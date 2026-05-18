@@ -1,0 +1,27 @@
+# Faulty script test fixture — scripts with intentional errors for trace testing
+broken_delay:
+  alias: Broken Delay Script
+  description: Script with a delay that may cause timeout issues
+  sequence:
+    - delay:
+        seconds: 120
+    - service: light.turn_on
+      target:
+        entity_id: light.nonexistent_room
+  mode: single
+
+error_service:
+  alias: Error Service Script
+  description: Script that calls a nonexistent service target
+  sequence:
+    - service: light.turn_on
+      target:
+        entity_id: light.nonexistent_entity_xyz
+  mode: single
+
+working_toggle:
+  alias: Working Toggle
+  description: Simple working script for baseline comparison
+  sequence:
+    - service: homeassistant.check_config
+  mode: single

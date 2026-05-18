@@ -1,0 +1,501 @@
+openapi: 3.0.3
+info:
+  title: hactl-companion API
+  version: 0.2.0
+  description: YAML file access API for Home Assistant. Provides structured CRUD
+    for templates, scripts, and automations, plus raw config file read/write 
+    with !include resolution.
+servers:
+- url: /
+  description: HA Ingress
+paths:
+  /v1/health:
+    get:
+      summary: Liveness check
+      tags:
+      - health
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  version:
+                    type: string
+  /v1/config/files:
+    get:
+      summary: List YAML config files
+      tags:
+      - config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: string
+  /v1/config/file:
+    get:
+      summary: Read a config file (with optional !include resolution)
+      tags:
+      - config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  content:
+                    type: string
+      parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: resolve
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 'true'
+    put:
+      summary: Write a config file (dry-run or apply)
+      tags:
+      - config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  diff:
+                    type: string
+      parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 'true'
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+  /v1/config/block:
+    get:
+      summary: Read a specific block from a config file
+      tags:
+      - config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  id:
+                    type: string
+                  content:
+                    type: string
+      parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+  /v1/config/templates:
+    get:
+      summary: List all template sensor definitions
+      tags:
+      - templates
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        unique_id:
+                          type: string
+                        name:
+                          type: string
+                        domain:
+                          type: string
+                        state:
+                          type: string
+                        unit_of_measurement:
+                          type: string
+                        device_class:
+                          type: string
+  /v1/config/template:
+    get:
+      summary: Get single template definition
+      tags:
+      - templates
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unique_id:
+                    type: string
+                  content:
+                    type: string
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Update template definition
+      tags:
+      - templates
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: &id001
+                type: object
+                properties:
+                  status:
+                    type: string
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 'true'
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    post:
+      summary: Create new template sensor
+      tags:
+      - templates
+      responses:
+        '201':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  unique_id:
+                    type: string
+      parameters:
+      - name: domain
+        in: query
+        required: false
+        schema:
+          type: string
+          default: sensor
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    delete:
+      summary: Delete template sensor
+      tags:
+      - templates
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id001
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+  /v1/config/scripts:
+    get:
+      summary: List all script definitions
+      tags:
+      - scripts
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scripts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        alias:
+                          type: string
+                        mode:
+                          type: string
+                        fields:
+                          type: array
+                          items:
+                            type: object
+  /v1/config/script:
+    get:
+      summary: Get single script definition
+      tags:
+      - scripts
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  content:
+                    type: string
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Update script definition
+      tags:
+      - scripts
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id001
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 'true'
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    post:
+      summary: Create new script
+      tags:
+      - scripts
+      responses:
+        '201':
+          description: Successful response
+          content:
+            application/json:
+              schema: &id002
+                type: object
+                properties:
+                  status:
+                    type: string
+                  id:
+                    type: string
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    delete:
+      summary: Delete script
+      tags:
+      - scripts
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id001
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+  /v1/config/automations:
+    get:
+      summary: List all automation definitions
+      tags:
+      - automations
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  automations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        alias:
+                          type: string
+                        mode:
+                          type: string
+                        description:
+                          type: string
+  /v1/config/automation:
+    get:
+      summary: Get single automation definition
+      tags:
+      - automations
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  content:
+                    type: string
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Update automation definition
+      tags:
+      - automations
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id001
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: string
+          default: 'true'
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    post:
+      summary: Create new automation
+      tags:
+      - automations
+      responses:
+        '201':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id002
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+    delete:
+      summary: Delete automation
+      tags:
+      - automations
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id001
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+security:
+- bearerAuth: []

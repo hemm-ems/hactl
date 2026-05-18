@@ -1,0 +1,40 @@
+﻿services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: hactl-companion-test-ha
+    ports:
+      - "8123"
+    volumes:
+      - ha-config:/config
+    networks:
+      ha-net:
+        aliases:
+          - homeassistant
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8123/api/onboarding')"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  companion:
+    image: ghcr.io/hemm-ems/hactl-companion:0.2
+    container_name: hactl-companion-test-comp
+    command: ["python3", "-m", "companion"]
+    environment:
+      SUPERVISOR_TOKEN: integration-test-token-12345
+    ports:
+      - "9100"
+    volumes:
+      - ha-config:/config
+    networks:
+      ha-net:
+        aliases:
+          - companion
+
+volumes:
+  ha-config:
+
+networks:
+  ha-net:
+    driver: bridge

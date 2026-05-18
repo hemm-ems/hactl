@@ -1,0 +1,3 @@
+[~XXX tok]
+entity_id state         area labels last_changed
+sun.sun   <SUN_STATE>             <TIME>

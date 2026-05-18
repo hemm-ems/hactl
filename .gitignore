@@ -1,0 +1,49 @@
+# Binaries
+/hactl
+/hactl.exe
+
+# Go build
+/bin/
+/dist/
+
+# Cache & instance data (top-level only, not internal/cache/)
+/cache/
+*.db
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+coverage.out
+coverage.html
+testdata/tmp
+unit_test_output.txt
+integration_test_output.txt
+test_output.log
+test_output.txt
+homeassistant
+
+# Backup directory
+backups/
+
+# Windows redirect artifact
+dev/null
+
+# Auto-release workflow artifacts
+ha-version-*.txt
+release-notes.md
+
+# Tuning loop runs (per-iteration scratch output)
+dev/tuning/runs/
+
+# Local Claude Code session state
+.claude/
+

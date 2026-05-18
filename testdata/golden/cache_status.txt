@@ -1,0 +1,5 @@
+[~XXX tok]
+traces:  0 entries  <SIZE>
+logs:    <SIZE>
+synced:  traces=never  logs=never
+dir:     <TMPDIR>/hatest-<ID>/cache

@@ -1,0 +1,117 @@
+# Realistic HA test fixture — mimics a busy real-world installation
+# with template sensors, input helpers, custom automations, and system_log.
+homeassistant:
+  name: Realistic Home
+  unit_system: metric
+  time_zone: Europe/Berlin
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+
+default_config:
+
+# Explicit system_log so WS system_log/list works
+system_log:
+  max_entries: 50
+
+# Explicit logger with component-level control (generates log entries)
+logger:
+  default: warning
+  logs:
+    homeassistant.components.automation: info
+    homeassistant.components.sensor: warning
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+
+# Input helpers — controllable entities for deterministic testing
+input_boolean:
+  guest_mode:
+    name: Guest Mode
+    icon: mdi:account-group
+  vacation_mode:
+    name: Vacation Mode
+    icon: mdi:airplane
+  alarm_armed:
+    name: Alarm Armed
+    icon: mdi:shield-lock
+
+input_number:
+  outdoor_temperature:
+    name: Simulated Outdoor Temp
+    min: -20
+    max: 45
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    initial: 18.5
+  indoor_humidity:
+    name: Simulated Indoor Humidity
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+    initial: 55
+  power_consumption:
+    name: Simulated Power
+    min: 0
+    max: 5000
+    step: 0.1
+    unit_of_measurement: "W"
+    icon: mdi:flash
+    initial: 350
+
+input_select:
+  house_mode:
+    name: House Mode
+    options:
+      - home
+      - away
+      - sleep
+      - party
+    initial: home
+    icon: mdi:home
+
+# Template sensors — provide numeric history for ent hist / anomalies tests
+template:
+  - sensor:
+      - name: "Outdoor Temperature"
+        unique_id: tpl_outdoor_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        state: "{{ states('input_number.outdoor_temperature') | float(0) }}"
+
+      - name: "Indoor Humidity"
+        unique_id: tpl_indoor_humidity
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+        state: "{{ states('input_number.indoor_humidity') | float(0) }}"
+
+      - name: "Power Consumption"
+        unique_id: tpl_power_consumption
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: "{{ states('input_number.power_consumption') | float(0) }}"
+
+      - name: "Daily Energy"
+        unique_id: tpl_daily_energy
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        state: >-
+          {{ (states('input_number.power_consumption') | float(0) * 24 / 1000) | round(2) }}
+
+  - binary_sensor:
+      - name: "Front Door"
+        unique_id: tpl_front_door
+        device_class: door
+        state: "{{ is_state('input_boolean.guest_mode', 'on') }}"
+
+      - name: "High Humidity Alert"
+        unique_id: tpl_high_humidity
+        device_class: moisture
+        state: "{{ states('input_number.indoor_humidity') | float(0) > 70 }}"

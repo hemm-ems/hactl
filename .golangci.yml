@@ -1,0 +1,55 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: all
+  disable:
+    - exhaustruct
+    - varnamelen
+    - wrapcheck
+    - wsl
+    - wsl_v5
+    - nlreturn
+    - godox
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - depguard
+    - lll
+    - testpackage
+    - paralleltest
+    - ireturn
+    - nonamedreturns
+    - exhaustive
+    - cyclop
+    - maintidx
+    - nestif
+    - godot
+    - err113
+    - tagliatelle
+    - containedctx
+    - mnd
+    - interfacebloat
+    - tagalign
+    - gomoddirectives
+    - noinlineerr
+    - goconst
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+    gosec:
+      excludes:
+        - G104
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

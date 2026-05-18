@@ -1,0 +1,40 @@
+{
+  "trace": {
+    "last_step": "action/0",
+    "run_id": "run-alarm-001",
+    "state": "stopped",
+    "script_execution": "finished",
+    "domain": "automation",
+    "item_id": "alarm_morning",
+    "timestamp": {
+      "start": "2026-04-16T06:00:00.000000+00:00",
+      "finish": "2026-04-16T06:00:02.000000+00:00"
+    },
+    "trigger": "time"
+  },
+  "trace_steps": {
+    "trigger/0": [
+      {
+        "path": "trigger/0",
+        "timestamp": "2026-04-16T06:00:00.000000+00:00",
+        "changed_variables": {
+          "trigger": {"platform": "time", "now": "2026-04-16T06:00:00+00:00"}
+        }
+      }
+    ],
+    "action/0": [
+      {
+        "path": "action/0",
+        "timestamp": "2026-04-16T06:00:01.000000+00:00",
+        "result": {"params": {"entity_id": "light.bedroom", "brightness": 100}},
+        "changed_variables": {}
+      }
+    ]
+  },
+  "config": {
+    "id": "alarm_morning",
+    "alias": "Alarm Morning",
+    "trigger": [{"platform": "time", "at": "06:00:00"}],
+    "action": [{"service": "light.turn_on", "target": {"entity_id": "light.bedroom"}, "data": {"brightness": 100}}]
+  }
+}

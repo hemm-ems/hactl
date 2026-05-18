@@ -1,0 +1,81 @@
+﻿version: 2
+
+builds:
+  - main: ./cmd/hactl
+    binary: hactl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X 'github.com/hemm-ems/hactl/internal/cmd.version={{.Version}}'
+      - -X 'github.com/hemm-ems/hactl/internal/cmd.commit={{.ShortCommit}}'
+      - -X 'github.com/hemm-ems/hactl/internal/cmd.date={{.Date}}'
+      - -X 'github.com/hemm-ems/hactl/internal/cmd.testedHA={{.Env.TESTED_HA}}'
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "📦 Dependencies"
+      regexp: '^.*?build\(deps\):.+$'
+      order: 2
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "${artifact}.sbom.json"
+
+signs:
+  - cmd: cosign
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+release:
+  github:
+    owner: hemm-ems
+    name: hactl
+  footer: |
+    {{ if .Env.TESTED_HA }}
+    ---
+    **Tested against Home Assistant:** {{ .Env.TESTED_HA }}
+    {{ end }}

@@ -1,0 +1,14 @@
+# Faulty HA test fixture – configuration with intentional errors
+homeassistant:
+  name: Faulty Home
+  unit_system: metric
+  time_zone: UTC
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+
+# Enable API (required for hactl REST + WebSocket access)
+default_config:
+
+automation: !include automations.yaml
+script: !include scripts.yaml

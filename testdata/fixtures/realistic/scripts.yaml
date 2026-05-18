@@ -1,0 +1,56 @@
+# Realistic script fixtures — diverse scripts for trace testing
+# Mimics typical HA installations with lighting, media, and system scripts
+
+morning_routine:
+  alias: Morning Routine
+  description: Turns on lights and starts coffee
+  sequence:
+    - service: light.turn_on
+      target:
+        entity_id: light.bedroom
+      data:
+        brightness: 150
+    - delay:
+        seconds: 2
+    - service: light.turn_on
+      target:
+        entity_id: light.kitchen
+  mode: single
+
+night_mode:
+  alias: Night Mode
+  description: Dims all lights and locks doors
+  sequence:
+    - service: light.turn_off
+      target:
+        entity_id: light.living_room
+    - service: light.turn_off
+      target:
+        entity_id: light.kitchen
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.alarm_armed
+  mode: single
+
+guest_welcome:
+  alias: Guest Welcome
+  description: Sets up the house for guests
+  sequence:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.guest_mode
+    - service: light.turn_on
+      target:
+        entity_id: light.bedroom
+      data:
+        brightness: 200
+  mode: single
+
+system_restart:
+  alias: System Restart
+  description: Restarts HA core for maintenance
+  sequence:
+    - delay:
+        seconds: 5
+    - service: homeassistant.restart
+  mode: single

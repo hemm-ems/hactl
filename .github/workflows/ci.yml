@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.11.4
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - run: make test
+
+  test-integration:
+    name: Integration Tests (HA ${{ matrix.ha-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ha-version: [stable, prev, dev]
+        include:
+          - ha-version: stable
+            image: ghcr.io/home-assistant/home-assistant:stable
+            required: true
+          - ha-version: prev
+            image: ""  # computed below
+            required: true
+          - ha-version: dev
+            image: ghcr.io/home-assistant/home-assistant:dev
+            required: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Compute previous HA version
+        if: matrix.ha-version == 'prev'
+        id: prev
+        run: |
+          prev_month=$(date -d "$(date +%Y-%m-01) -1 month" +%Y.%-m)
+          echo "image=ghcr.io/home-assistant/home-assistant:${prev_month}" >> "$GITHUB_OUTPUT"
+      - name: Set HA image
+        id: image
+        run: |
+          img="${{ matrix.image }}"
+          if [ -z "$img" ]; then
+            img="${{ steps.prev.outputs.image }}"
+          fi
+          echo "ha_image=${img}" >> "$GITHUB_OUTPUT"
+      - name: Run integration tests
+        if: matrix.required
+        run: make test-int
+        env:
+          HACTL_HA_IMAGE: ${{ steps.image.outputs.ha_image }}
+      - name: Run integration tests (non-blocking)
+        if: '!matrix.required'
+        run: |
+          if make test-int; then
+            echo "::notice::HA dev integration tests passed"
+          else
+            echo "::warning::HA dev integration tests failed (non-blocking)"
+          fi
+        env:
+          HACTL_HA_IMAGE: ${{ steps.image.outputs.ha_image }}
+
+      - name: Detect HA version
+        if: always()
+        run: |
+          img="${{ steps.image.outputs.ha_image }}"
+          ha_full=$(docker inspect "${img}" --format '{{index .Config.Labels "io.hass.version"}}' 2>/dev/null || true)
+          if [ -z "${ha_full}" ]; then
+            ha_full=$(echo "${img}" | sed 's|.*/home-assistant:||')
+          fi
+          echo "::notice title=HA Version (${img##*:})::Home Assistant ${ha_full}"
+
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  test-companion:
+    name: Companion Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Run companion tests
+        run: go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...

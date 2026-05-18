@@ -1,0 +1,58 @@
+# Basic automation test fixture
+- id: climate_schedule
+  alias: Climate Schedule
+  description: Manages climate based on time schedule
+  trigger:
+    - platform: time_pattern
+      hours: "/1"
+  condition:
+    - condition: state
+      entity_id: person.owner
+      state: home
+    - condition: template
+      value_template: "{{ states('sensor.outdoor_temp') | float < 20 }}"
+  action:
+    - service: climate.set_temperature
+      target:
+        entity_id: climate.living_room
+      data:
+        temperature: 21
+  mode: single
+
+- id: alarm_morning
+  alias: Morning Alarm
+  description: Turns on lights at alarm time
+  trigger:
+    - platform: time
+      at: "07:00:00"
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.bedroom
+      data:
+        brightness: 150
+  mode: single
+
+- id: vent_boost
+  alias: Ventilation Boost
+  description: Boosts ventilation on high humidity
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.bathroom_humidity
+      above: 70
+  condition: []
+  action:
+    - service: fan.set_percentage
+      target:
+        entity_id: fan.bathroom_vent
+      data:
+        percentage: 100
+    - delay:
+        minutes: 15
+    - service: fan.set_percentage
+      target:
+        entity_id: fan.bathroom_vent
+      data:
+        percentage: 30
+  mode: restart

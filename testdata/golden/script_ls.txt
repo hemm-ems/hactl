@@ -1,0 +1,5 @@
+[~XXX tok]
+id               state area labels runs_24h errors last_err
+kino_start       off               0        0     
+kino_ende        off               0        0     
+standby_activate off               0        0     

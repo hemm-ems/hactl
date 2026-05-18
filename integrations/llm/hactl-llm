@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# Wrapper that invokes `llm -t hactl` with the read-only hactl tool wrappers
+# loaded via --functions, from a directory where `./hactl` does not shadow
+# the global template name (otherwise `llm` reads the Mach-O binary as YAML
+# and dies on byte 0xcf).
+#
+# Forwards all extra args verbatim to `llm`. Use:
+#   hactl-llm "was ging in den letzten 24h schief?"
+#   hactl-llm --td "..."         # show tool execution traces
+#   hactl-llm --cl 6 "..."       # raise chain-limit (default 5)
+#
+# Env overrides:
+#   HACTL_BIN  path to the hactl binary (defaults to repo's ./hactl)
+#   HACTL_DIR  instance directory (forwarded into tools.py)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TOOLS_PY="$SCRIPT_DIR/tools.py"
+
+# Default to the repo's dev binary so we exercise the latest fixes.
+export HACTL_BIN="${HACTL_BIN:-$REPO_ROOT/hactl}"
+# Default the instance directory to the repo (where .env lives in dev).
+export HACTL_DIR="${HACTL_DIR:-$REPO_ROOT}"
+
+SAFE_CWD="${TMPDIR:-/tmp}"
+cd "$SAFE_CWD"
+exec llm -t hactl --functions "$TOOLS_PY" "$@"

@@ -1,0 +1,4 @@
+[~XXX tok]
+HA <VERSION>  state=<STATE>  recorder=ok  errors=<N>
+location=Test Home  tz=UTC
+companion=not found
