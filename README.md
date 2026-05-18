@@ -9,36 +9,39 @@
 
 # Home Assistant control, built for agentic workflows
 
-Stop burning tokens on raw APIs. **hactl** is purpose-built for LLM-driven control of Home Assistant: minimal payloads, precise queries, no structural noise.
+## Background
+
+I manage several Home Assistant instances. Logging into each one, hunting through the UI for broken automations, editing YAML by hand — it's fine, but it adds up. You can also wire an LLM into HA directly, but it still feels clunky: the API is chatty, context fills up fast, and there's no good way to keep multiple instances straight.
+
+`hactl` is the tool I created to solve this: a CLI that talks to HA's REST API from outside, works fine by hand, but is really designed to be driven by an LLM. I use hactl daily — or rather, my LLMs do. It works well with local models but also with Claude Code, Codex, or similar. The goal is that you can point an LLM at one or more HA instances and mostly just describe what you want done.
+
+With the [hactl-companion](https://github.com/hemm-ems/hactl-companion) add-on, which runs inside Home Assistant, you can edit all entities including ones the API doesn't normally expose.
 
 ## What it does
-- Diagnose automations: failures, trigger frequency, dead rules  
-- Inspect entities: anomalies, outages, signal quality  
-- Read/Write analyse attributes, scripts, labels, etc.
-- Spider along your feature cluster
-- Generate and update dashboards (beta)  
-- More: see [manual](docs/manual.md)
 
-## Why it’s different
-- **Token-efficient by design**: every response starts with `[~N tok]`, capped at 500 tokens by default (`--tokensmax`)  
-- **On-target validation**: executes against the real Jinja engine — no mock layers  
-- **Deterministic safety**: rollback by default, explicit commit required  
-- **Low traffic footprint**: aggressive request caching, filesystem-backed  
-- **Multi-instance ready**: one directory per HA instance, `.env` scoped
+`hactl` covers most of what you'd normally do through the HA UI or SSH: checking system health, diagnosing automations, inspecting entities, reading and writing config. No SSH access needed, just a long-lived token.
 
-## Engineering
-- Go, single static binary, zero runtime deps  
-- Integration-tested against real Home Assistant via ephemeral Docker instances  
-- Security-checked
+```
+hactl health
+# → HA 2026.4.3  state=RUNNING  recorder=ok  errors=4
+#   location=Home  tz=Europe/Berlin
+```
 
-## Setup
-Drop a `.env` with your token into a directory. Run. Done.
+See the [manual](docs/manual.md) for the full command reference.
 
----
+## How it's built for LLMs
 
+Every response reports its own token count (`[~N tok]`) and is capped at 500 tokens by default. Extended output is available but opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
 
+`hactl manual` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
 
-**[Manual (LLM usage guide)](docs/manual.md)** · **[LLM tuning notes](docs/llm-tuning.md)** · **[Testing guide](docs/testing.md)**
+## Safety
+
+Syntax validation runs against HA's real Jinja engine, not a mock. If the config is invalid, HA says so before anything is written. Changes are staged and require an explicit commit — the default is always safe.
+
+## Multi-instance
+
+Each HA instance gets its own directory with a `.env` file. `hactl` picks up whichever one is active via `--dir`, `HACTL_DIR`, the current working directory, or `~/.hactl/default/`.
 
 ## Install
 
@@ -53,16 +56,10 @@ go install github.com/hemm-ems/hactl/cmd/hactl@latest
 git clone https://github.com/hemm-ems/hactl && cd hactl && make build
 ```
 
-Pre-built binaries for Linux, macOS, and Windows (amd64/arm64) are attached to each [GitHub release](https://github.com/hemm-ems/hactl/releases/latest).
-
-### Verify release signatures
-
-All release checksums are signed with [cosign](https://github.com/sigstore/cosign) (keyless / OIDC).
+Pre-built binaries for Linux, macOS, and Windows (amd64/arm64) on the [releases page](https://github.com/hemm-ems/hactl/releases/latest). Release checksums are signed with cosign (keyless/OIDC):
 
 ```bash
-cosign verify-blob \
-  --bundle checksums.txt.sig \
-  checksums.txt
+cosign verify-blob --bundle checksums.txt.sig checksums.txt
 ```
 
 ## Setup
@@ -75,8 +72,14 @@ HA_TOKEN=<long_lived_access_token>
 EOF
 
 hactl health
-# → HA 2026.4.3  state=RUNNING  recorder=ok  errors=4
-#   location=Home  tz=Europe/Berlin
 ```
 
-Instance discovery: `--dir` flag → `HACTL_DIR` env → CWD (if `.env` exists) → `~/.hactl/default/`.
+Token: HA → Profile → Long-lived access tokens.
+
+## The companion
+
+The HA API doesn't expose everything needed to fully manage a Home Assistant instance — creating, editing, and deleting template entities, for example, isn't available. The [hactl-companion](https://github.com/hemm-ems/hactl-companion) add-on fills that gap.
+
+---
+
+[Manual](docs/manual.md) · [LLM tuning notes](docs/llm-tuning.md) · [Testing](docs/testing.md)
