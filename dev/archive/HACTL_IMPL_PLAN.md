@@ -1,4 +1,4 @@
-﻿# hactl Phase 14 — Implementation Plan
+# hactl Phase 14 — Implementation Plan
 
 > Repo: `hemm-ems/hactl` (Go)  
 > Depends on: hactl-companion v0.2.0 (COMPANION_IMPL_PLAN.md)  

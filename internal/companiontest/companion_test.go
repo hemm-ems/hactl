@@ -1,4 +1,4 @@
-﻿//go:build companion
+//go:build companion
 
 package companiontest
 

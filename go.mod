@@ -1,4 +1,4 @@
-﻿module github.com/hemm-ems/hactl
+module github.com/hemm-ems/hactl
 
 go 1.26.3
 

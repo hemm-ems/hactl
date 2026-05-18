@@ -1,4 +1,4 @@
-﻿# hactl ↔ companion: API Contract v2
+# hactl ↔ companion: API Contract v2
 
 > Defines the interface between hactl (Go CLI) and hactl-companion (Python add-on).  
 > Companion scope: **YAML file access only** — things the HA REST/WS API cannot do.

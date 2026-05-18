@@ -1,4 +1,4 @@
-﻿## hactl
+## hactl
 
 [![CI](https://github.com/hemm-ems/hactl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hemm-ems/hactl/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hemm-ems/hactl)](https://github.com/hemm-ems/hactl/releases/latest)
