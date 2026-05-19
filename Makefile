@@ -17,7 +17,7 @@ lint:
 	golangci-lint run ./...
 
 test:
-	go test ./... -count=1
+	go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic
 
 test-int:
 	go test ./... -tags=integration -count=1 -timeout 300s

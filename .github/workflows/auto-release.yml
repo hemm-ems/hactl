@@ -32,15 +32,16 @@ jobs:
 
       - name: Merge approved dependabot PRs
         run: |
-          # Find all open dependabot PRs that have passed CI
-          prs=$(gh pr list --author "app/dependabot" --state open --json number,mergeable,reviewDecision --jq '.[] | select(.mergeable == "MERGEABLE") | .number')
+          prs=$(gh pr list --author "app/dependabot" --state open \
+            --json number,mergeable,statusCheckRollup \
+            --jq '.[] | select(.mergeable == "MERGEABLE" and ((.statusCheckRollup | length) > 0) and (.statusCheckRollup | all(.state == "SUCCESS"))) | .number')
           if [ -z "$prs" ]; then
             echo "No mergeable dependabot PRs found"
             exit 0
           fi
           for pr in $prs; do
             echo "Merging dependabot PR #${pr}..."
-            if gh pr merge "$pr" --squash --admin; then
+            if gh pr merge "$pr" --squash; then
               echo "✓ PR #${pr} merged"
             else
               echo "⚠ PR #${pr} merge failed (non-blocking)"
@@ -123,9 +124,6 @@ jobs:
           - ha-version: dev
             image: ghcr.io/home-assistant/home-assistant:dev
             required: false
-    outputs:
-      stable-version: ${{ steps.detect.outputs.ha_version }}
-      prev-version: ${{ steps.detect.outputs.ha_version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -264,4 +262,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP: ${{ secrets.HOMEBREW_TAP }}
           TESTED_HA: ${{ steps.tested.outputs.tested_ha }}
