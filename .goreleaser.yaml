@@ -60,7 +60,7 @@ brews:
     repository:
       owner: hemm-ems
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP }}"
     homepage: "https://github.com/hemm-ems/hactl"
     description: "Home Assistant control CLI, built for agentic workflows"
     license: "MIT"
