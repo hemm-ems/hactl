@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -85,7 +86,7 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 	_, _ = fmt.Fprintf(out, "HA_TOKEN: ")
 	haToken := strings.TrimSpace(readLine(reader))
 	if haToken == "" {
-		return fmt.Errorf("HA_TOKEN is required")
+		return errors.New("HA_TOKEN is required")
 	}
 
 	// Test connectivity
