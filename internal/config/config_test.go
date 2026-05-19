@@ -85,8 +85,8 @@ func TestLoad_FallbackNoEnv(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "cannot open .env") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "cannot open .env")
+	if !strings.Contains(err.Error(), "hactl setup") {
+		t.Errorf("error = %q, want it to contain 'hactl setup'", err.Error())
 	}
 }
 

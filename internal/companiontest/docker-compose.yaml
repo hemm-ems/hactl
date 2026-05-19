@@ -18,9 +18,12 @@ services:
       start_period: 60s
 
   companion:
-    image: ghcr.io/hemm-ems/hactl-companion:0.2
+    build:
+      context: ../../../hactl-companion
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: python:3.12-alpine
     container_name: hactl-companion-test-comp
-    command: ["python3", "-m", "companion"]
     environment:
       SUPERVISOR_TOKEN: integration-test-token-12345
     ports:

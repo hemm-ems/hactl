@@ -47,9 +47,9 @@ func TestMain(m *testing.M) {
 
 	slog.Info("companion-test: starting stack", "dir", composeDir)
 
-	// Pull companion image from GHCR
-	if err := pullCompanionImage(); err != nil {
-		slog.Error("companion-test: pull companion image failed", "error", err)
+	// Build companion image from local source
+	if err := buildCompanionImage(composeDir); err != nil {
+		slog.Error("companion-test: build companion image failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -188,50 +188,17 @@ func composeDown() {
 	_ = cmd.Run()
 }
 
-func pullCompanionImage() error {
-	const ghcrImage = "ghcr.io/hemm-ems/hactl-companion:0.2"
-
-	slog.Info("companion-test: pulling companion image from GHCR", "image", ghcrImage)
-	cmd := exec.Command("docker", "pull", ghcrImage)
+// buildCompanionImage builds the companion Docker image from the local source tree
+// using docker compose build so the image is available when composeUp runs.
+func buildCompanionImage(composeDir string) error {
+	slog.Info("companion-test: building companion image from local source")
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "build", "companion")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		slog.Warn("companion-test: GHCR pull failed, falling back to local build", "error", err)
-		return buildCompanionFallback()
+		return fmt.Errorf("docker compose build companion: %w", err)
 	}
-
-	slog.Info("companion-test: companion image pulled from GHCR")
-	return nil
-}
-
-func buildCompanionFallback() error {
-	// Clone companion repo to temp dir and build locally
-	tmpDir, err := os.MkdirTemp("", "hactl-companion-src-*")
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	slog.Info("companion-test: cloning companion repo", "dest", tmpDir)
-	cmd := exec.Command("git", "clone", "--depth=1", "https://github.com/hemm-ems/hactl-companion.git", tmpDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git clone: %w", err)
-	}
-
-	slog.Info("companion-test: building companion image locally")
-	cmd = exec.Command("docker", "build",
-		"--build-arg", "BASE_IMAGE=python:3.12-alpine",
-		"-t", "ghcr.io/hemm-ems/hactl-companion:0.2",
-		tmpDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker build: %w", err)
-	}
-
-	slog.Info("companion-test: companion image built locally")
+	slog.Info("companion-test: companion image built")
 	return nil
 }
 

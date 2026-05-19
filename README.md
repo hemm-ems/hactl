@@ -65,20 +65,20 @@ cosign verify-blob --bundle checksums.txt.sig checksums.txt
 ## Setup
 
 ```bash
-mkdir -p ~/ha/home && cd ~/ha/home
-cat > .env << 'EOF'
-HA_URL=http://homeassistant.local:8123
-HA_TOKEN=<long_lived_access_token>
-EOF
-
-hactl health
+hactl setup
 ```
 
-Token: HA → Profile → Long-lived access tokens.
+`hactl setup` guides you through connecting to a Home Assistant instance: it prompts for the URL and a long-lived token, tests connectivity, and writes `~/.hactl/default/.env`. The companion add-on is auto-detected — no extra secret is needed (HA Ingress handles auth automatically).
+
+To create a token manually: HA → Profile → Long-lived access tokens.
+
+For multiple instances, create one directory per instance with its own `.env` and use `--dir` or `HACTL_DIR` to select it.
 
 ## The companion
 
 The HA API doesn't expose everything needed to fully manage a Home Assistant instance — creating, editing, and deleting template entities, for example, isn't available. The [hactl-companion](https://github.com/hemm-ems/hactl-companion) add-on fills that gap.
+
+Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl health` — the companion URL is discovered automatically via the Supervisor. No URL or secret configuration is needed.
 
 ---
 

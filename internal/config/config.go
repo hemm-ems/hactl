@@ -103,6 +103,9 @@ func resolveDir(dirFlag string) (string, error) {
 func parseEnvFile(path string) (map[string]string, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no .env found at %s — run 'hactl setup' to create one", path)
+		}
 		return nil, fmt.Errorf("cannot open .env: %w", err)
 	}
 	defer func() { _ = f.Close() }()

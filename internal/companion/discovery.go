@@ -39,5 +39,7 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 		}
 	}
 
-	return "", errors.New("companion not found: set COMPANION_URL in .env or install hactl-companion add-on")
+	return "", errors.New("companion not found: install the hactl-companion add-on in HA (Settings → Add-ons),\n" +
+		"or set COMPANION_URL in .env for a direct connection.\n" +
+		"Note: no separate secret is needed — HA Ingress handles authentication automatically.")
 }

@@ -4,6 +4,7 @@ package companiontest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,5 +130,47 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	// Build path must have been written to a valid file for the YAML (not path-related issue)
 	if _, statErr := os.Stat(filepath.Clean(f.Name())); statErr != nil {
 		t.Errorf("yaml file disappeared: %v", statErr)
+	}
+}
+
+// TestE2ESetupCLI verifies that `hactl --dir <tmpdir> setup` creates a valid .env
+// when given HA_URL and HA_TOKEN via piped stdin, and that the resulting .env
+// passes config.Load.
+func TestE2ESetupCLI(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pipe: URL (accept default), token, then "no" to companion prompt if any
+	input := fmt.Sprintf("%s\n%s\n", haURL, haToken)
+
+	cmd := exec.Command(hactlBin, "--dir", dir, "setup") //nolint:gosec
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hactl setup failed (exit %v):\n%s", err, out)
+	}
+
+	envPath := filepath.Join(dir, ".env")
+	if _, statErr := os.Stat(envPath); statErr != nil {
+		t.Fatalf(".env not created at %s: %v\nsetup output:\n%s", envPath, statErr, out)
+	}
+
+	data, err := os.ReadFile(envPath) //nolint:gosec
+	if err != nil {
+		t.Fatalf("reading .env: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "HA_URL=") {
+		t.Errorf(".env missing HA_URL, content:\n%s", content)
+	}
+	if !strings.Contains(content, "HA_TOKEN=") {
+		t.Errorf(".env missing HA_TOKEN, content:\n%s", content)
+	}
+
+	outStr := string(out)
+	if !strings.Contains(outStr, "OK") {
+		t.Errorf("expected connectivity OK in setup output:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "Setup complete") {
+		t.Errorf("expected 'Setup complete' in setup output:\n%s", outStr)
 	}
 }
