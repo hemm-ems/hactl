@@ -53,8 +53,9 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - path: "_test.go"
-      linters:
-        - errchkjson
-        - dupl
+  exclusions:
+    rules:
+      - linters:
+          - errchkjson
+          - dupl
+        path: "_test\\.go"
