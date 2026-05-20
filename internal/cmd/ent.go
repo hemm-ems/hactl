@@ -166,6 +166,10 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		states = filterEntitiesByArea(states, rc, flagEntArea)
 	}
 	if rc != nil && flagEntLabel != "" {
+		if !labelExistsInRegistry(rc, flagEntLabel) {
+			_, _ = fmt.Fprintln(w, labelNotFoundHint(flagEntLabel))
+			return nil
+		}
 		states = filterEntitiesByLabel(states, rc, flagEntLabel)
 	}
 
@@ -874,6 +878,22 @@ func filterEntitiesByArea(states []entityState, rc *registryContext, area string
 		}
 	}
 	return result
+}
+
+// labelNotFoundHint returns the user-facing message when a --label value isn't in the registry.
+func labelNotFoundHint(label string) string {
+	return fmt.Sprintf("label %q not found in registry (try: hactl label ls)", label)
+}
+
+// labelExistsInRegistry returns true if the given label name or ID exists in the registry.
+func labelExistsInRegistry(rc *registryContext, label string) bool {
+	lower := strings.ToLower(label)
+	for _, l := range rc.labelByID {
+		if strings.ToLower(l.LabelID) == lower || strings.ToLower(l.Name) == lower {
+			return true
+		}
+	}
+	return false
 }
 
 func filterEntitiesByLabel(states []entityState, rc *registryContext, label string) []entityState {

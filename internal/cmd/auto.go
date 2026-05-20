@@ -197,6 +197,10 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 
 	if flagAutoFailing {
 		rows = filterFailing(rows)
+		if len(rows) == 0 {
+			_, _ = fmt.Fprintln(w, failingEmptyHint())
+			return nil
+		}
 	}
 
 	tbl := &format.Table{
@@ -439,6 +443,12 @@ func filterAutosByTag(rows []autoRow, tag string) []autoRow {
 		}
 	}
 	return result
+}
+
+// failingEmptyHint returns the hint printed when --failing yields no rows.
+func failingEmptyHint() string {
+	return "# no failing automations in recent traces\n" +
+		"# (try: hactl log --errors --unique to check the error log)"
 }
 
 func filterFailing(rows []autoRow) []autoRow {

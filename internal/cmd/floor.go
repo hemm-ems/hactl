@@ -55,6 +55,7 @@ var floorDeleteCmd = &cobra.Command{
 func init() {
 	floorCreateCmd.Flags().StringVar(&flagFloorIcon, "icon", "", "floor icon (e.g. mdi:home-floor-1)")
 	floorCreateCmd.Flags().IntVar(&flagFloorLevel, "level", 0, "floor level number")
+	floorCreateCmd.Flags().BoolVar(&flagFloorConfirm, "confirm", false, "actually create (default is dry-run)")
 	floorDeleteCmd.Flags().BoolVar(&flagFloorConfirm, "confirm", false, "actually delete (default is dry-run)")
 	floorCmd.AddCommand(floorLsCmd, floorCreateCmd, floorDeleteCmd)
 	rootCmd.AddCommand(floorCmd)
@@ -108,6 +109,16 @@ func runFloorLs(ctx context.Context, w io.Writer) error {
 }
 
 func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
+	if !flagFloorConfirm {
+		_, _ = fmt.Fprintln(w, "dry-run: would create floor")
+		_, _ = fmt.Fprintf(w, "  name: %s\n", name)
+		if flagFloorLevel != 0 {
+			_, _ = fmt.Fprintf(w, "  level: %d\n", flagFloorLevel)
+		}
+		_, _ = fmt.Fprintln(w, "use --confirm to apply")
+		return nil
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err

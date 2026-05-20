@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -14,7 +15,12 @@ import (
 	"github.com/hemm-ems/hactl/internal/writer"
 )
 
-var rollbackCmd = &cobra.Command{
+// rollbackDeprecationMsg returns the one-line deprecation notice for hactl rollback.
+func rollbackDeprecationMsg() string {
+	return "deprecated: use 'hactl auto rollback' instead (hactl rollback will be removed in a future release)"
+}
+
+var autoRollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Restore the most recent automation backup",
 	Long:  "Rollback to the last backed-up automation config. Optionally specify an automation ID.",
@@ -28,7 +34,26 @@ var rollbackCmd = &cobra.Command{
 	},
 }
 
+// rollbackCmd is a deprecated alias for 'hactl auto rollback'.
+var rollbackCmd = &cobra.Command{
+	Use:   "rollback [automation-id]",
+	Short: "Deprecated: use 'hactl auto rollback' instead",
+	Long:  "Rollback to the last backed-up automation config. Use 'hactl auto rollback' instead.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, _ = fmt.Fprintln(os.Stderr, rollbackDeprecationMsg())
+		autoID := ""
+		if len(args) > 0 {
+			autoID = args[0]
+		}
+		return runRollback(cmd.Context(), cmd.OutOrStdout(), autoID)
+	},
+}
+
 func init() {
+	// Canonical: hactl auto rollback
+	autoCmd.AddCommand(autoRollbackCmd)
+	// Deprecated alias: hactl rollback
 	rootCmd.AddCommand(rollbackCmd)
 }
 

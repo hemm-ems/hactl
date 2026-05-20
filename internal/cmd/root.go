@@ -181,6 +181,7 @@ func resetSubcommandFlags() {
 	flagEntLabel = ""
 	flagCCLogsUnique = false
 	flagSvcData = "{}"
+	flagSvcReturn = false
 	flagScriptPattern = ""
 	flagScriptLabel = ""
 	flagScriptFailing = false
@@ -190,6 +191,9 @@ func resetSubcommandFlags() {
 	flagLabelColor = ""
 	flagLabelIcon = ""
 	flagLabelDesc = ""
+	flagLabelConfirm = false
+	flagAreaConfirm = false
+	flagFloorConfirm = false
 	flagDashView = ""
 	flagDashRaw = false
 	flagDashFile = ""

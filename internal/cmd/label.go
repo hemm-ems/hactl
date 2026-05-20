@@ -58,6 +58,7 @@ func init() {
 	labelCreateCmd.Flags().StringVar(&flagLabelColor, "color", "", "label color (e.g. red, blue, #ff0000)")
 	labelCreateCmd.Flags().StringVar(&flagLabelIcon, "icon", "", "label icon (e.g. mdi:flash)")
 	labelCreateCmd.Flags().StringVar(&flagLabelDesc, "description", "", "label description")
+	labelCreateCmd.Flags().BoolVar(&flagLabelConfirm, "confirm", false, "actually create (default is dry-run)")
 	labelDeleteCmd.Flags().BoolVar(&flagLabelConfirm, "confirm", false, "actually delete (default is dry-run)")
 	labelCmd.AddCommand(labelLsCmd, labelCreateCmd, labelDeleteCmd)
 	rootCmd.AddCommand(labelCmd)
@@ -106,7 +107,29 @@ func runLabelLs(ctx context.Context, w io.Writer) error {
 	})
 }
 
+// dryRunLabelSummary returns the dry-run summary string for label create.
+func dryRunLabelSummary(name, icon, color, description string) string {
+	s := "dry-run: would create label\n"
+	s += fmt.Sprintf("  name:        %s\n", name)
+	if icon != "" {
+		s += fmt.Sprintf("  icon:        %s\n", icon)
+	}
+	if color != "" {
+		s += fmt.Sprintf("  color:       %s\n", color)
+	}
+	if description != "" {
+		s += fmt.Sprintf("  description: %s\n", description)
+	}
+	s += "use --confirm to apply"
+	return s
+}
+
 func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
+	if !flagLabelConfirm {
+		_, _ = fmt.Fprintln(w, dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc))
+		return nil
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err

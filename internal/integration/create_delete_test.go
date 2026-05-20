@@ -10,8 +10,12 @@ import (
 // --- Area create / delete lifecycle ---
 
 func TestAreaCreateDelete(t *testing.T) {
-	// Create
-	out := runHactl(t, "area", "create", "integ-test-area")
+	// Dry-run first
+	dryOut := runHactl(t, "area", "create", "integ-test-area")
+	assertContains(t, dryOut, "dry-run")
+
+	// Create for real
+	out := runHactl(t, "area", "create", "integ-test-area", "--confirm")
 	assertContains(t, out, "created area")
 
 	// Verify it shows up in area ls
@@ -29,7 +33,7 @@ func TestAreaCreateDelete(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "area", "delete", areaID)
+	dryOut = runHactl(t, "area", "delete", areaID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
@@ -44,7 +48,12 @@ func TestAreaCreateDelete(t *testing.T) {
 // --- Floor create / delete lifecycle ---
 
 func TestFloorCreateDelete(t *testing.T) {
-	out := runHactl(t, "floor", "create", "integ-test-floor")
+	// Dry-run first
+	dryOut := runHactl(t, "floor", "create", "integ-test-floor")
+	assertContains(t, dryOut, "dry-run")
+
+	// Create for real
+	out := runHactl(t, "floor", "create", "integ-test-floor", "--confirm")
 	assertContains(t, out, "created floor")
 
 	lsOut := runHactl(t, "floor", "ls")
@@ -59,7 +68,7 @@ func TestFloorCreateDelete(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "floor", "delete", floorID)
+	dryOut = runHactl(t, "floor", "delete", floorID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
@@ -70,8 +79,10 @@ func TestFloorCreateDelete(t *testing.T) {
 // --- Label delete lifecycle ---
 
 func TestLabelDeleteLifecycle(t *testing.T) {
-	// Create a label first
-	out := runHactl(t, "label", "create", "integ-delete-label", "--color", "green")
+	// Create a label first (dry-run, then confirm)
+	dryOut := runHactl(t, "label", "create", "integ-delete-label", "--color", "green")
+	assertContains(t, dryOut, "dry-run")
+	out := runHactl(t, "label", "create", "integ-delete-label", "--color", "green", "--confirm")
 	assertContains(t, out, "created label")
 
 	// Extract actual label_id from output: created label "integ-delete-label" (id=integ_delete_label)
@@ -84,7 +95,7 @@ func TestLabelDeleteLifecycle(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "label", "delete", labelID)
+	dryOut = runHactl(t, "label", "delete", labelID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
