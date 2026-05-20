@@ -2349,6 +2349,10 @@ func TestRunLabelCreate(t *testing.T) {
 	flagLabelDesc = ""
 	defer func() { flagLabelDesc = oldDesc }()
 
+	oldConfirm := flagLabelConfirm
+	flagLabelConfirm = true
+	defer func() { flagLabelConfirm = oldConfirm }()
+
 	var buf bytes.Buffer
 	if err := runLabelCreate(context.Background(), &buf, "Energy"); err != nil {
 		t.Fatalf("runLabelCreate failed: %v", err)
@@ -2375,6 +2379,10 @@ func TestRunAreaCreate(t *testing.T) {
 	flagAreaFloor = ""
 	defer func() { flagAreaFloor = oldFloor }()
 
+	oldConfirm := flagAreaConfirm
+	flagAreaConfirm = true
+	defer func() { flagAreaConfirm = oldConfirm }()
+
 	var buf bytes.Buffer
 	if err := runAreaCreate(context.Background(), &buf, "Kitchen"); err != nil {
 		t.Fatalf("runAreaCreate failed: %v", err)
@@ -2394,6 +2402,10 @@ func TestRunFloorCreate(t *testing.T) {
 		"config/floor_registry/create": createdFloor,
 	}, nil)
 	withFlagDir(t, ts.dir)
+
+	oldConfirm := flagFloorConfirm
+	flagFloorConfirm = true
+	defer func() { flagFloorConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runFloorCreate(context.Background(), &buf, "Ground"); err != nil {
