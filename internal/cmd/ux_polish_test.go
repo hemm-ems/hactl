@@ -24,7 +24,7 @@ func writeURLEnv(t *testing.T, dir, baseURL string) {
 func TestSvcCall_ReturnFlag(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"response":{"result":"valid"}}]`)
+		_, _ = fmt.Fprint(w, `[{"response":{"result":"valid"}}]`)
 	}))
 	defer srv.Close()
 
@@ -47,7 +47,7 @@ func TestSvcCall_ReturnFlag(t *testing.T) {
 func TestSvcCall_NoReturn(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{}]`)
+		_, _ = fmt.Fprint(w, `[{}]`)
 	}))
 	defer srv.Close()
 
