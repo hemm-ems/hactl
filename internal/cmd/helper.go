@@ -134,6 +134,9 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	content := string(data)
 
 	if !flagHelperConfirm {
+		if _, connErr := connectCompanion(ctx); connErr != nil {
+			return connErr
+		}
 		_, _ = fmt.Fprintln(w, "dry-run: would create helper")
 		_, _ = fmt.Fprintf(w, "  domain: %s\n", domain)
 		_, _ = fmt.Fprintf(w, "  file:   %s\n", flagHelperFile)

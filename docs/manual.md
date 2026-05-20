@@ -279,9 +279,9 @@ Three commands support `--pattern` (glob or substring on the item ID):
 
 ```bash
 hactl auto ls --pattern victron           # substring: matches "victron" anywhere in ID
-hactl auto ls --pattern "victron_*"       # glob: IDs starting with victron_
+hactl auto ls --pattern 'victron_*'       # glob: IDs starting with victron_
 hactl script ls --pattern kino
-hactl ent ls --pattern sensor.wp_*
+hactl ent ls --pattern 'sensor.wp_*'
 ```
 
 Pattern with `*` or `?` → glob. Otherwise → case-sensitive substring.
@@ -341,7 +341,7 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 
 ## Agent workflows
 
-> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax.
+> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax. `hactl rtfm` is uncapped by default — pass `--tokensmax=N` only when you want to truncate it.
 
 ### "Why did my automation fail?"
 ```

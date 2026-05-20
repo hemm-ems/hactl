@@ -617,6 +617,9 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 	content := string(data)
 
 	if !flagAutoConfirm {
+		if _, connErr := connectCompanion(ctx); connErr != nil {
+			return connErr
+		}
 		_, _ = fmt.Fprintln(w, "dry-run: would create automation")
 		_, _ = fmt.Fprintf(w, "  file: %s\n", flagAutoFile)
 		_, _ = fmt.Fprintf(w, "  size: %d bytes\n", len(data))
