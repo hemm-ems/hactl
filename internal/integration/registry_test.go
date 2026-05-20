@@ -16,7 +16,12 @@ func TestLabelLs(t *testing.T) {
 }
 
 func TestLabelCreate(t *testing.T) {
-	out := runHactl(t, "label", "create", "integ-test-label", "--color", "blue")
+	// Dry-run
+	dryOut := runHactl(t, "label", "create", "integ-test-label", "--color", "blue")
+	assertContains(t, dryOut, "dry-run")
+
+	// Actually create
+	out := runHactl(t, "label", "create", "integ-test-label", "--color", "blue", "--confirm")
 	assertContains(t, out, "created label")
 	assertContains(t, out, "integ-test-label")
 
