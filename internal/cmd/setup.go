@@ -96,7 +96,7 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 		_, _ = fmt.Fprintf(out, " FAILED\n")
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "403") || strings.Contains(errMsg, "Unauthorized") || strings.Contains(errMsg, "Forbidden") {
-			return fmt.Errorf("authentication failed: HA_TOKEN is invalid or lacks required scope\n\nFix the token in HA → Profile → Long-lived access tokens, then run hactl setup again")
+			return errors.New("authentication failed: HA_TOKEN is invalid or lacks required scope\n\nFix the token in HA → Profile → Long-lived access tokens, then run hactl setup again")
 		}
 		return fmt.Errorf("cannot reach Home Assistant at %s\n\nCheck that HA_URL is correct and the instance is reachable, then run hactl setup again.\nDetail: %w", haURL, err)
 	}

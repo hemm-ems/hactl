@@ -308,7 +308,7 @@ func TestFilterScriptsFailing(t *testing.T) {
 // --- maskToken ---
 
 func TestMaskToken_Long(t *testing.T) {
-	token := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
+	token := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test" //nolint:gosec
 	got := maskToken(token)
 	if !strings.Contains(got, "***") {
 		t.Errorf("maskToken = %q, want '***' in result", got)

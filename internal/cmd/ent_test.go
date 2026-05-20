@@ -502,7 +502,7 @@ func TestFormatAttrList(t *testing.T) {
 }
 
 func TestToFloat64_JSONNumber(t *testing.T) {
-	jn := interface{}(json.Number("99.9"))
+	jn := any(json.Number("99.9"))
 	got, err := toFloat64(jn)
 	if err != nil {
 		t.Fatalf("toFloat64(json.Number) error = %v", err)

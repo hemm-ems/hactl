@@ -217,7 +217,7 @@ func TestFindLatestBackup_EmptyDir(t *testing.T) {
 }
 
 // makeWriterServer creates an httptest server that handles automation config operations.
-func makeWriterServer(t *testing.T, autoID, remoteConfig string) *httptest.Server {
+func makeWriterServer(t *testing.T, _ string, remoteConfig string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -342,9 +342,7 @@ func TestWriter_Apply_Confirm(t *testing.T) {
 	if result.DryRun {
 		t.Error("Apply confirm: DryRun = true, want false")
 	}
-	if result.Reloaded {
-		// OK if reloaded since mock returns 200
-	}
+	_ = result.Reloaded // OK whether reloaded or not since mock returns 200
 }
 
 func TestWriter_Apply_InvalidYAML(t *testing.T) {

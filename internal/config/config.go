@@ -101,12 +101,14 @@ func resolveDir(dirFlag string) (string, error) {
 // ConfigNotFoundError is returned when no .env file can be located.
 // It carries exit code 2 ("configuration error") so callers can distinguish it
 // from generic runtime errors.
-type ConfigNotFoundError struct {
+type ConfigNotFoundError struct { //nolint:revive // stutter is intentional: config.ConfigNotFoundError is unambiguous
 	msg string
 }
 
 func (e *ConfigNotFoundError) Error() string { return e.msg }
-func (e *ConfigNotFoundError) ExitCode() int  { return 2 }
+
+// ExitCode returns 2 to signal a configuration error rather than a generic program error.
+func (e *ConfigNotFoundError) ExitCode() int { return 2 }
 
 const noConfigMsg = "no hactl instance configured\n\n" +
 	"hactl looks for a .env in this order:\n" +

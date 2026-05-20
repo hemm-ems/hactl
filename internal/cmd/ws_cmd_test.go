@@ -1455,7 +1455,7 @@ func TestRunConfigFlowStep_JSON(t *testing.T) {
 	flowResponse := `{"flow_id":"f1","type":"form","step_id":"user","handler":"mqtt","data_schema":[]}`
 	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
 		"/api/config/config_entries/flow/f1": func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "POST" {
+			if r.Method != http.MethodPost {
 				t.Errorf("method = %s, want POST", r.Method)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1934,7 +1934,7 @@ func TestRunSetup_NewConfig(t *testing.T) {
 	withFlagDir(t, dir)
 
 	// Simulate user input: URL + token
-	input := fmt.Sprintf("%s\ntest-long-lived-token-123\n", haSrv.URL)
+	input := haSrv.URL + "\ntest-long-lived-token-123\n"
 	reader := strings.NewReader(input)
 
 	var buf bytes.Buffer
@@ -2113,7 +2113,7 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
 		"/api/config/automation/config/": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			if r.Method == "GET" {
+			if r.Method == http.MethodGet {
 				_, _ = fmt.Fprint(w, remoteJSON)
 			} else {
 				w.WriteHeader(http.StatusOK)

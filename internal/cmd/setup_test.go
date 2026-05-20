@@ -44,7 +44,7 @@ func TestSetup_WritesDotEnv(t *testing.T) {
 		t.Fatalf("runSetup failed: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".env"))
+	data, err := os.ReadFile(filepath.Join(dir, ".env")) //nolint:gosec
 	if err != nil {
 		t.Fatalf(".env not written: %v", err)
 	}
