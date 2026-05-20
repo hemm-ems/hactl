@@ -796,7 +796,7 @@ func TestRunEntAnomalies_NumericNoAnomalies(t *testing.T) {
 
 // --- runEntHistAttr (HTTP) ---
 
-func TestRunEntHistAttr_WithData(t *testing.T) {
+func TestRunEntHistAttr_WithData(t *testing.T) { //nolint:dupl
 	histData := `[[
 		{"entity_id":"light.kitchen","state":"on","last_changed":"2026-01-01T10:00:00+00:00","attributes":{"brightness":200}},
 		{"entity_id":"light.kitchen","state":"on","last_changed":"2026-01-01T11:00:00+00:00","attributes":{"brightness":255}}
@@ -1175,7 +1175,7 @@ func TestResolveTraceID_InvalidFormat(t *testing.T) {
 	idsPath := filepath.Join(t.TempDir(), "ids.json")
 	reg := idsRegistry(idsPath)
 
-	_, _, _, err := resolveTraceID(reg, "invalid_format")
+	_, _, _, err := resolveTraceID(reg, "invalid_format") //nolint:dogsled
 	if err == nil {
 		t.Fatal("expected error for invalid format, got nil")
 	}
@@ -1826,7 +1826,7 @@ func TestResolveTraceID_TrcPrefix_NotFound(t *testing.T) {
 	idsPath := filepath.Join(t.TempDir(), "ids.json")
 	reg := ids.NewRegistry(idsPath)
 
-	_, _, _, err := resolveTraceID(reg, "trc:unknown")
+	_, _, _, err := resolveTraceID(reg, "trc:unknown") //nolint:dogsled
 	if err == nil {
 		t.Fatal("expected error for unknown trc: ID, got nil")
 	}
