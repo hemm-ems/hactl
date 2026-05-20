@@ -24,6 +24,8 @@ export HACTL_DIR=/path/to/instance   # or
 hactl --dir /path/to/instance <cmd>  # or cd into it
 ```
 
+Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why.
+
 ---
 
 ## Command Reference
