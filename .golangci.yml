@@ -36,6 +36,8 @@ linters:
     - gomoddirectives
     - noinlineerr
     - goconst
+    - dupl
+    - errchkjson
 
   settings:
     govet:
@@ -53,9 +55,3 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclusions:
-    rules:
-      - linters:
-          - errchkjson
-          - dupl
-        path: "_test\\.go"
