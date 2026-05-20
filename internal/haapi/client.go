@@ -96,6 +96,15 @@ func (c *Client) CallService(ctx context.Context, domain, service string, data a
 	return err
 }
 
+// CallServiceWithResponse calls POST /api/services/<domain>/<service>?return_response=true
+// and returns the raw JSON response body (the service_response array from HA).
+func (c *Client) CallServiceWithResponse(ctx context.Context, domain, service string, data any) ([]byte, error) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	return c.doPost(ctx, "/api/services/"+domain+"/"+service+"?return_response=true", data)
+}
+
 // GetIssues calls GET /api/repairs/issues and returns the raw JSON body.
 func (c *Client) GetIssues(ctx context.Context) ([]byte, error) {
 	return c.doGet(ctx, "/api/repairs/issues")

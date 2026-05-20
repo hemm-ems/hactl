@@ -16,6 +16,7 @@ import (
 )
 
 var flagSvcData string
+var flagSvcReturn bool
 
 var svcCmd = &cobra.Command{
 	Use:   "svc",
@@ -35,6 +36,7 @@ var svcCallCmd = &cobra.Command{
 
 func init() {
 	svcCallCmd.Flags().StringVarP(&flagSvcData, "data", "d", "{}", "JSON service data (use @file.json to read from file)")
+	svcCallCmd.Flags().BoolVar(&flagSvcReturn, "return", false, "request and print the service response (return_response=true)")
 	svcCmd.AddCommand(svcCallCmd)
 	rootCmd.AddCommand(svcCmd)
 }
@@ -61,10 +63,24 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
+
+	if flagSvcReturn {
+		resp, err := client.CallServiceWithResponse(ctx, domain, service, data)
+		if err != nil {
+			return fmt.Errorf("calling %s.%s: %w", domain, service, err)
+		}
+		if flagJSON {
+			_, _ = w.Write(resp)
+			_, _ = fmt.Fprintln(w)
+		} else {
+			_, _ = fmt.Fprintf(w, "called %s.%s\nresponse: %s\n", domain, service, resp)
+		}
+		return nil
+	}
+
 	if err := client.CallService(ctx, domain, service, data); err != nil {
 		return fmt.Errorf("calling %s.%s: %w", domain, service, err)
 	}
-
 	_, _ = fmt.Fprintf(w, "called %s.%s\n", domain, service)
 	return nil
 }

@@ -55,6 +55,7 @@ var areaDeleteCmd = &cobra.Command{
 func init() {
 	areaCreateCmd.Flags().StringVar(&flagAreaIcon, "icon", "", "area icon (e.g. mdi:sofa)")
 	areaCreateCmd.Flags().StringVar(&flagAreaFloor, "floor", "", "floor ID to assign")
+	areaCreateCmd.Flags().BoolVar(&flagAreaConfirm, "confirm", false, "actually create (default is dry-run)")
 	areaDeleteCmd.Flags().BoolVar(&flagAreaConfirm, "confirm", false, "actually delete (default is dry-run)")
 	areaCmd.AddCommand(areaLsCmd, areaCreateCmd, areaDeleteCmd)
 	rootCmd.AddCommand(areaCmd)
@@ -135,6 +136,16 @@ func joinStrings(s []string) string {
 }
 
 func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
+	if !flagAreaConfirm {
+		_, _ = fmt.Fprintln(w, "dry-run: would create area")
+		_, _ = fmt.Fprintf(w, "  name: %s\n", name)
+		if flagAreaIcon != "" {
+			_, _ = fmt.Fprintf(w, "  icon: %s\n", flagAreaIcon)
+		}
+		_, _ = fmt.Fprintln(w, "use --confirm to apply")
+		return nil
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err

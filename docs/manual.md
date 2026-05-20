@@ -120,14 +120,17 @@ hactl ent related sensor.wp_vl            # related automations, device siblings
 
 ```bash
 hactl label ls                            # label_id, name, color, description
-hactl label create "Energy" --color red --icon mdi:flash --description "Power consumers"
+hactl label create "Energy" --color red --icon mdi:flash --description "Power consumers"  # dry-run
+hactl label create "Energy" --color red --icon mdi:flash --confirm                          # actually create
 
 hactl area ls                             # area_id, name, floor (name), labels
-hactl area create "Kitchen" --icon mdi:silverware-fork  # create immediately (no dry-run)
+hactl area create "Kitchen" --icon mdi:silverware-fork           # dry-run
+hactl area create "Kitchen" --icon mdi:silverware-fork --confirm  # actually create
 hactl area delete kitchen --confirm       # delete (dry-run without --confirm)
 
 hactl floor ls                            # floor_id, name, level, icon
-hactl floor create "Ground Floor" --icon mdi:home-floor-0 --level 0  # create immediately
+hactl floor create "Ground Floor" --icon mdi:home-floor-0 --level 0           # dry-run
+hactl floor create "Ground Floor" --icon mdi:home-floor-0 --level 0 --confirm # actually create
 hactl floor delete ground_floor --confirm # delete (dry-run without --confirm)
 
 hactl label delete old-label --confirm    # delete a label (dry-run without --confirm)
@@ -144,8 +147,9 @@ Labels and areas are applied via the entity registry. Multiple labels can be pas
 hactl auto diff climate_schedule -f new.yaml          # diff local vs remote
 hactl auto apply climate_schedule -f new.yaml          # dry-run (default, no write)
 hactl auto apply climate_schedule -f new.yaml --confirm  # write + reload
-hactl rollback                                         # undo last backup
-hactl rollback climate_schedule                        # undo specific automation
+hactl auto rollback                                    # undo last backup
+hactl auto rollback climate_schedule                   # undo specific automation
+
 ```
 
 **Safety:** `apply` without `--confirm` is always a dry-run. Backups are created automatically in `backups/`. Writes go through HA's Config API; `check_config` validates before reload.
@@ -182,7 +186,7 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
 hactl tpl eval '{{ states("sensor.temperature") | float * 2 }}'
 hactl tpl eval -f my_template.j2          # read from file
 
-hactl svc call homeassistant.check_config
+hactl svc call homeassistant.check_config --return   # prints service response
 hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}'
 hactl svc call light.turn_on -d @payload.json   # read JSON from file (avoids quoting)
 ```
