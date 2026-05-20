@@ -8,9 +8,19 @@ import (
 	"testing"
 )
 
+// writeEnvWithCompanion writes a .env with COMPANION_URL so companion discovery
+// succeeds in unit tests without needing a live companion server.
+func writeEnvWithCompanion(t *testing.T, dir string) {
+	t.Helper()
+	content := "HA_URL=http://127.0.0.1:19999\nHA_TOKEN=test\nCOMPANION_URL=http://127.0.0.1:19998\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAutoCreateDryRun(t *testing.T) {
-	// Create a temp YAML file
 	dir := t.TempDir()
+	writeEnvWithCompanion(t, dir)
 	yamlFile := filepath.Join(dir, "test_auto.yaml")
 	if err := os.WriteFile(yamlFile, []byte("id: test_auto\nalias: Test\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -18,7 +28,7 @@ func TestAutoCreateDryRun(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"auto", "create", "-f", yamlFile})
+	rootCmd.SetArgs([]string{"auto", "create", "-f", yamlFile, "--dir", dir})
 
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("auto create dry-run failed: %v", err)
@@ -65,6 +75,7 @@ func TestAutoDeleteDryRun(t *testing.T) {
 
 func TestScriptCreateDryRun(t *testing.T) {
 	dir := t.TempDir()
+	writeEnvWithCompanion(t, dir)
 	yamlFile := filepath.Join(dir, "test_script.yaml")
 	if err := os.WriteFile(yamlFile, []byte("test_script:\n  alias: Test\n  sequence: []\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -72,7 +83,7 @@ func TestScriptCreateDryRun(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"script", "create", "-f", yamlFile})
+	rootCmd.SetArgs([]string{"script", "create", "-f", yamlFile, "--dir", dir})
 
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("script create dry-run failed: %v", err)
@@ -101,6 +112,7 @@ func TestScriptDeleteDryRun(t *testing.T) {
 
 func TestTplCreateDryRun(t *testing.T) {
 	dir := t.TempDir()
+	writeEnvWithCompanion(t, dir)
 	yamlFile := filepath.Join(dir, "test_tpl.yaml")
 	if err := os.WriteFile(yamlFile, []byte("unique_id: test_tpl\nname: Test\nstate: '{{ 42 }}'\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -108,7 +120,7 @@ func TestTplCreateDryRun(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"tpl", "create", "-f", yamlFile})
+	rootCmd.SetArgs([]string{"tpl", "create", "-f", yamlFile, "--dir", dir})
 
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("tpl create dry-run failed: %v", err)
@@ -137,6 +149,7 @@ func TestTplDeleteDryRun(t *testing.T) {
 
 func TestHelperCreateDryRun(t *testing.T) {
 	dir := t.TempDir()
+	writeEnvWithCompanion(t, dir)
 	yamlFile := filepath.Join(dir, "test_helper.yaml")
 	if err := os.WriteFile(yamlFile, []byte("test_toggle:\n  name: Test Toggle\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -144,7 +157,7 @@ func TestHelperCreateDryRun(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"helper", "create", "input_boolean", "-f", yamlFile})
+	rootCmd.SetArgs([]string{"helper", "create", "input_boolean", "-f", yamlFile, "--dir", dir})
 
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("helper create dry-run failed: %v", err)

@@ -109,6 +109,9 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 	content := string(data)
 
 	if !flagTplConfirm {
+		if _, err := connectCompanion(ctx); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintln(w, "dry-run: would create template sensor")
 		_, _ = fmt.Fprintf(w, "  file:   %s\n", flagTplFile)
 		_, _ = fmt.Fprintf(w, "  domain: %s\n", flagTplDomain)
