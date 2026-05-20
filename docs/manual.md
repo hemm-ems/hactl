@@ -28,9 +28,10 @@ hactl --dir /path/to/instance <cmd>  # or cd into it
 
 ## Command Reference
 
-### Triage & health
+### Setup & health
 
 ```bash
+hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes ~/.hactl/default/.env
 hactl health                  # HA version, state, recorder, location, timezone, error count
 hactl health --json            # same as structured JSON
 hactl issues                  # active HA repairs/issues (domain, severity, fixable)

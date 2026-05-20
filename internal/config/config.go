@@ -98,13 +98,31 @@ func resolveDir(dirFlag string) (string, error) {
 	return defaultDir, nil
 }
 
+// ConfigNotFoundError is returned when no .env file can be located.
+// It carries exit code 2 ("configuration error") so callers can distinguish it
+// from generic runtime errors.
+type ConfigNotFoundError struct {
+	msg string
+}
+
+func (e *ConfigNotFoundError) Error() string { return e.msg }
+func (e *ConfigNotFoundError) ExitCode() int  { return 2 }
+
+const noConfigMsg = "no hactl instance configured\n\n" +
+	"hactl looks for a .env in this order:\n" +
+	"  1. --dir <path>\n" +
+	"  2. $HACTL_DIR\n" +
+	"  3. the current directory (and parents)\n" +
+	"  4. ~/.hactl/default\n\n" +
+	"Quick start:  hactl setup"
+
 // parseEnvFile reads a .env file and returns key-value pairs.
 // It supports blank lines, # comments, and optional quoting of values.
 func parseEnvFile(path string) (map[string]string, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no .env found at %s — run 'hactl setup' to create one", path)
+			return nil, &ConfigNotFoundError{msg: noConfigMsg}
 		}
 		return nil, fmt.Errorf("cannot open .env: %w", err)
 	}

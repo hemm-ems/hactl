@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,49 @@ func TestLoad_FallbackNoEnv(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "hactl setup") {
 		t.Errorf("error = %q, want it to contain 'hactl setup'", err.Error())
+	}
+}
+
+func TestLoad_MissingEnv_HasDiscoveryOrder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HACTL_DIR", "")
+	t.Chdir(dir)
+
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"no hactl instance configured",
+		"--dir",
+		"HACTL_DIR",
+		"current directory",
+		"~/.hactl/default",
+		"hactl setup",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q\nfull message: %s", want, msg)
+		}
+	}
+}
+
+func TestLoad_MissingEnv_ExitCode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HACTL_DIR", "")
+	t.Chdir(dir)
+
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	type exiter interface{ ExitCode() int }
+	var ec exiter
+	if !errors.As(err, &ec) {
+		t.Fatalf("expected ConfigNotFoundError implementing ExitCode(), got %T", err)
+	}
+	if ec.ExitCode() != 2 {
+		t.Errorf("ExitCode() = %d, want 2", ec.ExitCode())
 	}
 }
 

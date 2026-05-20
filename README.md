@@ -68,9 +68,9 @@ cosign verify-blob --bundle checksums.txt.sig checksums.txt
 hactl setup
 ```
 
-`hactl setup` guides you through connecting to a Home Assistant instance: it prompts for the URL and a long-lived token, tests connectivity, and writes `~/.hactl/default/.env`. The companion add-on is auto-detected — no extra secret is needed (HA Ingress handles auth automatically).
+`hactl setup` prompts for the HA URL and a long-lived token, tests connectivity, and writes `~/.hactl/default/.env`. The companion add-on is auto-detected if installed.
 
-To create a token manually: HA → Profile → Long-lived access tokens.
+To create a token: HA → Profile → Long-lived access tokens.
 
 For multiple instances, create one directory per instance with its own `.env` and use `--dir` or `HACTL_DIR` to select it.
 

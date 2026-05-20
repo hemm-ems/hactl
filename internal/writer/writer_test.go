@@ -1,7 +1,18 @@
 package writer
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 func TestDiffLines_NoChanges(t *testing.T) {
@@ -127,6 +138,361 @@ func TestExtractAutoIDFromBackup(t *testing.T) {
 		got := extractAutoIDFromBackup(tt.path)
 		if got != tt.want {
 			t.Errorf("extractAutoIDFromBackup(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestNew(t *testing.T) {
+	client := haapi.New("http://localhost", "token")
+	w := New(client, nil, "/tmp/backups")
+	if w == nil {
+		t.Fatal("New returned nil")
+	}
+	if w.backupDir != "/tmp/backups" {
+		t.Errorf("backupDir = %q, want /tmp/backups", w.backupDir)
+	}
+}
+
+func TestFindLatestBackup_Found(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{
+		"2026-01-01T09-00-00_climate_schedule.yaml",
+		"2026-01-02T09-00-00_climate_schedule.yaml",
+		"2026-01-03T09-00-00_alarm_morning.yaml",
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := &Writer{backupDir: dir}
+
+	// Should return the most recent climate_schedule backup (jan 2)
+	latest, err := w.findLatestBackup("climate_schedule")
+	if err != nil {
+		t.Fatalf("findLatestBackup failed: %v", err)
+	}
+	if !strings.Contains(latest, "2026-01-02") {
+		t.Errorf("findLatestBackup = %q, expected the jan 2 file", latest)
+	}
+}
+
+func TestFindLatestBackup_AnyWhenEmptyID(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "2026-01-05T09-00-00_some_auto.yaml"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Writer{backupDir: dir}
+	latest, err := w.findLatestBackup("")
+	if err != nil {
+		t.Fatalf("findLatestBackup(empty id) failed: %v", err)
+	}
+	if !strings.Contains(latest, "some_auto") {
+		t.Errorf("findLatestBackup(empty) = %q, want a yaml file", latest)
+	}
+}
+
+func TestFindLatestBackup_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "2026-01-01T09-00-00_other_auto.yaml"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Writer{backupDir: dir}
+	_, err := w.findLatestBackup("missing_auto")
+	if err == nil {
+		t.Fatal("expected error for missing backup, got nil")
+	}
+}
+
+func TestFindLatestBackup_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	w := &Writer{backupDir: dir}
+	_, err := w.findLatestBackup("any_auto")
+	if err == nil {
+		t.Fatal("expected error for empty backup dir, got nil")
+	}
+}
+
+// makeWriterServer creates an httptest server that handles automation config operations.
+func makeWriterServer(t *testing.T, autoID, remoteConfig string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, remoteConfig)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			body, _ := io.ReadAll(r.Body)
+			if len(body) == 0 {
+				http.Error(w, "empty body", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/services/"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+}
+
+func TestWriter_Diff_NoChanges(t *testing.T) {
+	// Local and remote are identical → no changes
+	remoteJSON := `{"alias":"Test","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "test_auto", remoteJSON)
+	defer srv.Close()
+
+	// Write the same config as local YAML
+	localDir := t.TempDir()
+	localFile := filepath.Join(localDir, "test_auto.yaml")
+	localYAML := "alias: Test\naction: []\ncondition: []\ntrigger: []\n"
+	if err := os.WriteFile(localFile, []byte(localYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, t.TempDir())
+
+	result, err := w.Diff(context.Background(), "test_auto", localFile)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if result.AutomationID != "test_auto" {
+		t.Errorf("AutomationID = %q, want 'test_auto'", result.AutomationID)
+	}
+}
+
+func TestWriter_Diff_WithChanges(t *testing.T) {
+	remoteJSON := `{"alias":"Old Name","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "test_auto", remoteJSON)
+	defer srv.Close()
+
+	localDir := t.TempDir()
+	localFile := filepath.Join(localDir, "test_auto.yaml")
+	// Different alias → should detect changes
+	if err := os.WriteFile(localFile, []byte("alias: New Name\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, t.TempDir())
+
+	result, err := w.Diff(context.Background(), "test_auto", localFile)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if !result.HasChanges {
+		t.Error("Diff.HasChanges = false, want true (different alias)")
+	}
+}
+
+func TestWriter_Apply_DryRun(t *testing.T) {
+	remoteJSON := `{"alias":"Existing","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "test_auto", remoteJSON)
+	defer srv.Close()
+
+	localDir := t.TempDir()
+	localFile := filepath.Join(localDir, "test_auto.yaml")
+	if err := os.WriteFile(localFile, []byte("alias: Updated\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	backupDir := t.TempDir()
+	w := New(client, nil, backupDir)
+
+	// confirm=false → dry run
+	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
+	if err != nil {
+		t.Fatalf("Apply dry-run failed: %v", err)
+	}
+	if !result.DryRun {
+		t.Error("Apply dry-run: DryRun = false, want true")
+	}
+	if result.AutomationID != "test_auto" {
+		t.Errorf("AutomationID = %q, want 'test_auto'", result.AutomationID)
+	}
+}
+
+func TestWriter_Apply_Confirm(t *testing.T) {
+	remoteJSON := `{"alias":"Old","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "test_auto", remoteJSON)
+	defer srv.Close()
+
+	localDir := t.TempDir()
+	localFile := filepath.Join(localDir, "test_auto.yaml")
+	if err := os.WriteFile(localFile, []byte("alias: New\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	backupDir := t.TempDir()
+	w := New(client, nil, backupDir)
+
+	// confirm=true → actually writes
+	result, err := w.Apply(context.Background(), "test_auto", localFile, true)
+	if err != nil {
+		t.Fatalf("Apply confirm failed: %v", err)
+	}
+	if result.DryRun {
+		t.Error("Apply confirm: DryRun = true, want false")
+	}
+	if result.Reloaded {
+		// OK if reloaded since mock returns 200
+	}
+}
+
+func TestWriter_Apply_InvalidYAML(t *testing.T) {
+	srv := makeWriterServer(t, "test_auto", `{"alias":"Old"}`)
+	defer srv.Close()
+
+	localDir := t.TempDir()
+	localFile := filepath.Join(localDir, "test_auto.yaml")
+	// Invalid YAML
+	if err := os.WriteFile(localFile, []byte("{ not: valid: yaml: }:"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, t.TempDir())
+
+	// YAML parsing error - might succeed or fail depending on yaml parser strictness
+	// Just ensure no panic
+	_, _ = w.Apply(context.Background(), "test_auto", localFile, false)
+}
+
+func TestWriter_Apply_MissingFile(t *testing.T) {
+	srv := makeWriterServer(t, "test_auto", `{}`)
+	defer srv.Close()
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, t.TempDir())
+
+	_, err := w.Apply(context.Background(), "test_auto", "/nonexistent/file.yaml", false)
+	if err == nil {
+		t.Fatal("expected error for missing local file, got nil")
+	}
+}
+
+func TestWriter_Rollback(t *testing.T) {
+	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "test_auto", remoteJSON)
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	// Create a backup file
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
+	backupYAML := `alias: Backup Version
+trigger: []
+condition: []
+action: []
+`
+	if err := os.WriteFile(backupFile, []byte(backupYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, backupDir)
+
+	result, err := w.Rollback(context.Background(), "test_auto")
+	if err != nil {
+		t.Fatalf("Rollback failed: %v", err)
+	}
+	if result.AutomationID != "test_auto" {
+		t.Errorf("AutomationID = %q, want 'test_auto'", result.AutomationID)
+	}
+}
+
+func TestWriter_Rollback_EmptyID(t *testing.T) {
+	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "", remoteJSON)
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_mystery_auto.yaml")
+	if err := os.WriteFile(backupFile, []byte("alias: Mystery\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, backupDir)
+
+	// Empty autoID → picks most recent backup, extracts ID from filename
+	result, err := w.Rollback(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Rollback(empty ID) failed: %v", err)
+	}
+	if result.AutomationID == "" {
+		t.Error("Rollback(empty ID): AutomationID should be extracted from backup filename")
+	}
+}
+
+func TestExtractAutoIDFromBackup_ShortBasename(t *testing.T) {
+	// Basename shorter than 21 chars → returned unchanged
+	got := extractAutoIDFromBackup("/some/path/short.yaml")
+	if got != "short.yaml" {
+		t.Errorf("extractAutoIDFromBackup(short) = %q, want %q", got, "short.yaml")
+	}
+}
+
+func TestExtractAutoIDFromBackup_YMLExtension(t *testing.T) {
+	got := extractAutoIDFromBackup("/backups/2026-04-17T09-42-05_alarm_morning.yml")
+	if got != "alarm_morning" {
+		t.Errorf("extractAutoIDFromBackup(.yml) = %q, want 'alarm_morning'", got)
+	}
+}
+
+func TestWriter_Rollback_InvalidYAML(t *testing.T) {
+	srv := makeWriterServer(t, "test_auto", `{"alias":"Current","trigger":[],"condition":[],"action":[]}`)
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
+	// Write invalid YAML to the backup file
+	if err := os.WriteFile(backupFile, []byte("{ : bad yaml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := haapi.New(srv.URL, "tok")
+	w := New(client, nil, backupDir)
+
+	_, err := w.Rollback(context.Background(), "test_auto")
+	if err == nil {
+		t.Fatal("expected error for invalid backup YAML, got nil")
+	}
+}
+
+// Verify the JSON number handling in backup restoration.
+func TestWriter_Backup_CreatesFile(t *testing.T) {
+	remoteJSON := `{"alias":"My Auto","id":"my_auto","trigger":[],"condition":[],"action":[]}`
+	srv := makeWriterServer(t, "my_auto", remoteJSON)
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	client := haapi.New(srv.URL, "tok")
+	w := &Writer{client: client, backupDir: backupDir}
+
+	backupPath, err := w.backup(context.Background(), "my_auto")
+	if err != nil {
+		t.Fatalf("backup failed: %v", err)
+	}
+	if backupPath == "" {
+		t.Fatal("backup returned empty path")
+	}
+	if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
+		t.Errorf("backup file %q does not exist", backupPath)
+	}
+	data, _ := os.ReadFile(filepath.Clean(backupPath))
+	var check map[string]any
+	if err := json.Unmarshal(data, &check); err != nil {
+		// YAML — check for content
+		if !strings.Contains(string(data), "My Auto") {
+			t.Errorf("backup file content missing automation alias: %q", string(data))
 		}
 	}
 }

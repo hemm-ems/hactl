@@ -491,6 +491,200 @@ func TestDeleteAutomationDef(t *testing.T) {
 	}
 }
 
+// --- ReadConfigBlock ---
+
+func TestReadConfigBlock(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/config/block" {
+			t.Errorf("path = %q, want /v1/config/block", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("path"); got != "automations.yaml" {
+			t.Errorf("path param = %q, want automations.yaml", got)
+		}
+		if got := r.URL.Query().Get("id"); got != "block_001" {
+			t.Errorf("id param = %q, want block_001", got)
+		}
+		_ = json.NewEncoder(w).Encode(ConfigBlockResponse{
+			Path:    "automations.yaml",
+			ID:      "block_001",
+			Content: "id: '001'\nalias: Test Automation\n",
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.ReadConfigBlock(context.Background(), "automations.yaml", "block_001")
+	if err != nil {
+		t.Fatalf("ReadConfigBlock: %v", err)
+	}
+	if r.ID != "block_001" {
+		t.Errorf("id = %q, want block_001", r.ID)
+	}
+	if r.Content == "" {
+		t.Error("content is empty")
+	}
+}
+
+// --- Helper CRUD ---
+
+func TestListHelpers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/config/helpers" {
+			t.Errorf("path = %q, want /v1/config/helpers", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(HelpersResponse{
+			Helpers: []HelperDefinition{
+				{ID: "guest_mode", Domain: "input_boolean", Name: "Guest Mode"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.ListHelpers(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListHelpers: %v", err)
+	}
+	if len(r.Helpers) != 1 {
+		t.Fatalf("helpers count = %d, want 1", len(r.Helpers))
+	}
+}
+
+func TestListHelpers_WithDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("domain"); got != "input_boolean" {
+			t.Errorf("domain = %q, want input_boolean", got)
+		}
+		_ = json.NewEncoder(w).Encode(HelpersResponse{
+			Helpers: []HelperDefinition{
+				{ID: "guest_mode", Domain: "input_boolean"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.ListHelpers(context.Background(), "input_boolean")
+	if err != nil {
+		t.Fatalf("ListHelpers with domain: %v", err)
+	}
+	if len(r.Helpers) != 1 {
+		t.Fatalf("helpers count = %d, want 1", len(r.Helpers))
+	}
+}
+
+func TestGetHelper(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("id"); got != "guest_mode" {
+			t.Errorf("id = %q, want guest_mode", got)
+		}
+		_ = json.NewEncoder(w).Encode(HelperResponse{
+			ID:      "guest_mode",
+			Domain:  "input_boolean",
+			Content: "guest_mode:\n  name: Guest Mode\n",
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.GetHelper(context.Background(), "guest_mode")
+	if err != nil {
+		t.Fatalf("GetHelper: %v", err)
+	}
+	if r.ID != "guest_mode" {
+		t.Errorf("id = %q, want guest_mode", r.ID)
+	}
+}
+
+func TestCreateHelper(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.URL.Query().Get("domain"); got != "input_boolean" {
+			t.Errorf("domain = %q, want input_boolean", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(HelperCreateResponse{
+			Status: "created",
+			ID:     "new_toggle",
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.CreateHelper(context.Background(), "new_toggle:\n  name: New Toggle\n", "input_boolean")
+	if err != nil {
+		t.Fatalf("CreateHelper: %v", err)
+	}
+	if r.Status != "created" {
+		t.Errorf("status = %q, want created", r.Status)
+	}
+}
+
+func TestUpdateHelper(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %q, want PUT", r.Method)
+		}
+		if got := r.URL.Query().Get("id"); got != "guest_mode" {
+			t.Errorf("id = %q, want guest_mode", got)
+		}
+		_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "applied"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.UpdateHelper(context.Background(), "guest_mode", "guest_mode:\n  name: Updated Mode\n")
+	if err != nil {
+		t.Fatalf("UpdateHelper: %v", err)
+	}
+	if r.Status != "applied" {
+		t.Errorf("status = %q, want applied", r.Status)
+	}
+}
+
+func TestDeleteHelper(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %q, want DELETE", r.Method)
+		}
+		if got := r.URL.Query().Get("id"); got != "guest_mode" {
+			t.Errorf("id = %q, want guest_mode", got)
+		}
+		_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "deleted"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	r, err := c.DeleteHelper(context.Background(), "guest_mode")
+	if err != nil {
+		t.Fatalf("DeleteHelper: %v", err)
+	}
+	if r.Status != "deleted" {
+		t.Errorf("status = %q, want deleted", r.Status)
+	}
+}
+
+func TestReloadDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/v1/ha/reload/input_boolean" {
+			t.Errorf("path = %q, want /v1/ha/reload/input_boolean", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	if err := c.ReloadDomain(context.Background(), "input_boolean"); err != nil {
+		t.Fatalf("ReloadDomain: %v", err)
+	}
+}
+
 func TestRetryOn5xx(t *testing.T) {
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
