@@ -33,7 +33,7 @@ func TestAreaCreateDelete(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "area", "delete", areaID)
+	dryOut = runHactl(t, "area", "delete", areaID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
@@ -68,7 +68,7 @@ func TestFloorCreateDelete(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "floor", "delete", floorID)
+	dryOut = runHactl(t, "floor", "delete", floorID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
@@ -95,7 +95,7 @@ func TestLabelDeleteLifecycle(t *testing.T) {
 	}
 
 	// Delete (dry-run first)
-	dryOut := runHactl(t, "label", "delete", labelID)
+	dryOut = runHactl(t, "label", "delete", labelID)
 	assertContains(t, dryOut, "dry-run")
 
 	// Delete for real
