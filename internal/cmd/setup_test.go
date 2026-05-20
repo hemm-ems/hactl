@@ -25,7 +25,7 @@ func TestSetup_WritesDotEnv(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/" {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintln(w, `{"message":"API running."}`)
+			_, _ = fmt.Fprintln(w, `{"message":"API running."}`)
 			return
 		}
 		http.NotFound(w, r)
