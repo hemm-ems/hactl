@@ -36,6 +36,8 @@ linters:
     - gomoddirectives
     - noinlineerr
     - goconst
+    - dupl
+    - errchkjson
 
   settings:
     govet:

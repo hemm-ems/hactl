@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -497,5 +498,48 @@ func TestFormatAttrList(t *testing.T) {
 	got = formatAttrList([]any{"text", 42, true})
 	if got != "[text, 42, true]" {
 		t.Errorf("formatAttrList(mixed) = %q, want %q", got, "[text, 42, true]")
+	}
+}
+
+func TestToFloat64_JSONNumber(t *testing.T) {
+	jn := any(json.Number("99.9"))
+	got, err := toFloat64(jn)
+	if err != nil {
+		t.Fatalf("toFloat64(json.Number) error = %v", err)
+	}
+	if got != 99.9 {
+		t.Errorf("toFloat64(json.Number(99.9)) = %v, want 99.9", got)
+	}
+}
+
+func TestParseHistoryResponse_InvalidJSON(t *testing.T) {
+	_, err := parseHistoryResponse([]byte(`not json`))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestParseStateTimeline_InvalidJSON(t *testing.T) {
+	_, err := parseStateTimeline([]byte(`not json`), time.Now())
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestParseStateTimeline_EmptyInnerArray(t *testing.T) {
+	// Outer array present but inner is empty → nil, nil
+	changes, err := parseStateTimeline([]byte(`[[]]`), time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if changes != nil {
+		t.Errorf("expected nil changes for empty inner array, got %v", changes)
+	}
+}
+
+func TestParseAttrHistoryResponse_InvalidJSON(t *testing.T) {
+	_, err := parseAttrHistoryResponse([]byte(`not json`), "brightness")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
 	}
 }

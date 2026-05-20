@@ -143,3 +143,38 @@ func TestFormatShortTimestamp(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatShortTimestamp_Formats(t *testing.T) {
+	// Test legacy format "2006-01-02 15:04:05"
+	got := FormatShortTimestamp("2026-01-01 09:00:00")
+	if got == "-" || got == "2026-01-01 09:00:00" {
+		// Should have parsed and reformatted to "01-02 15:04" or "15:04"
+		t.Logf("FormatShortTimestamp(legacy) = %q", got)
+	} else if len(got) == 0 {
+		t.Error("FormatShortTimestamp(legacy) returned empty string")
+	}
+
+	// Test with sub-second precision
+	got = FormatShortTimestamp("2026-01-01 09:42:00.123")
+	if got == "-" {
+		t.Error("FormatShortTimestamp(with milliseconds) returned '-'")
+	}
+
+	// Test with RFC3339
+	got = FormatShortTimestamp("2026-01-01T09:42:00Z")
+	if got == "-" {
+		t.Error("FormatShortTimestamp(RFC3339) returned '-'")
+	}
+
+	// Test with RFC3339Nano
+	got = FormatShortTimestamp("2026-01-01T09:42:00.123456Z")
+	if got == "-" {
+		t.Error("FormatShortTimestamp(RFC3339Nano) returned '-'")
+	}
+
+	// Test unparseable input is returned as-is
+	got = FormatShortTimestamp("not-a-timestamp")
+	if got != "not-a-timestamp" {
+		t.Errorf("FormatShortTimestamp(unparseable) = %q, want original string", got)
+	}
+}

@@ -69,6 +69,14 @@ func TestFormatShortTime_Empty(t *testing.T) {
 	}
 }
 
+func TestFormatShortTime_InvalidString(t *testing.T) {
+	// Completely unparseable string → returned as-is
+	got := formatShortTime("not-a-time")
+	if got != "not-a-time" {
+		t.Errorf("formatShortTime(invalid) = %q, want 'not-a-time'", got)
+	}
+}
+
 func TestShortenStep(t *testing.T) {
 	tests := []struct {
 		input string
@@ -249,6 +257,55 @@ func TestBuildAutoRows_NoTracesNoFires(t *testing.T) {
 	}
 	if rows[0].errors != 0 {
 		t.Errorf("errors = %d, want 0", rows[0].errors)
+	}
+}
+
+func TestTraceResult_Error(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "error"}
+	if got := traceResult(tr); got != "error" {
+		t.Errorf("traceResult(execution=error) = %q, want 'error'", got)
+	}
+}
+
+func TestTraceResult_ErrorMsg(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "finished", Error: "something broke"}
+	if got := traceResult(tr); got != "error" {
+		t.Errorf("traceResult(error msg set) = %q, want 'error'", got)
+	}
+}
+
+func TestTraceResult_Finished(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "finished"}
+	if got := traceResult(tr); got != "finished" {
+		t.Errorf("traceResult(finished) = %q, want 'finished'", got)
+	}
+}
+
+func TestTraceResult_EmptyExecution(t *testing.T) {
+	tr := haapi.TraceSummary{State: "stopped"}
+	if got := traceResult(tr); got != "stopped" {
+		t.Errorf("traceResult(empty execution) = %q, want 'stopped'", got)
+	}
+}
+
+func TestIsTraceError_ErrorExecution(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "error"}
+	if !isTraceError(tr) {
+		t.Error("isTraceError(error execution) = false, want true")
+	}
+}
+
+func TestIsTraceError_ErrorMsg(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "finished", Error: "failed"}
+	if !isTraceError(tr) {
+		t.Error("isTraceError(error msg) = false, want true")
+	}
+}
+
+func TestIsTraceError_Clean(t *testing.T) {
+	tr := haapi.TraceSummary{Execution: "finished"}
+	if isTraceError(tr) {
+		t.Error("isTraceError(finished) = true, want false")
 	}
 }
 

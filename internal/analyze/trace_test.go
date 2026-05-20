@@ -157,6 +157,176 @@ func TestClassifyStep(t *testing.T) {
 	}
 }
 
+func TestParseTrigger_String(t *testing.T) {
+	raw := json.RawMessage(`"time_pattern"`)
+	got := parseTrigger(raw)
+	if got != "time_pattern" {
+		t.Errorf("parseTrigger(string) = %q, want 'time_pattern'", got)
+	}
+}
+
+func TestParseTrigger_Array(t *testing.T) {
+	raw := json.RawMessage(`["state","time"]`)
+	got := parseTrigger(raw)
+	if got != "state, time" {
+		t.Errorf("parseTrigger(array) = %q, want 'state, time'", got)
+	}
+}
+
+func TestParseTrigger_RawJSON(t *testing.T) {
+	raw := json.RawMessage(`{"platform":"state"}`)
+	got := parseTrigger(raw)
+	if got != `{"platform":"state"}` {
+		t.Errorf("parseTrigger(raw JSON) = %q, want raw string", got)
+	}
+}
+
+func TestParseTrigger_Empty(t *testing.T) {
+	got := parseTrigger(nil)
+	if got != "" {
+		t.Errorf("parseTrigger(nil) = %q, want empty", got)
+	}
+}
+
+func TestExtractTriggerDetail_WithPlatform(t *testing.T) {
+	run := RawTraceRun{
+		ChangedVariables: json.RawMessage(`{"trigger":{"platform":"time_pattern"}}`),
+	}
+	got := extractTriggerDetail(run)
+	if got != "time_pattern" {
+		t.Errorf("extractTriggerDetail = %q, want 'time_pattern'", got)
+	}
+}
+
+func TestExtractTriggerDetail_NoPlatform(t *testing.T) {
+	run := RawTraceRun{
+		ChangedVariables: json.RawMessage(`{"trigger":{"other":"value"}}`),
+	}
+	got := extractTriggerDetail(run)
+	if got != "" {
+		t.Errorf("extractTriggerDetail without platform = %q, want empty", got)
+	}
+}
+
+func TestExtractTriggerDetail_NoTriggerKey(t *testing.T) {
+	run := RawTraceRun{
+		ChangedVariables: json.RawMessage(`{"other_key":"value"}`),
+	}
+	got := extractTriggerDetail(run)
+	if got != "" {
+		t.Errorf("extractTriggerDetail no trigger key = %q, want empty", got)
+	}
+}
+
+func TestExtractTriggerDetail_Empty(t *testing.T) {
+	run := RawTraceRun{}
+	got := extractTriggerDetail(run)
+	if got != "" {
+		t.Errorf("extractTriggerDetail empty = %q, want empty", got)
+	}
+}
+
+func TestExtractConditionDetail_Path(t *testing.T) {
+	run := RawTraceRun{Path: "condition/1"}
+	got := extractConditionDetail(run)
+	if got != "condition" {
+		t.Errorf("extractConditionDetail = %q, want 'condition'", got)
+	}
+}
+
+func TestExtractConditionDetail_Empty(t *testing.T) {
+	run := RawTraceRun{Path: ""}
+	got := extractConditionDetail(run)
+	if got != "" {
+		t.Errorf("extractConditionDetail empty path = %q, want empty", got)
+	}
+}
+
+func TestExtractActionDetail_WithEntityID(t *testing.T) {
+	run := RawTraceRun{
+		Result: json.RawMessage(`{"params":{"entity_id":"light.kitchen"}}`),
+	}
+	got := extractActionDetail(run)
+	if got != "light.kitchen" {
+		t.Errorf("extractActionDetail with entity_id = %q, want 'light.kitchen'", got)
+	}
+}
+
+func TestExtractActionDetail_ServiceCall(t *testing.T) {
+	run := RawTraceRun{
+		Result: json.RawMessage(`{"params":{"domain":"light"}}`),
+	}
+	got := extractActionDetail(run)
+	if got != "service_call" {
+		t.Errorf("extractActionDetail without entity_id = %q, want 'service_call'", got)
+	}
+}
+
+func TestExtractActionDetail_Empty(t *testing.T) {
+	run := RawTraceRun{}
+	got := extractActionDetail(run)
+	if got != "" {
+		t.Errorf("extractActionDetail empty = %q, want empty", got)
+	}
+}
+
+func TestStepOutcome_Error(t *testing.T) {
+	run := RawTraceRun{Error: "TemplateError: undefined"}
+	result, reason := stepOutcome(run)
+	if result != StepFail {
+		t.Errorf("stepOutcome with error: result = %q, want StepFail", result)
+	}
+	if reason == "" {
+		t.Error("stepOutcome with error: reason should not be empty")
+	}
+}
+
+func TestStepOutcome_ConditionFalse(t *testing.T) {
+	run := RawTraceRun{
+		Result: json.RawMessage(`{"result":false}`),
+	}
+	result, reason := stepOutcome(run)
+	if result != StepFail {
+		t.Errorf("stepOutcome condition false: result = %q, want StepFail", result)
+	}
+	if reason != "condition_false" {
+		t.Errorf("stepOutcome condition false: reason = %q, want 'condition_false'", reason)
+	}
+}
+
+func TestStepOutcome_Pass(t *testing.T) {
+	run := RawTraceRun{}
+	result, _ := stepOutcome(run)
+	if result != StepPass {
+		t.Errorf("stepOutcome pass: result = %q, want StepPass", result)
+	}
+}
+
+func TestStepHasError_WithError(t *testing.T) {
+	runs := []RawTraceRun{
+		{Error: "something failed"},
+		{},
+	}
+	if !stepHasError(runs) {
+		t.Error("stepHasError: expected true with error, got false")
+	}
+}
+
+func TestStepHasError_NoError(t *testing.T) {
+	runs := []RawTraceRun{{}, {}}
+	if stepHasError(runs) {
+		t.Error("stepHasError: expected false with no errors, got true")
+	}
+}
+
+func TestShortenError_Long(t *testing.T) {
+	long := "TemplateError: some long complex: inner message that is definitely over forty characters long"
+	got := shortenError(long)
+	if len(got) > 40 {
+		t.Errorf("shortenError: result = %q (len %d), want <= 40 chars", got, len(got))
+	}
+}
+
 func loadTestTrace(t *testing.T, name string) *RawTrace {
 	t.Helper()
 	path := filepath.Join("..", "..", "testdata", "traces", name)
