@@ -410,8 +410,8 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	content := string(data)
 
 	if !flagScriptConfirm {
-		if _, err := connectCompanion(ctx); err != nil {
-			return err
+		if _, connErr := connectCompanion(ctx); connErr != nil {
+			return connErr
 		}
 		_, _ = fmt.Fprintln(w, "dry-run: would create script")
 		_, _ = fmt.Fprintf(w, "  file: %s\n", flagScriptFile)
