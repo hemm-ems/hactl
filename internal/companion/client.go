@@ -42,6 +42,16 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	return &r, json.Unmarshal(data, &r)
 }
 
+// Status calls GET /v1/status.
+func (c *Client) Status(ctx context.Context) (*StatusResponse, error) {
+	data, err := c.doGet(ctx, "/v1/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var r StatusResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
 // ListConfigFiles calls GET /v1/config/files.
 func (c *Client) ListConfigFiles(ctx context.Context) (*ConfigFilesResponse, error) {
 	data, err := c.doGet(ctx, "/v1/config/files", nil)

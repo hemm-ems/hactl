@@ -6,6 +6,16 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
+// StatusResponse is the response from GET /v1/status.
+type StatusResponse struct {
+	Version            string `json:"version"`
+	SupervisorReachable bool   `json:"supervisor_reachable"`
+	HasHACLI           bool   `json:"has_ha_cli"`
+	ConfigWritable     bool   `json:"config_writable"`
+	IngressActive      bool   `json:"ingress_active"`
+	AuthMode           string `json:"auth_mode"`
+}
+
 // ConfigFilesResponse is the response from GET /v1/config/files.
 type ConfigFilesResponse struct {
 	Files []string `json:"files"`

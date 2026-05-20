@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -168,6 +169,10 @@ func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string)
 	companionURL, err := companion.Discover(ctx, cfg, wsClient)
 	if err != nil {
 		slog.Debug("companion discovery failed", "error", err)
+		var de *companion.DiscoveryError
+		if errors.As(err, &de) {
+			return "not found (" + string(de.Reason) + ")", ""
+		}
 		return "not found", ""
 	}
 
