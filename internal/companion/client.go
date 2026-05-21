@@ -461,7 +461,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 	originalRawQuery := req.URL.RawQuery
 
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
-	const maxAttempts = 3
+	maxAttempts := len(backoffs) + 1
 
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
@@ -472,8 +472,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		}
 
 		respBody, status, err := c.doOnce(req)
-		retry := shouldRetry(err, status, signed) && attempt < maxAttempts-1
-		if retry {
+		if shouldRetry(err, status, signed) && attempt < len(backoffs) {
 			slog.Warn("retrying companion request", "method", req.Method, "status", status, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue
