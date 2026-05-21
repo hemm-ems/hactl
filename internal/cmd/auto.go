@@ -685,9 +685,9 @@ func connectCompanion(ctx context.Context) (*companion.Client, error) {
 		slog.Debug("could not connect WebSocket for companion discovery", "error", connectErr)
 	} else {
 		wsClient = ws
-		// NOTE: we intentionally don't defer ws.Close() here because the caller
-		// may need the companion client longer. The WS connection is lightweight.
-		defer func() { _ = ws.Close() }()
+		// Intentionally leak the WS connection: the returned client uses it
+		// for IngressSession on every Companion call. The OS closes it when
+		// the CLI process exits.
 	}
 
 	companionURL, err := companion.Discover(ctx, cfg, wsClient)
@@ -697,7 +697,7 @@ func connectCompanion(ctx context.Context) (*companion.Client, error) {
 
 	cc := companion.New(companionURL, cfg.CompanionToken)
 	if wsClient != nil {
-		cc = cc.WithSigner(wsClient)
+		cc = cc.WithIngressAuth(wsClient)
 	}
 	return cc, nil
 }

@@ -83,18 +83,18 @@ func TestDiscover_ResolvesViaSupervisorWSProxy(t *testing.T) {
 		t.Errorf("Discover URL = %q, want %q", got, want)
 	}
 
-	// Wire-format pin: the two WS messages must be the new hassio/api proxy
+	// Wire-format pin: the two WS messages must be the new supervisor/api proxy
 	// calls (not the legacy hassio/addon/info command). If hactl ever
 	// regresses to the legacy command, this test catches it immediately.
 	requests := fakeSup.WSRequests()
 	if len(requests) < 2 {
 		t.Fatalf("expected 2 WS requests, got %d: %+v", len(requests), requests)
 	}
-	if requests[0].Type != "hassio/api" || requests[0].Endpoint != "/addons" {
-		t.Errorf("first WS = %+v, want hassio/api /addons", requests[0])
+	if requests[0].Type != "supervisor/api" || requests[0].Endpoint != "/addons" {
+		t.Errorf("first WS = %+v, want supervisor/api /addons", requests[0])
 	}
-	if requests[1].Type != "hassio/api" || !strings.HasSuffix(requests[1].Endpoint, "_hactl_companion/info") {
-		t.Errorf("second WS = %+v, want hassio/api /addons/<slug>/info", requests[1])
+	if requests[1].Type != "supervisor/api" || !strings.HasSuffix(requests[1].Endpoint, "_hactl_companion/info") {
+		t.Errorf("second WS = %+v, want supervisor/api /addons/<slug>/info", requests[1])
 	}
 }
 

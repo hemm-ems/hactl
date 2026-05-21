@@ -510,12 +510,17 @@ func (ws *WSClient) IntegrationManifestList(ctx context.Context) ([]IntegrationM
 	return entries, nil
 }
 
-// SupervisorAPI invokes a Supervisor REST endpoint via the HA WS `hassio/api`
-// proxy. method is "get" / "post" / etc. data is the request body for write
-// methods (nil for reads). Returns the raw `result` payload from Supervisor.
+// SupervisorAPI invokes a Supervisor REST endpoint via the HA WS
+// `supervisor/api` proxy. method is "get" / "post" / etc. data is the request
+// body for write methods (nil for reads). Returns the raw `result` payload
+// from Supervisor.
 //
 // Only available on HA OS / Supervised installations — HA Container has no
-// Supervisor and HA Core returns `unknown_command` for `hassio/api`.
+// Supervisor and HA Core returns `unknown_command` for `supervisor/api`.
+//
+// HA core ref: homeassistant/components/hassio/const.py — `WS_TYPE_API =
+// "supervisor/api"`. The legacy name `hassio/api` does not exist; the
+// component registers commands under the `supervisor/*` namespace.
 func (ws *WSClient) SupervisorAPI(ctx context.Context, endpoint, method string, data map[string]any) (json.RawMessage, error) {
 	if method == "" {
 		method = "get"
@@ -527,45 +532,41 @@ func (ws *WSClient) SupervisorAPI(ctx context.Context, endpoint, method string, 
 	if data != nil {
 		params["data"] = data
 	}
-	return ws.sendCommand(ctx, "hassio/api", params)
+	return ws.sendCommand(ctx, "supervisor/api", params)
 }
 
-// SignPath signs an HA URL path for short-lived authenticated access via the
-// `authSig` query parameter. Used to authenticate HTTP calls to Ingress
-// endpoints from outside the HA frontend (e.g. CLI tools with only a
-// long-lived token).
+// IngressSession requests a new HA Ingress session token from Supervisor.
+// Returns the opaque session string to set as `ingress_session` cookie on
+// subsequent Ingress HTTP calls (`/api/hassio_ingress/<addonToken>/…`).
 //
-// WS command: auth/sign_path. Requires any authenticated user (not admin —
-// verified against HA core 2026.4.4 `websocket_sign_path` decorator
-// `ws_require_user()`).
+// HA's `/api/hassio_ingress/*` route is `requires_auth = False` at the Core
+// level — Core proxies straight to Supervisor, and Supervisor enforces auth
+// by checking the `ingress_session` cookie against sessions it issued.
+// Long-lived tokens, signed URLs (`auth/sign_path`), and Bearer auth all
+// fail because they never reach Supervisor's session validator.
 //
-// path must include any query string the request will carry, because HA's
-// JWT validation also pins the query parameters. Example:
+// Sessions tie to the requesting user and expire after a short window
+// (Supervisor refreshes them on access). Cache the token; on 401, request a
+// new one and retry once.
 //
-//	signed, err := ws.SignPath(ctx, "/api/hassio_ingress/abc/v1/config/file?path=template.yaml", 30)
-//	// signed == "/api/hassio_ingress/abc/v1/config/file?path=template.yaml&authSig=eyJ..."
-func (ws *WSClient) SignPath(ctx context.Context, path string, expirySeconds int) (string, error) {
-	if expirySeconds <= 0 {
-		expirySeconds = 30
-	}
-	params := map[string]any{
-		"path":    path,
-		"expires": expirySeconds,
-	}
-	result, err := ws.sendCommand(ctx, "auth/sign_path", params)
+// HA core ref: components/hassio/ingress.py (requires_auth=False),
+// components/hassio/websocket_api.py:websocket_supervisor_api (injects
+// session_data_user_id when endpoint == "/ingress/session").
+func (ws *WSClient) IngressSession(ctx context.Context) (string, error) {
+	result, err := ws.SupervisorAPI(ctx, "/ingress/session", "post", nil)
 	if err != nil {
 		return "", err
 	}
 	var resp struct {
-		Path string `json:"path"`
+		Session string `json:"session"`
 	}
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return "", fmt.Errorf("parsing sign_path response: %w", err)
+		return "", fmt.Errorf("parsing /ingress/session response: %w", err)
 	}
-	if resp.Path == "" {
-		return "", errors.New("sign_path returned empty path")
+	if resp.Session == "" {
+		return "", errors.New("/ingress/session returned empty session token")
 	}
-	return resp.Path, nil
+	return resp.Session, nil
 }
 
 // ResourceList returns all registered Lovelace resources.

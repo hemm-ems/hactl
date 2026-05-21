@@ -24,7 +24,7 @@
 
 ## Overview
 
-1. hactl auto-discovers companion via the Supervisor WS proxy (`hassio/api` → `/addons` enumeration → `/addons/<slug>/info`), or explicit `COMPANION_URL`
+1. hactl auto-discovers companion via the Supervisor WS proxy (`supervisor/api` → `/addons` enumeration → `/addons/<slug>/info`), or explicit `COMPANION_URL`
 2. Companion mounts `/config` volume and serves YAML content via HTTP
 3. hactl calls companion for YAML read/write, then uses HA API directly for reload
 4. All writes are dry-run by default; `--confirm` flag to apply
@@ -323,7 +323,7 @@ func (c *Client) DeleteAutomationDef(ctx, id string) (*ConfigDeleteResponse, err
 ```go
 // Discover finds the companion URL.
 // Priority: 1) Config.CompanionURL,
-//           2) WS hassio/api (Supervisor proxy) → /addons enumeration → /addons/<slug>/info → ingress URL
+//           2) WS supervisor/api (Supervisor proxy) → /addons enumeration → /addons/<slug>/info → ingress URL
 func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (string, error)
 ```
 

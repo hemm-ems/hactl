@@ -11,107 +11,130 @@ import (
 	"testing"
 )
 
-var errSignFailed = errors.New("simulated sign failure")
+var errSessionFailed = errors.New("simulated ingress session failure")
 
-// fakeSigner records SignPath calls and returns a deterministic signed URL so
-// tests can assert both the wire-format of the path passed in and that the
-// resulting URL is what the client actually GETs.
-type fakeSigner struct {
-	calls         atomic.Int64
-	failNthCall   int    // 0 = never; 1-based index of call to fail
-	failWith      error
-	pathOverride  string // if set, returned regardless of input path
-	signatureName string // query param value; defaults to "fake-sig-N" per call
+// fakeIngressAuth records IngressSession calls and returns deterministic
+// session tokens so tests can verify cookie wiring and re-auth behavior.
+type fakeIngressAuth struct {
+	calls       atomic.Int64
+	failNthCall int    // 0 = never; 1-based index of call to fail
+	failWith    error
+	tokenPrefix string // defaults to "fake-sess"
 }
 
-func (f *fakeSigner) SignPath(_ context.Context, path string, _ int) (string, error) {
+func (f *fakeIngressAuth) IngressSession(_ context.Context) (string, error) {
 	n := f.calls.Add(1)
 	if f.failNthCall > 0 && int64(f.failNthCall) == n {
 		return "", f.failWith
 	}
-	out := path
-	if f.pathOverride != "" {
-		out = f.pathOverride
+	prefix := f.tokenPrefix
+	if prefix == "" {
+		prefix = "fake-sess"
 	}
-	sigName := f.signatureName
-	if sigName == "" {
-		sigName = "fake-sig"
-	}
-	sep := "?"
-	if strings.Contains(out, "?") {
-		sep = "&"
-	}
-	return out + sep + "authSig=" + sigName, nil
+	return prefix + "-" + strconvI64(n), nil
 }
 
-func TestClient_SignsIngressRequest(t *testing.T) {
-	var hitPath string
-	var hitQuery string
+func strconvI64(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+func TestClient_AttachesIngressSessionCookie(t *testing.T) {
+	var cookieVal string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hitPath = r.URL.Path
-		hitQuery = r.URL.RawQuery
-		// Require the signature — without it the request must not be served.
-		if r.URL.Query().Get("authSig") == "" {
-			http.Error(w, "missing authSig", http.StatusUnauthorized)
+		c, err := r.Cookie("ingress_session")
+		if err != nil {
+			http.Error(w, "missing ingress_session cookie", http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "1.0.0"})
+		cookieVal = c.Value
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 	}))
 	defer srv.Close()
 
-	signer := &fakeSigner{}
-	c := New(srv.URL+"/api/hassio_ingress/abc", "irrelevant").WithSigner(signer)
+	auth := &fakeIngressAuth{}
+	c := New(srv.URL+"/api/hassio_ingress/abc", "tok").WithIngressAuth(auth)
 
-	h, err := c.Health(context.Background())
-	if err != nil {
-		t.Fatalf("Health failed: %v", err)
+	if _, err := c.Health(context.Background()); err != nil {
+		t.Fatalf("Health: %v", err)
 	}
-	if h.Status != "ok" {
-		t.Errorf("status = %q, want ok", h.Status)
+	if cookieVal != "fake-sess-1" {
+		t.Errorf("cookie value = %q, want fake-sess-1", cookieVal)
 	}
-	if hitPath != "/api/hassio_ingress/abc/v1/health" {
-		t.Errorf("server saw path = %q, want /api/hassio_ingress/abc/v1/health", hitPath)
-	}
-	if !strings.Contains(hitQuery, "authSig=fake-sig") {
-		t.Errorf("server saw query = %q, want authSig=... present", hitQuery)
-	}
-	if signer.calls.Load() != 1 {
-		t.Errorf("signer calls = %d, want 1", signer.calls.Load())
+	if auth.calls.Load() != 1 {
+		t.Errorf("IngressSession calls = %d, want 1", auth.calls.Load())
 	}
 }
 
-func TestClient_DoesNotSignDirectURL(t *testing.T) {
+func TestClient_DoesNotFetchSessionForDirectURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("authSig") != "" {
-			t.Errorf("direct URL should not be signed, got authSig=%q", r.URL.Query().Get("authSig"))
+		if _, err := r.Cookie("ingress_session"); err == nil {
+			t.Error("direct URL should not carry ingress_session cookie")
 		}
 		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 	}))
 	defer srv.Close()
 
-	signer := &fakeSigner{}
-	c := New(srv.URL, "tok").WithSigner(signer)
+	auth := &fakeIngressAuth{}
+	c := New(srv.URL, "tok").WithIngressAuth(auth)
 
 	if _, err := c.Health(context.Background()); err != nil {
 		t.Fatalf("Health: %v", err)
 	}
-	if signer.calls.Load() != 0 {
-		t.Errorf("signer should not be invoked for non-ingress URL, called %d times", signer.calls.Load())
+	if auth.calls.Load() != 0 {
+		t.Errorf("IngressSession unexpectedly invoked for direct URL: %d calls", auth.calls.Load())
 	}
 }
 
-func TestClient_ReSignsOnUnauthorized(t *testing.T) {
-	var firstSig, secondSig string
-	var requestCount atomic.Int64
+func TestClient_CachesSessionAcrossRequests(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := requestCount.Add(1)
-		sig := r.URL.Query().Get("authSig")
-		switch n {
+		c, err := r.Cookie("ingress_session")
+		if err != nil {
+			http.Error(w, "missing", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok","version":"` + c.Value + `"}`))
+	}))
+	defer srv.Close()
+
+	auth := &fakeIngressAuth{}
+	c := New(srv.URL+"/api/hassio_ingress/abc", "tok").WithIngressAuth(auth)
+
+	for range 3 {
+		if _, err := c.Health(context.Background()); err != nil {
+			t.Fatalf("Health: %v", err)
+		}
+	}
+	if auth.calls.Load() != 1 {
+		t.Errorf("IngressSession calls = %d, want 1 (token cached across requests)", auth.calls.Load())
+	}
+}
+
+func TestClient_RefreshesSessionOnUnauthorized(t *testing.T) {
+	var first, second string
+	var n atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i := n.Add(1)
+		c, _ := r.Cookie("ingress_session")
+		val := ""
+		if c != nil {
+			val = c.Value
+		}
+		switch i {
 		case 1:
-			firstSig = sig
-			http.Error(w, "signature expired", http.StatusUnauthorized)
+			first = val
+			http.Error(w, "expired", http.StatusUnauthorized)
 		case 2:
-			secondSig = sig
+			second = val
 			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 		default:
 			t.Errorf("unexpected 3rd request")
@@ -119,64 +142,57 @@ func TestClient_ReSignsOnUnauthorized(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	signer := &fakeSigner{}
-	// Each SignPath call returns a different signature ("fake-sig" is constant,
-	// but pathOverride includes a counter via the path itself isn't easy — so
-	// inspect via the request count instead).
-	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithSigner(signer)
+	auth := &fakeIngressAuth{}
+	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithIngressAuth(auth)
 
 	if _, err := c.Health(context.Background()); err != nil {
-		t.Fatalf("Health (after re-sign) failed: %v", err)
+		t.Fatalf("Health after refresh: %v", err)
 	}
-	if requestCount.Load() != 2 {
-		t.Errorf("requests = %d, want 2 (first 401, second OK)", requestCount.Load())
+	if auth.calls.Load() != 2 {
+		t.Errorf("IngressSession calls = %d, want 2 (one initial, one refresh after 401)", auth.calls.Load())
 	}
-	if signer.calls.Load() != 2 {
-		t.Errorf("signer calls = %d, want 2 (one per attempt)", signer.calls.Load())
-	}
-	// Both attempts carry a signature — the second one is fresh.
-	if firstSig == "" || secondSig == "" {
-		t.Errorf("both attempts should carry authSig (got %q, %q)", firstSig, secondSig)
+	if first == "" || second == "" || first == second {
+		t.Errorf("retries should use distinct sessions, got %q then %q", first, second)
 	}
 }
 
-func TestClient_ReturnsErrorAfterMaxResignAttempts(t *testing.T) {
-	var requestCount atomic.Int64
+func TestClient_ReturnsErrorAfterMaxRetries(t *testing.T) {
+	var n atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requestCount.Add(1)
+		n.Add(1)
 		http.Error(w, "always 401", http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
-	signer := &fakeSigner{}
-	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithSigner(signer)
+	auth := &fakeIngressAuth{}
+	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithIngressAuth(auth)
 
 	_, err := c.Health(context.Background())
 	if err == nil {
-		t.Fatal("Health should fail after exhausting re-sign attempts")
+		t.Fatal("Health should fail after exhausting retries")
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error should mention 401, got: %v", err)
 	}
-	if requestCount.Load() != 3 {
-		t.Errorf("requests = %d, want 3 (max attempts)", requestCount.Load())
+	if n.Load() != 3 {
+		t.Errorf("requests = %d, want 3 (max attempts)", n.Load())
 	}
 }
 
-func TestClient_SignerFailurePropagates(t *testing.T) {
+func TestClient_IngressAuthFailurePropagates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("server should not be hit when signing fails")
+		t.Error("server should not be hit when session fetch fails")
 	}))
 	defer srv.Close()
 
-	signer := &fakeSigner{failNthCall: 1, failWith: errSignFailed}
-	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithSigner(signer)
+	auth := &fakeIngressAuth{failNthCall: 1, failWith: errSessionFailed}
+	c := New(srv.URL+"/api/hassio_ingress/x", "tok").WithIngressAuth(auth)
 
 	_, err := c.Health(context.Background())
 	if err == nil {
-		t.Fatal("Health should fail when signer errors")
+		t.Fatal("Health should fail when session fetch errors")
 	}
-	if !strings.Contains(err.Error(), "signing ingress path") {
-		t.Errorf("error should wrap signer failure, got: %v", err)
+	if !strings.Contains(err.Error(), "fetching ingress session") {
+		t.Errorf("error should wrap session failure, got: %v", err)
 	}
 }
