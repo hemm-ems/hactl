@@ -24,7 +24,14 @@ export HACTL_DIR=/path/to/instance   # or
 hactl --dir /path/to/instance <cmd>  # or cd into it
 ```
 
-Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why.
+Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why. Typical failure reasons:
+
+- `auth_denied` — your long-lived token lacks admin scope. Re-issue from an HA owner account.
+- `addon_missing` — the add-on isn't installed. HA → Settings → Add-ons → install `hactl-companion`.
+- `protocol_mismatch` — HA Container without Supervisor. Set `COMPANION_URL` in `.env` directly.
+- `unreachable` — Supervisor is there but the add-on URL isn't responding. Check Ingress / network.
+
+Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be available). External access works automatically via Supervisor-issued `ingress_session` cookies — no manual port-forwarding or signed-URL setup needed.
 
 ---
 

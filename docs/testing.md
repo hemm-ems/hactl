@@ -145,7 +145,6 @@ Because the companion needs to run alongside HA on a shared volume, these tests 
 
 - **CRUD operations**: writing, reading, and listing config files through the companion API
 - **Security**: attempts to read files outside the config directory (path traversal) and requests for sensitive files (secrets, tokens) are verified to fail
-- **Discovery**: the mechanism by which hactl automatically finds a companion on the same HA host
 - **OpenAPI contract**: three tests that validate the companion's API responses against its published OpenAPI schema
 
 To run:
@@ -154,6 +153,38 @@ To run:
 make test-companion
 # equivalent: go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...
 ```
+
+This layer intentionally bypasses companion **discovery** — the test writes the resolved `COMPANION_URL` directly into the test `.env` so the contract tests can focus on the HTTP API. The production discovery path (Supervisor WS proxy + Ingress session) is covered by a separate harness, below.
+
+---
+
+## Layer 4: Discovery + Ingress Auth
+
+A second companion-related harness lives in `internal/companiontest_discovery/` (build tag `companion_discovery`). It exists because the original companion test harness above hides discovery and ingress auth behind a pre-populated `COMPANION_URL` — exactly the bypass that let two production bugs ship undetected (a wrong WS namespace and the wrong Ingress auth mechanism; see [companion-discovery-fix-plan.md](../../companion-discovery-fix-plan.md)).
+
+The harness combines:
+
+- A **real Companion container** started via Docker Compose (no shared volume — discovery does not need one).
+- An **in-process Fake Supervisor** (`fake_supervisor.go`) running as a Go HTTP+WS server on a free 127.0.0.1 port. It speaks the subset of the HA WS API that hactl actually uses:
+  - `supervisor/api` proxy for `/addons`, `/addons/<slug>/info`, `/info`, and `/ingress/session` (POST).
+  - Legacy names (`hassio/api`, `hassio/addon/info`) explicitly return `Unknown command.` so a regression to the wrong namespace fails loudly.
+- An **HTTP reverse-proxy** on the fake at the deterministic Ingress prefix (`/api/hassio_ingress/fakeid/`) that strips the prefix, adds the `X-Ingress-Path` header the Companion's auth middleware needs, and forwards to the real Companion. This mimics HA Core's `HassIOIngress` view, which is `requires_auth = False` and proxies straight through.
+
+Tests assert:
+
+- Discovery enumerates `/addons` via the Supervisor proxy and matches the companion by slug (bare, repo-prefixed, or name fallback).
+- The resolved URL actually serves the Companion's `/v1/health` end-to-end (full Discovery → HTTP round-trip).
+- Ingress auth: with the cookie wired up via `WithIngressAuth(wsClient)`, calls succeed; without it, the fake's `requireSession` enforcement returns 401 (proves the cookie is the only thing authenticating).
+- The cached `ingress_session` is reused across requests and refreshed on 401 (simulated by the fake's `InvalidateSessions`).
+
+To run:
+
+```bash
+make test-int-discovery
+# equivalent: go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
+```
+
+The harness boots in roughly 15 seconds (mostly the one-time Companion image build), then runs all seven tests in under three.
 
 ---
 
@@ -170,6 +201,7 @@ docker info
 | Quick sanity check | `make test` | No | ~5 seconds |
 | Full test suite | `make test-int` | Yes | ~2 min first run, ~60s cached |
 | Companion tests | `make test-companion` | Yes | ~5 minutes |
+| Discovery + Ingress auth tests | `make test-int-discovery` | Yes | ~15 seconds (cached image) |
 | Regenerate golden files | `HACTL_UPDATE_GOLDEN=1 make test-int` | Yes | ~2 min |
 | Test against a specific HA version | `HACTL_HA_IMAGE=ghcr.io/home-assistant/home-assistant:2026.3 make test-int` | Yes | ~2 min |
 
