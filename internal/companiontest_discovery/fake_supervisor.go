@@ -42,6 +42,14 @@ type fakeSupervisor struct {
 	proxy      *httputil.ReverseProxy
 	signPathOK bool
 
+	// requireSignature enforces presence of authSig=<expectedSignature> on
+	// every ingress-proxy request. Off by default (PR 2 era); flipped on in
+	// PR 3 tests.
+	requireSignature bool
+	// signatureCounter is incremented per auth/sign_path call so each issued
+	// signature is distinct — used by tests that need to assert re-signing.
+	signatureCounter atomic.Int64
+
 	mu         sync.Mutex
 	wsRequests []wsRequest
 	httpHits   atomic.Int64
@@ -139,7 +147,21 @@ func (f *fakeSupervisor) HTTPHits() int64 {
 
 func (f *fakeSupervisor) handleIngress(w http.ResponseWriter, r *http.Request) {
 	f.httpHits.Add(1)
+	if f.requireSignature {
+		sig := r.URL.Query().Get("authSig")
+		if !strings.HasPrefix(sig, "fake-sig-") {
+			http.Error(w, "fake supervisor: missing or invalid authSig", http.StatusUnauthorized)
+			return
+		}
+	}
 	f.proxy.ServeHTTP(w, r)
+}
+
+// SetRequireSignature toggles enforcement of authSig on the ingress proxy.
+// Tests that exercise the sign-path flow turn this on; default-off keeps the
+// PR 2 discovery tests independent of PR 3's auth wiring.
+func (f *fakeSupervisor) SetRequireSignature(on bool) {
+	f.requireSignature = on
 }
 
 func (f *fakeSupervisor) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -277,12 +299,14 @@ func (f *fakeSupervisor) dispatchSignPath(id any, msg map[string]any) map[string
 		return errResp(id, "unauthorized", "auth/sign_path: simulated admin requirement")
 	}
 	path, _ := msg["path"].(string)
-	// Return a deterministic signed path so PR 3 tests can assert the format.
+	// Each issued signature is unique so tests can assert re-signing on retry.
+	n := f.signatureCounter.Add(1)
+	sigValue := fmt.Sprintf("fake-sig-%d", n)
 	signed := path
 	if strings.Contains(signed, "?") {
-		signed += "&authSig=fake-signature"
+		signed += "&authSig=" + sigValue
 	} else {
-		signed += "?authSig=fake-signature"
+		signed += "?authSig=" + sigValue
 	}
 	return okResp(id, map[string]any{"path": signed})
 }

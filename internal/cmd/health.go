@@ -178,6 +178,9 @@ func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string)
 
 	// Health check
 	cc := companion.New(companionURL, cfg.CompanionToken)
+	if wsClient != nil {
+		cc = cc.WithSigner(wsClient)
+	}
 	health, err := cc.Health(ctx)
 	if err != nil {
 		slog.Debug("companion health check failed", "error", err)

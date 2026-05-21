@@ -529,6 +529,44 @@ func (ws *WSClient) SupervisorAPI(ctx context.Context, endpoint, method string, 
 	return ws.sendCommand(ctx, "hassio/api", params)
 }
 
+// SignPath signs an HA URL path for short-lived authenticated access via the
+// `authSig` query parameter. Used to authenticate HTTP calls to Ingress
+// endpoints from outside the HA frontend (e.g. CLI tools with only a
+// long-lived token).
+//
+// WS command: auth/sign_path. Requires any authenticated user (not admin —
+// verified against HA core 2026.4.4 `websocket_sign_path` decorator
+// `ws_require_user()`).
+//
+// path must include any query string the request will carry, because HA's
+// JWT validation also pins the query parameters. Example:
+//
+//	signed, err := ws.SignPath(ctx, "/api/hassio_ingress/abc/v1/config/file?path=template.yaml", 30)
+//	// signed == "/api/hassio_ingress/abc/v1/config/file?path=template.yaml&authSig=eyJ..."
+func (ws *WSClient) SignPath(ctx context.Context, path string, expirySeconds int) (string, error) {
+	if expirySeconds <= 0 {
+		expirySeconds = 30
+	}
+	params := map[string]any{
+		"path":    path,
+		"expires": expirySeconds,
+	}
+	result, err := ws.sendCommand(ctx, "auth/sign_path", params)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return "", fmt.Errorf("parsing sign_path response: %w", err)
+	}
+	if resp.Path == "" {
+		return "", fmt.Errorf("sign_path returned empty path")
+	}
+	return resp.Path, nil
+}
+
 // ResourceList returns all registered Lovelace resources.
 // WS command: lovelace/resources
 func (ws *WSClient) ResourceList(ctx context.Context) ([]LovelaceResource, error) {

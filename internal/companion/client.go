@@ -14,11 +14,20 @@ import (
 	"time"
 )
 
+// Signer signs an HA URL path for short-lived authenticated access. Used to
+// authenticate Ingress requests from outside the HA frontend — HA's Ingress
+// route rejects bare long-lived tokens, but accepts a signed `authSig` query
+// parameter issued by the WS `auth/sign_path` command.
+type Signer interface {
+	SignPath(ctx context.Context, path string, expirySeconds int) (string, error)
+}
+
 // Client talks to the hactl-companion add-on API.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	token      string
+	signer     Signer
 }
 
 // New creates a new companion API client.
@@ -30,6 +39,19 @@ func New(baseURL, token string) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// WithSigner attaches a Signer used to sign Ingress URLs before each request.
+// Pass the HA WS client. Returns the same Client so callers can chain.
+func (c *Client) WithSigner(s Signer) *Client {
+	c.signer = s
+	return c
+}
+
+// isIngressPath reports whether p is an HA Ingress URL path that requires
+// signing rather than a bare bearer token.
+func isIngressPath(p string) bool {
+	return strings.HasPrefix(p, "/api/hassio_ingress/")
 }
 
 // Health calls GET /v1/health.
@@ -416,12 +438,34 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		_ = req.Body.Close()
 	}
 
+	// Preserve the unsigned query string so we can re-sign on each attempt
+	// (HA's authSig JWT pins the params and the path, and expires in 30s by
+	// default — re-signing per attempt makes retries and clock-skew transparent).
+	signingRequired := c.signer != nil && isIngressPath(req.URL.Path)
+	originalRawQuery := req.URL.RawQuery
+
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
 	maxAttempts := 3
 
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
+		if signingRequired {
+			pathWithQuery := req.URL.Path
+			if originalRawQuery != "" {
+				pathWithQuery += "?" + originalRawQuery
+			}
+			signed, signErr := c.signer.SignPath(req.Context(), pathWithQuery, 30)
+			if signErr != nil {
+				return nil, fmt.Errorf("signing ingress path %s: %w", req.URL.Path, signErr)
+			}
+			signedParsed, parseErr := url.Parse(signed)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parsing signed path: %w", parseErr)
+			}
+			req.URL.RawQuery = signedParsed.RawQuery
 		}
 
 		start := time.Now()
@@ -443,8 +487,11 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 
 		slog.Debug("companion request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // method is a Go HTTP constant
 
-		if resp.StatusCode >= 500 && attempt < maxAttempts-1 {
-			slog.Warn("retrying companion request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // method is a Go HTTP constant
+		// 401 against a signed ingress URL most likely means an expired
+		// signature; re-sign and retry the same way we retry on 5xx.
+		retryableStatus := resp.StatusCode >= 500 || (signingRequired && resp.StatusCode == http.StatusUnauthorized)
+		if retryableStatus && attempt < maxAttempts-1 {
+			slog.Warn("retrying companion request", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue
 		}

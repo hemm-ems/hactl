@@ -82,6 +82,8 @@ Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl he
 
 **Discovery requires a long-lived token created by an HA admin (owner)** and a Supervisor-backed install (HA OS / Supervised). On HA Container (Docker without Supervisor) the WS proxy is not available — set `COMPANION_URL` in `.env` directly. If you get `companion=not found (auth_denied)`, create a new token as an owner. If your reverse proxy strips `/api/hassio/*`, set `COMPANION_URL` in `.env` instead (Settings → Add-ons → hactl companion → Web UI → copy the URL).
 
+**External access works automatically.** When discovery resolves to an Ingress URL (`/api/hassio_ingress/<token>/…`), hactl signs each request via the HA WS `auth/sign_path` command — the long-lived token alone is not accepted by HA's Ingress route, but the signed `authSig` query parameter is. Signatures expire after 30 seconds; hactl re-signs on every attempt and on any 401 retry, so this is transparent to users.
+
 Run `hactl companion status` to diagnose connectivity.
 
 ---

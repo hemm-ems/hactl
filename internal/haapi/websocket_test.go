@@ -1005,6 +1005,53 @@ func TestWSClient_SupervisorAPI_RequestShape(t *testing.T) {
 	}
 }
 
+func TestWSClient_SignPath_RequestShape(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if cmd["type"] != "auth/sign_path" {
+			t.Errorf("type = %q, want 'auth/sign_path'", cmd["type"])
+		}
+		if cmd["path"] != "/api/hassio_ingress/abc/v1/health" {
+			t.Errorf("path = %q, want '/api/hassio_ingress/abc/v1/health'", cmd["path"])
+		}
+		if expires, ok := cmd["expires"].(float64); !ok || expires != 30 {
+			t.Errorf("expires = %v, want 30 (float from JSON)", cmd["expires"])
+		}
+		sendWSResult(t, c, cmd, map[string]string{
+			"path": "/api/hassio_ingress/abc/v1/health?authSig=eyJfake",
+		})
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	signed, err := ws.SignPath(context.Background(), "/api/hassio_ingress/abc/v1/health", 30)
+	if err != nil {
+		t.Fatalf("SignPath: %v", err)
+	}
+	const want = "/api/hassio_ingress/abc/v1/health?authSig=eyJfake"
+	if signed != want {
+		t.Errorf("SignPath = %q, want %q", signed, want)
+	}
+}
+
+func TestWSClient_SignPath_DefaultExpiry(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if expires, ok := cmd["expires"].(float64); !ok || expires != 30 {
+			t.Errorf("expires = %v, want default 30", cmd["expires"])
+		}
+		sendWSResult(t, c, cmd, map[string]string{"path": "/x?authSig=y"})
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	if _, err := ws.SignPath(context.Background(), "/x", 0); err != nil {
+		t.Fatalf("SignPath with zero expiry: %v", err)
+	}
+}
+
 func TestWSClient_SupervisorAPI_DefaultMethodAndData(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
 		if cmd["method"] != "get" {
