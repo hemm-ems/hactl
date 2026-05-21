@@ -695,5 +695,9 @@ func connectCompanion(ctx context.Context) (*companion.Client, error) {
 		return nil, fmt.Errorf("companion discovery: %w", err)
 	}
 
-	return companion.New(companionURL, cfg.CompanionToken), nil
+	cc := companion.New(companionURL, cfg.CompanionToken)
+	if wsClient != nil {
+		cc = cc.WithSigner(wsClient)
+	}
+	return cc, nil
 }

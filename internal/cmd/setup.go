@@ -128,6 +128,9 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 		_, _ = fmt.Fprintf(out, "  No separate secret is needed: HA Ingress handles authentication automatically.\n")
 	} else {
 		cc := companion.New(companionURL, haToken)
+		if wsClient != nil {
+			cc = cc.WithSigner(wsClient)
+		}
 		if h, hErr := cc.Health(ctx); hErr == nil {
 			_, _ = fmt.Fprintf(out, "  Companion found: %s (v%s)\n", companionURL, h.Version)
 		} else {

@@ -97,6 +97,9 @@ func runCompanionStatus(ctx context.Context, w io.Writer) error {
 
 	// Health check
 	cc := companion.New(companionURL, cfg.CompanionToken)
+	if wsClient != nil {
+		cc = cc.WithSigner(wsClient)
+	}
 	health, healthErr := cc.Health(ctx)
 	if healthErr != nil {
 		_, _ = fmt.Fprintf(w, "  health:      failed (%v)\n", healthErr)

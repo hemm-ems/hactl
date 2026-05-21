@@ -14,11 +14,20 @@ import (
 	"time"
 )
 
+// Signer signs an HA URL path for short-lived authenticated access. Used to
+// authenticate Ingress requests from outside the HA frontend — HA's Ingress
+// route rejects bare long-lived tokens, but accepts a signed `authSig` query
+// parameter issued by the WS `auth/sign_path` command.
+type Signer interface {
+	SignPath(ctx context.Context, path string, expirySeconds int) (string, error)
+}
+
 // Client talks to the hactl-companion add-on API.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	token      string
+	signer     Signer
 }
 
 // New creates a new companion API client.
@@ -30,6 +39,19 @@ func New(baseURL, token string) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// WithSigner attaches a Signer used to sign Ingress URLs before each request.
+// Pass the HA WS client. Returns the same Client so callers can chain.
+func (c *Client) WithSigner(s Signer) *Client {
+	c.signer = s
+	return c
+}
+
+// isIngressPath reports whether p is an HA Ingress URL path that requires
+// signing rather than a bare bearer token.
+func isIngressPath(p string) bool {
+	return strings.HasPrefix(p, "/api/hassio_ingress/")
 }
 
 // Health calls GET /v1/health.
@@ -403,62 +425,112 @@ func (c *Client) doPut(ctx context.Context, path string, query url.Values, conte
 	return c.doWithRetry(req)
 }
 
+// signIngressIfNeeded rewrites req.URL.RawQuery with a fresh authSig if the
+// path is an Ingress URL and a Signer is wired up. originalRawQuery is the
+// query string before any signature was added, so re-signing on retry doesn't
+// double-include a previous signature.
+func (c *Client) signIngressIfNeeded(req *http.Request, originalRawQuery string) error {
+	if c.signer == nil || !isIngressPath(req.URL.Path) {
+		return nil
+	}
+	pathWithQuery := req.URL.Path
+	if originalRawQuery != "" {
+		pathWithQuery += "?" + originalRawQuery
+	}
+	signed, err := c.signer.SignPath(req.Context(), pathWithQuery, 30)
+	if err != nil {
+		return fmt.Errorf("signing ingress path %s: %w", req.URL.Path, err)
+	}
+	signedParsed, err := url.Parse(signed)
+	if err != nil {
+		return fmt.Errorf("parsing signed path: %w", err)
+	}
+	req.URL.RawQuery = signedParsed.RawQuery
+	return nil
+}
+
 func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
-	var bodyBytes []byte
-	if req.Body != nil {
-		var err error
-		bodyBytes, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, fmt.Errorf("reading request body: %w", err)
-		}
-		_ = req.Body.Close()
+	bodyBytes, err := drainBody(req)
+	if err != nil {
+		return nil, err
 	}
 
+	signed := c.signer != nil && isIngressPath(req.URL.Path)
+	originalRawQuery := req.URL.RawQuery
+
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
-	maxAttempts := 3
+	maxAttempts := len(backoffs) + 1
 
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
-
-		start := time.Now()
-		resp, err := c.httpClient.Do(req) //nolint:gosec // URL is operator-provided config (SSRF by design for a CLI tool)
-		duration := time.Since(start)
-
-		if err != nil {
-			slog.Debug("companion request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // method is a Go HTTP constant
-			if attempt < maxAttempts-1 {
-				slog.Warn("retrying companion request", "method", req.Method, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
-				time.Sleep(backoffs[attempt])
-				continue
-			}
-			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
+		if err := c.signIngressIfNeeded(req, originalRawQuery); err != nil {
+			return nil, err
 		}
 
-		respBody, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-
-		slog.Debug("companion request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // method is a Go HTTP constant
-
-		if resp.StatusCode >= 500 && attempt < maxAttempts-1 {
-			slog.Warn("retrying companion request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // method is a Go HTTP constant
+		respBody, status, err := c.doOnce(req)
+		if shouldRetry(err, status, signed) && attempt < len(backoffs) {
+			slog.Warn("retrying companion request", "method", req.Method, "status", status, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue
 		}
-
-		if readErr != nil {
-			return nil, fmt.Errorf("reading response body: %w", readErr)
+		if err != nil {
+			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
 		}
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("%s %s: %d %s: %s", req.Method, req.URL.Path, resp.StatusCode, http.StatusText(resp.StatusCode), string(respBody))
+		if status < 200 || status >= 300 {
+			return nil, fmt.Errorf("%s %s: %d %s: %s", req.Method, req.URL.Path, status, http.StatusText(status), string(respBody))
 		}
-
 		return respBody, nil
 	}
-
 	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, req.URL.Path)
+}
+
+// doOnce performs a single HTTP request attempt and returns the response
+// body, status code, and any transport error. Either body+status or err is
+// populated, never both.
+func (c *Client) doOnce(req *http.Request) ([]byte, int, error) {
+	start := time.Now()
+	resp, err := c.httpClient.Do(req) //nolint:gosec // URL is operator-provided config (SSRF by design for a CLI tool)
+	duration := time.Since(start)
+	if err != nil {
+		slog.Debug("companion request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // method is a Go HTTP constant
+		return nil, 0, err
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	slog.Debug("companion request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // method is a Go HTTP constant
+	if readErr != nil {
+		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", readErr)
+	}
+	return body, resp.StatusCode, nil
+}
+
+// drainBody reads and closes req.Body so the bytes can be replayed on retry.
+// Returns nil bytes (not an error) if there is no body.
+func drainBody(req *http.Request) ([]byte, error) {
+	if req.Body == nil {
+		return nil, nil
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading request body: %w", err)
+	}
+	_ = req.Body.Close()
+	return body, nil
+}
+
+// shouldRetry decides whether the current failure warrants another attempt.
+// Transport errors and 5xx always retry; 401 retries only when the request
+// was signed (likely an expired signature).
+func shouldRetry(err error, status int, signed bool) bool {
+	if err != nil {
+		return true
+	}
+	if status >= 500 {
+		return true
+	}
+	return signed && status == http.StatusUnauthorized
 }
