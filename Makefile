@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X 'github.com/hemm-ems/hactl/internal/cmd.date=$(DATE)' \
 	-X 'github.com/hemm-ems/hactl/internal/cmd.testedHA=$(TESTED_HA)'
 
-.PHONY: build lint test test-int test-companion test-matrix clean
+.PHONY: build lint test test-int test-companion test-int-discovery test-matrix clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -24,6 +24,9 @@ test-int:
 
 test-companion:
 	go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...
+
+test-int-discovery:
+	go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
 
 test-matrix:
 	@echo "Run via CI (see .github/workflows/ci.yml)"
