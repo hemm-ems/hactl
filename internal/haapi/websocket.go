@@ -3,6 +3,7 @@ package haapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -562,7 +563,7 @@ func (ws *WSClient) SignPath(ctx context.Context, path string, expirySeconds int
 		return "", fmt.Errorf("parsing sign_path response: %w", err)
 	}
 	if resp.Path == "" {
-		return "", fmt.Errorf("sign_path returned empty path")
+		return "", errors.New("sign_path returned empty path")
 	}
 	return resp.Path, nil
 }
