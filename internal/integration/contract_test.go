@@ -49,6 +49,33 @@ func TestContract_APIStates(t *testing.T) {
 	}
 }
 
+// TestContract_StateContext verifies that /api/states/<entity_id> returns
+// the "context" object (id / parent_id / user_id). The public REST docs do
+// not list this field, but HA core (homeassistant/core.py State._as_dict)
+// has emitted it on every state since long before 2026.4.4. The whole
+// "changed_by" feature breaks if HA ever stops returning this.
+func TestContract_StateContext(t *testing.T) {
+	out := runHactl(t, "ent", "show", "sun.sun", "--json")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("ent show --json invalid: %v\n%s", err, out)
+	}
+	ctxRaw, ok := got["context"]
+	if !ok {
+		t.Fatalf("state response missing 'context' object — HA may have changed "+
+			"core.State._as_dict; the changed_by feature breaks. Response: %s", out)
+	}
+	ctxObj, ok := ctxRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("state.context is not an object: %v", ctxRaw)
+	}
+	for _, key := range []string{"id", "parent_id", "user_id"} {
+		if _, ok := ctxObj[key]; !ok {
+			t.Errorf("state.context.%s missing — schema regression", key)
+		}
+	}
+}
+
 // TestContract_APIErrorLog verifies /api/error_log returns text content.
 func TestContract_APIErrorLog(t *testing.T) {
 	// log command parses /api/error_log — any output means the endpoint works

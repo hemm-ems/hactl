@@ -121,9 +121,14 @@ hactl ent hist sensor.wp_vl --resample 5m # override bucket size
 hactl ent hist sensor.wp_vl --attr brightness  # track attribute instead of state
 hactl ent anomalies sensor.wp_vl          # gaps (>1h), stuck (>2h/24h), spikes (z>3)
 hactl ent related sensor.wp_vl            # related automations, device siblings, area neighbors
+hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + counts summary
 ```
 
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration. Anomaly detection runs client-side on cached history.
+
+`ent show` includes a `changed_by:` line attributing the most recent change to a user (e.g. `User Jan`) or to `Home Assistant` when no user_id was on the state's `context`. `ent who` does the deeper attribution — it queries the logbook for the entity, classifies each event as `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant`, and aggregates a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window}`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
+
+The `changes` command also gained a `who` column carrying the same per-event label.
 
 ### Registry: labels, areas, floors
 

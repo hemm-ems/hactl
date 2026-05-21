@@ -118,12 +118,14 @@ func init() {
 }
 
 // entityState holds a generic entity from /api/states.
+// Context carries HA's trigger metadata; see haapi.Context.
 type entityState struct {
 	Attributes  map[string]any `json:"attributes"`
 	EntityID    string         `json:"entity_id"`
 	State       string         `json:"state"`
 	LastChanged string         `json:"last_changed"`
 	LastUpdated string         `json:"last_updated"`
+	Context     haapi.Context  `json:"context"`
 }
 
 func runEntLs(ctx context.Context, w io.Writer) error {
@@ -218,11 +220,13 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 		return fmt.Errorf("parsing entity state: %w", err)
 	}
 
-	// Fetch registry for area/labels
+	// Fetch registry for area/labels, and users for changed_by attribution.
 	var rc *registryContext
+	var users map[string]haapi.UserEntry
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		rc, _ = fetchRegistryContext(ctx, ws)
+		users, _ = loadUsers(ctx, ws)
 		_ = ws.Close()
 	}
 
@@ -236,6 +240,8 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	_, _ = fmt.Fprintf(w, "state:        %s\n", ent.State)
 	_, _ = fmt.Fprintf(w, "last_changed: %s\n", formatShortTime(ent.LastChanged))
 	_, _ = fmt.Fprintf(w, "last_updated: %s\n", formatShortTime(ent.LastUpdated))
+	_, _ = fmt.Fprintf(w, "changed_by:   %s\n",
+		triggerLabel(logbookEntry{ContextUserID: ent.Context.UserID}, users))
 
 	if friendly, ok := ent.Attributes["friendly_name"]; ok {
 		_, _ = fmt.Fprintf(w, "name:         %v\n", friendly)

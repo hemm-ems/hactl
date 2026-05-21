@@ -117,11 +117,25 @@ func (c *Client) GetEvents(ctx context.Context) ([]byte, error) {
 
 // GetLogbook calls GET /api/logbook/<startTime> and returns the raw JSON body.
 func (c *Client) GetLogbook(ctx context.Context, startTime, endTime string) ([]byte, error) {
+	return c.GetLogbookFiltered(ctx, startTime, endTime, "")
+}
+
+// GetLogbookFiltered calls GET /api/logbook/<startTime>?end_time=...&entity=<id>
+// and returns the raw JSON body. An empty entityID disables entity filtering
+// (equivalent to GetLogbook). Pass a single entity ID; HA also supports a
+// comma-separated list — entity is mutually exclusive with context_id per
+// homeassistant/components/logbook/rest_api.py.
+func (c *Client) GetLogbookFiltered(ctx context.Context, startTime, endTime, entityID string) ([]byte, error) {
 	path := "/api/logbook/" + url.PathEscape(startTime)
+	params := url.Values{}
 	if endTime != "" {
-		params := url.Values{}
 		params.Set("end_time", endTime)
-		path += "?" + params.Encode()
+	}
+	if entityID != "" {
+		params.Set("entity", entityID)
+	}
+	if q := params.Encode(); q != "" {
+		path += "?" + q
 	}
 	return c.doGet(ctx, path)
 }

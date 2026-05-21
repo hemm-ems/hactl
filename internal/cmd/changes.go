@@ -28,13 +28,25 @@ func init() {
 }
 
 // logbookEntry holds one entry from the HA logbook API.
+//
+// Context_* fields come from HA's logbook ContextAugmenter
+// (homeassistant/components/logbook/processor.py, HA 2026.4.4) and identify
+// the trigger of this event: a user (ContextUserID), an automation/script
+// (ContextEventType + ContextName + ContextEntityID), or a parent entity.
 type logbookEntry struct {
-	EntityID string `json:"entity_id"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	When     string `json:"when"`
-	Domain   string `json:"domain"`
-	Message  string `json:"message"`
+	EntityID            string `json:"entity_id"`
+	Name                string `json:"name"`
+	State               string `json:"state"`
+	When                string `json:"when"`
+	Domain              string `json:"domain"`
+	Message             string `json:"message"`
+	ContextID           string `json:"context_id"`
+	ContextUserID       string `json:"context_user_id"`
+	ContextEventType    string `json:"context_event_type"`
+	ContextName         string `json:"context_name"`
+	ContextEntityID     string `json:"context_entity_id"`
+	ContextEntityIDName string `json:"context_entity_id_name"`
+	ContextSource       string `json:"context_source"`
 }
 
 func runChanges(ctx context.Context, w io.Writer) error {
@@ -69,8 +81,25 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return nil
 	}
 
+	// JSON mode emits the raw entries (including all context_* fields) so
+	// LLM consumers get the full structured data, not just the table cells.
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(entries)
+	}
+
+	// Pull users once for changed_by attribution. Graceful-degrades to UUIDs
+	// when the LL token isn't admin.
+	var users map[string]haapi.UserEntry
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if wsErr := ws.Connect(ctx); wsErr == nil {
+		users, _ = loadUsers(ctx, ws)
+		_ = ws.Close()
+	}
+
 	tbl := &format.Table{
-		Headers: []string{"time", "entity_id", "state", "message"},
+		Headers: []string{"time", "entity_id", "state", "who", "message"},
 		Rows:    make([][]string, len(entries)),
 	}
 	for i, e := range entries {
@@ -85,6 +114,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 			formatShortTime(e.When),
 			e.EntityID,
 			e.State,
+			triggerLabel(e, users),
 			msg,
 		}
 	}
@@ -92,7 +122,6 @@ func runChanges(ctx context.Context, w io.Writer) error {
 	return tbl.Render(w, format.RenderOpts{
 		Top:     flagTop,
 		Full:    flagFull,
-		JSON:    flagJSON,
 		Compact: true,
 	})
 }

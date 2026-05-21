@@ -3,6 +3,7 @@ package haapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -484,6 +485,66 @@ func TestWSClient_FloorRegistryList(t *testing.T) {
 	}
 	if result[0].Level == nil || *result[0].Level != 0 {
 		t.Errorf("floor[0].Level = %v, want 0", result[0].Level)
+	}
+}
+
+func TestWSClient_UserList_Success(t *testing.T) {
+	users := []UserEntry{
+		{ID: "ae7c1d92b8f4429fae3e08d8a9b1c2d4", Name: "Jan", Username: "jan", IsOwner: true, IsActive: true},
+		{ID: "11111111111111111111111111111111", Name: "Home Assistant Content", SystemGenerated: true, IsActive: true},
+	}
+
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if cmd["type"] != "config/auth/list" {
+			t.Errorf("expected config/auth/list, got %q", cmd["type"])
+			return
+		}
+		sendWSResult(t, c, cmd, users)
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	result, err := ws.UserList(context.Background())
+	if err != nil {
+		t.Fatalf("UserList failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(result))
+	}
+	if result[0].Name != "Jan" || !result[0].IsOwner {
+		t.Errorf("user[0] = %+v, want Jan (owner)", result[0])
+	}
+	if !result[1].SystemGenerated {
+		t.Errorf("user[1].SystemGenerated = false, want true")
+	}
+}
+
+func TestWSClient_UserList_AdminDenied(t *testing.T) {
+	// HA's @require_admin decorator raises Unauthorized → error.code: "unauthorized".
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSError(c, cmd, "unauthorized", "Unauthorized")
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	_, err := ws.UserList(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T (%v)", err, err)
+	}
+	if apiErr.Code != "unauthorized" {
+		t.Errorf("APIError.Code = %q, want unauthorized", apiErr.Code)
+	}
+	// Backwards-compat: Error() string still contains the legacy "failed:" form.
+	if !strings.Contains(err.Error(), "config/auth/list failed") {
+		t.Errorf("error string = %q, want it to contain 'config/auth/list failed'", err.Error())
 	}
 }
 
