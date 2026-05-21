@@ -78,9 +78,9 @@ For multiple instances, create one directory per instance with its own `.env` an
 
 The HA API doesn't expose everything needed to fully manage a Home Assistant instance — creating, editing, and deleting template entities, for example, isn't available. The [hactl-companion](https://github.com/hemm-ems/hactl-companion) add-on fills that gap.
 
-Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl health` — the companion URL is discovered automatically via the Supervisor API.
+Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl health` — the companion URL is discovered automatically by enumerating add-ons through the Supervisor WS proxy (`hassio/api`).
 
-**Discovery requires a long-lived token created by an HA admin (owner).** Tokens created by non-admin users are denied on `/api/hassio/*`. If you get `companion=not found (auth_denied)`, create a new token as an owner. If your reverse proxy strips `/api/hassio/*`, set `COMPANION_URL` in `.env` instead (Settings → Add-ons → hactl companion → Web UI → copy the URL).
+**Discovery requires a long-lived token created by an HA admin (owner)** and a Supervisor-backed install (HA OS / Supervised). On HA Container (Docker without Supervisor) the WS proxy is not available — set `COMPANION_URL` in `.env` directly. If you get `companion=not found (auth_denied)`, create a new token as an owner. If your reverse proxy strips `/api/hassio/*`, set `COMPANION_URL` in `.env` instead (Settings → Add-ons → hactl companion → Web UI → copy the URL).
 
 Run `hactl companion status` to diagnose connectivity.
 

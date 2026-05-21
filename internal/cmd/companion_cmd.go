@@ -44,6 +44,8 @@ func formatCompanionStatusLine(status, reason string) string {
 		return fmt.Sprintf("companion=%s  (token lacks hassio_admin — create token as HA owner or set COMPANION_URL)", status)
 	case companion.ReasonAddonMissing:
 		return fmt.Sprintf("companion=%s  (add-on not installed — HA → Settings → Add-ons)", status)
+	case companion.ReasonProtocolMismatch:
+		return fmt.Sprintf("companion=%s  (HA Container has no Supervisor — set COMPANION_URL)", status)
 	default:
 		return fmt.Sprintf("companion=%s  (%s)", status, reason)
 	}
@@ -62,7 +64,7 @@ func runCompanionStatus(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprintf(w, "  config URL:  %s\n", cfg.CompanionURL)
 		_, _ = fmt.Fprintln(w, "  source:      .env (COMPANION_URL)")
 	} else {
-		_, _ = fmt.Fprintln(w, "  config URL:  (not set — will try hassio/addon/info via WS)")
+		_, _ = fmt.Fprintln(w, "  config URL:  (not set — will enumerate /addons via Supervisor WS proxy)")
 	}
 
 	// Try WS connect

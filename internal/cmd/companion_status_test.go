@@ -45,3 +45,13 @@ func TestCompanionStatusLine_OK(t *testing.T) {
 		t.Errorf("ok line should contain 'ok', got: %q", msg)
 	}
 }
+
+func TestCompanionStatusLine_ProtocolMismatch(t *testing.T) {
+	msg := formatCompanionStatusLine("not found", "protocol_mismatch")
+	if !strings.Contains(msg, "HA Container") {
+		t.Errorf("protocol_mismatch line should mention HA Container, got: %q", msg)
+	}
+	if !strings.Contains(msg, "COMPANION_URL") {
+		t.Errorf("protocol_mismatch line should point at COMPANION_URL, got: %q", msg)
+	}
+}
