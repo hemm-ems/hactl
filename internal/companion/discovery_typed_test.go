@@ -84,7 +84,7 @@ func TestMatchCompanion(t *testing.T) {
 		{
 			name: "bare slug (dev / local install)",
 			addons: []addonEntry{
-				{Slug: "core_mosquitto", Name: "Mosquitto broker"},
+				{Slug: "core_zwave_js", Name: "Z-Wave JS"},
 				{Slug: "hactl_companion", Name: "hactl companion"},
 			},
 			wantSlug: "hactl_companion",
@@ -93,7 +93,7 @@ func TestMatchCompanion(t *testing.T) {
 			name: "repo-prefixed slug (Supervisor install)",
 			addons: []addonEntry{
 				{Slug: "4f607318_hactl_companion", Name: "hactl companion"},
-				{Slug: "core_mosquitto", Name: "Mosquitto broker"},
+				{Slug: "core_zwave_js", Name: "Z-Wave JS"},
 			},
 			wantSlug: "4f607318_hactl_companion",
 		},
