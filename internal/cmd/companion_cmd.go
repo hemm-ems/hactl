@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,25 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
+
+// companionStatusResult holds structured companion status data for JSON output.
+type companionStatusResult struct {
+	ConfigURL           string `json:"config_url,omitempty"`
+	Source              string `json:"source,omitempty"`
+	WSConnect           string `json:"ws_connect"`
+	WSError             string `json:"ws_error,omitempty"`
+	Discovery           string `json:"discovery"`
+	DiscoveryReason     string `json:"discovery_reason,omitempty"`
+	DiscoveryHint       string `json:"discovery_hint,omitempty"`
+	URL                 string `json:"url,omitempty"`
+	Health              string `json:"health,omitempty"`
+	HealthError         string `json:"health_error,omitempty"`
+	Version             string `json:"version,omitempty"`
+	SupervisorReachable *bool  `json:"supervisor_reachable,omitempty"`
+	HasHACLI            *bool  `json:"ha_cli,omitempty"`
+	IngressActive       *bool  `json:"ingress_active,omitempty"`
+	AuthMode            string `json:"auth_mode,omitempty"`
+}
 
 var companionCmd = &cobra.Command{
 	Use:   "companion",
@@ -57,64 +77,113 @@ func runCompanionStatus(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintln(w, "companion status")
+	res := companionStatusResult{}
 
-	// Show COMPANION_URL from config if set
 	if cfg.CompanionURL != "" {
-		_, _ = fmt.Fprintf(w, "  config URL:  %s\n", cfg.CompanionURL)
-		_, _ = fmt.Fprintln(w, "  source:      .env (COMPANION_URL)")
-	} else {
-		_, _ = fmt.Fprintln(w, "  config URL:  (not set — will enumerate /addons via Supervisor WS proxy)")
+		res.ConfigURL = cfg.CompanionURL
+		res.Source = ".env (COMPANION_URL)"
 	}
 
-	// Try WS connect
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	var wsClient *haapi.WSClient
 	if connErr := ws.Connect(ctx); connErr != nil {
-		_, _ = fmt.Fprintf(w, "  WS connect:  failed (%v)\n", connErr)
+		res.WSConnect = "failed"
+		res.WSError = connErr.Error()
 	} else {
 		defer func() { _ = ws.Close() }()
 		wsClient = ws
-		_, _ = fmt.Fprintln(w, "  WS connect:  ok")
+		res.WSConnect = "ok"
 	}
 
-	// Companion discovery
 	companionURL, discoverErr := companion.Discover(ctx, cfg, wsClient)
 	if discoverErr != nil {
 		var de *companion.DiscoveryError
 		errors.As(discoverErr, &de)
-		reason := "unreachable"
+		res.Discovery = "failed"
 		if de != nil {
-			reason = string(de.Reason)
+			res.DiscoveryReason = string(de.Reason)
+		} else {
+			res.DiscoveryReason = "unreachable"
 		}
-		_, _ = fmt.Fprintf(w, "  discovery:   failed (%s)\n", reason)
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, discoverErr.Error())
-		return nil
+		res.DiscoveryHint = discoverErr.Error()
+		return writeCompanionStatus(w, res)
 	}
 
-	_, _ = fmt.Fprintf(w, "  URL:         %s\n", companionURL)
+	res.Discovery = "ok"
+	res.URL = companionURL
 
-	// Health check
 	cc := companion.New(companionURL, cfg.CompanionToken)
 	if wsClient != nil {
 		cc = cc.WithIngressAuth(wsClient)
 	}
 	health, healthErr := cc.Health(ctx)
 	if healthErr != nil {
-		_, _ = fmt.Fprintf(w, "  health:      failed (%v)\n", healthErr)
+		res.Health = "failed"
+		res.HealthError = healthErr.Error()
+		return writeCompanionStatus(w, res)
+	}
+	res.Health = health.Status
+	res.Version = health.Version
+
+	if status, statusErr := cc.Status(ctx); statusErr == nil {
+		sr := status.SupervisorReachable
+		hc := status.HasHACLI
+		ia := status.IngressActive
+		res.SupervisorReachable = &sr
+		res.HasHACLI = &hc
+		res.IngressActive = &ia
+		res.AuthMode = status.AuthMode
+	}
+
+	return writeCompanionStatus(w, res)
+}
+
+func writeCompanionStatus(w io.Writer, res companionStatusResult) error {
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+
+	_, _ = fmt.Fprintln(w, "companion status")
+
+	if res.ConfigURL != "" {
+		_, _ = fmt.Fprintf(w, "  config URL:  %s\n", res.ConfigURL)
+		_, _ = fmt.Fprintf(w, "  source:      %s\n", res.Source)
+	} else {
+		_, _ = fmt.Fprintln(w, "  config URL:  (not set — will enumerate /addons via Supervisor WS proxy)")
+	}
+
+	if res.WSConnect == "ok" {
+		_, _ = fmt.Fprintln(w, "  WS connect:  ok")
+	} else {
+		_, _ = fmt.Fprintf(w, "  WS connect:  failed (%s)\n", res.WSError)
+	}
+
+	if res.Discovery == "failed" {
+		_, _ = fmt.Fprintf(w, "  discovery:   failed (%s)\n", res.DiscoveryReason)
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, res.DiscoveryHint)
 		return nil
 	}
-	_, _ = fmt.Fprintf(w, "  health:      %s\n", health.Status)
-	_, _ = fmt.Fprintf(w, "  version:     %s\n", health.Version)
 
-	// Status check (best-effort — companion may not have /v1/status yet)
-	status, statusErr := cc.Status(ctx)
-	if statusErr == nil {
-		_, _ = fmt.Fprintf(w, "  supervisor:  %v\n", status.SupervisorReachable)
-		_, _ = fmt.Fprintf(w, "  ha cli:      %v\n", status.HasHACLI)
-		_, _ = fmt.Fprintf(w, "  ingress:     %v\n", status.IngressActive)
-		_, _ = fmt.Fprintf(w, "  auth mode:   %s\n", status.AuthMode)
+	_, _ = fmt.Fprintf(w, "  URL:         %s\n", res.URL)
+
+	if res.Health == "" {
+		return nil
+	}
+	if res.HealthError != "" {
+		_, _ = fmt.Fprintf(w, "  health:      failed (%s)\n", res.HealthError)
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "  health:      %s\n", res.Health)
+	_, _ = fmt.Fprintf(w, "  version:     %s\n", res.Version)
+
+	if res.SupervisorReachable != nil {
+		_, _ = fmt.Fprintf(w, "  supervisor:  %v\n", *res.SupervisorReachable)
+		_, _ = fmt.Fprintf(w, "  ha cli:      %v\n", *res.HasHACLI)
+		_, _ = fmt.Fprintf(w, "  ingress:     %v\n", *res.IngressActive)
+		_, _ = fmt.Fprintf(w, "  auth mode:   %s\n", res.AuthMode)
 	}
 
 	return nil
