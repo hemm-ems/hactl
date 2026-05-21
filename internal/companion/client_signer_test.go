@@ -96,13 +96,15 @@ func TestClient_DoesNotFetchSessionForDirectURL(t *testing.T) {
 }
 
 func TestClient_CachesSessionAcrossRequests(t *testing.T) {
+	var seenCookies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie("ingress_session")
 		if err != nil {
 			http.Error(w, "missing", http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"ok","version":"` + c.Value + `"}`))
+		seenCookies = append(seenCookies, c.Value)
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 	}))
 	defer srv.Close()
 
@@ -116,6 +118,14 @@ func TestClient_CachesSessionAcrossRequests(t *testing.T) {
 	}
 	if auth.calls.Load() != 1 {
 		t.Errorf("IngressSession calls = %d, want 1 (token cached across requests)", auth.calls.Load())
+	}
+	if len(seenCookies) != 3 {
+		t.Fatalf("server saw %d cookies, want 3", len(seenCookies))
+	}
+	for i, got := range seenCookies {
+		if got != seenCookies[0] {
+			t.Errorf("cookie value at request %d = %q, want stable %q across all requests", i, got, seenCookies[0])
+		}
 	}
 }
 
