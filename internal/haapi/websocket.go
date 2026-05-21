@@ -509,28 +509,24 @@ func (ws *WSClient) IntegrationManifestList(ctx context.Context) ([]IntegrationM
 	return entries, nil
 }
 
-// HassioAddonInfo holds the subset of Supervisor addon info we need for companion discovery.
-type HassioAddonInfo struct {
-	Ingress    bool   `json:"ingress"`
-	IngressURL string `json:"ingress_url"`
-	State      string `json:"state"`  // "started", "stopped", etc.
-	Version    string `json:"version"`
-}
-
-// HassioAddonInfo returns addon info from the Supervisor via WS.
-// WS command: hassio/addon/info
-// Only available on HA OS / Supervised installations.
-func (ws *WSClient) HassioAddonInfo(ctx context.Context, slug string) (*HassioAddonInfo, error) {
-	params := map[string]any{"slug": slug}
-	result, err := ws.sendCommand(ctx, "hassio/addon/info", params)
-	if err != nil {
-		return nil, err
+// SupervisorAPI invokes a Supervisor REST endpoint via the HA WS `hassio/api`
+// proxy. method is "get" / "post" / etc. data is the request body for write
+// methods (nil for reads). Returns the raw `result` payload from Supervisor.
+//
+// Only available on HA OS / Supervised installations — HA Container has no
+// Supervisor and HA Core returns `unknown_command` for `hassio/api`.
+func (ws *WSClient) SupervisorAPI(ctx context.Context, endpoint, method string, data map[string]any) (json.RawMessage, error) {
+	if method == "" {
+		method = "get"
 	}
-	var info HassioAddonInfo
-	if err := json.Unmarshal(result, &info); err != nil {
-		return nil, fmt.Errorf("parsing addon info: %w", err)
+	params := map[string]any{
+		"endpoint": endpoint,
+		"method":   method,
 	}
-	return &info, nil
+	if data != nil {
+		params["data"] = data
+	}
+	return ws.sendCommand(ctx, "hassio/api", params)
 }
 
 // ResourceList returns all registered Lovelace resources.

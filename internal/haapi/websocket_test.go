@@ -975,41 +975,54 @@ func TestWSClient_IntegrationManifestList(t *testing.T) {
 	}
 }
 
-func TestWSClient_HassioAddonInfo(t *testing.T) {
-	info := HassioAddonInfo{
-		Ingress:    true,
-		IngressURL: "/api/hassio_ingress/abc123",
-		State:      "started",
-		Version:    "2.1.0",
-	}
-
+func TestWSClient_SupervisorAPI_RequestShape(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if cmd["type"] != "hassio/addon/info" {
-			t.Errorf("expected hassio/addon/info, got %q", cmd["type"])
-			return
+		if cmd["type"] != "hassio/api" {
+			t.Errorf("type = %q, want 'hassio/api'", cmd["type"])
 		}
-		if cmd["slug"] != "hactl_companion" {
-			t.Errorf("slug = %q, want 'hactl_companion'", cmd["slug"])
+		if cmd["endpoint"] != "/addons" {
+			t.Errorf("endpoint = %q, want '/addons'", cmd["endpoint"])
 		}
-		sendWSResult(t, c, cmd, info)
+		if cmd["method"] != "get" {
+			t.Errorf("method = %q, want 'get'", cmd["method"])
+		}
+		if _, hasData := cmd["data"]; hasData {
+			t.Error("data should be omitted when nil")
+		}
+		sendWSResult(t, c, cmd, map[string]any{"addons": []any{}})
 	})
 	defer srv.Close()
 
 	ws := connectWSTest(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	result, err := ws.HassioAddonInfo(context.Background(), "hactl_companion")
+	result, err := ws.SupervisorAPI(context.Background(), "/addons", "get", nil)
 	if err != nil {
-		t.Fatalf("HassioAddonInfo failed: %v", err)
+		t.Fatalf("SupervisorAPI failed: %v", err)
 	}
-	if !result.Ingress {
-		t.Error("Ingress = false, want true")
+	if !strings.Contains(string(result), "addons") {
+		t.Errorf("result does not contain expected key: %s", string(result))
 	}
-	if result.IngressURL != "/api/hassio_ingress/abc123" {
-		t.Errorf("IngressURL = %q, want '/api/hassio_ingress/abc123'", result.IngressURL)
-	}
-	if result.Version != "2.1.0" {
-		t.Errorf("Version = %q, want '2.1.0'", result.Version)
+}
+
+func TestWSClient_SupervisorAPI_DefaultMethodAndData(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if cmd["method"] != "get" {
+			t.Errorf("method = %q, want 'get' (default when empty)", cmd["method"])
+		}
+		data, ok := cmd["data"].(map[string]any)
+		if !ok || data["confirm"] != true {
+			t.Errorf("data = %v, want {confirm: true}", cmd["data"])
+		}
+		sendWSResult(t, c, cmd, map[string]any{})
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	if _, err := ws.SupervisorAPI(context.Background(), "/addons/foo/restart", "", map[string]any{"confirm": true}); err != nil {
+		t.Fatalf("SupervisorAPI failed: %v", err)
 	}
 }
 

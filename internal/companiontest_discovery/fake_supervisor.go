@@ -245,8 +245,8 @@ func (f *fakeSupervisor) dispatchHassioAPI(id any, msg map[string]any) map[strin
 					"ingress": true,
 				},
 				{
-					"slug":  "core_mosquitto",
-					"name":  "Mosquitto broker",
+					"slug":  "core_zwave_js",
+					"name":  "Z-Wave JS",
 					"state": "started",
 				},
 			},
