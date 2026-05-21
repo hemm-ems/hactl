@@ -1,0 +1,23 @@
+services:
+  companion:
+    build:
+      context: ${COMPANION_SRC:-../../../hactl-companion}
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: python:3.12-alpine
+    environment:
+      SUPERVISOR_TOKEN: integration-test-token-discovery
+      LOG_LEVEL: INFO
+    ports:
+      - "9100"
+    volumes:
+      - ha-config:/config
+    networks:
+      - disco-net
+
+volumes:
+  ha-config:
+
+networks:
+  disco-net:
+    driver: bridge
