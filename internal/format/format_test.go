@@ -63,6 +63,26 @@ func TestRenderText_TopN(t *testing.T) {
 	}
 }
 
+func TestRenderText_TopN_WithMoreHint(t *testing.T) {
+	tbl := &Table{
+		Headers: []string{"name"},
+		Rows:    [][]string{{"a"}, {"b"}, {"c"}},
+	}
+
+	var buf bytes.Buffer
+	if err := tbl.Render(&buf, RenderOpts{Top: 1, MoreHint: "try --pattern foo.*"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "…+2 more") {
+		t.Errorf("expected '…+2 more' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "try --pattern foo.*") {
+		t.Errorf("expected hint 'try --pattern foo.*' in output, got:\n%s", out)
+	}
+}
+
 func TestRenderText_FullIgnoresTop(t *testing.T) {
 	tbl := &Table{
 		Headers: []string{"x"},

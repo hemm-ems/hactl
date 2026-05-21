@@ -24,6 +24,8 @@ export HACTL_DIR=/path/to/instance   # or
 hactl --dir /path/to/instance <cmd>  # or cd into it
 ```
 
+For debugging, set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on stderr (accepts `debug`, `info`, `warn`, `error`; defaults to `info`).
+
 Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why. Typical failure reasons:
 
 - `auth_denied` — your long-lived token lacks admin scope. Re-issue from an HA owner account.
@@ -52,7 +54,7 @@ hactl changes --since 24h     # logbook: what changed recently (state changes, a
 ```bash
 hactl auto ls                             # table: id, state, area, labels, runs_24h, errors, last_err
 hactl auto ls --failing                   # only automations with recent errors
-hactl auto ls --pattern ess_*             # glob/substring filter on automation ID
+hactl auto ls --pattern 'ess_*'           # glob/substring filter on automation ID
 hactl auto ls --label victron             # filter by label name (substring)
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
@@ -108,7 +110,7 @@ Requires hactl-companion. YAML file format matches HA scripts.yaml (top-level ke
 
 ```bash
 hactl ent ls                              # all entities
-hactl ent ls --pattern sensor.wp_*        # glob/substring on entity_id
+hactl ent ls --pattern 'sensor.wp_*'      # glob/substring on entity_id
 hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)
@@ -193,7 +195,7 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
 hactl tpl eval '{{ states("sensor.temperature") | float * 2 }}'
 hactl tpl eval -f my_template.j2          # read from file
 
-hactl svc call homeassistant.check_config --return   # prints service response
+hactl svc call weather.get_forecasts -d '{"entity_id":"weather.home","type":"daily"}' --return   # prints service response (use --return for services that support return_response, e.g. weather.get_forecasts, calendar.get_events)
 hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}'
 hactl svc call light.turn_on -d @payload.json   # read JSON from file (avoids quoting)
 ```
@@ -239,7 +241,7 @@ All `config` commands use HA's REST API directly — no companion needed. Add `-
 hactl dash ls                                      # list all dashboards (url_path, title, mode)
 hactl dash ls --json                               # structured JSON for all dashboards
 hactl dash show                                    # views summary for default dashboard
-hactl dash show my-dashboard                       # views summary for named dashboard
+hactl dash show my-dashboard                       # views summary by url_path (from `dash ls`, NOT a view path)
 hactl dash show my-dashboard --json                # pretty-printed full config JSON
 hactl dash show my-dashboard --raw                 # raw HA JSON (for round-trip editing)
 hactl dash show my-dashboard --view living-room    # single view detail as JSON
@@ -303,7 +305,7 @@ Pattern with `*` or `?` → glob. Otherwise → case-sensitive substring.
 
 ```bash
 hactl ent ls --domain binary_sensor --area garage
-hactl ent ls --label energy --pattern sensor.*
+hactl ent ls --label energy --pattern 'sensor.*'
 ```
 
 `auto ls` and `script ls` support `--label` to filter by label name (uses HA entity registry labels),
@@ -403,7 +405,7 @@ hactl helper delete <id> --confirm
 ```
 hactl label ls
 hactl label create "Solar" --icon mdi:solar-power
-hactl ent ls --pattern sensor.solar_*
+hactl ent ls --pattern 'sensor.solar_*'
 hactl ent set-label sensor.solar_power solar
 hactl auto ls --label solar
 ```
@@ -427,8 +429,8 @@ hactl changes --since 24h
 hactl ent ls --pattern <topic>             # discover entities (one call, stop here)
 # --- confirm with user before writing ---
 hactl dash create --url-path <path> --title "<title>" --icon mdi:home --confirm
-hactl dash save <path> --file dash.json --confirm
-hactl dash show <path>                     # verify
+hactl dash save <url_path> --file dash.json --confirm
+hactl dash show <url_path>                 # verify (url_path from `dash ls`)
 ```
 
 ---

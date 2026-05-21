@@ -193,10 +193,11 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	}
 
 	return tbl.Render(w, format.RenderOpts{
-		Top:     flagTop,
-		Full:    flagFull,
-		JSON:    flagJSON,
-		Compact: true,
+		Top:      flagTop,
+		Full:     flagFull,
+		JSON:     flagJSON,
+		Compact:  true,
+		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, or --top N",
 	})
 }
 

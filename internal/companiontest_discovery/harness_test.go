@@ -73,7 +73,9 @@ func TestDiscover_ResolvesViaSupervisorWSProxy(t *testing.T) {
 	}
 	defer ws.Close() //nolint:errcheck
 
-	cfg := minimalConfig(fakeSup.BaseURL())
+	// Use a base URL with trailing slash to verify the join does not produce a
+	// double slash where host meets the ingress path.
+	cfg := minimalConfig(fakeSup.BaseURL() + "/")
 	got, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
 		t.Fatalf("Discover failed: %v", err)
@@ -81,6 +83,9 @@ func TestDiscover_ResolvesViaSupervisorWSProxy(t *testing.T) {
 	want := fakeSup.BaseURL() + ingressPrefix
 	if got != want {
 		t.Errorf("Discover URL = %q, want %q", got, want)
+	}
+	if strings.Contains(strings.TrimPrefix(got, "http://"), "//") {
+		t.Errorf("Discover URL contains '//' after the host: %q", got)
 	}
 
 	// Wire-format pin: the two WS messages must be the new supervisor/api proxy

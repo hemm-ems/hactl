@@ -18,6 +18,9 @@ type RenderOpts struct {
 	Full    bool
 	JSON    bool
 	Compact bool
+	// MoreHint is appended to the "…+N more" line when rows are truncated.
+	// Use to suggest a way to narrow output (e.g. "try --pattern foo.*").
+	MoreHint string
 }
 
 // Render writes the table to w using the given options.
@@ -76,7 +79,11 @@ func (t *Table) renderText(w io.Writer, opts RenderOpts) error {
 	}
 
 	if remaining > 0 {
-		_, _ = fmt.Fprintf(w, "\u2026+%d more\n", remaining)
+		if opts.MoreHint != "" {
+			_, _ = fmt.Fprintf(w, "\u2026+%d more (%s)\n", remaining, opts.MoreHint)
+		} else {
+			_, _ = fmt.Fprintf(w, "\u2026+%d more\n", remaining)
+		}
 	}
 
 	return nil

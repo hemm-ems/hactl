@@ -180,7 +180,7 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 		return "", newDiscoveryError(ReasonUnreachable)
 	}
 
-	url := strings.TrimRight(cfg.URL, "/") + info.IngressURL
+	url := strings.TrimRight(cfg.URL, "/") + "/" + strings.Trim(info.IngressURL, "/") + "/"
 	slog.Debug("companion URL from Supervisor WS proxy", "slug", slug, "url", url)
 	return url, nil
 }
