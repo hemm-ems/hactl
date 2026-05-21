@@ -129,7 +129,7 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 	} else {
 		cc := companion.New(companionURL, haToken)
 		if wsClient != nil {
-			cc = cc.WithSigner(wsClient)
+			cc = cc.WithIngressAuth(wsClient)
 		}
 		if h, hErr := cc.Health(ctx); hErr == nil {
 			_, _ = fmt.Fprintf(out, "  Companion found: %s (v%s)\n", companionURL, h.Version)

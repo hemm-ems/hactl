@@ -32,18 +32,18 @@ func TestClassifyWSError(t *testing.T) {
 		reason DiscoveryReason
 	}{
 		// New Supervisor-WS-proxy error strings (post PR 2):
-		{"hassio/api /addons failed: Forbidden", ReasonAuthDenied},
-		{"hassio/api /addons failed: unauthorized", ReasonAuthDenied},
-		{"hassio/api /addons failed: 401", ReasonAuthDenied},
-		{"hassio/api /addons/foo/info failed: addon not found", ReasonAddonMissing},
-		{"hassio/api /addons failed: not found", ReasonAddonMissing},
+		{"supervisor/api /addons failed: Forbidden", ReasonAuthDenied},
+		{"supervisor/api /addons failed: unauthorized", ReasonAuthDenied},
+		{"supervisor/api /addons failed: 401", ReasonAuthDenied},
+		{"supervisor/api /addons/foo/info failed: addon not found", ReasonAddonMissing},
+		{"supervisor/api /addons failed: not found", ReasonAddonMissing},
 
-		// HA Container / no Supervisor — HA Core returns unknown_command for hassio/api.
+		// HA Container / no Supervisor — HA Core returns unknown_command for supervisor/api.
 		// Classifier must surface this as a distinct reason so the hint can tell the
 		// user to set COMPANION_URL rather than chasing a network problem.
-		{"hassio/api failed: unknown_command", ReasonProtocolMismatch},
-		{"hassio/api failed: unknown_message_type", ReasonProtocolMismatch},
-		{"sending hassio/api: unknown command: hassio/api", ReasonProtocolMismatch},
+		{"supervisor/api failed: unknown_command", ReasonProtocolMismatch},
+		{"supervisor/api failed: unknown_message_type", ReasonProtocolMismatch},
+		{"sending supervisor/api: unknown command: supervisor/api", ReasonProtocolMismatch},
 
 		// Network / transport failures.
 		{"connecting to websocket: connection refused", ReasonUnreachable},

@@ -11,23 +11,26 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// Signer signs an HA URL path for short-lived authenticated access. Used to
-// authenticate Ingress requests from outside the HA frontend — HA's Ingress
-// route rejects bare long-lived tokens, but accepts a signed `authSig` query
-// parameter issued by the WS `auth/sign_path` command.
-type Signer interface {
-	SignPath(ctx context.Context, path string, expirySeconds int) (string, error)
+// IngressAuth obtains a Supervisor-issued Ingress session token. Used to
+// authenticate HTTP calls to Ingress URLs (`/api/hassio_ingress/<addon>/…`)
+// from outside the HA frontend — HA Core proxies straight to Supervisor for
+// those routes, and Supervisor only honors its own session cookie.
+type IngressAuth interface {
+	IngressSession(ctx context.Context) (string, error)
 }
 
 // Client talks to the hactl-companion add-on API.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	token      string
-	signer     Signer
+	httpClient   *http.Client
+	baseURL      string
+	token        string
+	ingressAuth  IngressAuth
+	sessionMu    sync.Mutex
+	ingressToken string // cached session, refreshed on 401
 }
 
 // New creates a new companion API client.
@@ -41,10 +44,11 @@ func New(baseURL, token string) *Client {
 	}
 }
 
-// WithSigner attaches a Signer used to sign Ingress URLs before each request.
-// Pass the HA WS client. Returns the same Client so callers can chain.
-func (c *Client) WithSigner(s Signer) *Client {
-	c.signer = s
+// WithIngressAuth attaches an IngressAuth source used to fetch the
+// `ingress_session` cookie value for Ingress URL requests. Pass the HA WS
+// client. Returns the same Client so callers can chain.
+func (c *Client) WithIngressAuth(a IngressAuth) *Client {
+	c.ingressAuth = a
 	return c
 }
 
@@ -425,27 +429,24 @@ func (c *Client) doPut(ctx context.Context, path string, query url.Values, conte
 	return c.doWithRetry(req)
 }
 
-// signIngressIfNeeded rewrites req.URL.RawQuery with a fresh authSig if the
-// path is an Ingress URL and a Signer is wired up. originalRawQuery is the
-// query string before any signature was added, so re-signing on retry doesn't
-// double-include a previous signature.
-func (c *Client) signIngressIfNeeded(req *http.Request, originalRawQuery string) error {
-	if c.signer == nil || !isIngressPath(req.URL.Path) {
+// applyIngressAuth attaches the cached Supervisor ingress session cookie to
+// the request, fetching a fresh one if missing or if forceRefresh is true
+// (which the retry loop sets on 401). No-op for non-Ingress URLs and when no
+// IngressAuth source is wired up.
+func (c *Client) applyIngressAuth(req *http.Request, forceRefresh bool) error {
+	if c.ingressAuth == nil || !isIngressPath(req.URL.Path) {
 		return nil
 	}
-	pathWithQuery := req.URL.Path
-	if originalRawQuery != "" {
-		pathWithQuery += "?" + originalRawQuery
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	if c.ingressToken == "" || forceRefresh {
+		tok, err := c.ingressAuth.IngressSession(req.Context())
+		if err != nil {
+			return fmt.Errorf("fetching ingress session: %w", err)
+		}
+		c.ingressToken = tok
 	}
-	signed, err := c.signer.SignPath(req.Context(), pathWithQuery, 30)
-	if err != nil {
-		return fmt.Errorf("signing ingress path %s: %w", req.URL.Path, err)
-	}
-	signedParsed, err := url.Parse(signed)
-	if err != nil {
-		return fmt.Errorf("parsing signed path: %w", err)
-	}
-	req.URL.RawQuery = signedParsed.RawQuery
+	req.AddCookie(&http.Cookie{Name: "ingress_session", Value: c.ingressToken})
 	return nil
 }
 
@@ -457,8 +458,8 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		return nil, err
 	}
 
-	signed := c.signer != nil && isIngressPath(req.URL.Path)
-	originalRawQuery := req.URL.RawQuery
+	hasIngressAuth := c.ingressAuth != nil && isIngressPath(req.URL.Path)
+	originalHeader := req.Header.Clone()
 
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
 	maxAttempts := len(backoffs) + 1
@@ -467,12 +468,18 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		if bodyBytes != nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
-		if err := c.signIngressIfNeeded(req, originalRawQuery); err != nil {
+		// Reset headers each attempt so retries don't accumulate stale cookies.
+		req.Header = originalHeader.Clone()
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		// On retry after a 401, force a fresh session token — the previous
+		// one may have expired or been invalidated server-side.
+		forceRefresh := attempt > 0
+		if err := c.applyIngressAuth(req, forceRefresh); err != nil {
 			return nil, err
 		}
 
 		respBody, status, err := c.doOnce(req)
-		if shouldRetry(err, status, signed) && attempt < len(backoffs) {
+		if shouldRetry(err, status, hasIngressAuth) && attempt < len(backoffs) {
 			slog.Warn("retrying companion request", "method", req.Method, "status", status, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue

@@ -130,7 +130,7 @@ func matchCompanion(addons []addonEntry) string {
 // Discover finds the companion URL.
 // Priority:
 //  1. Explicit COMPANION_URL from config (.env)
-//  2. Enumerate add-ons via the Supervisor WS proxy (`hassio/api`), pick the
+//  2. Enumerate add-ons via the Supervisor WS proxy (`supervisor/api`), pick the
 //     companion by slug/name, then fetch its ingress URL.
 //
 // Returns the companion base URL or a *DiscoveryError if not found.
@@ -147,7 +147,7 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 	listRaw, err := ws.SupervisorAPI(ctx, "/addons", "get", nil)
 	if err != nil {
 		reason := classifyWSError(err.Error())
-		slog.Debug("hassio/api /addons failed", "error", err, "reason", reason)
+		slog.Debug("supervisor/api /addons failed", "error", err, "reason", reason)
 		return "", newDiscoveryError(reason)
 	}
 
@@ -167,7 +167,7 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 	infoRaw, err := ws.SupervisorAPI(ctx, "/addons/"+slug+"/info", "get", nil)
 	if err != nil {
 		reason := classifyWSError(err.Error())
-		slog.Debug("hassio/api /addons/<slug>/info failed", "slug", slug, "error", err, "reason", reason)
+		slog.Debug("supervisor/api /addons/<slug>/info failed", "slug", slug, "error", err, "reason", reason)
 		return "", newDiscoveryError(reason)
 	}
 

@@ -977,8 +977,8 @@ func TestWSClient_IntegrationManifestList(t *testing.T) {
 
 func TestWSClient_SupervisorAPI_RequestShape(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if cmd["type"] != "hassio/api" {
-			t.Errorf("type = %q, want 'hassio/api'", cmd["type"])
+		if cmd["type"] != "supervisor/api" {
+			t.Errorf("type = %q, want 'supervisor/api'", cmd["type"])
 		}
 		if cmd["endpoint"] != "/addons" {
 			t.Errorf("endpoint = %q, want '/addons'", cmd["endpoint"])
@@ -1005,50 +1005,44 @@ func TestWSClient_SupervisorAPI_RequestShape(t *testing.T) {
 	}
 }
 
-func TestWSClient_SignPath_RequestShape(t *testing.T) {
+func TestWSClient_IngressSession_RequestShape(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if cmd["type"] != "auth/sign_path" {
-			t.Errorf("type = %q, want 'auth/sign_path'", cmd["type"])
+		if cmd["type"] != "supervisor/api" {
+			t.Errorf("type = %q, want 'supervisor/api'", cmd["type"])
 		}
-		if cmd["path"] != "/api/hassio_ingress/abc/v1/health" {
-			t.Errorf("path = %q, want '/api/hassio_ingress/abc/v1/health'", cmd["path"])
+		if cmd["endpoint"] != "/ingress/session" {
+			t.Errorf("endpoint = %q, want '/ingress/session'", cmd["endpoint"])
 		}
-		if expires, ok := cmd["expires"].(float64); !ok || expires != 30 {
-			t.Errorf("expires = %v, want 30 (float from JSON)", cmd["expires"])
+		if cmd["method"] != "post" {
+			t.Errorf("method = %q, want 'post'", cmd["method"])
 		}
-		sendWSResult(t, c, cmd, map[string]string{
-			"path": "/api/hassio_ingress/abc/v1/health?authSig=eyJfake",
-		})
+		sendWSResult(t, c, cmd, map[string]string{"session": "abc123sessiontoken"})
 	})
 	defer srv.Close()
 
 	ws := connectWSTest(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	signed, err := ws.SignPath(context.Background(), "/api/hassio_ingress/abc/v1/health", 30)
+	tok, err := ws.IngressSession(context.Background())
 	if err != nil {
-		t.Fatalf("SignPath: %v", err)
+		t.Fatalf("IngressSession: %v", err)
 	}
-	const want = "/api/hassio_ingress/abc/v1/health?authSig=eyJfake"
-	if signed != want {
-		t.Errorf("SignPath = %q, want %q", signed, want)
+	if tok != "abc123sessiontoken" {
+		t.Errorf("session = %q, want abc123sessiontoken", tok)
 	}
 }
 
-func TestWSClient_SignPath_DefaultExpiry(t *testing.T) {
+func TestWSClient_IngressSession_EmptyResponse(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if expires, ok := cmd["expires"].(float64); !ok || expires != 30 {
-			t.Errorf("expires = %v, want default 30", cmd["expires"])
-		}
-		sendWSResult(t, c, cmd, map[string]string{"path": "/x?authSig=y"})
+		sendWSResult(t, c, cmd, map[string]string{})
 	})
 	defer srv.Close()
 
 	ws := connectWSTest(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	if _, err := ws.SignPath(context.Background(), "/x", 0); err != nil {
-		t.Fatalf("SignPath with zero expiry: %v", err)
+	if _, err := ws.IngressSession(context.Background()); err == nil {
+		t.Fatal("IngressSession should fail when supervisor returns no session")
 	}
 }
 

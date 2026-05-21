@@ -53,7 +53,7 @@ func TestMain(m *testing.M) {
 	}
 	slog.Info("discovery-test: companion ready", "url", companionURL)
 
-	fakeSup, err = startFakeSupervisor(companionURL, true)
+	fakeSup, err = startFakeSupervisor(companionURL)
 	if err != nil {
 		slog.Error("discovery-test: start fake supervisor", "error", err)
 		composeDown()

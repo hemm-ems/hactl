@@ -78,11 +78,11 @@ For multiple instances, create one directory per instance with its own `.env` an
 
 The HA API doesn't expose everything needed to fully manage a Home Assistant instance — creating, editing, and deleting template entities, for example, isn't available. The [hactl-companion](https://github.com/hemm-ems/hactl-companion) add-on fills that gap.
 
-Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl health` — the companion URL is discovered automatically by enumerating add-ons through the Supervisor WS proxy (`hassio/api`).
+Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl health` — the companion URL is discovered automatically by enumerating add-ons through the Supervisor WS proxy (`supervisor/api`).
 
 **Discovery requires a long-lived token created by an HA admin (owner)** and a Supervisor-backed install (HA OS / Supervised). On HA Container (Docker without Supervisor) the WS proxy is not available — set `COMPANION_URL` in `.env` directly. If you get `companion=not found (auth_denied)`, create a new token as an owner. If your reverse proxy strips `/api/hassio/*`, set `COMPANION_URL` in `.env` instead (Settings → Add-ons → hactl companion → Web UI → copy the URL).
 
-**External access works automatically.** When discovery resolves to an Ingress URL (`/api/hassio_ingress/<token>/…`), hactl signs each request via the HA WS `auth/sign_path` command — the long-lived token alone is not accepted by HA's Ingress route, but the signed `authSig` query parameter is. Signatures expire after 30 seconds; hactl re-signs on every attempt and on any 401 retry, so this is transparent to users.
+**External access works automatically.** When discovery resolves to an Ingress URL (`/api/hassio_ingress/<token>/…`), HA Core proxies straight through to Supervisor, which only honors its own `ingress_session` cookie. hactl asks Supervisor for a session via the WS `supervisor/api` `/ingress/session` endpoint and sets the cookie on each Companion request. Sessions are cached and refreshed on 401, so this is transparent to users.
 
 Run `hactl companion status` to diagnose connectivity.
 

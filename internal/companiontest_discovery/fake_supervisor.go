@@ -36,23 +36,23 @@ const ingressPrefix = "/api/hassio_ingress/fakeid/"
 const addonSlug = "4f607318_hactl_companion"
 
 type fakeSupervisor struct {
-	server     *http.Server
-	listener   net.Listener
-	upgrader   websocket.Upgrader
-	proxy      *httputil.ReverseProxy
-	signPathOK bool
+	server   *http.Server
+	listener net.Listener
+	upgrader websocket.Upgrader
+	proxy    *httputil.ReverseProxy
 
-	// requireSignature enforces presence of authSig=<expectedSignature> on
-	// every ingress-proxy request. Off by default (PR 2 era); flipped on in
-	// PR 3 tests.
-	requireSignature bool
-	// signatureCounter is incremented per auth/sign_path call so each issued
-	// signature is distinct — used by tests that need to assert re-signing.
-	signatureCounter atomic.Int64
+	// requireSession enforces presence of a valid ingress_session cookie on
+	// every ingress-proxy request. Off by default (PR 2 era); flipped on by
+	// tests that exercise the Ingress auth flow.
+	requireSession bool
+	// sessionCounter is incremented per /ingress/session call so each issued
+	// token is distinct — used by tests to assert re-auth on 401.
+	sessionCounter atomic.Int64
 
-	mu         sync.Mutex
-	wsRequests []wsRequest
-	httpHits   atomic.Int64
+	mu             sync.Mutex
+	wsRequests     []wsRequest
+	httpHits       atomic.Int64
+	issuedSessions map[string]bool // tracks which session tokens we've handed out
 }
 
 type wsRequest struct {
@@ -66,9 +66,8 @@ type wsRequest struct {
 
 // startFakeSupervisor binds a listener on a free port, proxies HTTP requests
 // under ingressPrefix to companionURL, and returns the URL clients should use
-// as their HA base. signPathOK controls whether auth/sign_path returns a
-// signed URL (true) or an error (false) — flipped per test in PR 3.
-func startFakeSupervisor(companionURL string, signPathOK bool) (*fakeSupervisor, error) {
+// as their HA base.
+func startFakeSupervisor(companionURL string) (*fakeSupervisor, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listening: %w", err)
@@ -81,12 +80,12 @@ func startFakeSupervisor(companionURL string, signPathOK bool) (*fakeSupervisor,
 	}
 
 	f := &fakeSupervisor{
-		listener:   listener,
-		signPathOK: signPathOK,
+		listener: listener,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
-		proxy: httputil.NewSingleHostReverseProxy(companionParsed),
+		proxy:          httputil.NewSingleHostReverseProxy(companionParsed),
+		issuedSessions: make(map[string]bool),
 	}
 
 	// Strip the ingress prefix before forwarding and inject the header the
@@ -147,21 +146,33 @@ func (f *fakeSupervisor) HTTPHits() int64 {
 
 func (f *fakeSupervisor) handleIngress(w http.ResponseWriter, r *http.Request) {
 	f.httpHits.Add(1)
-	if f.requireSignature {
-		sig := r.URL.Query().Get("authSig")
-		if !strings.HasPrefix(sig, "fake-sig-") {
-			http.Error(w, "fake supervisor: missing or invalid authSig", http.StatusUnauthorized)
+	if f.requireSession {
+		cookie, err := r.Cookie("ingress_session")
+		f.mu.Lock()
+		known := err == nil && f.issuedSessions[cookie.Value]
+		f.mu.Unlock()
+		if !known {
+			http.Error(w, "fake supervisor: missing or unknown ingress_session cookie", http.StatusUnauthorized)
 			return
 		}
 	}
 	f.proxy.ServeHTTP(w, r)
 }
 
-// SetRequireSignature toggles enforcement of authSig on the ingress proxy.
-// Tests that exercise the sign-path flow turn this on; default-off keeps the
-// PR 2 discovery tests independent of PR 3's auth wiring.
-func (f *fakeSupervisor) SetRequireSignature(on bool) {
-	f.requireSignature = on
+// SetRequireSession toggles enforcement of an ingress_session cookie on the
+// ingress proxy. Tests that exercise the Ingress auth flow turn this on;
+// default-off keeps the discovery-only tests independent of the auth path.
+func (f *fakeSupervisor) SetRequireSession(on bool) {
+	f.requireSession = on
+}
+
+// InvalidateSessions wipes the set of accepted session tokens. Tests use
+// this to simulate Supervisor expiring a session mid-flight — the next
+// request must 401 and trigger a fresh /ingress/session fetch.
+func (f *fakeSupervisor) InvalidateSessions() {
+	f.mu.Lock()
+	f.issuedSessions = make(map[string]bool)
+	f.mu.Unlock()
 }
 
 func (f *fakeSupervisor) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -232,23 +243,21 @@ func (f *fakeSupervisor) dispatch(msg map[string]any) map[string]any {
 	cmdType, _ := msg["type"].(string)
 
 	switch cmdType {
-	case "hassio/api":
-		return f.dispatchHassioAPI(id, msg)
-	case "hassio/addon/info":
-		// Legacy command hactl used before PR 2. Return the same error HA
-		// Core would: "unknown_command". This is the bug PR 2 fixes — once
-		// hactl stops sending this, this branch becomes dead and we can
-		// delete it.
+	case "supervisor/api":
+		return f.dispatchSupervisorAPI(id, msg)
+	case "hassio/api", "hassio/addon/info":
+		// Legacy command names HA Core has never registered (verified against
+		// 2026.4.4 — the registered namespace is `supervisor/*`). Mimic HA's
+		// "Unknown command." response so regressions to the wrong name fail
+		// loudly in tests rather than silently working only against the fake.
 		return errResp(id, "unknown_command",
-			fmt.Sprintf("Unknown command: %s (use hassio/api proxy)", cmdType))
-	case "auth/sign_path":
-		return f.dispatchSignPath(id, msg)
+			fmt.Sprintf("Unknown command: %s (use supervisor/api)", cmdType))
 	default:
 		return errResp(id, "unknown_command", "Unknown command: "+cmdType)
 	}
 }
 
-func (f *fakeSupervisor) dispatchHassioAPI(id any, msg map[string]any) map[string]any {
+func (f *fakeSupervisor) dispatchSupervisorAPI(id any, msg map[string]any) map[string]any {
 	endpoint, _ := msg["endpoint"].(string)
 	method, _ := msg["method"].(string)
 	if method == "" {
@@ -284,31 +293,21 @@ func (f *fakeSupervisor) dispatchHassioAPI(id any, msg map[string]any) map[strin
 		})
 	case endpoint == "/info" && strings.EqualFold(method, "get"):
 		return okResp(id, map[string]any{
-			"supervisor":   "2025.05.0-fake",
+			"supervisor":    "2025.05.0-fake",
 			"homeassistant": "2026.5.0-fake",
-			"hassos":       nil,
+			"hassos":        nil,
 		})
+	case endpoint == "/ingress/session" && strings.EqualFold(method, "post"):
+		n := f.sessionCounter.Add(1)
+		tok := fmt.Sprintf("fake-sess-%d", n)
+		f.mu.Lock()
+		f.issuedSessions[tok] = true
+		f.mu.Unlock()
+		return okResp(id, map[string]any{"session": tok})
 	default:
 		return errResp(id, "not_found",
-			fmt.Sprintf("fake supervisor: hassio/api endpoint %q method %q not implemented", endpoint, method))
+			fmt.Sprintf("fake supervisor: supervisor/api endpoint %q method %q not implemented", endpoint, method))
 	}
-}
-
-func (f *fakeSupervisor) dispatchSignPath(id any, msg map[string]any) map[string]any {
-	if !f.signPathOK {
-		return errResp(id, "unauthorized", "auth/sign_path: simulated admin requirement")
-	}
-	path, _ := msg["path"].(string)
-	// Each issued signature is unique so tests can assert re-signing on retry.
-	n := f.signatureCounter.Add(1)
-	sigValue := fmt.Sprintf("fake-sig-%d", n)
-	signed := path
-	if strings.Contains(signed, "?") {
-		signed += "&authSig=" + sigValue
-	} else {
-		signed += "?authSig=" + sigValue
-	}
-	return okResp(id, map[string]any{"path": signed})
 }
 
 func okResp(id any, result map[string]any) map[string]any {
