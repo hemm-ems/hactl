@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,9 +361,9 @@ func TestFilterEntitiesByArea(t *testing.T) {
 	}
 	rc := &registryContext{
 		entityByID: map[string]haapi.EntityRegistryEntry{
-			"light.kitchen":  {EntityID: "light.kitchen", AreaID: "kitchen"},
-			"sensor.temp":    {EntityID: "sensor.temp", AreaID: "kitchen"},
-			"light.bedroom":  {EntityID: "light.bedroom", AreaID: "bedroom"},
+			"light.kitchen": {EntityID: "light.kitchen", AreaID: "kitchen"},
+			"sensor.temp":   {EntityID: "sensor.temp", AreaID: "kitchen"},
+			"light.bedroom": {EntityID: "light.bedroom", AreaID: "bedroom"},
 		},
 		areaByID: map[string]haapi.AreaEntry{
 			"kitchen": {AreaID: "kitchen", Name: "Kitchen"},
@@ -382,10 +386,10 @@ func TestFilterEntitiesByLabel(t *testing.T) {
 	}
 	rc := &registryContext{
 		entityByID: map[string]haapi.EntityRegistryEntry{
-			"light.kitchen":  {EntityID: "light.kitchen", Labels: []string{"lighting"}},
-			"sensor.power":   {EntityID: "sensor.power", Labels: []string{"energy"}},
+			"light.kitchen": {EntityID: "light.kitchen", Labels: []string{"lighting"}},
+			"sensor.power":  {EntityID: "sensor.power", Labels: []string{"energy"}},
 		},
-		areaByID:  map[string]haapi.AreaEntry{},
+		areaByID: map[string]haapi.AreaEntry{},
 		labelByID: map[string]haapi.LabelEntry{
 			"lighting": {LabelID: "lighting", Name: "Lighting"},
 			"energy":   {LabelID: "energy", Name: "Energy"},
@@ -541,5 +545,182 @@ func TestParseAttrHistoryResponse_InvalidJSON(t *testing.T) {
 	_, err := parseAttrHistoryResponse([]byte(`not json`), "brightness")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestEntityState_DecodesContext(t *testing.T) {
+	// Captured /api/states/<id> shape: HA core State._as_dict in 2026.4.4
+	// (homeassistant/core.py). The public REST docs omit "context" but the
+	// source returns it on every state.
+	data := []byte(`{
+		"entity_id": "light.kitchen",
+		"state": "on",
+		"attributes": {"friendly_name": "Kitchen Light"},
+		"last_changed": "2026-05-21T10:00:00+00:00",
+		"last_updated": "2026-05-21T10:00:00+00:00",
+		"context": {
+			"id": "01HXYZABCDEF",
+			"parent_id": null,
+			"user_id": "ae7c1d92b8f4429fae3e08d8a9b1c2d4"
+		}
+	}`)
+
+	var ent entityState
+	if err := json.Unmarshal(data, &ent); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if ent.Context.ID != "01HXYZABCDEF" {
+		t.Errorf("Context.ID = %q, want 01HXYZABCDEF", ent.Context.ID)
+	}
+	if ent.Context.ParentID != "" {
+		t.Errorf("Context.ParentID = %q, want empty (null in JSON)", ent.Context.ParentID)
+	}
+	if ent.Context.UserID != "ae7c1d92b8f4429fae3e08d8a9b1c2d4" {
+		t.Errorf("Context.UserID = %q, want ae7c1d92b8f4429fae3e08d8a9b1c2d4", ent.Context.UserID)
+	}
+}
+
+func TestEntityState_ContextOptional(t *testing.T) {
+	// Some older HA versions or oddball entities may omit "context".
+	// Decode must not fail; Context should be the zero value.
+	data := []byte(`{
+		"entity_id": "light.x",
+		"state": "off",
+		"attributes": {},
+		"last_changed": "2026-05-21T10:00:00+00:00",
+		"last_updated": "2026-05-21T10:00:00+00:00"
+	}`)
+
+	var ent entityState
+	if err := json.Unmarshal(data, &ent); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if ent.Context.ID != "" || ent.Context.UserID != "" || ent.Context.ParentID != "" {
+		t.Errorf("expected zero Context, got %+v", ent.Context)
+	}
+}
+
+const janUUID = "ae7c1d92b8f4429fae3e08d8a9b1c2d4"
+
+// stateJSON returns the JSON body /api/states/light.kitchen would emit for a
+// light in state "on" with the given user UUID as ContextUserID (empty for
+// a system-driven change).
+func stateJSON(userID string) string {
+	ctx := `{"id":"01HXYZ","parent_id":null,"user_id":` + jsonString(userID) + `}`
+	return `{"entity_id":"light.kitchen","state":"on",` +
+		`"attributes":{"friendly_name":"Kitchen Light"},` +
+		`"last_changed":"2026-05-21T10:00:00+00:00","last_updated":"2026-05-21T10:00:00+00:00",` +
+		`"context":` + ctx + `}`
+}
+
+func jsonString(s string) string {
+	if s == "" {
+		return "null"
+	}
+	return `"` + s + `"`
+}
+
+// entShowFixture wires up a cmdTestServer that serves the minimal set of
+// endpoints runEntShow touches for light.kitchen: REST /api/states/light.kitchen
+// + WS registries + user list.
+func entShowFixture(t *testing.T, body string, users []map[string]any) *cmdTestServer {
+	t.Helper()
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []any{},
+		"config/area_registry/list":   []any{},
+		"config/label_registry/list":  []any{},
+		"config/floor_registry/list":  []any{},
+		"config/auth/list":            users,
+	}, map[string]http.HandlerFunc{
+		"/api/states/light.kitchen": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(body))
+		},
+	})
+	return ts
+}
+
+func TestRunEntShow_ChangedBy_KnownUser(t *testing.T) {
+	ts := entShowFixture(t,
+		stateJSON(janUUID),
+		[]map[string]any{{"id": janUUID, "name": "Jan", "is_owner": true}},
+	)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "changed_by:") {
+		t.Fatalf("output missing 'changed_by:' line:\n%s", out)
+	}
+	if !strings.Contains(out, "User Jan") {
+		t.Errorf("output missing 'User Jan' attribution:\n%s", out)
+	}
+}
+
+func TestRunEntShow_ChangedBy_UnknownUser_UUIDFallback(t *testing.T) {
+	ts := entShowFixture(t,
+		stateJSON(janUUID),
+		[]map[string]any{},
+	)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "User ae7c1d92…") {
+		t.Errorf("output missing UUID-truncated fallback:\n%s", out)
+	}
+}
+
+func TestRunEntShow_ChangedBy_NoUserID(t *testing.T) {
+	// State has no user_id (automation- or integration-driven). Since ent show
+	// does not query the logbook for full attribution (that's `ent who`),
+	// the line should still appear with the "Home Assistant" fallback.
+	ts := entShowFixture(t,
+		stateJSON(""),
+		[]map[string]any{},
+	)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "changed_by:") || !strings.Contains(out, "Home Assistant") {
+		t.Errorf("expected 'changed_by: Home Assistant' line:\n%s", out)
+	}
+}
+
+func TestRunEntShow_JSON_PreservesContext(t *testing.T) {
+	ts := entShowFixture(t,
+		stateJSON(janUUID),
+		[]map[string]any{{"id": janUUID, "name": "Jan"}},
+	)
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow JSON: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	ctx, ok := got["context"].(map[string]any)
+	if !ok {
+		t.Fatalf("JSON output missing 'context' object: %v", got)
+	}
+	if ctx["user_id"] != janUUID {
+		t.Errorf("context.user_id = %v, want %s", ctx["user_id"], janUUID)
 	}
 }

@@ -65,6 +65,33 @@ type FloorEntry struct {
 	ModifiedAt float64  `json:"modified_at"`
 }
 
+// Context is the trigger metadata HA attaches to every state change and event.
+// Present on /api/states and /api/states/<entity_id> responses.
+// Source: homeassistant/core.py → State._as_dict, Context._as_dict (HA 2026.4.4).
+//
+//   - ID:       unique id of this state change (used to filter logbook via ?context_id=).
+//   - ParentID: id of the context that caused this one (e.g. an automation's trigger).
+//   - UserID:   HA user uuid that initiated the change. Empty when the change came
+//     from an automation, integration, or HA itself.
+type Context struct {
+	ID       string `json:"id"`
+	ParentID string `json:"parent_id"`
+	UserID   string `json:"user_id"`
+}
+
+// UserEntry is a HA user account.
+// WS command: config/auth/list (admin-only).
+// Source: homeassistant/components/config/auth.py → websocket_list (HA 2026.4.4).
+type UserEntry struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Username        string `json:"username"`
+	IsOwner         bool   `json:"is_owner"`
+	IsActive        bool   `json:"is_active"`
+	SystemGenerated bool   `json:"system_generated"`
+	LocalOnly       bool   `json:"local_only"`
+}
+
 // DeviceRegistryEntry is an entry from the HA device registry.
 // WS command: config/device_registry/list
 // Source: homeassistant/components/config/device_registry.py → websocket_list_devices

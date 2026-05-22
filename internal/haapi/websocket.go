@@ -145,8 +145,8 @@ func (ws *WSClient) CheckConfig(ctx context.Context) (bool, error) {
 
 	id := ws.nextID.Add(1)
 	msg := map[string]any{
-		"id":   id,
-		"type": "call_service",
+		"id":      id,
+		"type":    "call_service",
 		"domain":  "homeassistant",
 		"service": "check_config",
 	}
@@ -266,6 +266,22 @@ func (ws *WSClient) FloorRegistryList(ctx context.Context) ([]FloorEntry, error)
 	var entries []FloorEntry
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing floor registry: %w", err)
+	}
+	return entries, nil
+}
+
+// UserList returns all HA user accounts via WS.
+//
+// WS command: config/auth/list (admin-only — non-admin tokens get APIError{Code:"unauthorized"}).
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/auth.py
+func (ws *WSClient) UserList(ctx context.Context) ([]UserEntry, error) {
+	result, err := ws.sendCommand(ctx, "config/auth/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var entries []UserEntry
+	if err := json.Unmarshal(result, &entries); err != nil {
+		return nil, fmt.Errorf("parsing user list: %w", err)
 	}
 	return entries, nil
 }
@@ -606,14 +622,35 @@ func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[
 		return nil, fmt.Errorf("reading %s response: %w", cmdType, err)
 	}
 	if !resp.Success {
-		errMsg := errUnknown
-		if resp.Error != nil {
-			errMsg = resp.Error.Message
-		}
-		return nil, fmt.Errorf("%s failed: %s", cmdType, errMsg)
+		return nil, newAPIError(cmdType, resp.Error)
 	}
 
 	return resp.Result, nil
+}
+
+// APIError is returned by WS commands when HA responds with success=false.
+// Callers can errors.As to inspect Code (e.g. "unauthorized" for non-admin
+// access to admin-only endpoints) without parsing the error string.
+//
+// Error() preserves the legacy "<cmdType> failed: <message>" format so
+// existing substring assertions keep working.
+type APIError struct {
+	CmdType string
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return e.CmdType + " failed: " + e.Message
+}
+
+func newAPIError(cmdType string, werr *wsError) *APIError {
+	msg, code := errUnknown, ""
+	if werr != nil {
+		msg = werr.Message
+		code = werr.Code
+	}
+	return &APIError{CmdType: cmdType, Code: code, Message: msg}
 }
 
 func (ws *WSClient) connect(ctx context.Context) error {
@@ -719,14 +756,14 @@ type TraceListResult map[string][]TraceSummary
 // TraceSummary holds one trace entry from trace/list.
 type TraceSummary struct {
 	Timestamp TraceSummaryTimestamp `json:"timestamp"`
-	RunID     string               `json:"run_id"`
-	Domain    string               `json:"domain"`
-	ItemID    string               `json:"item_id"`
-	LastStep  string               `json:"last_step"`
-	State     string               `json:"state"`
-	Execution string               `json:"script_execution"`
-	Trigger   string               `json:"trigger"`
-	Error     string               `json:"error"`
+	RunID     string                `json:"run_id"`
+	Domain    string                `json:"domain"`
+	ItemID    string                `json:"item_id"`
+	LastStep  string                `json:"last_step"`
+	State     string                `json:"state"`
+	Execution string                `json:"script_execution"`
+	Trigger   string                `json:"trigger"`
+	Error     string                `json:"error"`
 }
 
 // TraceSummaryTimestamp holds start/finish times for a trace.
