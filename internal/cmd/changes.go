@@ -94,7 +94,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 	var users map[string]haapi.UserEntry
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
-		users, _ = loadUsers(ctx, ws)
+		users = loadUsers(ctx, ws)
 		_ = ws.Close()
 	}
 

@@ -226,7 +226,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		rc, _ = fetchRegistryContext(ctx, ws)
-		users, _ = loadUsers(ctx, ws)
+		users = loadUsers(ctx, ws)
 		_ = ws.Close()
 	}
 

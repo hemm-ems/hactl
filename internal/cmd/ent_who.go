@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -102,7 +103,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 	var users map[string]haapi.UserEntry
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
-		users, _ = loadUsers(ctx, ws)
+		users = loadUsers(ctx, ws)
 		_ = ws.Close()
 	}
 
@@ -184,7 +185,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 		Rows:    make([][]string, len(summary)),
 	}
 	for i, s := range summary {
-		sumTbl.Rows[i] = []string{s.Trigger, fmt.Sprintf("%d", s.Count)}
+		sumTbl.Rows[i] = []string{s.Trigger, strconv.Itoa(s.Count)}
 	}
 	return sumTbl.Render(w, format.RenderOpts{Full: true, Compact: true})
 }

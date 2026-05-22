@@ -149,10 +149,7 @@ func TestLoadUsers_Success(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	got, err := loadUsers(context.Background(), ws)
-	if err != nil {
-		t.Fatalf("loadUsers: %v", err)
-	}
+	got := loadUsers(context.Background(), ws)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 users in map, got %d", len(got))
 	}
@@ -176,10 +173,7 @@ func TestLoadUsers_GracefulDegrade_AdminDenied(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	got, err := loadUsers(context.Background(), ws)
-	if err != nil {
-		t.Fatalf("loadUsers should not error on admin-denied, got: %v", err)
-	}
+	got := loadUsers(context.Background(), ws)
 	if got == nil {
 		t.Fatal("loadUsers should return a non-nil (empty) map on degrade")
 	}
@@ -203,10 +197,7 @@ func TestLoadUsers_GracefulDegrade_OtherError(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	got, err := loadUsers(context.Background(), ws)
-	if err != nil {
-		t.Fatalf("loadUsers should degrade (not error) on transient failures, got: %v", err)
-	}
+	got := loadUsers(context.Background(), ws)
 	if got == nil || len(got) != 0 {
 		t.Errorf("expected empty map on transient failure, got %v", got)
 	}

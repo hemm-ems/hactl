@@ -60,8 +60,9 @@ func truncateUUID(s string) string {
 // scope, HA returns APIError{Code:"unauthorized"}. We degrade gracefully:
 // return an empty map plus a single stderr warning so the caller still gets
 // automation/script/device attribution (none of which need user resolution).
-// Any other error (network, parse) propagates.
-func loadUsers(ctx context.Context, ws *haapi.WSClient) (map[string]haapi.UserEntry, error) {
+// All errors are absorbed (logged at debug); the function never fails the
+// command, which is why it returns a single value.
+func loadUsers(ctx context.Context, ws *haapi.WSClient) map[string]haapi.UserEntry {
 	users, err := ws.UserList(ctx)
 	if err != nil {
 		var apiErr *haapi.APIError
@@ -70,17 +71,17 @@ func loadUsers(ctx context.Context, ws *haapi.WSClient) (map[string]haapi.UserEn
 				"hactl: long-lived token is not from an admin user — "+
 					"showing raw user UUIDs in 'changed_by'. "+
 					"Use an admin token to resolve user names.")
-			return map[string]haapi.UserEntry{}, nil
+			return map[string]haapi.UserEntry{}
 		}
 		// Other failures (network, parse, unknown_command on test fixtures)
 		// shouldn't kill the whole command. Degrade silently — `slog.Debug`
 		// for diagnosis, but no user-visible warning.
 		slog.Debug("loading HA user list", "error", err)
-		return map[string]haapi.UserEntry{}, nil
+		return map[string]haapi.UserEntry{}
 	}
 	out := make(map[string]haapi.UserEntry, len(users))
 	for _, u := range users {
 		out[u.ID] = u
 	}
-	return out, nil
+	return out
 }
