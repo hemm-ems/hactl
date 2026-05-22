@@ -604,11 +604,12 @@ func TestEntityState_ContextOptional(t *testing.T) {
 const janUUID = "ae7c1d92b8f4429fae3e08d8a9b1c2d4"
 
 // stateJSON returns the JSON body /api/states/light.kitchen would emit for a
-// light turned on by the given user UUID (or empty for a system-driven change).
-func stateJSON(state, userID string) string {
+// light in state "on" with the given user UUID as ContextUserID (empty for
+// a system-driven change).
+func stateJSON(userID string) string {
 	ctx := `{"id":"01HXYZ","parent_id":null,"user_id":` + jsonString(userID) + `}`
-	return `{"entity_id":"light.kitchen","state":"` + state +
-		`","attributes":{"friendly_name":"Kitchen Light"},` +
+	return `{"entity_id":"light.kitchen","state":"on",` +
+		`"attributes":{"friendly_name":"Kitchen Light"},` +
 		`"last_changed":"2026-05-21T10:00:00+00:00","last_updated":"2026-05-21T10:00:00+00:00",` +
 		`"context":` + ctx + `}`
 }
@@ -641,7 +642,7 @@ func entShowFixture(t *testing.T, body string, users []map[string]any) *cmdTestS
 
 func TestRunEntShow_ChangedBy_KnownUser(t *testing.T) {
 	ts := entShowFixture(t,
-		stateJSON("on", janUUID),
+		stateJSON(janUUID),
 		[]map[string]any{{"id": janUUID, "name": "Jan", "is_owner": true}},
 	)
 	withFlagDir(t, ts.dir)
@@ -661,7 +662,7 @@ func TestRunEntShow_ChangedBy_KnownUser(t *testing.T) {
 
 func TestRunEntShow_ChangedBy_UnknownUser_UUIDFallback(t *testing.T) {
 	ts := entShowFixture(t,
-		stateJSON("on", janUUID),
+		stateJSON(janUUID),
 		[]map[string]any{},
 	)
 	withFlagDir(t, ts.dir)
@@ -681,7 +682,7 @@ func TestRunEntShow_ChangedBy_NoUserID(t *testing.T) {
 	// does not query the logbook for full attribution (that's `ent who`),
 	// the line should still appear with the "Home Assistant" fallback.
 	ts := entShowFixture(t,
-		stateJSON("on", ""),
+		stateJSON(""),
 		[]map[string]any{},
 	)
 	withFlagDir(t, ts.dir)
@@ -698,7 +699,7 @@ func TestRunEntShow_ChangedBy_NoUserID(t *testing.T) {
 
 func TestRunEntShow_JSON_PreservesContext(t *testing.T) {
 	ts := entShowFixture(t,
-		stateJSON("on", janUUID),
+		stateJSON(janUUID),
 		[]map[string]any{{"id": janUUID, "name": "Jan"}},
 	)
 	withFlagDir(t, ts.dir)
