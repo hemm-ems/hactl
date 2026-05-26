@@ -9,29 +9,6 @@
 
 # Home Assistant control, built for agentic workflows
 
-## How it works
-
-Point any LLM agent at hactl. It reads the manual once (`hactl rtfm`), then uses hactl commands as tools to answer your questions.
-
-![hactl demo](docs/demo.gif)
-
-```
-$ claw "balcony watering didn't run yesterday — why?"
-
-  ● hactl rtfm                            [manual loaded · 4218 tok]
-  ● hactl health → HA 2026.4.4  RUNNING  errors=12  companion=ok
-  ● hactl auto show balcony_minimum_watering
-    on  last=2026-05-22  trc:a7 (condition stop)
-  ● hactl trace show trc:a7
-    ✓ trigger  ✗ condition: sensor.balcony_soil_moisture = unknown
-
-  Sensor offline since May 22 — numeric condition can't evaluate.
-  Likely dead Zigbee battery.
-```
-
-~100 tokens across 3 tool calls — the manual (4218 tok) is loaded once and cached. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py).
-Writes always require a separate confirmation step.
-
 ## Background
 
 I manage several Home Assistant instances. Logging into each one, hunting through the UI for broken automations, editing YAML by hand — it's fine, but it adds up. You can also wire an LLM into HA directly, but it still feels clunky: the API is chatty, context fills up fast, and there's no good way to keep multiple instances straight.
@@ -57,6 +34,29 @@ See the [manual](docs/manual.md) for the full command reference.
 Every response reports its own token count (`[~N tok]`) and is capped at 500 tokens by default. Extended output is available but opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
 
 `hactl manual` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
+
+## How it works
+
+Point any LLM agent at hactl. It reads the manual once (`hactl rtfm`), then uses hactl commands as tools to answer your questions.
+
+![hactl demo](docs/demo.gif)
+
+```
+$ claw "balcony watering didn't run yesterday — why?"
+
+  ● hactl rtfm                            [manual loaded · 4218 tok]
+  ● hactl health → HA 2026.4.4  RUNNING  errors=12  companion=ok
+  ● hactl auto show balcony_minimum_watering
+    on  last=2026-05-22  trc:a7 (condition stop)
+  ● hactl trace show trc:a7
+    ✓ trigger  ✗ condition: sensor.balcony_soil_moisture = unknown
+
+  Sensor offline since May 22 — numeric condition can't evaluate.
+  Likely dead Zigbee battery.
+```
+
+~100 tokens across 3 tool calls — the manual (4218 tok) is loaded once and cached. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py).
+Writes always require a separate confirmation step.
 
 ## Safety
 
