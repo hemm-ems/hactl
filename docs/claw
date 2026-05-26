@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Mock "claw" agent for GIF — shows hactl being used by an LLM agent.
+# Argument (the user question) is accepted but ignored; output is canned.
+
+set -u
+
+stream() {
+  local IFS=' '
+  local first=1
+  for w in $1; do
+    if [ $first -eq 1 ]; then first=0; else printf ' '; fi
+    printf '%s' "$w"
+    sleep 0.045
+  done
+  printf '\n'
+}
+
+printf '\n'
+sleep 0.3
+
+# 1 — agent reads the manual (big load, show only token count)
+printf '  \033[1m●\033[0m hactl rtfm'
+sleep 1.4
+printf '                              \033[2m[manual loaded · 4218 tok]\033[0m\n'
+sleep 0.25
+
+# 2 — health check (compact, inline result)
+printf '  \033[1m●\033[0m hactl health'
+sleep 0.7
+printf ' → HA 2026.4.4  RUNNING  errors=12  companion=ok\n'
+sleep 0.25
+
+# 3 — inspect the automation
+printf '  \033[1m●\033[0m hactl auto show balcony_minimum_watering\n'
+sleep 0.85
+printf '    on  last=2026-05-22  trc:a7 (condition stop)\n'
+sleep 0.25
+
+# 4 — look at the failing trace
+printf '  \033[1m●\033[0m hactl trace show trc:a7\n'
+sleep 0.75
+printf '    ✓ trigger  ✗ condition: sensor.balcony_soil_moisture = unknown\n'
+
+# synthesis — streams word-by-word like a real LLM
+sleep 0.55
+printf '\n'
+stream '  Sensor offline since May 22 — numeric condition can'\''t evaluate.'
+sleep 0.1
+stream '  Likely dead Zigbee battery.'
+printf '  \033[2m[~100 tok across 3 tool calls + 4218 tok manual]\033[0m\n'
