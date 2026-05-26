@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/github/license/hemm-ems/hactl)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/hemm-ems/hactl)](go.mod)
 
-# Home Assistant control, built for agentic workflows
+# Home Assistant control from the command line
 
 ## Background
 
