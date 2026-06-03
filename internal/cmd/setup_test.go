@@ -139,7 +139,7 @@ func TestSetup_PromptsNotBuffered(t *testing.T) {
 	os.Stdin = pr
 	defer func() { os.Stdin = origStdin; _ = pr.Close() }()
 	_, _ = fmt.Fprintf(pw, "%s\ntest-token-abc\n", srv.URL)
-	pw.Close()
+	_ = pw.Close()
 
 	_ = rootCmd.Execute()
 
