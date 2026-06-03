@@ -22,7 +22,10 @@ var setupCmd = &cobra.Command{
 	Short: "Interactive first-time setup — creates ~/.hactl/default/.env",
 	Long:  "Guides you through connecting hactl to a Home Assistant instance.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSetup(cmd.Context(), cmd.OutOrStdout(), os.Stdin)
+		// Write directly to os.Stdout so interactive prompts are visible
+		// immediately — the root Execute() buffers cmd.OutOrStdout(), which
+		// would hide prompts until after stdin is fully read (silent hang).
+		return runSetup(cmd.Context(), os.Stdout, os.Stdin)
 	},
 }
 

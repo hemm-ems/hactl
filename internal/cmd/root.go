@@ -123,7 +123,9 @@ func Execute() error {
 		return err
 	}
 
-	applyTokenPolicy(os.Stdout, capBuf.Bytes(), rootCmd.CommandPath())
+	if capBuf.Len() > 0 {
+		applyTokenPolicy(os.Stdout, capBuf.Bytes(), rootCmd.CommandPath())
+	}
 
 	if flagStats {
 		writeStats(os.Stderr, int64(capBuf.Len()))
