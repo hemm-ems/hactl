@@ -102,3 +102,50 @@ func TestSetup_RejectsBadToken(t *testing.T) {
 		t.Error(".env must not be written on auth failure")
 	}
 }
+
+// TestSetup_PromptsNotBuffered verifies that hactl setup writes prompts directly
+// to os.Stdout rather than through the cobra output buffer. The root Execute()
+// captures cobra output (cmd.OutOrStdout()) for token-cap post-processing; if
+// setup used that writer, all prompts would be silently buffered while stdin
+// blocked — causing a hang with no visible output to the user.
+func TestSetup_PromptsNotBuffered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintln(w, `{"message":"API running."}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	old := flagDir; flagDir = dir; defer func() { flagDir = old }()
+
+	// Point cobra's output at a sentinel buffer — setup must NOT write there.
+	var cobraBuf bytes.Buffer
+	rootCmd.SetOut(&cobraBuf)
+	defer rootCmd.SetOut(nil)
+
+	rootCmd.SetArgs([]string{"setup"})
+	defer func() { rootCmd.SetArgs(nil); resetSubcommandFlags() }()
+
+	// Pipe valid input so setup doesn't block on stdin.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdin := os.Stdin
+	os.Stdin = pr
+	defer func() { os.Stdin = origStdin; _ = pr.Close() }()
+	_, _ = fmt.Fprintf(pw, "%s\ntest-token-abc\n", srv.URL)
+	pw.Close()
+
+	_ = rootCmd.Execute()
+
+	// setup must not have written to the cobra buffer — it writes to os.Stdout
+	// directly so prompts are visible immediately in interactive use.
+	if cobraBuf.Len() > 0 {
+		t.Errorf("setup output went through cobra buffer — prompts would be invisible: %q", cobraBuf.String())
+	}
+}
