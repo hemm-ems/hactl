@@ -23,8 +23,11 @@ type FlowResult struct {
 type SchemaField struct {
 	Default  any    `json:"default,omitempty"`
 	Name     string `json:"name"`
-	Type     string `json:"type,omitempty"` // "string", "integer", "boolean", "float", "select", etc.
+	Type     string `json:"type,omitempty"` // "string", "integer", "boolean", "float", "select", "expandable", etc.
 	Required bool   `json:"required"`
+	// Schema holds the nested fields of an "expandable" section. When set, the
+	// field's values must be submitted nested under Name, e.g. {"advanced": {...}}.
+	Schema []SchemaField `json:"schema,omitempty"`
 }
 
 // flowRawResponse is the raw shape of the HA flow API response, used for parsing.
@@ -56,24 +59,39 @@ func parseFlowResult(data []byte) (*FlowResult, error) {
 		Result:  raw.Result,
 	}
 
-	for _, fieldRaw := range raw.DataSchema {
-		var field struct {
-			Default  any    `json:"default"`
-			Name     string `json:"name"`
-			Type     string `json:"type"`
-			Required bool   `json:"required"`
-		}
-		if err := json.Unmarshal(fieldRaw, &field); err == nil {
-			result.DataSchema = append(result.DataSchema, SchemaField{
-				Name:     field.Name,
-				Required: field.Required,
-				Type:     field.Type,
-				Default:  field.Default,
-			})
-		}
-	}
+	result.DataSchema = parseSchemaFields(raw.DataSchema)
 
 	return result, nil
+}
+
+// parseSchemaFields parses a list of raw schema-field JSON objects into
+// SchemaFields, recursing into the nested "schema" of expandable sections so
+// callers can see (and hint at) the fields that must be nested.
+func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
+	var fields []SchemaField
+	for _, fieldRaw := range rawFields {
+		var field struct {
+			Default  any               `json:"default"`
+			Name     string            `json:"name"`
+			Type     string            `json:"type"`
+			Required bool              `json:"required"`
+			Schema   []json.RawMessage `json:"schema"`
+		}
+		if err := json.Unmarshal(fieldRaw, &field); err != nil {
+			continue
+		}
+		sf := SchemaField{
+			Name:     field.Name,
+			Required: field.Required,
+			Type:     field.Type,
+			Default:  field.Default,
+		}
+		if len(field.Schema) > 0 {
+			sf.Schema = parseSchemaFields(field.Schema)
+		}
+		fields = append(fields, sf)
+	}
+	return fields
 }
 
 // StartOptionsFlow starts an options flow for an existing config entry.
