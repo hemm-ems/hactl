@@ -148,6 +148,14 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	return c.doWithRetry(req)
 }
 
+func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	return c.doWithRetry(req)
+}
+
 func (c *Client) doPost(ctx context.Context, path string, body any) ([]byte, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
