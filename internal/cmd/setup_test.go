@@ -103,6 +103,47 @@ func TestSetup_RejectsBadToken(t *testing.T) {
 	}
 }
 
+// TestSetup_DefaultsToCwd verifies that when no --dir flag is set, runSetup
+// writes .env into the current working directory.
+func TestSetup_DefaultsToCwd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintln(w, `{"message":"API running."}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Ensure flagDir is empty so cwd is used.
+	old := flagDir
+	flagDir = ""
+	defer func() { flagDir = old }()
+
+	input := strings.NewReader(srv.URL + "\n" + "test-token-cwd\n")
+	out := &bytes.Buffer{}
+
+	if err := runSetup(context.Background(), out, input); err != nil {
+		t.Fatalf("runSetup failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".env")) //nolint:gosec
+	if err != nil {
+		t.Fatalf(".env not written to cwd: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, srv.URL) {
+		t.Errorf(".env missing HA_URL %q: %s", srv.URL, content)
+	}
+	if !strings.Contains(content, "test-token-cwd") {
+		t.Errorf(".env missing HA_TOKEN: %s", content)
+	}
+}
+
 // TestSetup_PromptsNotBuffered verifies that hactl setup writes prompts directly
 // to os.Stdout rather than through the cobra output buffer. The root Execute()
 // captures cobra output (cmd.OutOrStdout()) for token-cap post-processing; if

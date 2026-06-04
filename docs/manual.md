@@ -42,7 +42,7 @@ Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be availa
 ### Setup & health
 
 ```bash
-hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes ~/.hactl/default/.env
+hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes .env in the current dir (or --dir)
 hactl health                  # HA version, state, recorder, location, timezone, error count
 hactl health --json            # same as structured JSON
 hactl issues                  # active HA repairs/issues (domain, severity, fixable)
@@ -212,6 +212,7 @@ Templates evaluated server-side by HA's Jinja engine — semantically correct, i
 ```bash
 hactl config entries                              # list all config entries (entry_id, domain, title, state, version)
 hactl config entries --domain zha                 # filter by integration domain
+hactl config delete <entry_id>                    # delete a config entry (dry-run; add --confirm to apply)
 hactl config options <entry_id>                   # start options flow for an existing config entry
 hactl config flow-start <domain>                  # start a new config flow for a domain/integration
 hactl config flow-step <flow_id> --data '{...}'   # submit data to advance a flow step

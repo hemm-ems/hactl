@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
 // FlowResult represents a response from the config entries flow API.
@@ -92,6 +93,12 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 		fields = append(fields, sf)
 	}
 	return fields
+}
+
+// DeleteConfigEntry deletes a config entry by ID.
+// DELETE /api/config/config_entries/entry/<entryID>
+func (c *Client) DeleteConfigEntry(ctx context.Context, entryID string) ([]byte, error) {
+	return c.doDelete(ctx, "/api/config/config_entries/entry/"+url.PathEscape(entryID))
 }
 
 // StartOptionsFlow starts an options flow for an existing config entry.
