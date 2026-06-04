@@ -42,7 +42,7 @@ Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be availa
 ### Setup & health
 
 ```bash
-hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes ~/.hactl/default/.env
+hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes .env in the current dir (or --dir)
 hactl health                  # HA version, state, recorder, location, timezone, error count
 hactl health --json            # same as structured JSON
 hactl issues                  # active HA repairs/issues (domain, severity, fixable)
@@ -236,6 +236,14 @@ hactl config flow-step xyz --data '{"action": "add_device"}' --options --json
 hactl config flow-step xyz --data '{"device_type": "heat_pump"}' --options --json
 # → {"flow_id":"xyz","type":"create_entry","title":"Heat Pump"}
 ```
+
+Some steps contain **expandable sections** (schema fields of type `expandable`, e.g. the Generic Camera `advanced` section). Their fields must be nested under the section name in `--data`, not passed flat — otherwise HA returns a 400. `flow-inspect` shows the nested fields (as `advanced.framerate`) and prints the exact nesting to use:
+
+```bash
+hactl config flow-step xyz --data '{"stream_source": "rtsp://...", "advanced": {"framerate": 2, "verify_ssl": false}}'
+```
+
+When a step fails, the HA error detail (e.g. the offending field) is included in the error message.
 
 When starting a *new* integration (not reconfiguring an existing entry), use `flow-start` + `flow-step` without `--options`.
 

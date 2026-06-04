@@ -62,6 +62,27 @@ func TestGetConfig_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestErrorBodyIncluded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message": "expected a dictionary for data['advanced']"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	_, err := c.GetConfig(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if want := "advanced"; !contains(err.Error(), want) {
+		t.Fatalf("error = %q, want it to contain HA body detail %q", err, want)
+	}
+	if want := "400"; !contains(err.Error(), want) {
+		t.Fatalf("error = %q, want it to contain status %q", err, want)
+	}
+}
+
 func TestGetErrorLog_Success(t *testing.T) {
 	const logText = "2025-01-15 12:00:00 ERROR (MainThread) [homeassistant] something broke"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

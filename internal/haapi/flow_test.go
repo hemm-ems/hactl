@@ -146,6 +146,43 @@ func TestParseFlowResult_EmptySchema(t *testing.T) {
 	}
 }
 
+func TestParseFlowResult_Expandable(t *testing.T) {
+	raw := []byte(`{
+		"flow_id": "cam1",
+		"type": "form",
+		"step_id": "user",
+		"handler": "generic",
+		"data_schema": [
+			{"name": "stream_source", "required": true, "type": "string"},
+			{"name": "advanced", "required": true, "type": "expandable", "schema": [
+				{"name": "framerate", "type": "float", "required": false},
+				{"name": "verify_ssl", "type": "boolean", "required": false}
+			]}
+		]
+	}`)
+
+	result, err := ParseFlowResult(raw)
+	if err != nil {
+		t.Fatalf("ParseFlowResult error: %v", err)
+	}
+	if len(result.DataSchema) != 2 {
+		t.Fatalf("DataSchema len = %d, want 2", len(result.DataSchema))
+	}
+	adv := result.DataSchema[1]
+	if adv.Name != "advanced" || adv.Type != "expandable" {
+		t.Fatalf("expected advanced/expandable, got %q/%q", adv.Name, adv.Type)
+	}
+	if len(adv.Schema) != 2 {
+		t.Fatalf("advanced.Schema len = %d, want 2", len(adv.Schema))
+	}
+	if adv.Schema[0].Name != "framerate" || adv.Schema[0].Type != "float" {
+		t.Errorf("Schema[0] = %q/%q, want framerate/float", adv.Schema[0].Name, adv.Schema[0].Type)
+	}
+	if adv.Schema[1].Name != "verify_ssl" {
+		t.Errorf("Schema[1].Name = %q, want verify_ssl", adv.Schema[1].Name)
+	}
+}
+
 func TestParseFlowResult_InvalidJSON(t *testing.T) {
 	_, err := ParseFlowResult([]byte(`not json`))
 	if err == nil {

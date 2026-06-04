@@ -140,6 +140,22 @@ func (c *Client) GetLogbookFiltered(ctx context.Context, startTime, endTime, ent
 	return c.doGet(ctx, path)
 }
 
+// httpStatusError formats a non-2xx response into an error. When the response
+// body is non-empty it is included (trimmed and length-capped) so HA's error
+// detail — e.g. {"message": "Expected ... for dictionary value @ data['advanced']"}
+// on a 400 — is surfaced instead of swallowed behind a bare status line.
+func httpStatusError(method, path string, status int, body []byte) error {
+	const maxLen = 500
+	msg := strings.TrimSpace(string(body))
+	if len(msg) > maxLen {
+		msg = msg[:maxLen] + "…"
+	}
+	if msg == "" {
+		return fmt.Errorf("%s %s: %d %s", method, path, status, http.StatusText(status))
+	}
+	return fmt.Errorf("%s %s: %d %s: %s", method, path, status, http.StatusText(status), msg)
+}
+
 func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -207,7 +223,7 @@ func (c *Client) doOnce(req *http.Request) ([]byte, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, http.StatusText(resp.StatusCode))
+		return nil, httpStatusError(req.Method, req.URL.Path, resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
@@ -265,7 +281,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("%s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, http.StatusText(resp.StatusCode))
+			return nil, httpStatusError(req.Method, req.URL.Path, resp.StatusCode, respBody)
 		}
 
 		return respBody, nil

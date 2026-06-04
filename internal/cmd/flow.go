@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -296,22 +297,31 @@ func renderFlowResult(w io.Writer, data []byte) error {
 		tbl := &format.Table{
 			Headers: []string{"Field", "Type", "Required", "Default"},
 		}
+		var sections []haapi.SchemaField
 		for _, f := range flow.DataSchema {
-			req := "no"
-			if f.Required {
-				req = "yes"
+			appendSchemaRows(tbl, f, "")
+			if len(f.Schema) > 0 {
+				sections = append(sections, f)
 			}
-			def := ""
-			if f.Default != nil {
-				def = fmt.Sprintf("%v", f.Default)
-			}
-			typ := f.Type
-			if typ == "" {
-				typ = "string"
-			}
-			tbl.Rows = append(tbl.Rows, []string{f.Name, typ, req, def})
 		}
-		return tbl.Render(w, format.RenderOpts{Full: true})
+		if err := tbl.Render(w, format.RenderOpts{Full: true}); err != nil {
+			return err
+		}
+		// Hint how to submit expandable sections, which must be nested under
+		// their section name in --data (HA rejects flat keys with a 400).
+		for _, s := range sections {
+			parts := make([]string, len(s.Schema))
+			for i, sub := range s.Schema {
+				typ := sub.Type
+				if typ == "" {
+					typ = "string"
+				}
+				parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, typ)
+			}
+			_, _ = fmt.Fprintf(w, "\n%q is an expandable section — nest its fields in --data:\n", s.Name)
+			_, _ = fmt.Fprintf(w, "  {%q: {%s}}\n", s.Name, strings.Join(parts, ", "))
+		}
+		return nil
 	}
 
 	// Result payload for create_entry / abort
@@ -322,4 +332,30 @@ func renderFlowResult(w io.Writer, data []byte) error {
 	}
 
 	return nil
+}
+
+// appendSchemaRows adds a schema field (and, for expandable sections, its
+// nested sub-fields) to the table. Sub-fields are shown with a dotted path
+// (e.g. "advanced.framerate") so the nesting is visible at a glance.
+func appendSchemaRows(tbl *format.Table, f haapi.SchemaField, prefix string) {
+	name := f.Name
+	if prefix != "" {
+		name = prefix + "." + f.Name
+	}
+	req := "no"
+	if f.Required {
+		req = "yes"
+	}
+	def := ""
+	if f.Default != nil {
+		def = fmt.Sprintf("%v", f.Default)
+	}
+	typ := f.Type
+	if typ == "" {
+		typ = "string"
+	}
+	tbl.Rows = append(tbl.Rows, []string{name, typ, req, def})
+	for _, sub := range f.Schema {
+		appendSchemaRows(tbl, sub, name)
+	}
 }
