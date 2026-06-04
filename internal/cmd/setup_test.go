@@ -117,15 +117,7 @@ func TestSetup_DefaultsToCwd(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
+	t.Chdir(dir)
 
 	// Ensure flagDir is empty so cwd is used.
 	old := flagDir
