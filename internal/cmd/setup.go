@@ -19,7 +19,7 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Interactive first-time setup — creates ~/.hactl/default/.env",
+	Short: "Interactive first-time setup — creates .env in the current directory",
 	Long:  "Guides you through connecting hactl to a Home Assistant instance.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Write directly to os.Stdout so interactive prompts are visible
@@ -42,11 +42,11 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 		}
 		dir = abs
 	} else {
-		home, err := os.UserHomeDir()
+		cwd, err := os.Getwd()
 		if err != nil {
-			return fmt.Errorf("cannot determine home directory: %w", err)
+			return fmt.Errorf("cannot determine current directory: %w", err)
 		}
-		dir = filepath.Join(home, ".hactl", "default")
+		dir = cwd
 	}
 	envPath := filepath.Join(dir, ".env")
 
