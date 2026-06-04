@@ -41,6 +41,18 @@ var configOptionsCmd = &cobra.Command{
 	},
 }
 
+var flagConfigConfirm bool
+
+var configDeleteCmd = &cobra.Command{
+	Use:   "delete <entry_id>",
+	Short: "Delete a config entry (dry-run by default)",
+	Long:  "Delete a config entry by ID. Dry-run by default — use --confirm to apply.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 var configFlowStartCmd = &cobra.Command{
 	Use:   "flow-start <domain>",
 	Short: "Start a config flow for an integration",
@@ -84,10 +96,11 @@ Without --options, the inspect reads from the config flow endpoint instead of th
 
 func init() {
 	configEntriesCmd.Flags().StringVar(&flagConfigDomain, "domain", "", "filter entries by integration domain")
+	configDeleteCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually delete (default is dry-run)")
 	configFlowStepCmd.Flags().StringVar(&flagFlowData, "data", "{}", "JSON data to submit to the flow step")
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFlowInspectCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
-	configCmd.AddCommand(configEntriesCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd)
+	configCmd.AddCommand(configEntriesCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
@@ -152,6 +165,37 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {
+	if !flagConfigConfirm {
+		_, _ = fmt.Fprintln(w, "dry-run: would delete config entry")
+		_, _ = fmt.Fprintf(w, "  entry_id: %s\n", entryID)
+		_, _ = fmt.Fprintln(w, "use --confirm to apply")
+		return nil
+	}
+
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+	client := haapi.New(cfg.URL, cfg.Token)
+	data, err := client.DeleteConfigEntry(ctx, entryID)
+	if err != nil {
+		return fmt.Errorf("deleting config entry: %w", err)
+	}
+
+	if flagJSON {
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w)
+		return err
+	}
+
+	_, _ = fmt.Fprintf(w, "deleted config entry %q\n", entryID)
+	return nil
 }
 
 func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {

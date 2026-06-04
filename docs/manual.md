@@ -212,6 +212,7 @@ Templates evaluated server-side by HA's Jinja engine — semantically correct, i
 ```bash
 hactl config entries                              # list all config entries (entry_id, domain, title, state, version)
 hactl config entries --domain zha                 # filter by integration domain
+hactl config delete <entry_id>                    # delete a config entry (dry-run; add --confirm to apply)
 hactl config options <entry_id>                   # start options flow for an existing config entry
 hactl config flow-start <domain>                  # start a new config flow for a domain/integration
 hactl config flow-step <flow_id> --data '{...}'   # submit data to advance a flow step
