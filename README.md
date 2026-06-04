@@ -91,7 +91,7 @@ cosign verify-blob --bundle checksums.txt.sig checksums.txt
 hactl setup
 ```
 
-`hactl setup` prompts for the HA URL and a long-lived token, tests connectivity, and writes `~/.hactl/default/.env`. The companion add-on is auto-detected if installed.
+`hactl setup` prompts for the HA URL and a long-lived token, tests connectivity, and writes `.env` in the current directory (or the path given via `--dir`). The companion add-on is auto-detected if installed.
 
 To create a token: HA → Profile → Long-lived access tokens.
 
