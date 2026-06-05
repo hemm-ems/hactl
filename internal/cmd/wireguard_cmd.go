@@ -104,9 +104,60 @@ func writeWireguardStatus(w io.Writer, st *companion.WireGuardStatusResponse) {
 	for _, p := range st.Peers {
 		hs := p.LatestHandshake
 		if hs == "" {
-			hs = "(no handshake)"
+			hs = "(none)"
 		}
-		_, _ = fmt.Fprintf(w, "  peer   %s  hs=%q  rx=%s tx=%s\n", p.Endpoint, hs, p.TransferRx, p.TransferTx)
+		_, _ = fmt.Fprintf(w, "  peer   %s  hs=%s  rx=%s tx=%s\n", p.Endpoint, hs, p.TransferRx, p.TransferTx)
+	}
+	writeWireguardMonitor(w, st.Monitor)
+}
+
+func writeWireguardMonitor(w io.Writer, m *companion.WireGuardMonitor) {
+	if m == nil || !m.Running {
+		_, _ = fmt.Fprintln(w, "  monitor  not running (no hostname-endpoint peer)")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  monitor  running  hostnames=%d\n", len(m.Hostnames))
+	if m.LastReresolveSecsAgo != nil {
+		// Show the most recent resolved address if we have one.
+		ip := ""
+		for _, v := range m.Resolved {
+			ip = v
+			break
+		}
+		_, _ = fmt.Fprintf(w, "    last re-resolve  %s ago", fmtAge(*m.LastReresolveSecsAgo))
+		if ip != "" {
+			_, _ = fmt.Fprintf(w, " → %s", ip)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+	if m.Healthy {
+		_, _ = fmt.Fprintln(w, "    state  healthy")
+	} else {
+		next := ""
+		if m.NextRetrySecs != nil {
+			next = ", next in " + fmtAge(*m.NextRetrySecs)
+		}
+		_, _ = fmt.Fprintf(w, "    state  reconnecting (attempt %d%s)\n", m.Attempt, next)
+	}
+	if m.LastError != "" {
+		_, _ = fmt.Fprintf(w, "    last error  %s\n", m.LastError)
+	}
+}
+
+// fmtAge renders a non-negative seconds count compactly (e.g. "1m46s").
+func fmtAge(secs int) string {
+	if secs < 0 {
+		secs = 0
+	}
+	switch {
+	case secs < 60:
+		return fmt.Sprintf("%ds", secs)
+	case secs < 3600:
+		return fmt.Sprintf("%dm%ds", secs/60, secs%60)
+	case secs < 86400:
+		return fmt.Sprintf("%dh%dm", secs/3600, (secs%3600)/60)
+	default:
+		return fmt.Sprintf("%dd%dh", secs/86400, (secs%86400)/3600)
 	}
 }
 
