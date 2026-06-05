@@ -2,8 +2,9 @@ name: Auto Release
 
 on:
   schedule:
-    # 5th of each month at 10:00 UTC — after HA's monthly release
-    - cron: "0 10 5 * *"
+    # 5th of each month at 10:23 UTC — after HA's monthly release.
+    # Off the top of the hour: GitHub delays/drops schedules at :00 under load.
+    - cron: "23 10 5 * *"
   workflow_dispatch:
     inputs:
       version:
