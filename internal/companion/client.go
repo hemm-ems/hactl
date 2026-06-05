@@ -424,6 +424,32 @@ func (c *Client) WireGuardStop(ctx context.Context, tunnel string) (*WireGuardAc
 	return &r, json.Unmarshal(data, &r)
 }
 
+// --- Logs ---
+
+// Logs calls GET /v1/logs with the given filters and returns recent companion
+// log records from the add-on's in-memory ring buffer.
+func (c *Client) Logs(ctx context.Context, p LogsParams) (*LogsResponse, error) {
+	q := url.Values{}
+	if p.Component != "" {
+		q.Set("component", p.Component)
+	}
+	if p.Level != "" {
+		q.Set("level", p.Level)
+	}
+	if p.Since != "" {
+		q.Set("since", p.Since)
+	}
+	if p.Limit > 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	data, err := c.doGet(ctx, "/v1/logs", q)
+	if err != nil {
+		return nil, err
+	}
+	var r LogsResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
 func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]byte, error) {
 	u := c.baseURL + path
 	if query != nil {

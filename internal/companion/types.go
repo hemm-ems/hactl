@@ -154,10 +154,11 @@ type HelperCreateResponse struct {
 // WireGuardStatusResponse is the response from GET /v1/wireguard/status.
 // When the tunnel is inactive only Tunnel and State are populated.
 type WireGuardStatusResponse struct {
-	Tunnel    string          `json:"tunnel"`
-	State     string          `json:"state"` // "active" | "inactive"
-	Interface *WireGuardIface `json:"interface,omitempty"`
-	Peers     []WireGuardPeer `json:"peers,omitempty"`
+	Tunnel    string            `json:"tunnel"`
+	State     string            `json:"state"` // "active" | "inactive"
+	Interface *WireGuardIface   `json:"interface,omitempty"`
+	Peers     []WireGuardPeer   `json:"peers,omitempty"`
+	Monitor   *WireGuardMonitor `json:"monitor,omitempty"`
 }
 
 // WireGuardIface holds the local interface details of an active tunnel.
@@ -166,18 +167,58 @@ type WireGuardIface struct {
 	ListeningPort int    `json:"listening_port,omitempty"`
 }
 
-// WireGuardPeer holds per-peer details from `wg show`.
+// WireGuardPeer holds per-peer details from `wg show <tunnel> dump`. The
+// *Secs/*Bytes fields are the raw numerics; the string fields are humanized.
 type WireGuardPeer struct {
-	PublicKey       string `json:"public_key,omitempty"`
-	Endpoint        string `json:"endpoint,omitempty"`
-	AllowedIPs      string `json:"allowed_ips,omitempty"`
-	LatestHandshake string `json:"latest_handshake,omitempty"`
-	TransferRx      string `json:"transfer_rx,omitempty"`
-	TransferTx      string `json:"transfer_tx,omitempty"`
+	PublicKey           string `json:"public_key,omitempty"`
+	Endpoint            string `json:"endpoint,omitempty"`
+	AllowedIPs          string `json:"allowed_ips,omitempty"`
+	LatestHandshake     string `json:"latest_handshake,omitempty"`
+	LatestHandshakeSecs *int   `json:"latest_handshake_secs,omitempty"`
+	TransferRx          string `json:"transfer_rx,omitempty"`
+	TransferTx          string `json:"transfer_tx,omitempty"`
+	TransferRxBytes     int64  `json:"transfer_rx_bytes,omitempty"`
+	TransferTxBytes     int64  `json:"transfer_tx_bytes,omitempty"`
+}
+
+// WireGuardMonitor reflects the companion's live dyndns re-resolution monitor.
+type WireGuardMonitor struct {
+	Running              bool              `json:"running"`
+	Hostnames            []string          `json:"hostnames,omitempty"`
+	Healthy              bool              `json:"healthy,omitempty"`
+	Resolved             map[string]string `json:"resolved,omitempty"`
+	LastCheckSecsAgo     *int              `json:"last_check_secs_ago,omitempty"`
+	LastReresolveSecsAgo *int              `json:"last_reresolve_secs_ago,omitempty"`
+	Attempt              int               `json:"attempt,omitempty"`
+	NextRetrySecs        *int              `json:"next_retry_secs,omitempty"`
+	LastError            string            `json:"last_error,omitempty"`
 }
 
 // WireGuardActionResponse is the response from config/start/stop.
 type WireGuardActionResponse struct {
 	Status string `json:"status"`
 	Tunnel string `json:"tunnel"`
+}
+
+// --- Logs ---
+
+// LogsResponse is the response from GET /v1/logs.
+type LogsResponse struct {
+	Entries []LogEntry `json:"entries"`
+}
+
+// LogEntry is a single captured companion log record. Ts is epoch seconds.
+type LogEntry struct {
+	Ts      float64 `json:"ts"`
+	Level   string  `json:"level"`
+	Name    string  `json:"name"`
+	Message string  `json:"message"`
+}
+
+// LogsParams are the optional filters for GET /v1/logs.
+type LogsParams struct {
+	Component string // friendly alias (e.g. "wireguard") or logger-name substring
+	Level     string // minimum severity
+	Since     string // relative duration like "30m", "24h"
+	Limit     int    // 0 = no limit
 }

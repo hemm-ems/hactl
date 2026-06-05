@@ -286,6 +286,21 @@ hactl cc logs hacs --unique               # CC-specific errors, deduplicated
 
 Log source: WS `system_log/list` (structured, preferred) with automatic fallback to REST `/api/error_log`.
 
+`hactl log` shows **Home Assistant core** logs only. Add-on logs (including the
+companion's own WireGuard/dyndns monitor output) run in a separate Supervisor
+container and never reach the core logger — they will **not** appear here. To read
+the companion's own logs, use `hactl companion logs` (see below).
+
+```bash
+hactl companion logs                           # recent companion add-on logs
+hactl companion logs --component wireguard      # just the WG tunnel + dyndns monitor
+hactl companion logs --component wireguard --since 1h --level warning
+```
+
+Companion logs come from an in-memory ring buffer on the add-on, fetched over the
+same Ingress lifeline as the other companion commands. `--since`/`--top` set the
+time window and max line count. Requires hactl-companion.
+
 ### Cache & version
 
 ```bash
@@ -301,7 +316,7 @@ hactl rtfm                                # print this manual (for LLM self-teac
 ### WireGuard (companion lifeline)
 
 ```bash
-hactl companion wireguard status                       # tunnel state, handshake, transfer
+hactl companion wireguard status                       # tunnel state, handshake, rx/tx, monitor
 hactl companion wireguard config -f peer.conf --confirm # push a .conf (persisted on /data)
 hactl companion wireguard up --confirm                 # bring the tunnel up now
 hactl companion wireguard down --confirm               # bring the tunnel down now
