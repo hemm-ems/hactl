@@ -125,7 +125,7 @@ func (c *Client) ReadConfigBlock(ctx context.Context, path, id string) (*ConfigB
 func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryRun bool) (*ConfigWriteResponse, error) {
 	q := url.Values{
 		"path":    {path},
-			"dry_run": {strconv.FormatBool(dryRun)},
+		"dry_run": {strconv.FormatBool(dryRun)},
 	}
 	data, err := c.doPut(ctx, "/v1/config/file", q, content)
 	if err != nil {
@@ -162,7 +162,7 @@ func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse,
 func (c *Client) WriteTemplate(ctx context.Context, id, content string, dryRun bool) (*ConfigDeleteResponse, error) {
 	q := url.Values{
 		"id":      {id},
-			"dry_run": {strconv.FormatBool(dryRun)},
+		"dry_run": {strconv.FormatBool(dryRun)},
 	}
 	data, err := c.doPut(ctx, "/v1/config/template", q, content)
 	if err != nil {
@@ -224,7 +224,7 @@ func (c *Client) GetScriptDef(ctx context.Context, id string) (*ScriptResponse, 
 func (c *Client) WriteScriptDef(ctx context.Context, id, content string, dryRun bool) (*ConfigDeleteResponse, error) {
 	q := url.Values{
 		"id":      {id},
-			"dry_run": {strconv.FormatBool(dryRun)},
+		"dry_run": {strconv.FormatBool(dryRun)},
 	}
 	data, err := c.doPut(ctx, "/v1/config/script", q, content)
 	if err != nil {
@@ -282,7 +282,7 @@ func (c *Client) GetAutomationDef(ctx context.Context, id string) (*AutomationRe
 func (c *Client) WriteAutomationDef(ctx context.Context, id, content string, dryRun bool) (*ConfigDeleteResponse, error) {
 	q := url.Values{
 		"id":      {id},
-			"dry_run": {strconv.FormatBool(dryRun)},
+		"dry_run": {strconv.FormatBool(dryRun)},
 	}
 	data, err := c.doPut(ctx, "/v1/config/automation", q, content)
 	if err != nil {
@@ -377,6 +377,51 @@ func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResp
 func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
 	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "")
 	return err
+}
+
+// --- WireGuard tunnel management ---
+
+// WireGuardStatus calls GET /v1/wireguard/status?tunnel=<tunnel>.
+func (c *Client) WireGuardStatus(ctx context.Context, tunnel string) (*WireGuardStatusResponse, error) {
+	data, err := c.doGet(ctx, "/v1/wireguard/status", url.Values{"tunnel": {tunnel}})
+	if err != nil {
+		return nil, err
+	}
+	var r WireGuardStatusResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
+// WireGuardConfig calls POST /v1/wireguard/config?tunnel=<tunnel> with a raw
+// `.conf` body (text/plain).
+func (c *Client) WireGuardConfig(ctx context.Context, tunnel, conf string) (*WireGuardActionResponse, error) {
+	data, err := c.doPostBody(ctx, "/v1/wireguard/config", url.Values{"tunnel": {tunnel}}, conf)
+	if err != nil {
+		return nil, err
+	}
+	var r WireGuardActionResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
+// WireGuardStart calls POST /v1/wireguard/start?tunnel=<tunnel>&auto_enable=<autoEnable>.
+func (c *Client) WireGuardStart(ctx context.Context, tunnel string, autoEnable bool) (*WireGuardActionResponse, error) {
+	q := url.Values{"tunnel": {tunnel}, "auto_enable": {strconv.FormatBool(autoEnable)}}
+	data, err := c.doPostBody(ctx, "/v1/wireguard/start", q, "")
+	if err != nil {
+		return nil, err
+	}
+	var r WireGuardActionResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
+// WireGuardStop calls POST /v1/wireguard/stop?tunnel=<tunnel>&auto_disable=<autoDisable>.
+func (c *Client) WireGuardStop(ctx context.Context, tunnel string, autoDisable bool) (*WireGuardActionResponse, error) {
+	q := url.Values{"tunnel": {tunnel}, "auto_disable": {strconv.FormatBool(autoDisable)}}
+	data, err := c.doPostBody(ctx, "/v1/wireguard/stop", q, "")
+	if err != nil {
+		return nil, err
+	}
+	var r WireGuardActionResponse
+	return &r, json.Unmarshal(data, &r)
 }
 
 func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]byte, error) {

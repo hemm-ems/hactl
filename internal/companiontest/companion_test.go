@@ -11,6 +11,33 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 )
 
+func TestWireGuardStatusAndConfig(t *testing.T) {
+	ctx := context.Background()
+
+	// No tunnel configured yet → inactive. Exercises the client's WG status
+	// path through the real Ingress-authed companion (a bare bearer token 401s).
+	st, err := testClient.WireGuardStatus(ctx, "wg0")
+	if err != nil {
+		t.Fatalf("wireguard status: %v", err)
+	}
+	if st.State != "inactive" {
+		t.Errorf("state = %q, want inactive", st.State)
+	}
+
+	// Pushing a config persists it (to /data/wireguard) and returns configured.
+	// We don't start it here — bringing the interface up needs NET_ADMIN, which
+	// the dockerized WG handshake suite in the companion repo already covers.
+	conf := "[Interface]\nPrivateKey = WErlf9aEKj0DhPait1rk5OgOV2RGeikMkX2dbK8gxiHo=\nAddress = 10.6.0.2/24\n\n" +
+		"[Peer]\nPublicKey = FE5OhQCNLLxF1OdDBIDMf5ktc8sEFngHoxy2o5iMhxs=\nAllowedIPs = 10.6.0.0/24\n"
+	res, err := testClient.WireGuardConfig(ctx, "wg0", conf)
+	if err != nil {
+		t.Fatalf("wireguard config: %v", err)
+	}
+	if res.Status != "configured" || res.Tunnel != "wg0" {
+		t.Errorf("config response = %+v, want configured/wg0", res)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	h, err := testClient.Health(context.Background())
 	if err != nil {

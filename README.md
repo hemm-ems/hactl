@@ -109,6 +109,8 @@ Install it from HA → Settings → Add-ons, then run `hactl setup` or `hactl he
 
 Run `hactl companion status` to diagnose connectivity.
 
+**Remote lifeline.** The companion can also run a WireGuard tunnel so an instance stays reachable from anywhere. Manage it with `hactl companion wireguard {status,config,up,down}` — configs persist across restarts and tunnels brought up with `--auto` reconnect on boot.
+
 ---
 
 [Manual](docs/manual.md) · [LLM tuning notes](docs/llm-tuning.md) · [Testing](docs/testing.md)

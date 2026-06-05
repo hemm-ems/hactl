@@ -8,12 +8,12 @@ type HealthResponse struct {
 
 // StatusResponse is the response from GET /v1/status.
 type StatusResponse struct {
-	Version            string `json:"version"`
+	Version             string `json:"version"`
 	SupervisorReachable bool   `json:"supervisor_reachable"`
-	HasHACLI           bool   `json:"has_ha_cli"`
-	ConfigWritable     bool   `json:"config_writable"`
-	IngressActive      bool   `json:"ingress_active"`
-	AuthMode           string `json:"auth_mode"`
+	HasHACLI            bool   `json:"has_ha_cli"`
+	ConfigWritable      bool   `json:"config_writable"`
+	IngressActive       bool   `json:"ingress_active"`
+	AuthMode            string `json:"auth_mode"`
 }
 
 // ConfigFilesResponse is the response from GET /v1/config/files.
@@ -147,4 +147,39 @@ type HelperResponse struct {
 type HelperCreateResponse struct {
 	Status string `json:"status"`
 	ID     string `json:"id"`
+}
+
+// --- WireGuard ---
+
+// WireGuardStatusResponse is the response from GET /v1/wireguard/status.
+// When the tunnel is inactive only Tunnel and State are populated.
+type WireGuardStatusResponse struct {
+	Tunnel     string          `json:"tunnel"`
+	State      string          `json:"state"` // "active" | "inactive"
+	AutoEnable bool            `json:"auto_enable,omitempty"`
+	Interface  *WireGuardIface `json:"interface,omitempty"`
+	Peers      []WireGuardPeer `json:"peers,omitempty"`
+}
+
+// WireGuardIface holds the local interface details of an active tunnel.
+type WireGuardIface struct {
+	PublicKey     string `json:"public_key,omitempty"`
+	ListeningPort int    `json:"listening_port,omitempty"`
+}
+
+// WireGuardPeer holds per-peer details from `wg show`.
+type WireGuardPeer struct {
+	PublicKey       string `json:"public_key,omitempty"`
+	Endpoint        string `json:"endpoint,omitempty"`
+	AllowedIPs      string `json:"allowed_ips,omitempty"`
+	LatestHandshake string `json:"latest_handshake,omitempty"`
+	TransferRx      string `json:"transfer_rx,omitempty"`
+	TransferTx      string `json:"transfer_tx,omitempty"`
+}
+
+// WireGuardActionResponse is the response from config/start/stop.
+type WireGuardActionResponse struct {
+	Status     string `json:"status"`
+	Tunnel     string `json:"tunnel"`
+	AutoEnable bool   `json:"auto_enable"`
 }
