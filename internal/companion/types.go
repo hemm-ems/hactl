@@ -154,11 +154,10 @@ type HelperCreateResponse struct {
 // WireGuardStatusResponse is the response from GET /v1/wireguard/status.
 // When the tunnel is inactive only Tunnel and State are populated.
 type WireGuardStatusResponse struct {
-	Tunnel     string          `json:"tunnel"`
-	State      string          `json:"state"` // "active" | "inactive"
-	AutoEnable bool            `json:"auto_enable,omitempty"`
-	Interface  *WireGuardIface `json:"interface,omitempty"`
-	Peers      []WireGuardPeer `json:"peers,omitempty"`
+	Tunnel    string          `json:"tunnel"`
+	State     string          `json:"state"` // "active" | "inactive"
+	Interface *WireGuardIface `json:"interface,omitempty"`
+	Peers     []WireGuardPeer `json:"peers,omitempty"`
 }
 
 // WireGuardIface holds the local interface details of an active tunnel.
@@ -179,7 +178,6 @@ type WireGuardPeer struct {
 
 // WireGuardActionResponse is the response from config/start/stop.
 type WireGuardActionResponse struct {
-	Status     string `json:"status"`
-	Tunnel     string `json:"tunnel"`
-	AutoEnable bool   `json:"auto_enable"`
+	Status string `json:"status"`
+	Tunnel string `json:"tunnel"`
 }

@@ -18,11 +18,10 @@ func TestWireGuardStatusActive(t *testing.T) {
 			t.Errorf("tunnel param = %q, want wg0", got)
 		}
 		_ = json.NewEncoder(w).Encode(WireGuardStatusResponse{
-			Tunnel:     "wg0",
-			State:      "active",
-			AutoEnable: true,
-			Interface:  &WireGuardIface{PublicKey: "PUB", ListeningPort: 36317},
-			Peers:      []WireGuardPeer{{Endpoint: "1.2.3.4:51820", LatestHandshake: "42 seconds ago"}},
+			Tunnel:    "wg0",
+			State:     "active",
+			Interface: &WireGuardIface{PublicKey: "PUB", ListeningPort: 36317},
+			Peers:     []WireGuardPeer{{Endpoint: "1.2.3.4:51820", LatestHandshake: "42 seconds ago"}},
 		})
 	}))
 	defer srv.Close()
@@ -32,8 +31,8 @@ func TestWireGuardStatusActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WireGuardStatus: %v", err)
 	}
-	if st.State != "active" || !st.AutoEnable {
-		t.Errorf("got state=%q auto=%v, want active/true", st.State, st.AutoEnable)
+	if st.State != "active" {
+		t.Errorf("got state=%q, want active", st.State)
 	}
 	if st.Interface == nil || st.Interface.ListeningPort != 36317 {
 		t.Errorf("interface = %+v, want port 36317", st.Interface)
@@ -91,20 +90,20 @@ func TestWireGuardStart(t *testing.T) {
 		if r.URL.Path != "/v1/wireguard/start" {
 			t.Errorf("path = %q, want /v1/wireguard/start", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("auto_enable"); got != "true" {
-			t.Errorf("auto_enable = %q, want true", got)
+		if got := r.URL.Query().Get("tunnel"); got != "wg0" {
+			t.Errorf("tunnel = %q, want wg0", got)
 		}
-		_ = json.NewEncoder(w).Encode(WireGuardActionResponse{Status: "started", Tunnel: "wg0", AutoEnable: true})
+		_ = json.NewEncoder(w).Encode(WireGuardActionResponse{Status: "started", Tunnel: "wg0"})
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL, "test-token")
-	res, err := c.WireGuardStart(context.Background(), "wg0", true)
+	res, err := c.WireGuardStart(context.Background(), "wg0")
 	if err != nil {
 		t.Fatalf("WireGuardStart: %v", err)
 	}
-	if res.Status != "started" || !res.AutoEnable {
-		t.Errorf("got status=%q auto=%v, want started/true", res.Status, res.AutoEnable)
+	if res.Status != "started" {
+		t.Errorf("got status=%q, want started", res.Status)
 	}
 }
 
@@ -113,15 +112,15 @@ func TestWireGuardStop(t *testing.T) {
 		if r.URL.Path != "/v1/wireguard/stop" {
 			t.Errorf("path = %q, want /v1/wireguard/stop", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("auto_disable"); got != "true" {
-			t.Errorf("auto_disable = %q, want true", got)
+		if got := r.URL.Query().Get("tunnel"); got != "wg0" {
+			t.Errorf("tunnel = %q, want wg0", got)
 		}
 		_ = json.NewEncoder(w).Encode(WireGuardActionResponse{Status: "stopped", Tunnel: "wg0"})
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL, "test-token")
-	res, err := c.WireGuardStop(context.Background(), "wg0", true)
+	res, err := c.WireGuardStop(context.Background(), "wg0")
 	if err != nil {
 		t.Fatalf("WireGuardStop: %v", err)
 	}

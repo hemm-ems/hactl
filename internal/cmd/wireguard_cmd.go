@@ -15,11 +15,9 @@ import (
 )
 
 var (
-	flagWGTunnel      string
-	flagWGConfFile    string
-	flagWGConfirm     bool
-	flagWGAuto        bool
-	flagWGAutoDisable bool
+	flagWGTunnel   string
+	flagWGConfFile string
+	flagWGConfirm  bool
 )
 
 var wireguardCmd = &cobra.Command{
@@ -50,7 +48,7 @@ var wireguardConfigCmd = &cobra.Command{
 
 var wireguardUpCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Bring the tunnel up (use --auto to reconnect on boot)",
+	Short: "Bring the tunnel up",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runWireguardUp(cmd.Context(), cmd.OutOrStdout())
 	},
@@ -70,10 +68,8 @@ func init() {
 	wireguardConfigCmd.Flags().StringVarP(&flagWGConfFile, "file", "f", "", "path to a WireGuard .conf file")
 	wireguardConfigCmd.Flags().BoolVar(&flagWGConfirm, "confirm", false, "actually push (default is dry-run)")
 
-	wireguardUpCmd.Flags().BoolVar(&flagWGAuto, "auto", false, "also auto-reconnect on boot")
 	wireguardUpCmd.Flags().BoolVar(&flagWGConfirm, "confirm", false, "actually start (default is dry-run)")
 
-	wireguardDownCmd.Flags().BoolVar(&flagWGAutoDisable, "auto-disable", false, "also clear boot auto-reconnect")
 	wireguardDownCmd.Flags().BoolVar(&flagWGConfirm, "confirm", false, "actually stop (default is dry-run)")
 
 	wireguardCmd.AddCommand(wireguardStatusCmd, wireguardConfigCmd, wireguardUpCmd, wireguardDownCmd)
@@ -101,11 +97,7 @@ func writeWireguardStatus(w io.Writer, st *companion.WireGuardStatusResponse) {
 		_, _ = fmt.Fprintf(w, "wireguard %s  %s\n", st.Tunnel, st.State)
 		return
 	}
-	auto := "off"
-	if st.AutoEnable {
-		auto = "on"
-	}
-	_, _ = fmt.Fprintf(w, "wireguard %s  active  auto=%s\n", st.Tunnel, auto)
+	_, _ = fmt.Fprintf(w, "wireguard %s  active\n", st.Tunnel)
 	if st.Interface != nil {
 		_, _ = fmt.Fprintf(w, "  iface  pub=%s  port=%d\n", st.Interface.PublicKey, st.Interface.ListeningPort)
 	}
@@ -146,7 +138,7 @@ func runWireguardConfig(ctx context.Context, w io.Writer) error {
 
 func runWireguardUp(ctx context.Context, w io.Writer) error {
 	if !flagWGConfirm {
-		_, _ = fmt.Fprintf(w, "would start tunnel %s (auto=%v)\n", flagWGTunnel, flagWGAuto)
+		_, _ = fmt.Fprintf(w, "would start tunnel %s\n", flagWGTunnel)
 		_, _ = fmt.Fprintln(w, "dry-run: use --confirm to apply")
 		return nil
 	}
@@ -154,7 +146,7 @@ func runWireguardUp(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	res, err := cc.WireGuardStart(ctx, flagWGTunnel, flagWGAuto)
+	res, err := cc.WireGuardStart(ctx, flagWGTunnel)
 	if err != nil {
 		return err
 	}
@@ -163,7 +155,7 @@ func runWireguardUp(ctx context.Context, w io.Writer) error {
 
 func runWireguardDown(ctx context.Context, w io.Writer) error {
 	if !flagWGConfirm {
-		_, _ = fmt.Fprintf(w, "would stop tunnel %s (auto-disable=%v)\n", flagWGTunnel, flagWGAutoDisable)
+		_, _ = fmt.Fprintf(w, "would stop tunnel %s\n", flagWGTunnel)
 		_, _ = fmt.Fprintln(w, "dry-run: use --confirm to apply")
 		return nil
 	}
@@ -171,7 +163,7 @@ func runWireguardDown(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	res, err := cc.WireGuardStop(ctx, flagWGTunnel, flagWGAutoDisable)
+	res, err := cc.WireGuardStop(ctx, flagWGTunnel)
 	if err != nil {
 		return err
 	}
@@ -183,9 +175,6 @@ func writeWireguardAction(w io.Writer, res *companion.WireGuardActionResponse, _
 		return writeJSON(w, res)
 	}
 	_, _ = fmt.Fprintf(w, "wireguard %s  %s", res.Tunnel, res.Status)
-	if res.Status == "started" {
-		_, _ = fmt.Fprintf(w, "  auto=%v", res.AutoEnable)
-	}
 	_, _ = fmt.Fprintln(w)
 	return nil
 }
