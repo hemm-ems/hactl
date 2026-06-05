@@ -303,16 +303,17 @@ hactl rtfm                                # print this manual (for LLM self-teac
 ```bash
 hactl companion wireguard status                       # tunnel state, handshake, transfer
 hactl companion wireguard config -f peer.conf --confirm # push a .conf (persisted on /data)
-hactl companion wireguard up --auto --confirm          # bring up + auto-reconnect on boot
-hactl companion wireguard down --auto-disable --confirm # bring down + clear boot reconnect
+hactl companion wireguard up --confirm                 # bring the tunnel up now
+hactl companion wireguard down --confirm               # bring the tunnel down now
 ```
 
 Manages the companion's WireGuard tunnel — the remote lifeline hactl rides over. The
 endpoints are Ingress-only (a bare bearer token gets 401); this command handles the
 Supervisor Ingress session auth automatically. Configs persist on the add-on's `/data`
-volume and tunnels started with `--auto` reconnect after a reboot. Mutations are dry-run
-by default — pass `--confirm` to apply. Use `--tunnel <name>` for a non-default tunnel
-(default `wg0`). Requires hactl-companion.
+volume; `up`/`down` only affect the live interface. To have the tunnel return after a
+reboot, set the add-on's `vpn.enabled` option (it reconciles on every add-on (re)start).
+Mutations are dry-run by default — pass `--confirm` to apply. Use `--tunnel <name>` for a
+non-default tunnel (default `wg0`). Requires hactl-companion.
 
 ---
 

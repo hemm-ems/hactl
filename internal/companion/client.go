@@ -402,9 +402,9 @@ func (c *Client) WireGuardConfig(ctx context.Context, tunnel, conf string) (*Wir
 	return &r, json.Unmarshal(data, &r)
 }
 
-// WireGuardStart calls POST /v1/wireguard/start?tunnel=<tunnel>&auto_enable=<autoEnable>.
-func (c *Client) WireGuardStart(ctx context.Context, tunnel string, autoEnable bool) (*WireGuardActionResponse, error) {
-	q := url.Values{"tunnel": {tunnel}, "auto_enable": {strconv.FormatBool(autoEnable)}}
+// WireGuardStart calls POST /v1/wireguard/start?tunnel=<tunnel>.
+func (c *Client) WireGuardStart(ctx context.Context, tunnel string) (*WireGuardActionResponse, error) {
+	q := url.Values{"tunnel": {tunnel}}
 	data, err := c.doPostBody(ctx, "/v1/wireguard/start", q, "")
 	if err != nil {
 		return nil, err
@@ -413,9 +413,9 @@ func (c *Client) WireGuardStart(ctx context.Context, tunnel string, autoEnable b
 	return &r, json.Unmarshal(data, &r)
 }
 
-// WireGuardStop calls POST /v1/wireguard/stop?tunnel=<tunnel>&auto_disable=<autoDisable>.
-func (c *Client) WireGuardStop(ctx context.Context, tunnel string, autoDisable bool) (*WireGuardActionResponse, error) {
-	q := url.Values{"tunnel": {tunnel}, "auto_disable": {strconv.FormatBool(autoDisable)}}
+// WireGuardStop calls POST /v1/wireguard/stop?tunnel=<tunnel>.
+func (c *Client) WireGuardStop(ctx context.Context, tunnel string) (*WireGuardActionResponse, error) {
+	q := url.Values{"tunnel": {tunnel}}
 	data, err := c.doPostBody(ctx, "/v1/wireguard/stop", q, "")
 	if err != nil {
 		return nil, err
