@@ -281,14 +281,21 @@ func (w *Writer) findLatestBackup(automationID string) (string, error) {
 	return latest, nil
 }
 
+// maxLCSLines bounds the O(n·m) LCS table in diffLines: 4096² ints ≈ 128 MB
+// worst case, far beyond any automation config. Larger inputs fall back to a
+// positional diff instead of allocating quadratically.
+const maxLCSLines = 4096
+
 // diffLines produces a unified-diff-style line diff between two strings,
 // aligned on the longest common subsequence — an inserted or deleted line
-// doesn't mark everything after it as changed. Configs are small, so the
-// O(n·m) table is fine.
+// doesn't mark everything after it as changed.
 func diffLines(a, b string) []string {
 	aLines := splitLines(a)
 	bLines := splitLines(b)
 	n, m := len(aLines), len(bLines)
+	if n > maxLCSLines || m > maxLCSLines {
+		return diffLinesPositional(aLines, bLines)
+	}
 
 	lcs := make([][]int, n+1)
 	for i := range lcs {
@@ -325,6 +332,33 @@ func diffLines(a, b string) []string {
 	}
 	for ; j < m; j++ {
 		result = append(result, "+"+bLines[j])
+	}
+	return result
+}
+
+// diffLinesPositional is the line-by-line fallback for inputs too large for
+// the LCS table; an insertion shifts everything after it, but output stays
+// correct as a diff.
+func diffLinesPositional(aLines, bLines []string) []string {
+	var result []string
+	for i := range max(len(aLines), len(bLines)) {
+		var aLine, bLine string
+		if i < len(aLines) {
+			aLine = aLines[i]
+		}
+		if i < len(bLines) {
+			bLine = bLines[i]
+		}
+		if aLine == bLine {
+			result = append(result, " "+aLine)
+			continue
+		}
+		if i < len(aLines) {
+			result = append(result, "-"+aLine)
+		}
+		if i < len(bLines) {
+			result = append(result, "+"+bLine)
+		}
 	}
 	return result
 }

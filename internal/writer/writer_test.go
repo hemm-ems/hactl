@@ -67,6 +67,22 @@ func TestDiffLines_InsertionDoesNotShiftEverything(t *testing.T) {
 	}
 }
 
+func TestDiffLines_HugeInputFallsBackWithoutQuadraticAllocation(t *testing.T) {
+	// Inputs beyond maxLCSLines must take the positional path; this mainly
+	// guards that the cap exists (the LCS table would be ~170 GB here).
+	a := strings.Repeat("line\n", maxLCSLines+10)
+	lines := diffLines(a, a+"extra\n")
+	var plus int
+	for _, l := range lines {
+		if strings.HasPrefix(l, "+") {
+			plus++
+		}
+	}
+	if plus != 1 {
+		t.Errorf("want exactly one + line, got %d", plus)
+	}
+}
+
 func TestDiffLines_Addition(t *testing.T) {
 	lines := diffLines("foo\n", "foo\nbar\n")
 	hasPlus := false
