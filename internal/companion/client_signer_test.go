@@ -17,7 +17,7 @@ var errSessionFailed = errors.New("simulated ingress session failure")
 // session tokens so tests can verify cookie wiring and re-auth behavior.
 type fakeIngressAuth struct {
 	calls       atomic.Int64
-	failNthCall int    // 0 = never; 1-based index of call to fail
+	failNthCall int // 0 = never; 1-based index of call to fail
 	failWith    error
 	tokenPrefix string // defaults to "fake-sess"
 }

@@ -32,13 +32,13 @@ const (
 )
 
 var (
-	testClient *companion.Client
-	haURL      string
-	compURL    string
-	composeDir string
-	haToken    string // long-lived HA token for E2E tests
+	testClient  *companion.Client
+	haURL       string
+	compURL     string
+	composeDir  string
+	haToken     string // long-lived HA token for E2E tests
 	instanceDir string // temp dir with .env for hactl CLI E2E tests
-	hactlBin   string // path to built hactl binary
+	hactlBin    string // path to built hactl binary
 )
 
 func TestMain(m *testing.M) {

@@ -83,10 +83,10 @@ func TestParseMajor(t *testing.T) {
 
 func TestCheckVersionCompat(t *testing.T) {
 	tests := []struct {
-		name       string
-		hactl      string
-		companion  string
-		wantEmpty  bool
+		name      string
+		hactl     string
+		companion string
+		wantEmpty bool
 	}{
 		{"same version", "1.0.0", "1.0.0", true},
 		{"minor diff", "1.0.0", "1.5.0", true},

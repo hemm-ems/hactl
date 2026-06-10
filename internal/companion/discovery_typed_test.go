@@ -77,8 +77,8 @@ func TestDiscoveryErrorMessages(t *testing.T) {
 
 func TestMatchCompanion(t *testing.T) {
 	cases := []struct {
-		name    string
-		addons  []addonEntry
+		name     string
+		addons   []addonEntry
 		wantSlug string
 	}{
 		{
@@ -119,8 +119,8 @@ func TestMatchCompanion(t *testing.T) {
 			wantSlug: "",
 		},
 		{
-			name:    "empty list",
-			addons:  nil,
+			name:     "empty list",
+			addons:   nil,
 			wantSlug: "",
 		},
 		{
