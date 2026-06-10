@@ -41,12 +41,23 @@ jobs:
           fi
           echo "Latest HA-style tag: ${latest}"
 
-          # Parse vYYYY.M.PATCH and increment patch
+          # Parse vYYYY.M.PATCH and increment patch — unless the latest tag is
+          # from an earlier month: CalVer means a June patch after a May series
+          # starts the June series (vYYYY.M.0), it doesn't extend May's.
           ver=$(echo "$latest" | sed 's/^v//')
           yyyy=$(echo "$ver" | cut -d. -f1)
           m=$(echo "$ver" | cut -d. -f2)
           patch=$(echo "$ver" | cut -d. -f3)
-          next_patch=$((patch + 1))
+          now_yyyy=$(date -u +%Y)
+          now_m=$(date -u +%-m)
+          if [ "$yyyy" != "$now_yyyy" ] || [ "$m" != "$now_m" ]; then
+            echo "Latest tag ${latest} is from ${yyyy}.${m}; rolling over to ${now_yyyy}.${now_m}.0"
+            yyyy=${now_yyyy}
+            m=${now_m}
+            next_patch=0
+          else
+            next_patch=$((patch + 1))
+          fi
           next_tag="v${yyyy}.${m}.${next_patch}"
 
           echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
