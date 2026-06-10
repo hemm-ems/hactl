@@ -2,14 +2,20 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 var (
@@ -21,14 +27,18 @@ var (
 	flagColor     bool
 	flagStats     bool
 	flagTokensMax int
+	flagTimeout   time.Duration
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "hactl",
-	Short: "CLI for Home Assistant analysis & development",
-	Long:  "hactl – LLM-friendly CLI for Home Assistant analysis, debugging, and controlled automation management.",
+	Use:           "hactl",
+	Short:         "CLI for Home Assistant analysis & development",
+	Long:          "hactl – LLM-friendly CLI for Home Assistant analysis, debugging, and controlled automation management.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		haapi.DefaultTimeout = flagTimeout
+	},
 }
 
 func init() {
@@ -40,6 +50,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagColor, "color", false, "enable colored output")
 	rootCmd.PersistentFlags().BoolVar(&flagStats, "stats", false, "show response size and estimated token count")
 	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500, "cap output at N tokens (0 = no cap)")
+	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout for HA/companion API calls")
 }
 
 // statsWriter wraps an io.Writer and counts bytes written.
@@ -69,9 +80,11 @@ func writeStats(w io.Writer, byteCount int64) {
 // applyTokenPolicy writes data to dst prefixed with a token-estimate header.
 // When flagTokensMax > 0 and the estimated tokens exceed the limit, output is
 // truncated at a UTF-8 safe byte boundary and a hint is appended.
-// JSON mode skips the header so output remains valid JSON.
+// JSON mode skips the header and the cap so output remains valid JSON; the
+// token estimate goes to stderr instead so the cost is still visible.
 func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagJSON {
+		fmt.Fprintf(os.Stderr, "[~%d tok]\n", estimateTokens(int64(len(data))))
 		_, _ = dst.Write(data)
 		return
 	}
@@ -120,6 +133,12 @@ func Execute() error {
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		// Name the instance the failing command was talking to — with
+		// multi-instance discovery the target is otherwise invisible.
+		var nf *config.ConfigNotFoundError
+		if dir := config.ResolvedDir(); dir != "" && !errors.As(err, &nf) {
+			fmt.Fprintf(os.Stderr, "instance: %s\n", dir)
+		}
 		return err
 	}
 
@@ -136,6 +155,13 @@ func Execute() error {
 // RunWithOutput executes the command with the given args and captures output to w.
 // Used by integration tests to run hactl commands programmatically.
 func RunWithOutput(args []string, w io.Writer) error {
+	return RunWithOutputContext(context.Background(), args, w)
+}
+
+// RunWithOutputContext is RunWithOutput with a caller-supplied context. The
+// MCP server uses it so that a client cancelling a tool call aborts the
+// in-flight HA requests instead of leaving the command running.
+func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error {
 	var capBuf bytes.Buffer
 	rootCmd.SetOut(&capBuf)
 	rootCmd.SetArgs(args[1:]) // skip "hactl" binary name
@@ -154,7 +180,14 @@ func RunWithOutput(args []string, w io.Writer) error {
 		resetSubcommandFlags()
 	}()
 
-	err := rootCmd.Execute()
+	// Set the context on the target command explicitly: cobra only
+	// propagates the root context to a subcommand whose ctx is still nil,
+	// so a re-run command would otherwise keep the (long cancelled)
+	// context of its previous invocation.
+	if target, _, findErr := rootCmd.Find(args[1:]); findErr == nil {
+		target.SetContext(ctx)
+	}
+	err := rootCmd.ExecuteContext(ctx)
 
 	cmdPath := "hactl " + strings.Join(args[1:], " ")
 	applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
@@ -194,6 +227,9 @@ func resetSubcommandFlags() {
 	flagLabelIcon = ""
 	flagLabelDesc = ""
 	flagLabelConfirm = false
+	flagSetupURL = ""
+	flagSetupToken = ""
+	flagSetupForce = false
 	flagAreaConfirm = false
 	flagFloorConfirm = false
 	flagDashView = ""

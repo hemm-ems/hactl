@@ -45,7 +45,7 @@ func runHactlDir(t *testing.T, dir string, args ...string) string {
 }
 
 // runHactlErr executes a hactl command and returns both output and error.
-// Unlike runHactl, it does NOT t.Fatalf on error â€” use for error-path tests.
+// Unlike runHactl, it does NOT t.Fatalf on error — use for error-path tests.
 func runHactlErr(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("HACTL_DIR", ha.Dir())
@@ -122,15 +122,15 @@ func assertNotContains(t *testing.T, s, substr string) {
 
 // Regex patterns for sanitizing dynamic values in golden-file comparisons.
 var (
-	reTimestamp  = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?([+-]\d{2}:?\d{2}|Z)?`)
-	reShortTime  = regexp.MustCompile(`\b\d{2}:\d{2}\b`)
-	reShortDate  = regexp.MustCompile(`\b\d{2}-\d{2} \d{2}:\d{2}\b`)
-	reSunState   = regexp.MustCompile(`above_horizon|below_horizon`)
-	reHAVersion  = regexp.MustCompile(`HA \d{4}\.\d+\.\d+(\.\w+)?`)
-	rePort       = regexp.MustCompile(`localhost:\d{4,5}`)
-	reTempPath   = regexp.MustCompile(`(?:[A-Z]:[^\s]*?|/[^\s]*?)hatest-\d+`)
-	reErrors     = regexp.MustCompile(`errors=\d+`)
-	reHAState    = regexp.MustCompile(`state=(RUNNING|NOT_RUNNING|STARTING|STOPPING)`)
+	reTimestamp   = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?([+-]\d{2}:?\d{2}|Z)?`)
+	reShortTime   = regexp.MustCompile(`\b\d{2}:\d{2}\b`)
+	reShortDate   = regexp.MustCompile(`\b\d{2}-\d{2} \d{2}:\d{2}\b`)
+	reSunState    = regexp.MustCompile(`above_horizon|below_horizon`)
+	reHAVersion   = regexp.MustCompile(`HA \d{4}\.\d+\.\d+(\.\w+)?`)
+	rePort        = regexp.MustCompile(`localhost:\d{4,5}`)
+	reTempPath    = regexp.MustCompile(`(?:[A-Z]:[^\s]*?|/[^\s]*?)hatest-\d+`)
+	reErrors      = regexp.MustCompile(`errors=\d+`)
+	reHAState     = regexp.MustCompile(`state=(RUNNING|NOT_RUNNING|STARTING|STOPPING)`)
 	reCacheSize   = regexp.MustCompile(`\d+(\.\d+)? (KB|MB|GB|B)\b`)
 	reTokenHeader = regexp.MustCompile(`\[~\d+ tok\]`)
 )

@@ -17,7 +17,7 @@ import (
 
 // realisticHA provides a lazily-initialized HA instance with the "realistic" fixture.
 // The realistic fixture includes template sensors, input helpers, system_log,
-// and diverse automations â€” modelled after a real-world 381-automation installation.
+// and diverse automations — modelled after a real-world 381-automation installation.
 var (
 	realisticOnce sync.Once
 	realisticHA   *hatest.Instance
@@ -158,7 +158,7 @@ func TestRealisticLog(t *testing.T) {
 	// so the WS system_log/list path should work.
 	out, err := runHactlDirErr(t, inst.Dir(), "log")
 	if err != nil {
-		// Fresh HA may have no log entries â€” the REST fallback may also 404.
+		// Fresh HA may have no log entries — the REST fallback may also 404.
 		// As long as we don't panic, that's acceptable.
 		if !strings.Contains(out, "panic") {
 			t.Log("log command returned error (may be normal for fresh HA):", err)
@@ -367,7 +367,7 @@ func TestRealisticTraceShowCondensed(t *testing.T) {
 		t.Fatal("expected trace ID in auto show output, got none")
 	}
 
-	// Show condensed trace â€” full pipeline: ID resolve â†’ WS trace/get â†’ condense â†’ format
+	// Show condensed trace — full pipeline: ID resolve → WS trace/get → condense → format
 	traceOut := runHactlDir(t, inst.Dir(), "trace", "show", traceID)
 	assertNotContains(t, traceOut, "panic")
 	if len(traceOut) == 0 {
@@ -491,7 +491,7 @@ func TestRealisticEntHistInputBoolean(t *testing.T) {
 
 func TestRealisticEntAnomaliesBinarySensor(t *testing.T) {
 	inst := getRealisticHA(t)
-	// binary_sensor.front_door â€” short-lived test, so no stuck anomalies expected
+	// binary_sensor.front_door — short-lived test, so no stuck anomalies expected
 	out, err := runHactlDirErr(t, inst.Dir(), "ent", "anomalies", "binary_sensor.front_door", "--since", "1h")
 	if err != nil {
 		if strings.Contains(out, "no history") {
@@ -499,7 +499,7 @@ func TestRealisticEntAnomaliesBinarySensor(t *testing.T) {
 		}
 		t.Fatalf("ent anomalies binary_sensor failed: %v\noutput: %s", err, out)
 	}
-	// Should not panic or show "no numeric" â€” either "no anomalies" or anomalies table
+	// Should not panic or show "no numeric" — either "no anomalies" or anomalies table
 	assertNotContains(t, out, "no numeric")
 	assertNotContains(t, out, "panic")
 }
@@ -614,7 +614,7 @@ func TestRealisticIssues(t *testing.T) {
 func TestRealisticCCLs(t *testing.T) {
 	inst := getRealisticHA(t)
 	out := runHactlDir(t, inst.Dir(), "cc", "ls")
-	// Realistic fixture has no custom components â€” "no custom components" expected
+	// Realistic fixture has no custom components — "no custom components" expected
 	assertNotContains(t, out, "panic")
 }
 
@@ -643,7 +643,7 @@ func TestRealisticWSSystemLogList(t *testing.T) {
 		t.Logf("SystemLogList error: %v (may be expected)", err)
 		return
 	}
-	// Entries may be empty on fresh HA â€” that's OK
+	// Entries may be empty on fresh HA — that's OK
 	t.Logf("SystemLogList returned %d entries", len(entries))
 	for _, e := range entries {
 		if e.Name == "" {

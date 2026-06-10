@@ -772,21 +772,29 @@ func TestWSClient_TraceGet(t *testing.T) {
 	}
 }
 
-func TestWSClient_CheckConfig_OK(t *testing.T) {
+func TestWSClient_ValidateConfig_OK(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if cmd["type"] != "call_service" {
-			t.Errorf("expected call_service, got %q", cmd["type"])
+		if cmd["type"] != "validate_config" {
+			t.Errorf("expected validate_config, got %q", cmd["type"])
 			return
 		}
-		if cmd["service"] != "check_config" {
-			t.Errorf("service = %q, want 'check_config'", cmd["service"])
-			return
+		if cmd["triggers"] == nil {
+			t.Error("expected triggers section in validate_config payload")
+		}
+		if cmd["trigger"] != nil {
+			t.Error("payload must use plural keys; HA rejects singular ones")
+		}
+		if _, present := cmd["conditions"]; present {
+			t.Error("nil conditions section should be omitted from payload")
 		}
 		_ = c.WriteJSON(map[string]any{
 			"id":      cmd["id"],
 			"type":    "result",
 			"success": true,
-			"result":  map[string]any{"result": "valid"},
+			"result": map[string]any{
+				"triggers": map[string]any{"valid": true, "error": nil},
+				"actions":  map[string]any{"valid": true, "error": nil},
+			},
 		})
 	})
 	defer srv.Close()
@@ -794,22 +802,52 @@ func TestWSClient_CheckConfig_OK(t *testing.T) {
 	ws := connectWSTest(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	valid, err := ws.CheckConfig(context.Background())
+	trigger := []any{map[string]any{"platform": "time", "at": "09:00:00"}}
+	action := []any{map[string]any{"service": "light.turn_on"}}
+	result, err := ws.ValidateConfig(context.Background(), trigger, nil, action)
 	if err != nil {
-		t.Fatalf("CheckConfig: %v", err)
+		t.Fatalf("ValidateConfig: %v", err)
 	}
-	if !valid {
-		t.Error("CheckConfig returned false, want true")
+	if !result["triggers"].Valid || !result["actions"].Valid {
+		t.Errorf("expected valid triggers and actions, got %+v", result)
 	}
 }
 
-func TestWSClient_CheckConfig_Failure(t *testing.T) {
+func TestWSClient_ValidateConfig_Invalid(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		_ = c.WriteJSON(map[string]any{
+			"id":      cmd["id"],
+			"type":    "result",
+			"success": true,
+			"result": map[string]any{
+				"triggers": map[string]any{"valid": false, "error": "Invalid trigger platform 'tim'"},
+			},
+		})
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	result, err := ws.ValidateConfig(context.Background(), []any{map[string]any{"platform": "tim"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("ValidateConfig: %v", err)
+	}
+	if result["triggers"].Valid {
+		t.Error("expected invalid triggers")
+	}
+	if result["triggers"].Error == "" {
+		t.Error("expected error detail for invalid triggers")
+	}
+}
+
+func TestWSClient_ValidateConfig_Failure(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
 		_ = c.WriteJSON(map[string]any{
 			"id":      cmd["id"],
 			"type":    "result",
 			"success": false,
-			"error":   map[string]string{"code": "service_error", "message": "check_config failed"},
+			"error":   map[string]string{"code": "unknown_command", "message": "validate_config failed"},
 		})
 	})
 	defer srv.Close()
@@ -817,9 +855,9 @@ func TestWSClient_CheckConfig_Failure(t *testing.T) {
 	ws := connectWSTest(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	_, err := ws.CheckConfig(context.Background())
+	_, err := ws.ValidateConfig(context.Background(), []any{}, nil, nil)
 	if err == nil {
-		t.Fatal("expected error from failed check_config")
+		t.Fatal("expected error from failed validate_config")
 	}
 }
 

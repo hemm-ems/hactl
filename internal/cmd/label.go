@@ -180,10 +180,11 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 
 func truncateStr(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-1] + "â€¦"
+	return string(runes[:maxLen-1]) + "…"
 }
 
 // fetchRegistryContext fetches entity registry, areas, labels, and floors in sequence.

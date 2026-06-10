@@ -76,9 +76,61 @@ func TestLoad_CWD(t *testing.T) {
 	}
 }
 
+func TestLoad_ParentDir(t *testing.T) {
+	// .env with HA_URL in a parent of cwd is discovered (git-style walk).
+	parent := t.TempDir()
+	writeEnv(t, parent, "HA_URL="+testHAURL+"\nHA_TOKEN=parenttoken\n")
+	sub := filepath.Join(parent, "backups", "deep")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HACTL_DIR", "")
+	t.Chdir(sub)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Token != "parenttoken" {
+		t.Errorf("Token = %q, want %q", cfg.Token, "parenttoken")
+	}
+}
+
+func TestLoad_ParentDirWithoutHAURL_Skipped(t *testing.T) {
+	// A parent .env without HA_URL (e.g. an unrelated project .env) is
+	// skipped, and discovery falls through to ~/.hactl/default.
+	parent := t.TempDir()
+	writeEnv(t, parent, "NODE_ENV=production\n")
+	sub := filepath.Join(parent, "src")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	defaultDir := filepath.Join(home, ".hactl", "default")
+	if err := os.MkdirAll(defaultDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeEnv(t, defaultDir, "HA_URL="+testHAURL+"\nHA_TOKEN=defaulttoken\n")
+
+	t.Setenv("HOME", home)
+	t.Setenv("HACTL_DIR", "")
+	t.Chdir(sub)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Token != "defaulttoken" {
+		t.Errorf("Token = %q, want %q", cfg.Token, "defaulttoken")
+	}
+}
+
 func TestLoad_FallbackNoEnv(t *testing.T) {
 	// CWD with no .env, no HACTL_DIR — falls back to ~/.hactl/default/ which doesn't exist
-	dir := t.TempDir() // empty dir, no .env
+	dir := t.TempDir()            // empty dir, no .env
+	t.Setenv("HOME", t.TempDir()) // isolate from a real ~/.hactl/default
 	t.Setenv("HACTL_DIR", "")
 	t.Chdir(dir)
 
@@ -93,6 +145,7 @@ func TestLoad_FallbackNoEnv(t *testing.T) {
 
 func TestLoad_MissingEnv_HasDiscoveryOrder(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir()) // isolate from a real ~/.hactl/default
 	t.Setenv("HACTL_DIR", "")
 	t.Chdir(dir)
 
@@ -117,6 +170,7 @@ func TestLoad_MissingEnv_HasDiscoveryOrder(t *testing.T) {
 
 func TestLoad_MissingEnv_ExitCode(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir()) // isolate from a real ~/.hactl/default
 	t.Setenv("HACTL_DIR", "")
 	t.Chdir(dir)
 

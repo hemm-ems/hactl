@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 // IngressAuth obtains a Supervisor-issued Ingress session token. Used to
@@ -39,7 +42,11 @@ func New(baseURL, token string) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: haapi.DefaultTimeout,
+			Transport: &http.Transport{
+				Proxy:       http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{Timeout: haapi.DialTimeout}).DialContext,
+			},
 		},
 	}
 }

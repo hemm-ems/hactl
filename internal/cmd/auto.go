@@ -506,22 +506,6 @@ func formatShortTime(isoTime string) string {
 	return t.Format("01-02 15:04")
 }
 
-// parseSince converts a duration string like "24h" or "7d" to time.Duration.
-func parseSince(s string) (time.Duration, error) {
-	if after, found := strings.CutSuffix(s, "d"); found {
-		days, err := strconv.Atoi(after)
-		if err != nil {
-			return 0, fmt.Errorf("invalid duration: %s", s)
-		}
-		return time.Duration(days) * 24 * time.Hour, nil
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration: %s", s)
-	}
-	return d, nil
-}
-
 func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 	if flagAutoFile == "" {
 		return errors.New("--file / -f is required for diff")
@@ -598,15 +582,18 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		return err
 	}
 
+	if result.Validated {
+		_, _ = fmt.Fprintf(w, "\nvalidation: ok (HA validate_config)\n")
+	} else {
+		_, _ = fmt.Fprintf(w, "\nvalidation: skipped (validate_config unavailable; HA still validates on write)\n")
+	}
+
 	if result.DryRun {
-		_, _ = fmt.Fprintf(w, "\ndry-run: no changes written (use --confirm to apply)\n")
-		if result.BackupPath != "" {
-			_, _ = fmt.Fprintf(w, "backup: %s\n", result.BackupPath)
-		}
+		_, _ = fmt.Fprintf(w, "dry-run: no changes written to %s (use --confirm to apply)\n", autoID)
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(w, "\napplied: %s\n", autoID)
+	_, _ = fmt.Fprintf(w, "applied: %s\n", autoID)
 	if result.BackupPath != "" {
 		_, _ = fmt.Fprintf(w, "backup:  %s\n", result.BackupPath)
 	}

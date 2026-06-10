@@ -21,7 +21,7 @@ sleep 0.3
 # 1 — agent reads the manual (big load, show only token count)
 printf '  \033[1m●\033[0m hactl rtfm'
 sleep 1.4
-printf '                              \033[2m[manual loaded · 4218 tok]\033[0m\n'
+printf '                              \033[2m[manual loaded · 6231 tok]\033[0m\n'
 sleep 0.25
 
 # 2 — health check (compact, inline result)
@@ -47,4 +47,4 @@ printf '\n'
 stream '  Sensor offline since May 22 — numeric condition can'\''t evaluate.'
 sleep 0.1
 stream '  Likely dead Zigbee battery.'
-printf '  \033[2m[~100 tok across 3 tool calls + 4218 tok manual]\033[0m\n'
+printf '  \033[2m[~100 tok across 3 tool calls + 6231 tok manual]\033[0m\n'
