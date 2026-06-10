@@ -44,7 +44,7 @@ Point any LLM agent at hactl. It reads the manual once (`hactl rtfm`), then uses
 ```
 $ claw "balcony watering didn't run yesterday — why?"
 
-  ● hactl rtfm                            [manual loaded · 4218 tok]
+  ● hactl rtfm                            [manual loaded · 6231 tok]
   ● hactl health → HA 2026.4.4  RUNNING  errors=12  companion=ok
   ● hactl auto show balcony_minimum_watering
     on  last=2026-05-22  trc:a7 (condition stop)
@@ -55,16 +55,31 @@ $ claw "balcony watering didn't run yesterday — why?"
   Likely dead Zigbee battery.
 ```
 
-~100 tokens across 3 tool calls — the manual (4218 tok) is loaded once and cached. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py).
-Writes always require a separate confirmation step.
+The transcript above is illustrative (the GIF is scripted), but it shows the intended shape: the manual (~6.2k tok) is loaded once and cached, after which each tool call costs tens of tokens. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py) — they expose read-only commands; config writes go through a separate dry-run + `--confirm` step.
+
+## MCP server
+
+`hactl mcp` serves the whole CLI over the [Model Context Protocol](https://modelcontextprotocol.io) on stdio — one `hactl` tool that takes a command line, for clients like Claude Code or Claude Desktop. No wrapper scripts; the manual is self-served (`rtfm`, also exposed as the `hactl://manual` resource).
+
+```bash
+claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
+```
+
+```json
+{ "mcpServers": { "hactl": { "command": "hactl", "args": ["mcp", "--dir", "/path/to/instance"] } } }
+```
+
+The server is read-only by default: mutating commands (`svc call`, `auto apply`, create/delete, …) are rejected. Start it with `hactl mcp --allow-writes` to permit them — the dry-run + `--confirm` write path still applies on top. One instance per server process; pin it with `--dir`.
 
 ## Safety
 
-Syntax validation runs against HA's real Jinja engine, not a mock. If the config is invalid, HA says so before anything is written. Changes are staged and require an explicit commit — the default is always safe.
+Config writes (`auto apply`/`create`/`delete`, templates, helpers, dashboards, registry changes) are dry-run by default and need an explicit `--confirm`. Automation configs are validated with HA's own `validate_config` before anything is written, and a backup is saved before every write (`hactl auto rollback` undoes it). Template syntax is evaluated by HA's real Jinja engine, not a mock.
+
+Two command families execute immediately, because acting is their purpose: `svc call` (service calls like `light.turn_on`) and `script run`. If you hand an agent unrestricted shell access to hactl, it can call services — the bundled LLM tool wrappers in `integrations/llm/` deliberately expose only read-only commands.
 
 ## Multi-instance
 
-Each HA instance gets its own directory with a `.env` file. `hactl` picks up whichever one is active via `--dir`, `HACTL_DIR`, the current working directory, or `~/.hactl/default/`.
+Each HA instance gets its own directory with a `.env` file. `hactl` picks up whichever one is active via `--dir`, `HACTL_DIR`, the current directory or its parents (git-style), or `~/.hactl/default/`.
 
 ## Install
 
@@ -91,7 +106,7 @@ cosign verify-blob --bundle checksums.txt.sig checksums.txt
 hactl setup
 ```
 
-`hactl setup` prompts for the HA URL and a long-lived token, tests connectivity, and writes `.env` in the current directory (or the path given via `--dir`). The companion add-on is auto-detected if installed.
+`hactl setup` prompts for the HA URL and a long-lived token, tests connectivity, and writes `.env` in the current directory (or the path given via `--dir`). The companion add-on is auto-detected if installed. For scripts and agents there's a non-interactive form: `hactl setup --url http://ha:8123 --token <token>` (use `--token -` to read the token from stdin, `--force` to overwrite).
 
 To create a token: HA → Profile → Long-lived access tokens.
 

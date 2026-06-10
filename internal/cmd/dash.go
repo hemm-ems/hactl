@@ -346,7 +346,7 @@ func runDashDelete(ctx context.Context, w io.Writer, urlPath string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Need dashboard ID for deletion â€” list and find by url_path
+	// Need dashboard ID for deletion — list and find by url_path
 	dashboards, err := ws.DashboardList(ctx)
 	if err != nil {
 		return fmt.Errorf("listing dashboards: %w", err)

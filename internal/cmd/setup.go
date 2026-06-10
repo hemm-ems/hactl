@@ -17,10 +17,18 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
+var (
+	flagSetupURL   string
+	flagSetupToken string
+	flagSetupForce bool
+)
+
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Interactive first-time setup — creates .env in the current directory",
-	Long:  "Guides you through connecting hactl to a Home Assistant instance.",
+	Short: "First-time setup — creates .env in the current directory",
+	Long: "Guides you through connecting hactl to a Home Assistant instance.\n\n" +
+		"Non-interactive (for scripts and agents): pass both --url and --token.\n" +
+		"Use --token - to read the token from stdin instead of the command line.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Write directly to os.Stdout so interactive prompts are visible
 		// immediately — the root Execute() buffers cmd.OutOrStdout(), which
@@ -30,6 +38,9 @@ var setupCmd = &cobra.Command{
 }
 
 func init() {
+	setupCmd.Flags().StringVar(&flagSetupURL, "url", "", "HA URL (with --token: non-interactive setup)")
+	setupCmd.Flags().StringVar(&flagSetupToken, "token", "", "long-lived access token; use - to read from stdin")
+	setupCmd.Flags().BoolVar(&flagSetupForce, "force", false, "overwrite an existing .env without asking (non-interactive mode)")
 	rootCmd.AddCommand(setupCmd)
 }
 
@@ -52,44 +63,9 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 
 	reader := bufio.NewReader(in)
 
-	_, _ = fmt.Fprintf(out, "hactl setup\n")
-	_, _ = fmt.Fprintf(out, "===========\n")
-	_, _ = fmt.Fprintf(out, "This will create %s\n\n", envPath)
-
-	// Check if .env already exists
-	if _, statErr := os.Stat(envPath); statErr == nil {
-		cfg, loadErr := config.Load(dir)
-		if loadErr == nil {
-			_, _ = fmt.Fprintf(out, "Existing config found:\n")
-			_, _ = fmt.Fprintf(out, "  HA_URL:   %s\n", cfg.URL)
-			_, _ = fmt.Fprintf(out, "  HA_TOKEN: %s\n", maskToken(cfg.Token))
-			if cfg.CompanionURL != "" {
-				_, _ = fmt.Fprintf(out, "  COMPANION_URL: %s\n", cfg.CompanionURL)
-			}
-			_, _ = fmt.Fprintf(out, "\nOverwrite? [y/N] ")
-			answer := readLine(reader)
-			if !strings.EqualFold(strings.TrimSpace(answer), "y") {
-				_, _ = fmt.Fprintf(out, "Keeping existing config.\n")
-				return nil
-			}
-		}
-	}
-
-	// Prompt for HA_URL
-	_, _ = fmt.Fprintf(out, "Home Assistant URL [http://homeassistant.local:8123]: ")
-	haURL := strings.TrimSpace(readLine(reader))
-	if haURL == "" {
-		haURL = "http://homeassistant.local:8123"
-	}
-	haURL = strings.TrimRight(haURL, "/")
-
-	// Prompt for HA_TOKEN
-	_, _ = fmt.Fprintf(out, "\nLong-lived access token:\n")
-	_, _ = fmt.Fprintf(out, "  HA → Profile → Long-lived access tokens → Create token\n")
-	_, _ = fmt.Fprintf(out, "HA_TOKEN: ")
-	haToken := strings.TrimSpace(readLine(reader))
-	if haToken == "" {
-		return errors.New("HA_TOKEN is required")
+	haURL, haToken, aborted, err := setupGatherInput(out, reader, dir, envPath)
+	if err != nil || aborted {
+		return err
 	}
 
 	// Test connectivity — fail fast: do not write .env on error.
@@ -143,6 +119,82 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 
 	_, _ = fmt.Fprintf(out, "\nSetup complete. Run 'hactl health' to verify.\n")
 	return nil
+}
+
+// setupGatherInput determines HA_URL and HA_TOKEN, either from the --url and
+// --token flags (non-interactive) or by prompting. aborted is true when the
+// user declined to overwrite an existing config (a graceful no-op).
+func setupGatherInput(out io.Writer, reader *bufio.Reader, dir, envPath string) (haURL, haToken string, aborted bool, err error) {
+	if (flagSetupURL != "") != (flagSetupToken != "") {
+		return "", "", false, errors.New("non-interactive setup needs both --url and --token")
+	}
+
+	if flagSetupURL != "" {
+		_, _ = fmt.Fprintf(out, "hactl setup (non-interactive)\n")
+		if _, statErr := os.Stat(envPath); statErr == nil && !flagSetupForce {
+			return "", "", false, fmt.Errorf("%s already exists — pass --force to overwrite", envPath)
+		}
+		haURL = strings.TrimRight(strings.TrimSpace(flagSetupURL), "/")
+		haToken = strings.TrimSpace(flagSetupToken)
+		if haToken == "-" {
+			haToken = strings.TrimSpace(readLine(reader))
+		}
+		if haToken == "" {
+			return "", "", false, errors.New("HA_TOKEN is required")
+		}
+		return haURL, haToken, false, nil
+	}
+
+	_, _ = fmt.Fprintf(out, "hactl setup\n")
+	_, _ = fmt.Fprintf(out, "===========\n")
+	_, _ = fmt.Fprintf(out, "This will create %s\n\n", envPath)
+
+	if !setupConfirmOverwrite(out, reader, dir, envPath) {
+		return "", "", true, nil
+	}
+
+	// Prompt for HA_URL
+	_, _ = fmt.Fprintf(out, "Home Assistant URL [http://homeassistant.local:8123]: ")
+	haURL = strings.TrimSpace(readLine(reader))
+	if haURL == "" {
+		haURL = "http://homeassistant.local:8123"
+	}
+	haURL = strings.TrimRight(haURL, "/")
+
+	// Prompt for HA_TOKEN
+	_, _ = fmt.Fprintf(out, "\nLong-lived access token:\n")
+	_, _ = fmt.Fprintf(out, "  HA → Profile → Long-lived access tokens → Create token\n")
+	_, _ = fmt.Fprintf(out, "HA_TOKEN: ")
+	haToken = strings.TrimSpace(readLine(reader))
+	if haToken == "" {
+		return "", "", false, errors.New("HA_TOKEN is required")
+	}
+	return haURL, haToken, false, nil
+}
+
+// setupConfirmOverwrite shows any existing config and asks before overwriting.
+// Returns false when the user wants to keep the existing config.
+func setupConfirmOverwrite(out io.Writer, reader *bufio.Reader, dir, envPath string) bool {
+	if _, statErr := os.Stat(envPath); statErr != nil {
+		return true
+	}
+	cfg, loadErr := config.Load(dir)
+	if loadErr != nil {
+		return true
+	}
+	_, _ = fmt.Fprintf(out, "Existing config found:\n")
+	_, _ = fmt.Fprintf(out, "  HA_URL:   %s\n", cfg.URL)
+	_, _ = fmt.Fprintf(out, "  HA_TOKEN: %s\n", maskToken(cfg.Token))
+	if cfg.CompanionURL != "" {
+		_, _ = fmt.Fprintf(out, "  COMPANION_URL: %s\n", cfg.CompanionURL)
+	}
+	_, _ = fmt.Fprintf(out, "\nOverwrite? [y/N] ")
+	answer := readLine(reader)
+	if !strings.EqualFold(strings.TrimSpace(answer), "y") {
+		_, _ = fmt.Fprintf(out, "Keeping existing config.\n")
+		return false
+	}
+	return true
 }
 
 // maskToken returns the first 4 and last 4 characters of a token with *** in between.

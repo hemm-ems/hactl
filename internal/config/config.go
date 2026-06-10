@@ -19,6 +19,14 @@ type Config struct {
 	CompanionToken string // optional COMPANION_TOKEN from .env; falls back to Token
 }
 
+// resolvedDir records the instance directory of the last Load call so error
+// paths can tell the user which instance a failing command was talking to.
+var resolvedDir string
+
+// ResolvedDir returns the instance directory resolved by the last Load call,
+// or "" if no directory has been resolved yet.
+func ResolvedDir() string { return resolvedDir }
+
 // Load resolves the instance directory and loads .env.
 // dirFlag is the value of --dir (may be empty).
 // Returns a validated Config or an error with a clear user-facing message.
@@ -32,6 +40,7 @@ func Load(dirFlag string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot make path absolute: %w", err)
 	}
+	resolvedDir = dir
 
 	envPath := filepath.Join(dir, ".env")
 	slog.Debug("loading .env", "path", envPath)
@@ -68,7 +77,12 @@ func Load(dirFlag string) (*Config, error) {
 }
 
 // resolveDir determines the instance directory by checking candidates in order:
-// 1. --dir flag, 2. HACTL_DIR env var, 3. cwd (if .env exists), 4. ~/.hactl/default/
+// 1. --dir flag, 2. HACTL_DIR env var, 3. cwd and its parents, 4. ~/.hactl/default/
+//
+// A .env in the cwd itself always wins, even if incomplete — a broken instance
+// dir should error loudly rather than silently fall through to another instance.
+// Parent directories are only accepted when their .env actually configures
+// hactl (contains HA_URL), so unrelated project .env files are skipped.
 func resolveDir(dirFlag string) (string, error) {
 	if dirFlag != "" {
 		slog.Debug("trying instance dir", "path", dirFlag, "source", "--dir flag")
@@ -82,10 +96,18 @@ func resolveDir(dirFlag string) (string, error) {
 
 	cwd, cwdErr := os.Getwd()
 	if cwdErr == nil {
-		candidate := filepath.Join(cwd, ".env")
 		slog.Debug("trying instance dir", "path", cwd, "source", "cwd")
-		if _, statErr := os.Stat(candidate); statErr == nil {
+		if _, statErr := os.Stat(filepath.Join(cwd, ".env")); statErr == nil {
 			return cwd, nil
+		}
+		for dir := filepath.Dir(cwd); ; dir = filepath.Dir(dir) {
+			slog.Debug("trying instance dir", "path", dir, "source", "parent")
+			if envFileHasHAURL(filepath.Join(dir, ".env")) {
+				return dir, nil
+			}
+			if dir == filepath.Dir(dir) { // reached filesystem root
+				break
+			}
 		}
 	}
 
@@ -96,6 +118,13 @@ func resolveDir(dirFlag string) (string, error) {
 	defaultDir := filepath.Join(home, ".hactl", "default")
 	slog.Debug("trying instance dir", "path", defaultDir, "source", "~/.hactl/default")
 	return defaultDir, nil
+}
+
+// envFileHasHAURL reports whether path is a readable .env file that contains
+// a non-empty HA_URL — i.e. one that plausibly configures a hactl instance.
+func envFileHasHAURL(path string) bool {
+	env, err := parseEnvFile(path)
+	return err == nil && env["HA_URL"] != ""
 }
 
 // ConfigNotFoundError is returned when no .env file can be located.

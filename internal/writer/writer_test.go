@@ -41,6 +41,48 @@ func TestDiffLines_WithChanges(t *testing.T) {
 	}
 }
 
+func TestDiffLines_InsertionDoesNotShiftEverything(t *testing.T) {
+	// A single line inserted at the top must not mark every following line
+	// as changed (the failure mode of a naive positional diff).
+	a := "alias: x\ntrigger: []\ncondition: []\naction: []\n"
+	b := "id: new\nalias: x\ntrigger: []\ncondition: []\naction: []\n"
+	lines := diffLines(a, b)
+
+	var plus, minus, same int
+	for _, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "+"):
+			plus++
+		case strings.HasPrefix(l, "-"):
+			minus++
+		default:
+			same++
+		}
+	}
+	if plus != 1 || minus != 0 {
+		t.Errorf("want exactly one + line and no - lines, got +%d -%d (diff: %v)", plus, minus, lines)
+	}
+	if same != 4 {
+		t.Errorf("want 4 unchanged lines, got %d (diff: %v)", same, lines)
+	}
+}
+
+func TestDiffLines_HugeInputFallsBackWithoutQuadraticAllocation(t *testing.T) {
+	// Inputs beyond maxLCSLines must take the positional path; this mainly
+	// guards that the cap exists (the LCS table would be ~170 GB here).
+	a := strings.Repeat("line\n", maxLCSLines+10)
+	lines := diffLines(a, a+"extra\n")
+	var plus int
+	for _, l := range lines {
+		if strings.HasPrefix(l, "+") {
+			plus++
+		}
+	}
+	if plus != 1 {
+		t.Errorf("want exactly one + line, got %d", plus)
+	}
+}
+
 func TestDiffLines_Addition(t *testing.T) {
 	lines := diffLines("foo\n", "foo\nbar\n")
 	hasPlus := false
@@ -316,6 +358,18 @@ func TestWriter_Apply_DryRun(t *testing.T) {
 	}
 	if result.AutomationID != "test_auto" {
 		t.Errorf("AutomationID = %q, want 'test_auto'", result.AutomationID)
+	}
+
+	// A dry run must not leave backup files behind
+	if result.BackupPath != "" {
+		t.Errorf("dry-run created backup %q, want none", result.BackupPath)
+	}
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("dry-run left %d files in backup dir, want 0", len(entries))
 	}
 }
 

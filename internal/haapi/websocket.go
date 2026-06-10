@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/url"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -138,39 +140,62 @@ func (ws *WSClient) TraceGet(ctx context.Context, domain, itemID, runID string) 
 	return resp.Result, nil
 }
 
-// CheckConfig calls the homeassistant/check_config service via WebSocket.
-// Returns true if config is valid, false otherwise.
-func (ws *WSClient) CheckConfig(ctx context.Context) (bool, error) {
+// ValidateResult is the per-section outcome of a validate_config call.
+type ValidateResult struct {
+	Error string `json:"error"`
+	Valid bool   `json:"valid"`
+}
+
+// ValidateConfig validates automation building blocks against HA's actual
+// config schema via the WS validate_config command — this checks the
+// *candidate* config, unlike homeassistant.check_config which only inspects
+// what is already installed. Nil sections are omitted and not validated.
+// The result maps section name ("triggers", "conditions", "actions") to
+// outcome. HA expects the plural keys (singular ones are rejected with
+// "extra keys not allowed" since the 2024.10 trigger/condition/action
+// rename).
+func (ws *WSClient) ValidateConfig(ctx context.Context, triggers, conditions, actions any) (map[string]ValidateResult, error) {
 	_ = ctx
 
 	id := ws.nextID.Add(1)
 	msg := map[string]any{
-		"id":      id,
-		"type":    "call_service",
-		"domain":  "homeassistant",
-		"service": "check_config",
+		"id":   id,
+		"type": "validate_config",
+	}
+	if triggers != nil {
+		msg["triggers"] = triggers
+	}
+	if conditions != nil {
+		msg["conditions"] = conditions
+	}
+	if actions != nil {
+		msg["actions"] = actions
 	}
 
 	ws.mu.Lock()
 	err := ws.conn.WriteJSON(msg)
 	ws.mu.Unlock()
 	if err != nil {
-		return false, fmt.Errorf("sending check_config: %w", err)
+		return nil, fmt.Errorf("sending validate_config: %w", err)
 	}
 
 	var resp wsResponse
 	if err := ws.conn.ReadJSON(&resp); err != nil {
-		return false, fmt.Errorf("reading check_config response: %w", err)
+		return nil, fmt.Errorf("reading validate_config response: %w", err)
 	}
 	if !resp.Success {
 		errMsg := errUnknown
 		if resp.Error != nil {
 			errMsg = resp.Error.Message
 		}
-		return false, fmt.Errorf("check_config failed: %s", errMsg)
+		return nil, fmt.Errorf("validate_config failed: %s", errMsg)
 	}
 
-	return true, nil
+	var result map[string]ValidateResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("parsing validate_config result: %w", err)
+	}
+	return result, nil
 }
 
 // SystemLogList returns log entries from the system_log integration via WS.
@@ -667,7 +692,12 @@ func (ws *WSClient) connect(ctx context.Context) error {
 
 	slog.Debug("connecting to HA websocket", "url", u.String())
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil) //nolint:bodyclose // websocket upgrade; resp.Body not applicable
+	dialer := &websocket.Dialer{
+		Proxy:            websocket.DefaultDialer.Proxy,
+		NetDialContext:   (&net.Dialer{Timeout: DialTimeout}).DialContext,
+		HandshakeTimeout: 10 * time.Second,
+	}
+	conn, _, err := dialer.DialContext(ctx, u.String(), nil) //nolint:bodyclose // websocket upgrade; resp.Body not applicable
 	if err != nil {
 		return fmt.Errorf("connecting to websocket: %w", err)
 	}

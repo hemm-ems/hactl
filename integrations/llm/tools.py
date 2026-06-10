@@ -33,6 +33,12 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
+def hactl_rtfm() -> str:
+    """Print the full hactl manual. Call this once, first, before any other hactl tool:
+    it documents every command, flag, and workflow pattern with accurate syntax."""
+    return _run("rtfm")
+
+
 def hactl_health() -> str:
     """Show Home Assistant health: version, state, recorder status, ERROR count, location, timezone."""
     return _run("health")
@@ -105,7 +111,7 @@ def hactl_ent_ls(domain: str = "", area: str = "", pattern: str = "", label: str
 
 
 def hactl_ent_show(entity_id: str) -> str:
-    """Show full entity profile: state, attributes, area, device, related entities."""
+    """Show entity profile: state, key attributes, area, labels, last change attribution."""
     return _run("ent", "show", entity_id)
 
 
@@ -147,3 +153,14 @@ def hactl_script_ls(failing: bool = False, pattern: str = "") -> str:
     if pattern:
         extra += ["--pattern", pattern]
     return _run("script", "ls", *extra)
+
+
+def hactl_script_show(script_id: str) -> str:
+    """Show one script's config summary and its last 5 traces (with stable trace IDs)."""
+    return _run("script", "show", script_id)
+
+
+def hactl_tpl_eval(template: str) -> str:
+    """Evaluate a Jinja2 template server-side in HA (read-only). Supports states(),
+    state_attr(), and HA's custom filters. Example: '{{ states("sensor.temperature") }}'."""
+    return _run("tpl", "eval", template)

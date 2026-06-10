@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,13 +26,26 @@ type Client struct {
 	token      string
 }
 
+// DefaultTimeout is the per-request timeout applied to new clients.
+// The root command overrides it from the global --timeout flag.
+var DefaultTimeout = 30 * time.Second
+
+// DialTimeout bounds connection establishment separately from DefaultTimeout,
+// so an unreachable host fails in seconds instead of consuming the full
+// request timeout (slow queries stay covered by DefaultTimeout).
+const DialTimeout = 5 * time.Second
+
 // New creates a new HA API client.
 func New(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: DefaultTimeout,
+			Transport: &http.Transport{
+				Proxy:       http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{Timeout: DialTimeout}).DialContext,
+			},
 		},
 	}
 }
@@ -243,8 +257,10 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		_ = req.Body.Close()
 	}
 
-	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
 	maxAttempts := 3
+	backoff := func(attempt int) time.Duration {
+		return 500 * time.Millisecond << attempt // 500ms, 1s
+	}
 
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
@@ -256,12 +272,10 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		duration := time.Since(start)
 
 		if err != nil {
+			// Transport errors (refused, DNS failure, timeout) are not
+			// retried: an unreachable HA doesn't heal in 500ms, and
+			// retrying compounds the stall. Only 5xx responses retry.
 			slog.Debug("HTTP request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // structured log
-			if attempt < maxAttempts-1 {
-				slog.Warn("retrying request", "method", req.Method, "attempt", attempt+1, "error", err) //nolint:gosec // structured log
-				time.Sleep(backoffs[attempt])
-				continue
-			}
 			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
 		}
 
@@ -271,8 +285,8 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		slog.Debug("HTTP request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // structured log
 
 		if resp.StatusCode >= 500 && attempt < maxAttempts-1 {
-			slog.Warn("retrying request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // structured log
-			time.Sleep(backoffs[attempt])
+			slog.Debug("retrying request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // structured log
+			time.Sleep(backoff(attempt))
 			continue
 		}
 

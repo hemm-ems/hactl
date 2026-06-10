@@ -13,7 +13,7 @@ import (
 func TestEntLs(t *testing.T) {
 	out := runHactl(t, "ent", "ls")
 
-	// Should show entities â€” at minimum HA creates some built-in entities
+	// Should show entities — at minimum HA creates some built-in entities
 	if !strings.Contains(out, "entity_id") {
 		t.Errorf("ent ls output missing 'entity_id' header: %s", out)
 	}
@@ -115,7 +115,7 @@ func TestEntHistUnknown(t *testing.T) {
 }
 
 func TestEntAnomalies(t *testing.T) {
-	// Run anomalies on sun.sun â€” likely "no anomalies" which is valid
+	// Run anomalies on sun.sun — likely "no anomalies" which is valid
 	out, err := runHactlErr(t, "ent", "anomalies", "sun.sun", "--since", "1h")
 	if err != nil {
 		// May fail if no numeric history; that's acceptable
@@ -231,7 +231,7 @@ func TestEntRelated(t *testing.T) {
 
 func TestEntRelatedUnknown(t *testing.T) {
 	out, err := runHactlErr(t, "ent", "related", "sensor.nonexistent_abc_xyz")
-	// May succeed with empty output or error â€” both acceptable
+	// May succeed with empty output or error — both acceptable
 	if err == nil {
 		assertNotContains(t, out, "panic")
 	}

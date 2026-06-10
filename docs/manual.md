@@ -23,6 +23,7 @@ Point hactl at the directory containing `.env`:
 export HACTL_DIR=/path/to/instance   # or
 hactl --dir /path/to/instance <cmd>  # or cd into it
 ```
+Without `--dir`/`HACTL_DIR`, hactl uses the `.env` in the current directory, then walks parent directories (git-style; parent `.env` files without `HA_URL` are skipped), then falls back to `~/.hactl/default/`.
 
 For debugging, set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on stderr (accepts `debug`, `info`, `warn`, `error`; defaults to `info`).
 
@@ -43,6 +44,7 @@ Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be availa
 
 ```bash
 hactl setup                   # interactive first-time setup: prompts for HA_URL + HA_TOKEN, writes .env in the current dir (or --dir)
+hactl setup --url http://ha:8123 --token <token>   # non-interactive (agents/scripts); --token - reads from stdin; --force overwrites
 hactl health                  # HA version, state, recorder, location, timezone, error count
 hactl health --json            # same as structured JSON
 hactl issues                  # active HA repairs/issues (domain, severity, fixable)
@@ -166,7 +168,7 @@ hactl auto rollback climate_schedule                   # undo specific automatio
 
 ```
 
-**Safety:** `apply` without `--confirm` is always a dry-run. Backups are created automatically in `backups/`. Writes go through HA's Config API; `check_config` validates before reload.
+**Safety:** `apply` without `--confirm` is always a dry-run and writes nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
 
 ### Templates — create & delete
 
@@ -380,7 +382,7 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 - **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls.
 - **Timestamps:** short form (`09:42`, `04-16 09:42`). ISO only with `--full`.
 - **No decoration:** no emojis, no color (unless `--color`). Clean for parsing.
-- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields.
+- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. JSON output is never truncated by `--tokensmax` (the token estimate goes to stderr instead) — on large datasets apply filters first.
 - **`--stats`:** prints raw response size + estimated token count to stderr after any command.
 
 ---
@@ -397,6 +399,7 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 | `--color` | off | ANSI colors |
 | `--stats` | off | Print response size + token estimate to stderr |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
+| `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
 
 ---
 
@@ -496,3 +499,17 @@ hactl --dir ~/ha/cabin auto ls --failing
 ```
 
 No global config, no profiles. Directory = instance.
+
+---
+
+## MCP server
+
+`hactl mcp` serves this CLI over the Model Context Protocol on stdio. MCP clients see a single `hactl` tool that takes a command line (without the binary name), e.g. `{"command": "ent ls --domain light"}`. All commands and flags in this manual work unchanged; this manual is also available as the MCP resource `hactl://manual`.
+
+```bash
+claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
+```
+
+- Read-only by default: mutating commands (`svc call`, `auto apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
+- One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
+- `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.

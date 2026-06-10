@@ -57,6 +57,95 @@ func TestSetup_WritesDotEnv(t *testing.T) {
 	}
 }
 
+// TestSetup_NonInteractive verifies that --url/--token skip all prompts and
+// that an existing .env is refused without --force.
+func TestSetup_NonInteractive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintln(w, `{"message":"API running."}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	old := flagDir
+	flagDir = dir
+	defer func() { flagDir = old }()
+
+	oldURL, oldToken, oldForce := flagSetupURL, flagSetupToken, flagSetupForce
+	flagSetupURL = srv.URL
+	flagSetupToken = "ni-token-xyz"
+	defer func() { flagSetupURL, flagSetupToken, flagSetupForce = oldURL, oldToken, oldForce }()
+
+	// Empty stdin: any prompt would read "" and fail, proving none are shown.
+	out := &bytes.Buffer{}
+	if err := runSetup(context.Background(), out, strings.NewReader("")); err != nil {
+		t.Fatalf("non-interactive runSetup failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".env")) //nolint:gosec
+	if err != nil {
+		t.Fatalf(".env not written: %v", err)
+	}
+	if !strings.Contains(string(data), "ni-token-xyz") {
+		t.Errorf(".env missing token: %s", data)
+	}
+
+	// Second run without --force must refuse to overwrite.
+	err = runSetup(context.Background(), &bytes.Buffer{}, strings.NewReader(""))
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected --force refusal on existing .env, got %v", err)
+	}
+
+	// With --force it overwrites.
+	flagSetupForce = true
+	flagSetupToken = "ni-token-2"
+	if err := runSetup(context.Background(), &bytes.Buffer{}, strings.NewReader("")); err != nil {
+		t.Fatalf("runSetup with --force failed: %v", err)
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, ".env")) //nolint:gosec
+	if !strings.Contains(string(data), "ni-token-2") {
+		t.Errorf(".env not overwritten: %s", data)
+	}
+}
+
+// TestSetup_NonInteractive_TokenFromStdin verifies --token - reads the token
+// from stdin.
+func TestSetup_NonInteractive_TokenFromStdin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/" {
+			_, _ = fmt.Fprintln(w, `{"message":"API running."}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	old := flagDir
+	flagDir = dir
+	defer func() { flagDir = old }()
+
+	oldURL, oldToken := flagSetupURL, flagSetupToken
+	flagSetupURL = srv.URL
+	flagSetupToken = "-"
+	defer func() { flagSetupURL, flagSetupToken = oldURL, oldToken }()
+
+	if err := runSetup(context.Background(), &bytes.Buffer{}, strings.NewReader("stdin-token\n")); err != nil {
+		t.Fatalf("runSetup failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".env")) //nolint:gosec
+	if err != nil {
+		t.Fatalf(".env not written: %v", err)
+	}
+	if !strings.Contains(string(data), "stdin-token") {
+		t.Errorf(".env missing stdin token: %s", data)
+	}
+}
+
 // TestSetup_RejectsBadURL verifies that runSetup returns an error and writes no
 // .env when the given HA URL is not reachable.
 func TestSetup_RejectsBadURL(t *testing.T) {
@@ -161,7 +250,9 @@ func TestSetup_PromptsNotBuffered(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	old := flagDir; flagDir = dir; defer func() { flagDir = old }()
+	old := flagDir
+	flagDir = dir
+	defer func() { flagDir = old }()
 
 	// Point cobra's output at a sentinel buffer — setup must NOT write there.
 	var cobraBuf bytes.Buffer

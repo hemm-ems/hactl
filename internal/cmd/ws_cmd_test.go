@@ -1587,11 +1587,11 @@ func TestRunAutoLs_WithTraces(t *testing.T) {
 	}
 
 	ts := startCmdServer(t, map[string]any{
-		"trace/list":                 traces,
+		"trace/list":                  traces,
 		"config/entity_registry/list": []any{},
-		"config/area_registry/list":  []any{},
-		"config/label_registry/list": []any{},
-		"config/floor_registry/list": []any{},
+		"config/area_registry/list":   []any{},
+		"config/label_registry/list":  []any{},
+		"config/floor_registry/list":  []any{},
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -2601,9 +2601,9 @@ func TestRunAutoShow_WithState(t *testing.T) {
 		"entity_id": "automation.climate_schedule",
 		"state":     "on",
 		"attributes": map[string]any{
-			"mode":            "single",
-			"last_triggered":  "2026-01-01T10:00:00Z",
-			"friendly_name":   "Climate Schedule",
+			"mode":           "single",
+			"last_triggered": "2026-01-01T10:00:00Z",
+			"friendly_name":  "Climate Schedule",
 		},
 		"last_changed": "2026-01-01T10:00:00Z",
 	}
@@ -3386,9 +3386,9 @@ func TestRunScriptShow_WithTraces(t *testing.T) {
 		"last_changed": "2026-01-01T10:00:00Z",
 		"last_updated": "2026-01-01T10:00:00Z",
 		"attributes": map[string]any{
-			"friendly_name":    "Welcome Home",
-			"mode":             "single",
-			"last_triggered":   "2026-01-01T10:00:00Z",
+			"friendly_name":  "Welcome Home",
+			"mode":           "single",
+			"last_triggered": "2026-01-01T10:00:00Z",
 		},
 	}
 	stateJSON, _ := json.Marshal(stateData)

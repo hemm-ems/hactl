@@ -212,7 +212,7 @@ func systemLogToEntries(entries []haapi.SystemLogEntry) []analyze.LogEntry {
 			msg += "\n" + e.Exception
 		}
 
-		// Extract short component name (e.g., "homeassistant.components.recorder" â†’ "recorder")
+		// Extract short component name (e.g., "homeassistant.components.recorder" → "recorder")
 		component := e.Name
 		if idx := strings.LastIndex(component, "."); idx >= 0 {
 			component = component[idx+1:]

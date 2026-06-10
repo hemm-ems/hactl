@@ -3,11 +3,11 @@ package writer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -45,6 +45,9 @@ type ApplyResult struct {
 	AutomationID string
 	Reloaded     bool
 	DryRun       bool
+	// Validated is true when the candidate config passed HA's
+	// validate_config check (false when validation was unavailable).
+	Validated bool
 }
 
 // Diff compares a local YAML file against the current HA automation config.
@@ -106,26 +109,23 @@ func (w *Writer) Apply(ctx context.Context, automationID, localPath string, conf
 		DryRun:       !confirm,
 	}
 
-	// Always backup current config before any write
+	// Validate the candidate config against HA's schema before anything else.
+	validated, validateErr := w.validateCandidate(ctx, localConfig)
+	if validateErr != nil {
+		return nil, validateErr
+	}
+	result.Validated = validated
+
+	if !confirm {
+		return result, nil
+	}
+
+	// Backup current config before the write
 	backupPath, backupErr := w.backup(ctx, automationID)
 	if backupErr != nil {
 		slog.Warn("could not create backup", "error", backupErr)
 	} else {
 		result.BackupPath = backupPath
-	}
-
-	// Validate via check_config
-	if w.wsClient != nil {
-		valid, validateErr := w.wsClient.CheckConfig(ctx)
-		if validateErr != nil {
-			slog.Warn("config validation unavailable", "error", validateErr)
-		} else if !valid {
-			return nil, errors.New("HA config validation failed â€” aborting write")
-		}
-	}
-
-	if !confirm {
-		return result, nil
 	}
 
 	// Write via Config API
@@ -179,6 +179,44 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 		BackupPath:   backupFile,
 		Reloaded:     true,
 	}, nil
+}
+
+// validateCandidate checks the automation's trigger/condition/action blocks
+// against HA's real config schema via WS validate_config — this validates
+// the *candidate* config, not what is already installed. Returns whether
+// validation actually ran (it is skipped when no WS connection is available;
+// HA's Config API still validates on write) and an error when a section is
+// rejected.
+func (w *Writer) validateCandidate(ctx context.Context, cfg map[string]any) (bool, error) {
+	if w.wsClient == nil {
+		return false, nil
+	}
+
+	// Automations use legacy singular or modern plural keys; accept both.
+	pick := func(singular, plural string) any {
+		if v, ok := cfg[singular]; ok {
+			return v
+		}
+		return cfg[plural]
+	}
+	triggers := pick("trigger", "triggers")
+	conditions := pick("condition", "conditions")
+	actions := pick("action", "actions")
+	if triggers == nil && conditions == nil && actions == nil {
+		return false, nil
+	}
+
+	results, err := w.wsClient.ValidateConfig(ctx, triggers, conditions, actions)
+	if err != nil {
+		slog.Warn("config validation unavailable", "error", err)
+		return false, nil
+	}
+	for _, section := range []string{"triggers", "conditions", "actions"} {
+		if r, ok := results[section]; ok && !r.Valid {
+			return false, fmt.Errorf("HA rejected the %s config: %s", strings.TrimSuffix(section, "s"), r.Error)
+		}
+	}
+	return true, nil
 }
 
 // backup saves the current remote config to the backups directory.
@@ -243,15 +281,67 @@ func (w *Writer) findLatestBackup(automationID string) (string, error) {
 	return latest, nil
 }
 
-// diffLines produces a simple line-by-line diff between two strings.
+// maxLCSLines bounds the O(n·m) LCS table in diffLines: 4096² ints ≈ 128 MB
+// worst case, far beyond any automation config. Larger inputs fall back to a
+// positional diff instead of allocating quadratically.
+const maxLCSLines = 4096
+
+// diffLines produces a unified-diff-style line diff between two strings,
+// aligned on the longest common subsequence — an inserted or deleted line
+// doesn't mark everything after it as changed.
 func diffLines(a, b string) []string {
 	aLines := splitLines(a)
 	bLines := splitLines(b)
+	n, m := len(aLines), len(bLines)
+	if n > maxLCSLines || m > maxLCSLines {
+		return diffLinesPositional(aLines, bLines)
+	}
+
+	lcs := make([][]int, n+1)
+	for i := range lcs {
+		lcs[i] = make([]int, m+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if aLines[i] == bLines[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else {
+				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+			}
+		}
+	}
 
 	var result []string
-	maxLen := max(len(aLines), len(bLines))
+	i, j := 0, 0
+	for i < n && j < m {
+		switch {
+		case aLines[i] == bLines[j]:
+			result = append(result, " "+aLines[i])
+			i++
+			j++
+		case lcs[i+1][j] >= lcs[i][j+1]:
+			result = append(result, "-"+aLines[i])
+			i++
+		default:
+			result = append(result, "+"+bLines[j])
+			j++
+		}
+	}
+	for ; i < n; i++ {
+		result = append(result, "-"+aLines[i])
+	}
+	for ; j < m; j++ {
+		result = append(result, "+"+bLines[j])
+	}
+	return result
+}
 
-	for i := range maxLen {
+// diffLinesPositional is the line-by-line fallback for inputs too large for
+// the LCS table; an insertion shifts everything after it, but output stays
+// correct as a diff.
+func diffLinesPositional(aLines, bLines []string) []string {
+	var result []string
+	for i := range max(len(aLines), len(bLines)) {
 		var aLine, bLine string
 		if i < len(aLines) {
 			aLine = aLines[i]
@@ -261,13 +351,13 @@ func diffLines(a, b string) []string {
 		}
 		if aLine == bLine {
 			result = append(result, " "+aLine)
-		} else {
-			if aLine != "" {
-				result = append(result, "-"+aLine)
-			}
-			if bLine != "" {
-				result = append(result, "+"+bLine)
-			}
+			continue
+		}
+		if i < len(aLines) {
+			result = append(result, "-"+aLine)
+		}
+		if i < len(bLines) {
+			result = append(result, "+"+bLine)
 		}
 	}
 	return result
