@@ -59,6 +59,15 @@ func (c *Client) WithIngressAuth(a IngressAuth) *Client {
 	return c
 }
 
+// WithTimeout overrides the per-request timeout for subsequent calls.
+// Returns the same Client so callers can chain. Use for endpoints slower
+// than haapi.DefaultTimeout — check-config runs a full HA config
+// validation, which can take well over 30s on a Pi.
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	c.httpClient.Timeout = d
+	return c
+}
+
 // isIngressPath reports whether p is an HA Ingress URL path that requires
 // signing rather than a bare bearer token.
 func isIngressPath(p string) bool {
@@ -384,6 +393,30 @@ func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResp
 func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
 	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "")
 	return err
+}
+
+// CheckConfig calls POST /v1/ha/check-config and reports whether the HA
+// config on disk is valid. The error is non-nil only when the check could
+// not be performed (companion or core API unreachable).
+func (c *Client) CheckConfig(ctx context.Context) (valid bool, errors string, err error) {
+	data, err := c.doPostBody(ctx, "/v1/ha/check-config", nil, "")
+	if err != nil {
+		return false, "", err
+	}
+	var r struct {
+		Status string `json:"status"`
+		Valid  *bool  `json:"valid"`
+		Errors string `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return false, "", fmt.Errorf("parsing check-config response: %w", err)
+	}
+	if r.Valid == nil {
+		// Companion <= 2026.6.7 returns {"status": "ok"} with no valid field
+		// (and 502 for an invalid config, surfaced as err above).
+		return r.Status == "ok", r.Errors, nil
+	}
+	return *r.Valid, r.Errors, nil
 }
 
 // --- WireGuard tunnel management ---

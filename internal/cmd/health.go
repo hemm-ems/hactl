@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
+
+var flagHealthCheckConfig bool
 
 var healthCmd = &cobra.Command{
 	Use:   "health",
@@ -29,6 +32,7 @@ var healthCmd = &cobra.Command{
 }
 
 func init() {
+	healthCmd.Flags().BoolVar(&flagHealthCheckConfig, "check-config", false, "validate the on-disk HA config via the companion (runs a full config check; slow)")
 	rootCmd.AddCommand(healthCmd)
 }
 
@@ -43,6 +47,8 @@ type healthResult struct {
 	SafeMode         bool   `json:"safe_mode,omitempty"`
 	CompanionVersion string `json:"companion_version,omitempty"`
 	CompanionStatus  string `json:"companion_status,omitempty"`
+	HAConfigValid    *bool  `json:"ha_config_valid,omitempty"`
+	HAConfigErrors   string `json:"ha_config_errors,omitempty"`
 }
 
 // haConfig holds the subset of /api/config we care about.
@@ -108,9 +114,11 @@ func runHealth(ctx context.Context, w io.Writer) error {
 	}
 
 	// Companion discovery and health check (non-fatal)
-	companionStatus, companionVersion := discoverCompanion(ctx, cfg)
+	companionStatus, companionVersion, configValid, configErrors := discoverCompanion(ctx, cfg, flagHealthCheckConfig)
 	hr.CompanionStatus = companionStatus
 	hr.CompanionVersion = companionVersion
+	hr.HAConfigValid = configValid
+	hr.HAConfigErrors = configErrors
 
 	if flagJSON {
 		enc := json.NewEncoder(w)
@@ -137,6 +145,17 @@ func runHealth(ctx context.Context, w io.Writer) error {
 		}
 	}
 
+	if flagHealthCheckConfig {
+		switch {
+		case configValid == nil:
+			_, _ = fmt.Fprintf(w, "config_check=failed: %s\n", configErrors)
+		case *configValid:
+			_, _ = fmt.Fprintf(w, "config_check=valid\n")
+		default:
+			_, _ = fmt.Fprintf(w, "config_check=INVALID: %s\n", configErrors)
+		}
+	}
+
 	return nil
 }
 
@@ -152,8 +171,13 @@ func countErrorEntries(entries []analyze.LogEntry) int {
 }
 
 // discoverCompanion attempts to find and health-check the companion.
-// Returns (status, version). Non-fatal: returns ("not found", "") if unavailable.
-func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string) {
+// Returns (status, version, configValid, configErrors). Non-fatal: returns
+// ("not found", "", nil, ...) if unavailable. When checkConfig is set and the
+// companion is reachable, it also validates the on-disk HA config; configValid
+// is nil when the check was not requested or could not run (reason in
+// configErrors). The check happens here, not in the caller, because the
+// ingress auth session is tied to the WS client closed on return.
+func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool) (string, string, *bool, string) {
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	var wsConnected bool
 	if err := ws.Connect(ctx); err == nil {
@@ -166,14 +190,19 @@ func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string)
 		wsClient = ws
 	}
 
+	notFoundErrors := ""
+	if checkConfig {
+		notFoundErrors = "companion not found"
+	}
+
 	companionURL, err := companion.Discover(ctx, cfg, wsClient)
 	if err != nil {
 		slog.Debug("companion discovery failed", "error", err)
 		var de *companion.DiscoveryError
 		if errors.As(err, &de) {
-			return "not found (" + string(de.Reason) + ")", ""
+			return "not found (" + string(de.Reason) + ")", "", nil, notFoundErrors
 		}
-		return "not found", ""
+		return "not found", "", nil, notFoundErrors
 	}
 
 	// Health check
@@ -184,7 +213,10 @@ func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string)
 	health, err := cc.Health(ctx)
 	if err != nil {
 		slog.Debug("companion health check failed", "error", err)
-		return "unreachable", ""
+		if checkConfig {
+			notFoundErrors = "companion unreachable"
+		}
+		return "unreachable", "", nil, notFoundErrors
 	}
 
 	status := health.Status
@@ -198,7 +230,19 @@ func discoverCompanion(ctx context.Context, cfg *config.Config) (string, string)
 		}
 	}
 
-	return status, ver
+	var configValid *bool
+	configErrors := ""
+	if checkConfig {
+		valid, errs, err := cc.WithTimeout(90 * time.Second).CheckConfig(ctx)
+		if err != nil {
+			configErrors = err.Error()
+		} else {
+			configValid = &valid
+			configErrors = errs
+		}
+	}
+
+	return status, ver, configValid, configErrors
 }
 
 // checkVersionCompat compares hactl and companion major versions.
