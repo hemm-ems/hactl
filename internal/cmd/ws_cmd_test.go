@@ -2249,6 +2249,60 @@ func TestRunHealth_WithCompanion(t *testing.T) {
 	}
 }
 
+func TestRunHealth_CheckConfig(t *testing.T) {
+	haConfigJSON := `{"version":"2026.4.0","state":"RUNNING","location_name":"Test","time_zone":"UTC","components":[],"safe_mode":false}`
+
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/health":
+			_, _ = fmt.Fprint(w, `{"status":"ok","version":"1.2.0"}`)
+		case "/v1/ha/check-config":
+			_, _ = fmt.Fprint(w, `{"status":"invalid","valid":false,"errors":"bad automation yaml"}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer companionSrv.Close()
+
+	haSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/config":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, haConfigJSON)
+		case "/api/error_log":
+			_, _ = fmt.Fprint(w, "")
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer haSrv.Close()
+
+	envDir := t.TempDir()
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=tok\nCOMPANION_URL=%s\n", haSrv.URL, companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlagDir(t, envDir)
+
+	oldJSON := flagJSON
+	flagJSON = false
+	oldCheck := flagHealthCheckConfig
+	flagHealthCheckConfig = true
+	defer func() {
+		flagJSON = oldJSON
+		flagHealthCheckConfig = oldCheck
+	}()
+
+	var buf bytes.Buffer
+	if err := runHealth(context.Background(), &buf); err != nil {
+		t.Fatalf("runHealth with check-config failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "config_check=INVALID: bad automation yaml") {
+		t.Errorf("output missing invalid config result: %q", out)
+	}
+}
+
 // --- findAutomationRelations (HTTP+states) ---
 
 func TestFindAutomationRelations_NoID(t *testing.T) {

@@ -709,3 +709,64 @@ func TestRetryOn5xx(t *testing.T) {
 		t.Errorf("attempts = %d, want 3", attempts)
 	}
 }
+
+func TestCheckConfig_Valid(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ha/check-config" {
+			t.Errorf("path = %q, want /v1/ha/check-config", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		_, _ = w.Write([]byte(`{"status":"ok","valid":true,"errors":""}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	valid, errs, err := c.CheckConfig(context.Background())
+	if err != nil {
+		t.Fatalf("CheckConfig: %v", err)
+	}
+	if !valid {
+		t.Error("valid = false, want true")
+	}
+	if errs != "" {
+		t.Errorf("errors = %q, want empty", errs)
+	}
+}
+
+func TestCheckConfig_Invalid(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"invalid","valid":false,"errors":"broken automation"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	valid, errs, err := c.CheckConfig(context.Background())
+	if err != nil {
+		t.Fatalf("CheckConfig: %v", err)
+	}
+	if valid {
+		t.Error("valid = true, want false")
+	}
+	if errs != "broken automation" {
+		t.Errorf("errors = %q, want broken automation", errs)
+	}
+}
+
+func TestCheckConfig_LegacyShape(t *testing.T) {
+	// Companion <= 2026.6.7 returns {"status": "ok"} with no valid field.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-token")
+	valid, _, err := c.CheckConfig(context.Background())
+	if err != nil {
+		t.Fatalf("CheckConfig: %v", err)
+	}
+	if !valid {
+		t.Error("valid = false, want true for legacy {\"status\":\"ok\"}")
+	}
+}
