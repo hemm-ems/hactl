@@ -132,6 +132,18 @@ hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + cou
 
 The `changes` command also gained a `who` column carrying the same per-event label.
 
+### Devices
+
+```bash
+hactl device ls                           # device_id, name, area, labels, entity count
+hactl device ls --pattern '*heat*'        # glob/substring on device ID or name
+hactl device ls --area basement           # filter by area name or ID
+hactl device ls --label heat_pump         # filter by label name or ID
+hactl device show summt_heizung           # device profile + registered entities
+```
+
+LLM workflow for area assignment: discover the device with `device ls`, inspect its entities with `device show`, preview one entity update with `ent set-area <entity_id> <area>`, then repeat the exact command with `--confirm` only after the user confirms the entity and target area.
+
 ### Registry: labels, areas, floors
 
 ```bash
@@ -152,7 +164,8 @@ hactl floor delete ground_floor --confirm # delete (dry-run without --confirm)
 hactl label delete old-label --confirm    # delete a label (dry-run without --confirm)
 
 hactl ent set-label sensor.wp_vl energy   # assign label(s) to entity (by ID or name)
-hactl ent set-area  sensor.wp_vl living_room  # set entity area (area_id)
+hactl ent set-area  sensor.wp_vl living_room            # dry-run
+hactl ent set-area  sensor.wp_vl living_room --confirm  # set entity area
 ```
 
 Labels and areas are applied via the entity registry. Multiple labels can be passed to `set-label` at once.

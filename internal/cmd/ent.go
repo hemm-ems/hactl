@@ -29,6 +29,7 @@ var (
 	flagEntAttr     string
 	flagEntArea     string
 	flagEntLabel    string
+	flagEntConfirm  bool
 )
 
 var entCmd = &cobra.Command{
@@ -98,8 +99,8 @@ var entSetLabelCmd = &cobra.Command{
 
 var entSetAreaCmd = &cobra.Command{
 	Use:   "set-area <entity_id> <area>",
-	Short: "Assign an area to an entity",
-	Long:  "Set the area (room) for an entity via the HA entity registry.",
+	Short: "Assign an area to an entity (dry-run by default)",
+	Long:  "Set the area (room) for an entity via the HA entity registry. Use --confirm to apply.",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
@@ -113,6 +114,7 @@ func init() {
 	entLsCmd.Flags().StringVar(&flagEntLabel, "label", "", "filter entities by label name (substring)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
+	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
 	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd)
 	rootCmd.AddCommand(entCmd)
 }
@@ -1001,24 +1003,69 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	if err != nil {
 		return fmt.Errorf("fetching areas: %w", err)
 	}
-	areaLower := strings.ToLower(area)
-	var areaID string
-	for _, a := range areas {
-		if strings.ToLower(a.Name) == areaLower || a.AreaID == area {
-			areaID = a.AreaID
-			break
-		}
-	}
-	if areaID == "" {
+	areaEntry, ok := resolveAreaEntry(areas, area)
+	if !ok {
 		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
 	}
 
-	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"area_id": areaID}); err != nil {
+	entries, err := ws.EntityRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching entity registry: %w", err)
+	}
+	entityEntry, ok := findEntityRegistryEntry(entries, entityID)
+	if !ok {
+		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
+	}
+
+	if !flagEntConfirm {
+		_, _ = fmt.Fprintln(w, dryRunEntSetAreaSummary(entityEntry, areaEntry, areas))
+		return nil
+	}
+
+	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
 		return fmt.Errorf("updating entity area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", entityID, areaID)
+	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", entityID, areaEntry.AreaID)
 	return nil
+}
+
+func resolveAreaEntry(areas []haapi.AreaEntry, area string) (haapi.AreaEntry, bool) {
+	areaLower := strings.ToLower(area)
+	for _, a := range areas {
+		if strings.ToLower(a.Name) == areaLower || strings.ToLower(a.AreaID) == areaLower {
+			return a, true
+		}
+	}
+	return haapi.AreaEntry{}, false
+}
+
+func findEntityRegistryEntry(entries []haapi.EntityRegistryEntry, entityID string) (haapi.EntityRegistryEntry, bool) {
+	for _, e := range entries {
+		if e.EntityID == entityID {
+			return e, true
+		}
+	}
+	return haapi.EntityRegistryEntry{}, false
+}
+
+func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) string {
+	currentArea := entity.AreaID
+	for _, a := range areas {
+		if a.AreaID == entity.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+
+	s := "dry-run: would set entity area\n"
+	s += fmt.Sprintf("  entity_id:    %s\n", entity.EntityID)
+	if currentArea != "" {
+		s += fmt.Sprintf("  current_area: %s\n", currentArea)
+	}
+	s += fmt.Sprintf("  new_area:     %s (%s)\n", area.Name, area.AreaID)
+	s += "use --confirm to apply"
+	return s
 }
 
 // relatedEntry holds one edge in the entity relationship graph.
