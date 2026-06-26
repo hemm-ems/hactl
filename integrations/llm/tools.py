@@ -1,10 +1,9 @@
-"""Read-only hactl wrappers exposed as llm tools.
+"""hactl wrappers exposed as llm tools.
 
 Each function shells out to the hactl CLI and returns its stdout. Errors are
-returned as text (so the model sees them) rather than raised. Write commands
-(svc call, auto apply, dash apply, label create, ent set-area, ent set-label,
-rollback) are intentionally absent so the agent must respond textually and
-ask for confirmation per the eval contract.
+returned as text (so the model sees them) rather than raised. Most wrappers are
+read-only. Safe write wrappers must expose an explicit confirm=False default and
+only pass --confirm when confirm=True.
 
 Env:
   HACTL_BIN  path to the hactl binary (defaults to "hactl" on PATH)
@@ -128,6 +127,32 @@ def hactl_ent_anomalies(entity_id: str, since: str = "24h") -> str:
 def hactl_ent_related(entity_id: str) -> str:
     """List entities related to the given one (same area/device, or referenced by automations)."""
     return _run("ent", "related", entity_id)
+
+
+def hactl_ent_set_area(entity_id: str, area: str, confirm: bool = False) -> str:
+    """Preview or set an entity's area. confirm=False returns the dry-run plan without writing.
+    Only use confirm=True after the user explicitly confirms the exact entity and target area."""
+    extra = ["--confirm"] if confirm else []
+    return _run("ent", "set-area", entity_id, area, *extra)
+
+
+def hactl_device_ls(name: str = "", area: str = "", label: str = "", pattern: str = "") -> str:
+    """List devices with area, labels, and entity counts. Filters: name substring, area, label, pattern."""
+    extra = []
+    if name:
+        extra += ["--name", name]
+    if area:
+        extra += ["--area", area]
+    if label:
+        extra += ["--label", label]
+    if pattern:
+        extra += ["--pattern", pattern]
+    return _run("device", "ls", *extra)
+
+
+def hactl_device_show(device: str) -> str:
+    """Show one device by ID or name, including its registered entities."""
+    return _run("device", "show", device)
 
 
 def hactl_label_ls() -> str:

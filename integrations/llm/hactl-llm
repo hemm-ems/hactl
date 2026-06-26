@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Wrapper that invokes `llm -t hactl` with the read-only hactl tool wrappers
+# Wrapper that invokes `llm -t hactl` with the hactl tool wrappers
 # loaded via --functions, from a directory where `./hactl` does not shadow
 # the global template name (otherwise `llm` reads the Mach-O binary as YAML
 # and dies on byte 0xcf).

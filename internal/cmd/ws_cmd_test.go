@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,8 +26,10 @@ var cmdWSUpgrader = websocket.Upgrader{
 
 // cmdTestServer holds a combined HTTP+WS test server and a temp dir with .env.
 type cmdTestServer struct {
-	srv *httptest.Server
-	dir string
+	srv       *httptest.Server
+	dir       string
+	mu        sync.Mutex
+	cmdCounts map[string]int
 }
 
 // startCmdServer creates an httptest server serving both HTTP and WS.
@@ -35,6 +38,7 @@ type cmdTestServer struct {
 func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[string]http.HandlerFunc) *cmdTestServer {
 	t.Helper()
 	mux := http.NewServeMux()
+	ts := &cmdTestServer{cmdCounts: make(map[string]int)}
 
 	mux.HandleFunc("/api/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := cmdWSUpgrader.Upgrade(w, r, nil)
@@ -55,6 +59,9 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 				return
 			}
 			cmdType, _ := cmd["type"].(string)
+			ts.mu.Lock()
+			ts.cmdCounts[cmdType]++
+			ts.mu.Unlock()
 			respData, ok := wsResponses[cmdType]
 			if !ok {
 				_ = conn.WriteJSON(map[string]any{
@@ -88,7 +95,15 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 		t.Fatal(err)
 	}
 
-	return &cmdTestServer{srv: srv, dir: dir}
+	ts.srv = srv
+	ts.dir = dir
+	return ts
+}
+
+func (ts *cmdTestServer) commandCount(cmdType string) int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.cmdCounts[cmdType]
 }
 
 // withFlagDir sets flagDir for the duration of a test and restores afterward.
@@ -863,9 +878,14 @@ func TestRunEntSetArea(t *testing.T) {
 		"config/area_registry/list": []map[string]any{
 			{"area_id": "kitchen_id", "name": "Kitchen"},
 		},
-		"config/entity_registry/update": map[string]any{"entity_id": "light.kitchen"},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "light.kitchen", "area_id": "old_area"},
+		},
 	}, nil)
 	withFlagDir(t, ts.dir)
+	oldConfirm := flagEntConfirm
+	flagEntConfirm = false
+	defer func() { flagEntConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runEntSetArea(context.Background(), &buf, "light.kitchen", "Kitchen"); err != nil {
@@ -874,6 +894,118 @@ func TestRunEntSetArea(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "light.kitchen") {
 		t.Errorf("output missing entity: %q", out)
+	}
+	if !strings.Contains(out, "dry-run") {
+		t.Errorf("output missing dry-run marker: %q", out)
+	}
+	if got := ts.commandCount("config/entity_registry/update"); got != 0 {
+		t.Fatalf("dry-run sent %d entity registry updates, want 0", got)
+	}
+}
+
+func TestRunEntSetArea_ConfirmWritesOnce(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/area_registry/list": []map[string]any{
+			{"area_id": "kitchen_id", "name": "Kitchen"},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "light.kitchen", "area_id": "old_area"},
+		},
+		"config/entity_registry/update": map[string]any{"entity_id": "light.kitchen"},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	oldConfirm := flagEntConfirm
+	flagEntConfirm = true
+	defer func() { flagEntConfirm = oldConfirm }()
+
+	var buf bytes.Buffer
+	if err := runEntSetArea(context.Background(), &buf, "light.kitchen", "Kitchen"); err != nil {
+		t.Fatalf("runEntSetArea --confirm failed: %v", err)
+	}
+	if got := ts.commandCount("config/entity_registry/update"); got != 1 {
+		t.Fatalf("confirm sent %d entity registry updates, want 1", got)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "area set to kitchen_id") {
+		t.Errorf("output missing confirmed area: %q", out)
+	}
+}
+
+// --- runDeviceLs / runDeviceShow (WS) ---
+
+func TestRunDeviceLs(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/device_registry/list": []map[string]any{
+			{
+				"id": "dev_heat", "name": "Heat Pump", "area_id": "basement",
+				"manufacturer": "Summt", "model": "HP1", "labels": []string{"heat_pump"},
+			},
+			{
+				"id": "dev_light", "name": "Kitchen Light", "area_id": "kitchen",
+				"labels": []string{},
+			},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.heat_temp", "device_id": "dev_heat"},
+			{"entity_id": "climate.heat_pump", "device_id": "dev_heat"},
+			{"entity_id": "light.kitchen", "device_id": "dev_light"},
+		},
+		"config/area_registry/list": []map[string]any{
+			{"area_id": "basement", "name": "Basement"},
+			{"area_id": "kitchen", "name": "Kitchen"},
+		},
+		"config/label_registry/list": []map[string]any{
+			{"label_id": "heat_pump", "name": "Heat Pump"},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	oldLabel := flagDeviceLabel
+	flagDeviceLabel = "heat"
+	defer func() { flagDeviceLabel = oldLabel }()
+
+	var buf bytes.Buffer
+	if err := runDeviceLs(context.Background(), &buf); err != nil {
+		t.Fatalf("runDeviceLs failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "dev_heat") || !strings.Contains(out, "Heat Pump") {
+		t.Errorf("output missing heat pump device: %q", out)
+	}
+	if strings.Contains(out, "dev_light") {
+		t.Errorf("label filter should exclude dev_light: %q", out)
+	}
+	if !strings.Contains(out, "2") {
+		t.Errorf("output missing entity count: %q", out)
+	}
+}
+
+func TestRunDeviceShow(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/device_registry/list": []map[string]any{
+			{"id": "dev_heat", "name": "Heat Pump", "area_id": "basement", "labels": []string{"heat_pump"}},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.heat_temp", "device_id": "dev_heat", "area_id": "basement", "platform": "mqtt"},
+			{"entity_id": "climate.heat_pump", "device_id": "dev_heat", "area_id": "basement", "platform": "mqtt"},
+		},
+		"config/area_registry/list": []map[string]any{
+			{"area_id": "basement", "name": "Basement"},
+		},
+		"config/label_registry/list": []map[string]any{
+			{"label_id": "heat_pump", "name": "Heat Pump"},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDeviceShow(context.Background(), &buf, "Heat Pump"); err != nil {
+		t.Fatalf("runDeviceShow failed: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"device_id: dev_heat", "sensor.heat_temp", "climate.heat_pump", "Basement"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q: %q", want, out)
+		}
 	}
 }
 
