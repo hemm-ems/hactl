@@ -14,7 +14,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Serve hactl over the Model Context Protocol on stdin/stdout, exposing the
 CLI as a single 'hactl' tool for MCP clients (Claude Code, Claude Desktop, ...).
 
-Read-only by default: mutating commands (svc call, auto apply, create/delete, ...)
+Read-only by default: mutating commands (svc call, auto apply, script apply, create/delete, ...)
 are rejected unless started with --allow-writes. The server is pinned to one
 instance per process; pass --dir to select it explicitly.
 

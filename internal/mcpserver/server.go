@@ -82,10 +82,10 @@ func toolDescription(opts Options) string {
 		"Start by running 'rtfm' once: it prints the full manual of all commands and is also " +
 		"available as the MCP resource hactl://manual.\n\n")
 	if opts.AllowWrites {
-		b.WriteString("Writes are ENABLED: mutating commands (svc call, auto apply/create/delete, ...) " +
+		b.WriteString("Writes are ENABLED: mutating commands (svc call, auto apply/create/delete, script apply, ...) " +
 			"are permitted. Config writes are still dry-run unless --confirm is given.")
 	} else {
-		b.WriteString("READ-ONLY: mutating commands (svc call, auto apply/create/delete, script run, " +
+		b.WriteString("READ-ONLY: mutating commands (svc call, auto apply/create/delete, script apply/run, " +
 			"helper/dash/area/floor/label create/delete, ...) are blocked; do not attempt them. " +
 			"The server must be restarted with 'hactl mcp --allow-writes' to enable writes.")
 	}

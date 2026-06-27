@@ -169,6 +169,32 @@ func TestDashShowViewFilter(t *testing.T) {
 	assertContains(t, viewOut, "beta view")
 	assertNotContains(t, viewOut, "Alpha")
 
+	viewJSON := runHactl(t, "dash", "show", "hactl-view-test", "--view", "beta", "--json")
+	var jsonView map[string]any
+	if err := json.Unmarshal([]byte(viewJSON), &jsonView); err != nil {
+		t.Fatalf("dash show --view --json invalid: %v\n%s", err, viewJSON)
+	}
+	if jsonView["path"] != "beta" {
+		t.Errorf("json view path = %v, want beta", jsonView["path"])
+	}
+	if _, hasViews := jsonView["views"]; hasViews {
+		t.Errorf("json view output should not include full dashboard views: %s", viewJSON)
+	}
+	assertNotContains(t, viewJSON, "Alpha")
+
+	viewRaw := stripTokenHeader(runHactl(t, "dash", "show", "hactl-view-test", "--view", "beta", "--raw", "--tokensmax=0"))
+	var rawView map[string]any
+	if err := json.Unmarshal([]byte(viewRaw), &rawView); err != nil {
+		t.Fatalf("dash show --view --raw invalid: %v\n%s", err, viewRaw)
+	}
+	if rawView["path"] != "beta" {
+		t.Errorf("raw view path = %v, want beta", rawView["path"])
+	}
+	if _, hasViews := rawView["views"]; hasViews {
+		t.Errorf("raw view output should not include full dashboard views: %s", viewRaw)
+	}
+	assertNotContains(t, viewRaw, "Alpha")
+
 	// Clean up
 	runHactl(t, "dash", "delete", "hactl-view-test", "--confirm")
 }
