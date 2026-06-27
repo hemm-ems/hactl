@@ -26,6 +26,7 @@ var (
 	flagJSON      bool
 	flagColor     bool
 	flagStats     bool
+	flagTokens    bool
 	flagTokensMax int
 	flagTimeout   time.Duration
 )
@@ -49,6 +50,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "output as JSON")
 	rootCmd.PersistentFlags().BoolVar(&flagColor, "color", false, "enable colored output")
 	rootCmd.PersistentFlags().BoolVar(&flagStats, "stats", false, "show response size and estimated token count")
+	rootCmd.PersistentFlags().BoolVar(&flagTokens, "tokens", false, "show compact token estimate")
 	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500, "cap output at N tokens (0 = no cap)")
 	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout for HA/companion API calls")
 }
@@ -77,19 +79,24 @@ func writeStats(w io.Writer, byteCount int64) {
 	_, _ = fmt.Fprintf(w, "---\nstats: %d bytes, ~%d tokens\n", byteCount, tokens)
 }
 
-// applyTokenPolicy writes data to dst prefixed with a token-estimate header.
+// applyTokenPolicy writes data to dst and applies the output token cap.
+// When flagTokens is set, text output gets a compact token-estimate header.
 // When flagTokensMax > 0 and the estimated tokens exceed the limit, output is
 // truncated at a UTF-8 safe byte boundary and a hint is appended.
-// JSON mode skips the header and the cap so output remains valid JSON; the
-// token estimate goes to stderr instead so the cost is still visible.
+// JSON mode skips the header and the cap so output remains valid JSON; when
+// flagTokens is set, the compact token estimate goes to stderr instead.
 func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagJSON {
-		fmt.Fprintf(os.Stderr, "[~%d tok]\n", estimateTokens(int64(len(data))))
+		if flagTokens {
+			fmt.Fprintf(os.Stderr, "[~%d tok]\n", estimateTokens(int64(len(data))))
+		}
 		_, _ = dst.Write(data)
 		return
 	}
 	tokens := estimateTokens(int64(len(data)))
-	_, _ = fmt.Fprintf(dst, "[~%d tok]\n", tokens)
+	if flagTokens {
+		_, _ = fmt.Fprintf(dst, "[~%d tok]\n", tokens)
+	}
 	if flagTokensMax > 0 && tokens > int64(flagTokensMax) {
 		limit := min(flagTokensMax*4, len(data))
 		// Walk backward to a valid UTF-8 boundary
@@ -176,6 +183,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		flagJSON = false
 		flagColor = false
 		flagStats = false
+		flagTokens = false
 		flagTokensMax = 500
 		resetSubcommandFlags()
 	}()

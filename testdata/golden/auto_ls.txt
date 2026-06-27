@@ -1,4 +1,3 @@
-[~XXX tok]
 id                state area labels runs_24h errors last_err
 climate_schedule  on                0        0     
 morning_alarm     on                0        0     

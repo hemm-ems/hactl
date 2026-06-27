@@ -74,10 +74,11 @@ type toolInput struct {
 func toolDescription(opts Options) string {
 	var b strings.Builder
 	b.WriteString("Run a hactl command. hactl is a Home Assistant analysis and management CLI " +
-		"tuned for LLM use: output is plain text capped at ~500 tokens by default and prefixed " +
-		"with a [~N tok] size header.\n\n" +
+		"tuned for LLM use: output is plain text capped at ~500 tokens by default. " +
+		"Use --tokens to add a compact [~N tok] size header.\n\n" +
 		"Pass the command line without the binary name, e.g. 'ent ls --domain light' or " +
-		"'auto show <id>'. Useful global flags: --json (structured output), --tokensmax N " +
+		"'auto show <id>'. Useful global flags: --json (structured output), --tokens " +
+		"(compact token estimate), --tokensmax N " +
 		"(raise/remove the output cap, 0 = uncapped), --since 7d, --top N, --full.\n\n" +
 		"Start by running 'rtfm' once: it prints the full manual of all commands and is also " +
 		"available as the MCP resource hactl://manual.\n\n")
