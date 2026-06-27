@@ -339,9 +339,10 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 | `hactl tpl create -f <yaml>` | `CreateTemplate()` | `CallService("template", "reload")` |
 | `hactl tpl rm <id> --confirm` | `DeleteTemplate()` | `CallService("template", "reload")` |
 | `hactl script def <id>` | `GetScriptDef()` | — |
-| `hactl script edit <id> -f <yaml> [--confirm]` | `WriteScriptDef(dry_run)` | `CallService("script", "reload")` |
+| `hactl script diff <id> -f <yaml>` | `GetScriptDef()` | — |
+| `hactl script apply <id> -f <yaml> [--confirm]` | `WriteScriptDef(dry_run)` | `CallService("script", "reload")` |
 | `hactl script create -f <yaml>` | `CreateScriptDef()` | `CallService("script", "reload")` |
-| `hactl script rm <id> --confirm` | `DeleteScriptDef()` | `CallService("script", "reload")` |
+| `hactl script delete <id> --confirm` | `DeleteScriptDef()` | `CallService("script", "reload")` |
 | `hactl auto def <id>` | `GetAutomationDef()` | — |
 | `hactl auto edit <id> -f <yaml> [--confirm]` | `WriteAutomationDef(dry_run)` | `CallService("automation", "reload")` |
 | `hactl auto create -f <yaml>` | `CreateAutomationDef()` | `CallService("automation", "reload")` |

@@ -336,6 +336,12 @@ func diffLines(a, b string) []string {
 	return result
 }
 
+// DiffLines exposes the package diff implementation for command paths that
+// need the same compact line diff without using the automation Writer.
+func DiffLines(a, b string) []string {
+	return diffLines(a, b)
+}
+
 // diffLinesPositional is the line-by-line fallback for inputs too large for
 // the LCS table; an insertion shifts everything after it, but output stays
 // correct as a diff.

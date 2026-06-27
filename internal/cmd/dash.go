@@ -183,6 +183,12 @@ func runDashShow(ctx context.Context, w io.Writer, urlPath string) error {
 		if rawErr != nil {
 			return fmt.Errorf("fetching dashboard config: %w", rawErr)
 		}
+		if flagDashView != "" {
+			raw, rawErr = selectDashboardViewRaw(raw, flagDashView)
+			if rawErr != nil {
+				return rawErr
+			}
+		}
 		if flagDashRaw {
 			_, writeErr := w.Write(append(raw, '\n'))
 			return writeErr
@@ -247,6 +253,26 @@ func showSingleView(w io.Writer, cfg *haapi.LovelaceConfig) error {
 		}
 	}
 	return fmt.Errorf("view %q not found", flagDashView)
+}
+
+func selectDashboardViewRaw(raw json.RawMessage, view string) (json.RawMessage, error) {
+	var cfg haapi.LovelaceConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing dashboard config: %w", err)
+	}
+	for _, candidate := range cfg.Views {
+		s := haapi.ParseViewSummary(candidate)
+		if s.Path == view {
+			return candidate, nil
+		}
+	}
+	for _, candidate := range cfg.Views {
+		s := haapi.ParseViewSummary(candidate)
+		if s.Title == view {
+			return candidate, nil
+		}
+	}
+	return nil, fmt.Errorf("view %q not found", view)
 }
 
 func viewType(t string) string {

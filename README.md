@@ -69,11 +69,11 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 { "mcpServers": { "hactl": { "command": "hactl", "args": ["mcp", "--dir", "/path/to/instance"] } } }
 ```
 
-The server is read-only by default: mutating commands (`svc call`, `auto apply`, create/delete, …) are rejected. Start it with `hactl mcp --allow-writes` to permit them — the dry-run + `--confirm` write path still applies on top. One instance per server process; pin it with `--dir`.
+The server is read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, …) are rejected. Start it with `hactl mcp --allow-writes` to permit them — the dry-run + `--confirm` write path still applies on top. One instance per server process; pin it with `--dir`.
 
 ## Safety
 
-Config writes (`auto apply`/`create`/`delete`, templates, helpers, dashboards, registry changes) are dry-run by default and need an explicit `--confirm`. Automation configs are validated with HA's own `validate_config` before anything is written, and a backup is saved before every write (`hactl auto rollback` undoes it). Template syntax is evaluated by HA's real Jinja engine, not a mock.
+Config writes (`auto apply`/`create`/`delete`, `script apply`, templates, helpers, dashboards, registry changes) are dry-run by default and need an explicit `--confirm`. Automation and script configs are validated with HA's own `validate_config` before anything is written, and a backup is saved before every apply write (`hactl auto rollback` undoes automation applies). Template syntax is evaluated by HA's real Jinja engine, not a mock.
 
 Two command families execute immediately, because acting is their purpose: `svc call` (service calls like `light.turn_on`) and `script run`. If you hand an agent unrestricted shell access to hactl, it can call services — the bundled LLM tool wrappers in `integrations/llm/` deliberately expose only read-only commands.
 

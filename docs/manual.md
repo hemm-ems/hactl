@@ -183,6 +183,16 @@ hactl auto rollback climate_schedule                   # undo specific automatio
 
 **Safety:** `apply` without `--confirm` is always a dry-run and writes nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
 
+### Write path (scripts)
+
+```bash
+hactl script diff kino_start -f new_script.yaml
+hactl script apply kino_start -f new_script.yaml             # dry-run (default, no write)
+hactl script apply kino_start -f new_script.yaml --confirm   # write via companion + reload
+```
+
+Requires hactl-companion. Input may be UI-style script YAML (`alias`, `sequence`, `mode`, ...) or `scripts.yaml` top-level-key form (`kino_start: ...`). Confirmed applies validate the candidate `sequence` against HA's action schema before writing and save a local backup under `backups/`.
+
 ### Templates — create & delete
 
 ```bash
@@ -274,6 +284,7 @@ hactl dash show my-dashboard                       # views summary by url_path (
 hactl dash show my-dashboard --json                # pretty-printed full config JSON
 hactl dash show my-dashboard --raw                 # raw HA JSON (for round-trip editing)
 hactl dash show my-dashboard --view living-room    # single view detail as JSON
+hactl dash show my-dashboard --view living-room --raw  # raw JSON for only that view
 
 hactl dash create --url-path my-dash --title "My Dashboard" --icon mdi:home --confirm
 hactl dash save my-dash --file config.json --confirm  # write full config (dry-run without --confirm)
@@ -282,7 +293,7 @@ hactl dash delete my-dash --confirm
 hactl dash resources                               # list custom card/CSS resources
 ```
 
-**LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API.
+**LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API. `--view` scopes inspection output only; do not feed a single-view object to `dash save`.
 
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
 
@@ -448,6 +459,13 @@ hactl auto apply <id> -f new.yaml --confirm
 hactl auto show <id>
 ```
 
+### "Deploy a script change"
+```
+hactl script diff <id> -f new.yaml
+hactl script apply <id> -f new.yaml --confirm
+hactl script show <id>
+```
+
 ### "Create a new automation / script / helper"
 ```
 hactl auto create -f auto.yaml              # dry-run preview
@@ -523,6 +541,6 @@ No global config, no profiles. Directory = instance.
 claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 ```
 
-- Read-only by default: mutating commands (`svc call`, `auto apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
+- Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
 - One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.

@@ -225,6 +225,8 @@ func resetSubcommandFlags() {
 	flagScriptPattern = ""
 	flagScriptLabel = ""
 	flagScriptFailing = false
+	flagScriptFile = ""
+	flagScriptConfirm = false
 	flagLogErrors = false
 	flagLogUnique = false
 	flagLogComponent = ""
