@@ -41,6 +41,19 @@ type ConfigWriteResponse struct {
 	Backup string `json:"backup,omitempty"`
 }
 
+// RelatedEntityResponse is the response from GET /v1/related/entity.
+type RelatedEntityResponse struct {
+	EntityID string               `json:"entity_id"`
+	Related  []RelatedEntityEntry `json:"related"`
+}
+
+// RelatedEntityEntry is one related entity edge returned by the companion graph.
+type RelatedEntityEntry struct {
+	EntityID     string `json:"entity_id"`
+	Relationship string `json:"relationship"`
+	Detail       string `json:"detail"`
+}
+
 // TemplateDefinition represents a template sensor definition.
 type TemplateDefinition struct {
 	UniqueID          string `json:"unique_id"`

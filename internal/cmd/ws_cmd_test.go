@@ -1645,6 +1645,66 @@ func TestRunEntRelated_NoRelations(t *testing.T) {
 	}
 }
 
+func TestRunEntRelated_MergesCompanionAndRegistryWithoutAutomationConfigFetch(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.source_power", "state": "21.5", "attributes": map[string]any{}},
+		{"entity_id": "sensor.generated_power", "state": "42", "attributes": map[string]any{}},
+		{"entity_id": "automation.expensive_lookup", "state": "on", "attributes": map[string]any{"id": "expensive_lookup"}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/related/entity" {
+			t.Fatalf("unexpected companion path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("entity_id"); got != "sensor.source_power" {
+			t.Fatalf("entity_id query = %q, want sensor.source_power", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"entity_id":"sensor.source_power","related":[{"entity_id":"sensor.generated_power","relationship":"config-entry-reference","detail":"config_entry=cfg_generated"}]}`)
+	}))
+	defer companionSrv.Close()
+
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.source_power", "device_id": "dev1", "area_id": "office"},
+			{"entity_id": "sensor.sibling_power", "device_id": "dev1", "area_id": "office"},
+			{"entity_id": "sensor.generated_power", "device_id": "dev2", "area_id": "office"},
+		},
+		"config/area_registry/list":  []map[string]any{{"area_id": "office", "name": "Office"}},
+		"config/label_registry/list": []any{},
+		"config/floor_registry/list": []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+		"/api/config/automation/config/expensive_lookup": func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("runEntRelated must not fetch automation config in the default path: %s", r.URL.Path)
+		},
+	})
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=test-token\nCOMPANION_URL=%s\nCOMPANION_TOKEN=test-token\n", ts.srv.URL, companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntRelated(context.Background(), &buf, "sensor.source_power"); err != nil {
+		t.Fatalf("runEntRelated failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "sensor.generated_power") {
+		t.Errorf("output missing companion relation: %q", out)
+	}
+	if !strings.Contains(out, "sensor.sibling_power") {
+		t.Errorf("output missing registry relation: %q", out)
+	}
+	if !strings.Contains(out, "config-entry-reference") {
+		t.Errorf("output missing companion relationship: %q", out)
+	}
+}
+
 // --- runAutoShow with traces (WS+HTTP) ---
 
 func TestRunAutoShow_WithTraces(t *testing.T) {

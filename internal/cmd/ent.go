@@ -16,6 +16,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/internal/cache"
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
@@ -1107,8 +1108,9 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 
 	related := make([]relatedEntry, 0, len(states))
 
-	// 1. Find automations that mention this entity
-	related = append(related, findAutomationRelations(ctx, client, states, entityID)...)
+	// 1. Ask the companion's generic storage/YAML graph first. This avoids the
+	// old per-automation config spider, which is slow on large HA instances.
+	related = append(related, findCompanionRelations(ctx, cfg, ws, entityID)...)
 
 	// 2. Find device siblings (same device_id)
 	related = append(related, findDeviceSiblings(rc, entityID)...)
@@ -1118,6 +1120,7 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 
 	// 4. Find groups that contain this entity
 	related = append(related, findGroupMemberships(states, entityID)...)
+	related = dedupeAndSortRelated(related)
 
 	if len(related) == 0 {
 		_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
@@ -1144,6 +1147,57 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.WSClient, entityID string) []relatedEntry {
+	companionURL, err := companion.Discover(ctx, cfg, ws)
+	if err != nil {
+		slog.Debug("companion related graph unavailable", "error", err)
+		return nil
+	}
+	cc := companion.New(companionURL, cfg.CompanionToken).WithIngressAuth(ws)
+	res, err := cc.RelatedEntity(ctx, entityID)
+	if err != nil {
+		slog.Debug("companion related graph failed", "error", err)
+		return nil
+	}
+	related := make([]relatedEntry, 0, len(res.Related))
+	for _, item := range res.Related {
+		if item.EntityID == "" || item.EntityID == entityID {
+			continue
+		}
+		related = append(related, relatedEntry{
+			entityID:     item.EntityID,
+			relationship: item.Relationship,
+			detail:       item.Detail,
+		})
+	}
+	return related
+}
+
+func dedupeAndSortRelated(entries []relatedEntry) []relatedEntry {
+	if len(entries) < 2 {
+		return entries
+	}
+	seen := make(map[relatedEntry]bool, len(entries))
+	out := make([]relatedEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.entityID == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].entityID != out[j].entityID {
+			return out[i].entityID < out[j].entityID
+		}
+		if out[i].relationship != out[j].relationship {
+			return out[i].relationship < out[j].relationship
+		}
+		return out[i].detail < out[j].detail
+	})
+	return out
 }
 
 // findAutomationRelations scans automation configs for references to the target entity.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hemm-ems/hactl/internal/companion"
+	"github.com/hemm-ems/hactl/internal/companiontestutil"
 )
 
 const (
@@ -138,6 +139,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	slog.Info("companion-test: config files seeded")
+
+	if err := companiontestutil.SeedRelatedFixture(filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
+		slog.Error("companion-test: seeding related fixture failed", "error", err)
+		composeDown()
+		os.Exit(1)
+	}
+	slog.Info("companion-test: related fixture seeded")
 
 	// Run tests
 	code := m.Run()

@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hemm-ems/hactl/internal/companiontestutil"
 )
 
 // runHactlE2E executes the hactl binary (built at TestMain) with the given args,
@@ -21,6 +24,62 @@ func runHactlE2E(t *testing.T, args ...string) (string, error) {
 	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func runHactlE2ETimed(t *testing.T, args ...string) (string, time.Duration, error) {
+	t.Helper()
+	start := time.Now()
+	out, err := runHactlE2E(t, args...)
+	return out, time.Since(start), err
+}
+
+func TestE2EEntRelatedCompanionGraphCLI(t *testing.T) {
+	out, cold, err := runHactlE2ETimed(t, "ent", "related", companiontestutil.RelatedSourceEntityID)
+	if err != nil {
+		t.Fatalf("hactl ent related failed (exit: %v):\n%s", err, out)
+	}
+	if cold > 10*time.Second {
+		t.Fatalf("cold hactl ent related took %s, want <=10s\noutput:\n%s", cold, out)
+	}
+	assertEntRelatedOutput(t, out,
+		companiontestutil.RelatedGeneratedEntityID,
+		companiontestutil.RelatedYAMLPeerEntityID,
+		"config-entry-reference",
+		"yaml-reference",
+	)
+
+	out, warm, err := runHactlE2ETimed(t, "ent", "related", companiontestutil.RelatedSourceEntityID)
+	if err != nil {
+		t.Fatalf("warm hactl ent related failed (exit: %v):\n%s", err, out)
+	}
+	if warm > 3*time.Second {
+		t.Fatalf("warm hactl ent related took %s, want <=3s\noutput:\n%s", warm, out)
+	}
+	assertEntRelatedOutput(t, out,
+		companiontestutil.RelatedGeneratedEntityID,
+		companiontestutil.RelatedYAMLPeerEntityID,
+		"config-entry-reference",
+		"yaml-reference",
+	)
+
+	reverseOut, err := runHactlE2E(t, "ent", "related", companiontestutil.RelatedGeneratedEntityID)
+	if err != nil {
+		t.Fatalf("reverse hactl ent related failed (exit: %v):\n%s", err, reverseOut)
+	}
+	assertEntRelatedOutput(t, reverseOut,
+		companiontestutil.RelatedSourceEntityID,
+		"referenced-entity",
+		"config_entry="+companiontestutil.RelatedGeneratedConfigEntryID,
+	)
+}
+
+func assertEntRelatedOutput(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Fatalf("hactl ent related output missing %q:\n%s", want, out)
+		}
+	}
 }
 
 // TestE2EAutoCreateCLI verifies that `hactl auto create --confirm -f <yaml>`
