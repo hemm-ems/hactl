@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hemm-ems/hactl/internal/companiontestutil"
 )
 
 const companionToken = "integration-test-token-discovery"
@@ -52,6 +54,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	slog.Info("discovery-test: companion ready", "url", companionURL)
+
+	if err := companiontestutil.SeedRelatedFixture(filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
+		slog.Error("discovery-test: seed related fixture", "error", err)
+		composeDown()
+		os.Exit(1)
+	}
+	slog.Info("discovery-test: related fixture seeded")
 
 	fakeSup, err = startFakeSupervisor(companionURL)
 	if err != nil {

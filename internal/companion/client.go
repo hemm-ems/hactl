@@ -151,6 +151,17 @@ func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryR
 	return &r, json.Unmarshal(data, &r)
 }
 
+// RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>.
+func (c *Client) RelatedEntity(ctx context.Context, entityID string) (*RelatedEntityResponse, error) {
+	q := url.Values{"entity_id": {entityID}}
+	data, err := c.doGet(ctx, "/v1/related/entity", q)
+	if err != nil {
+		return nil, err
+	}
+	var r RelatedEntityResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
 // --- Template CRUD ---
 
 // ListTemplates calls GET /v1/config/templates.
