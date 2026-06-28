@@ -31,7 +31,7 @@ See the [manual](docs/manual.md) for the full command reference.
 
 ## How it's built for LLMs
 
-Every response reports its own token count (`[~N tok]`) and is capped at 500 tokens by default. Extended output is available but opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
+Every response is capped at 500 tokens by default, and compact token estimates are available with `--tokens` (`[~N tok]`). Extended output is opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
 
 `hactl manual` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
 

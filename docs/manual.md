@@ -6,7 +6,7 @@
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
 
-**Token budget:** Every response starts with a `[~N tok]` header so agents know the cost before reading further. Default cap is 500 tokens (`--tokensmax=500`). Raise the cap (`--tokensmax=2000`) or remove it entirely (`--tokensmax=0`) when you need full output. Use `--full` or `--json` only when you need raw data. Add `--stats` to any command to see response size + estimated token count on stderr.
+**Token budget:** Output is capped at 500 tokens by default (`--tokensmax=500`). Raise the cap (`--tokensmax=2000`) or remove it entirely (`--tokensmax=0`) when you need full output. Add `--tokens` to print a compact `[~N tok]` estimate, or `--stats` to see response size + estimated token count on stderr.
 
 ## Setup
 
@@ -400,13 +400,13 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 
 ## Output conventions
 
-- **Token header:** Every response starts with `[~N tok]` so you know the cost at a glance.
+- **Token estimate:** Add `--tokens` to print a compact `[~N tok]` estimate (`stderr` in JSON mode).
 - **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable. Use filters to reduce output rather than raising the cap.
 - **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
 - **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls.
 - **Timestamps:** short form (`09:42`, `04-16 09:42`). ISO only with `--full`.
 - **No decoration:** no emojis, no color (unless `--color`). Clean for parsing.
-- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. JSON output is never truncated by `--tokensmax` (the token estimate goes to stderr instead) — on large datasets apply filters first.
+- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. JSON output is never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets apply filters first.
 - **`--stats`:** prints raw response size + estimated token count to stderr after any command.
 
 ---
@@ -422,6 +422,7 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 | `--json` | off | JSON output |
 | `--color` | off | ANSI colors |
 | `--stats` | off | Print response size + token estimate to stderr |
+| `--tokens` | off | Print compact token estimate |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
 | `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
 

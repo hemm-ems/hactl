@@ -92,10 +92,28 @@ func TestWriteStats(t *testing.T) {
 	}
 }
 
-func TestApplyTokenPolicy_Header(t *testing.T) {
+func TestApplyTokenPolicy_DefaultNoHeader(t *testing.T) {
 	flagTokensMax = 0 // no cap
 	flagJSON = false
-	defer func() { flagTokensMax = 500; flagJSON = false }()
+	flagTokens = false
+	defer func() { flagTokensMax = 500; flagJSON = false; flagTokens = false }()
+
+	var buf bytes.Buffer
+	applyTokenPolicy(&buf, []byte("hello world"), "hactl version")
+	out := buf.String()
+	if strings.HasPrefix(out, "[~") {
+		t.Errorf("unexpected token header prefix, got: %q", out)
+	}
+	if out != "hello world" {
+		t.Errorf("expected raw content in output, got: %q", out)
+	}
+}
+
+func TestApplyTokenPolicy_TokensHeader(t *testing.T) {
+	flagTokensMax = 0 // no cap
+	flagJSON = false
+	flagTokens = true
+	defer func() { flagTokensMax = 500; flagJSON = false; flagTokens = false }()
 
 	var buf bytes.Buffer
 	applyTokenPolicy(&buf, []byte("hello world"), "hactl version")
@@ -108,10 +126,21 @@ func TestApplyTokenPolicy_Header(t *testing.T) {
 	}
 }
 
+func TestRunWithOutput_TokensFlag(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "version", "--tokens"}, &buf); err != nil {
+		t.Fatalf("version --tokens failed: %v", err)
+	}
+	if !strings.HasPrefix(buf.String(), "[~") {
+		t.Errorf("expected token header prefix, got: %q", buf.String())
+	}
+}
+
 func TestApplyTokenPolicy_JSON_NoHeader(t *testing.T) {
 	flagTokensMax = 500
 	flagJSON = true
-	defer func() { flagTokensMax = 500; flagJSON = false }()
+	flagTokens = false
+	defer func() { flagTokensMax = 500; flagJSON = false; flagTokens = false }()
 
 	var buf bytes.Buffer
 	applyTokenPolicy(&buf, []byte(`{"key":"value"}`), "hactl health")
