@@ -310,6 +310,14 @@ func TestCreateAndGetAutomation(t *testing.T) {
 	if cr.ID == "" {
 		t.Fatal("id is empty after create")
 	}
+	// Regression coverage for issue #40: verify the write actually
+	// materialized in real HA, not just in the config file.
+	if !cr.Reloaded {
+		t.Error("reloaded = false, want true (real HA should confirm reload)")
+	}
+	if cr.EntityID == "" {
+		t.Error("entity_id is empty, want a confirmed live entity_id from /api/states")
+	}
 
 	// Get it back
 	got, err := testClient.GetAutomationDef(ctx, cr.ID)
@@ -337,6 +345,52 @@ func TestCreateAndGetAutomation(t *testing.T) {
 	del, err := testClient.DeleteAutomationDef(ctx, cr.ID)
 	if err != nil {
 		t.Fatalf("delete automation: %v", err)
+	}
+	if del.Status != "deleted" {
+		t.Errorf("delete status = %q, want deleted", del.Status)
+	}
+}
+
+// TestCreateAndGetHelper covers issue #40's other symptom: helper create
+// used to report success by convention (writing <domain>.yaml) without
+// checking configuration.yaml actually !include'd it or that the entity
+// materialized in HA. seedConfigFiles wires input_boolean: !include
+// input_boolean.yaml so this exercises the real path.
+func TestCreateAndGetHelper(t *testing.T) {
+	ctx := context.Background()
+	content := "e2e_test_toggle:\n  name: E2E Test Toggle\n"
+
+	cr, err := testClient.CreateHelper(ctx, content, "input_boolean")
+	if err != nil {
+		t.Fatalf("create helper: %v", err)
+	}
+	if cr.Status != "created" {
+		t.Errorf("status = %q, want created", cr.Status)
+	}
+	if cr.ID != "e2e_test_toggle" {
+		t.Errorf("id = %q, want e2e_test_toggle", cr.ID)
+	}
+	if !cr.Reloaded {
+		t.Error("reloaded = false, want true (real HA should confirm reload)")
+	}
+	if !cr.EntityCreated {
+		t.Error("entity_created = false, want true (real HA should confirm the entity)")
+	}
+	if cr.EntityID != "input_boolean.e2e_test_toggle" {
+		t.Errorf("entity_id = %q, want input_boolean.e2e_test_toggle", cr.EntityID)
+	}
+
+	got, err := testClient.GetHelper(ctx, cr.ID)
+	if err != nil {
+		t.Fatalf("get helper: %v", err)
+	}
+	if got.Domain != "input_boolean" {
+		t.Errorf("domain = %q, want input_boolean", got.Domain)
+	}
+
+	del, err := testClient.DeleteHelper(ctx, cr.ID)
+	if err != nil {
+		t.Fatalf("delete helper: %v", err)
 	}
 	if del.Status != "deleted" {
 		t.Errorf("delete status = %q, want deleted", del.Status)

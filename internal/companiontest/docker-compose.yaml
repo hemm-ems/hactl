@@ -25,7 +25,14 @@ services:
         BASE_IMAGE: python:3.12-alpine
     container_name: hactl-companion-test-comp
     environment:
-      SUPERVISOR_TOKEN: integration-test-token-12345
+      # Overridden via --env-file with a real HA long-lived token once
+      # onboarding completes (see TestMain in main_test.go). The fallback
+      # lets `docker compose up` work standalone for manual poking, though
+      # core_api.py calls will fail without a real token.
+      SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN:-integration-test-token-12345}
+      # No real Supervisor exists in this stack — point core_api.py
+      # directly at the real HA container instead of the Supervisor proxy.
+      CORE_API_URL: http://homeassistant:8123/api
     ports:
       - "9100"
     volumes:

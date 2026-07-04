@@ -25,21 +25,26 @@ import (
 )
 
 const (
-	companionToken = "integration-test-token-12345"
-	clientID       = "http://hactl-companion-test"
-	onboardUser    = "testowner"
-	onboardPass    = "testpass1234!"
-	onboardName    = "Test Owner"
+	clientID    = "http://hactl-companion-test"
+	onboardUser = "testowner"
+	onboardPass = "testpass1234!"
+	onboardName = "Test Owner"
 )
 
 var (
-	testClient  *companion.Client
-	haURL       string
-	compURL     string
-	composeDir  string
-	haToken     string // long-lived HA token for E2E tests
-	instanceDir string // temp dir with .env for hactl CLI E2E tests
-	hactlBin    string // path to built hactl binary
+	testClient *companion.Client
+	haURL      string
+	compURL    string
+	composeDir string
+	haToken    string // long-lived HA token for E2E tests
+	// companionToken authenticates against companion directly. There is no
+	// real Supervisor in this stack, so companion's SUPERVISOR_TOKEN (see
+	// docker-compose.yaml) is set to this same real HA token once onboarding
+	// completes — it doubles as companion's incoming Bearer auth secret and,
+	// via CORE_API_URL, its outgoing HA core API token.
+	companionToken string
+	instanceDir    string // temp dir with .env for hactl CLI E2E tests
+	hactlBin       string // path to built hactl binary
 )
 
 func TestMain(m *testing.M) {
@@ -54,13 +59,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Start stack
-	if err := composeUp(); err != nil {
-		slog.Error("companion-test: compose up failed", "error", err)
+	// Start HA only — companion's SUPERVISOR_TOKEN needs a real HA
+	// long-lived token (there's no real Supervisor in this stack), and that
+	// token only exists after onboarding, so HA must come up first.
+	if err := composeUpServices("homeassistant"); err != nil {
+		slog.Error("companion-test: compose up homeassistant failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Resolve mapped ports
 	var err error
 	haURL, err = getMappedURL("homeassistant", "8123")
 	if err != nil {
@@ -68,14 +74,8 @@ func TestMain(m *testing.M) {
 		composeDown()
 		os.Exit(1)
 	}
-	compURL, err = getMappedURL("companion", "9100")
-	if err != nil {
-		slog.Error("companion-test: get companion port", "error", err)
-		composeDown()
-		os.Exit(1)
-	}
 
-	slog.Info("companion-test: stack URLs", "ha", haURL, "companion", compURL)
+	slog.Info("companion-test: HA URL", "ha", haURL)
 
 	// Wait for HA
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -94,7 +94,32 @@ func TestMain(m *testing.M) {
 		composeDown()
 		os.Exit(1)
 	}
+	companionToken = haToken
 	slog.Info("companion-test: onboarding complete")
+
+	// Start companion with the real HA token as SUPERVISOR_TOKEN.
+	envFile, envErr := writeSupervisorTokenEnvFile(companionToken)
+	if envErr != nil {
+		slog.Error("companion-test: writing supervisor token env file failed", "error", envErr)
+		composeDown()
+		os.Exit(1)
+	}
+	defer os.Remove(envFile) //nolint:errcheck // best-effort cleanup of a temp file
+
+	if err := composeUpCompanionWithEnv(envFile); err != nil {
+		slog.Error("companion-test: compose up companion failed", "error", err)
+		composeDown()
+		os.Exit(1)
+	}
+
+	compURL, err = getMappedURL("companion", "9100")
+	if err != nil {
+		slog.Error("companion-test: get companion port", "error", err)
+		composeDown()
+		os.Exit(1)
+	}
+
+	slog.Info("companion-test: companion URL", "companion", compURL)
 
 	// Wait for companion
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
@@ -182,11 +207,36 @@ func resolveComposeDir() string {
 	return abs
 }
 
-func composeUp() error {
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "up", "-d")
+func composeUpServices(services ...string) error {
+	args := append([]string{"compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "up", "-d"}, services...)
+	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// composeUpCompanionWithEnv starts the companion service with SUPERVISOR_TOKEN
+// substituted from envFile — the container's env is fixed at creation, and the
+// real HA token doesn't exist until after HA onboarding, so companion must be
+// started separately from (and after) homeassistant.
+func composeUpCompanionWithEnv(envFile string) error {
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"),
+		"--env-file", envFile, "up", "-d", "companion")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func writeSupervisorTokenEnvFile(token string) (string, error) {
+	f, err := os.CreateTemp("", "hactl-companiontest-*.env")
+	if err != nil {
+		return "", fmt.Errorf("creating supervisor token env file: %w", err)
+	}
+	defer f.Close() //nolint:errcheck // best-effort close, write error checked below
+	if _, err := fmt.Fprintf(f, "SUPERVISOR_TOKEN=%s\n", token); err != nil {
+		return "", fmt.Errorf("writing supervisor token env file: %w", err)
+	}
+	return f.Name(), nil
 }
 
 func composeDown() {
@@ -247,6 +297,23 @@ func seedConfigFiles() error {
 `
 	if _, err := testClient.WriteConfigFile(ctx, "automations.yaml", automationsYAML, false); err != nil {
 		return fmt.Errorf("seeding automations.yaml: %w", err)
+	}
+
+	// HA's default onboarding config doesn't wire up helper domains via
+	// YAML — create the backing file, then add the !include ourselves, so
+	// helper create tests can exercise real entity materialization.
+	if _, err := testClient.WriteConfigFile(ctx, "input_boolean.yaml", "# seeded by companiontest\n", false); err != nil {
+		return fmt.Errorf("seeding input_boolean.yaml: %w", err)
+	}
+	rawConfig, err := testClient.ReadConfigFileRaw(ctx, "configuration.yaml")
+	if err != nil {
+		return fmt.Errorf("reading configuration.yaml: %w", err)
+	}
+	if !strings.Contains(rawConfig.Content, "input_boolean:") {
+		newConfig := strings.TrimRight(rawConfig.Content, "\n") + "\ninput_boolean: !include input_boolean.yaml\n"
+		if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
+			return fmt.Errorf("wiring input_boolean into configuration.yaml: %w", err)
+		}
 	}
 
 	return nil
