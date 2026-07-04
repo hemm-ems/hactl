@@ -1952,8 +1952,8 @@ func TestRunAutoDelete_Confirm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envContent = append(envContent, []byte(fmt.Sprintf("COMPANION_URL=%s\n", companionSrv.URL))...)
-	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil {
+	envContent = fmt.Appendf(envContent, "COMPANION_URL=%s\n", companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil { //nolint:gosec // test fixture dir from t.TempDir(), not user input
 		t.Fatal(err)
 	}
 	withFlagDir(t, ts.dir)
@@ -2014,8 +2014,8 @@ func TestRunAutoDelete_Confirm_ByAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envContent = append(envContent, []byte(fmt.Sprintf("COMPANION_URL=%s\n", companionSrv.URL))...)
-	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil {
+	envContent = fmt.Appendf(envContent, "COMPANION_URL=%s\n", companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil { //nolint:gosec // test fixture dir from t.TempDir(), not user input
 		t.Fatal(err)
 	}
 	withFlagDir(t, ts.dir)
