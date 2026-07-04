@@ -1683,6 +1683,62 @@ func TestRunEntRelated_StaleEntity(t *testing.T) {
 	}
 }
 
+func TestRunEntRelated_StaleFlag_ShowsConfigRefs(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.temp", "state": "21.5", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	var gotStale string
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/related/entity" {
+			t.Fatalf("unexpected companion path: %s", r.URL.Path)
+		}
+		gotStale = r.URL.Query().Get("stale")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"entity_id":"binary_sensor.tur_balkon","stale":true,"related":[],`+
+			`"stale_refs":[{"location":"automations.yaml","path":"[3].trigger[0].entity_id",`+
+			`"matched_value":"binary_sensor.tur_balkon"}]}`)
+	}))
+	defer companionSrv.Close()
+
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{{"entity_id": "sensor.temp"}},
+		"config/area_registry/list":   []any{},
+		"config/label_registry/list":  []any{},
+		"config/floor_registry/list":  []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=test-token\nCOMPANION_URL=%s\nCOMPANION_TOKEN=test-token\n", ts.srv.URL, companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlagDir(t, ts.dir)
+
+	old := flagEntStale
+	flagEntStale = true
+	defer func() { flagEntStale = old }()
+
+	var buf bytes.Buffer
+	if err := runEntRelated(context.Background(), &buf, "binary_sensor.tur_balkon"); err != nil {
+		t.Fatalf("runEntRelated --stale failed: %v", err)
+	}
+	if gotStale != "true" {
+		t.Errorf("companion should be queried with stale=true, got %q", gotStale)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "automations.yaml") || !strings.Contains(out, "[3].trigger[0].entity_id") {
+		t.Errorf("output should list the stale config reference, got: %q", out)
+	}
+	if !strings.Contains(out, "stale") {
+		t.Errorf("output should flag the entity as stale, got: %q", out)
+	}
+}
+
 func TestRunEntRelated_MergesCompanionAndRegistryWithoutAutomationConfigFetch(t *testing.T) {
 	states := []map[string]any{
 		{"entity_id": "sensor.source_power", "state": "21.5", "attributes": map[string]any{}},

@@ -42,9 +42,20 @@ type ConfigWriteResponse struct {
 }
 
 // RelatedEntityResponse is the response from GET /v1/related/entity.
+// Stale and StaleRefs are populated only when the request passes stale=true and
+// the entity is absent from the on-disk registry snapshot.
 type RelatedEntityResponse struct {
-	EntityID string               `json:"entity_id"`
-	Related  []RelatedEntityEntry `json:"related"`
+	EntityID  string               `json:"entity_id"`
+	Stale     bool                 `json:"stale"`
+	Related   []RelatedEntityEntry `json:"related"`
+	StaleRefs []StaleRef           `json:"stale_refs"`
+}
+
+// StaleRef is one config location where a stale entity_id is still referenced.
+type StaleRef struct {
+	Location     string `json:"location"`      // config-relative file, e.g. "automations.yaml"
+	Path         string `json:"path"`          // path within that file, e.g. "[3].trigger[0].entity_id"
+	MatchedValue string `json:"matched_value"` // the literal entity_id found
 }
 
 // RelatedEntityEntry is one related entity edge returned by the companion graph.

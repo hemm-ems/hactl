@@ -31,6 +31,7 @@ var (
 	flagEntArea     string
 	flagEntLabel    string
 	flagEntConfirm  bool
+	flagEntStale    bool
 )
 
 var entCmd = &cobra.Command{
@@ -116,6 +117,7 @@ func init() {
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
+	entRelatedCmd.Flags().BoolVar(&flagEntStale, "stale", false, "if the entity is gone, list where it is still referenced in config")
 	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd)
 	rootCmd.AddCommand(entCmd)
 }
@@ -1110,7 +1112,10 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 
 	// 1. Ask the companion's generic storage/YAML graph first. This avoids the
 	// old per-automation config spider, which is slow on large HA instances.
-	related = append(related, findCompanionRelations(ctx, cfg, ws, entityID)...)
+	// With --stale, the companion also returns where a gone entity is still
+	// referenced in config (staleRefs).
+	companionRelated, staleRefs := findCompanionRelations(ctx, cfg, ws, entityID, flagEntStale)
+	related = append(related, companionRelated...)
 
 	// 2. Find device siblings (same device_id)
 	related = append(related, findDeviceSiblings(rc, entityID)...)
@@ -1127,6 +1132,12 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 	// "no related entities found" — indistinguishable from a live entity that
 	// genuinely has no relations — silently hiding that the entity is gone.
 	known := entityKnown(rc, states, entityID)
+
+	// --stale: for a gone entity, surface where it is still referenced in config
+	// (the companion's literal scan) so the reference can be found and repaired.
+	if flagEntStale && !known {
+		return renderStaleRefs(w, entityID, staleRefs)
+	}
 
 	if len(related) == 0 {
 		if known {
@@ -1182,17 +1193,17 @@ func entityKnown(rc *registryContext, states []entityState, entityID string) boo
 	return false
 }
 
-func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.WSClient, entityID string) []relatedEntry {
+func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.WSClient, entityID string, stale bool) ([]relatedEntry, []companion.StaleRef) {
 	companionURL, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
 		slog.Debug("companion related graph unavailable", "error", err)
-		return nil
+		return nil, nil
 	}
 	cc := companion.New(companionURL, cfg.CompanionToken).WithIngressAuth(ws)
-	res, err := cc.RelatedEntity(ctx, entityID)
+	res, err := cc.RelatedEntity(ctx, entityID, stale)
 	if err != nil {
 		slog.Debug("companion related graph failed", "error", err)
-		return nil
+		return nil, nil
 	}
 	related := make([]relatedEntry, 0, len(res.Related))
 	for _, item := range res.Related {
@@ -1205,7 +1216,28 @@ func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.W
 			detail:       item.Detail,
 		})
 	}
-	return related
+	return related, res.StaleRefs
+}
+
+// renderStaleRefs reports where a gone entity is still referenced in config.
+func renderStaleRefs(w io.Writer, entityID string, refs []companion.StaleRef) error {
+	if len(refs) == 0 {
+		_, _ = fmt.Fprintf(w, "%s: no stale references found (entity fully cleaned up or config unavailable)\n", entityID)
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "%s: stale (renamed/deleted); %d config reference(s):\n", entityID, len(refs))
+	tbl := &format.Table{
+		Headers: []string{"location", "path", "matched_value"},
+		Rows:    make([][]string, len(refs)),
+	}
+	for i, r := range refs {
+		tbl.Rows[i] = []string{r.Location, r.Path, r.MatchedValue}
+	}
+	return tbl.Render(w, format.RenderOpts{
+		Top:  flagTop,
+		Full: true,
+		JSON: flagJSON,
+	})
 }
 
 func dedupeAndSortRelated(entries []relatedEntry) []relatedEntry {
