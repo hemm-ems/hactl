@@ -249,6 +249,8 @@ func resetSubcommandFlags() {
 	flagFloorConfirm = false
 	flagDashView = ""
 	flagDashRaw = false
+	flagDashYAML = false
+	flagConfigFileRaw = false
 	flagDashFile = ""
 	flagDashConfirm = false
 	flagDashTitle = ""
