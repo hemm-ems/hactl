@@ -1122,12 +1122,26 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 	related = append(related, findGroupMemberships(states, entityID)...)
 	related = dedupeAndSortRelated(related)
 
+	// A stale/renamed/deleted entity is absent from both the live registry and
+	// the state machine. Without this check an empty result is reported as
+	// "no related entities found" — indistinguishable from a live entity that
+	// genuinely has no relations — silently hiding that the entity is gone.
+	known := entityKnown(rc, states, entityID)
+
 	if len(related) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
+		if known {
+			_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
+		} else {
+			_, _ = fmt.Fprintf(w, "%s: not in the registry (stale/renamed or deleted); 0 relations found\n", entityID)
+		}
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: %d related entities\n", entityID, len(related))
+	if known {
+		_, _ = fmt.Fprintf(w, "%s: %d related entities\n", entityID, len(related))
+	} else {
+		_, _ = fmt.Fprintf(w, "%s: not in the registry (stale/renamed or deleted); %d dangling reference(s) still point here\n", entityID, len(related))
+	}
 
 	tbl := &format.Table{
 		Headers: []string{"entity_id", "relationship", "detail"},
@@ -1147,6 +1161,25 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+// entityKnown reports whether entityID currently exists in HA — either in the
+// live entity registry or the current state machine. A stale/renamed/deleted
+// entity is in neither; checking both (rather than the companion's on-disk
+// registry snapshot) avoids false "stale" positives for YAML-only entities that
+// have a state but no registry entry. rc may be nil if the registry fetch failed.
+func entityKnown(rc *registryContext, states []entityState, entityID string) bool {
+	if rc != nil {
+		if _, ok := rc.entityByID[entityID]; ok {
+			return true
+		}
+	}
+	for i := range states {
+		if states[i].EntityID == entityID {
+			return true
+		}
+	}
+	return false
 }
 
 func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.WSClient, entityID string) []relatedEntry {
