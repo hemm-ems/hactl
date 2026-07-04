@@ -13,7 +13,30 @@ import (
 	"time"
 
 	"github.com/hemm-ems/hactl/internal/companiontestutil"
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
+
+// entityRegistryContains connects to real HA over WS and reports whether
+// entityID still has a registry entry — used to prove `auto delete` actually
+// cleaned up the orphaned entity, not just the config file.
+func entityRegistryContains(ctx context.Context, entityID string) (bool, error) {
+	ws := haapi.NewWSClient(haURL, haToken)
+	if err := ws.Connect(ctx); err != nil {
+		return false, fmt.Errorf("connecting to HA: %w", err)
+	}
+	defer ws.Close() //nolint:errcheck // best-effort close in test helper
+
+	entries, err := ws.EntityRegistryList(ctx)
+	if err != nil {
+		return false, fmt.Errorf("listing entity registry: %w", err)
+	}
+	for _, e := range entries {
+		if e.EntityID == entityID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // runHactlE2E executes the hactl binary (built at TestMain) with the given args,
 // using instanceDir as the --dir flag so it picks up the E2E .env with both HA
@@ -111,6 +134,14 @@ action:
 	if !strings.Contains(out, "created automation") {
 		t.Errorf("expected 'created automation' in output, got:\n%s", out)
 	}
+	// Regression coverage for issue #40: a write that never actually
+	// materialized in HA used to still print "created automation".
+	if !strings.Contains(out, "entity_id: automation.e2e_create_test") {
+		t.Errorf("expected confirmed entity_id in output (real HA reload), got:\n%s", out)
+	}
+	if strings.Contains(out, "warning:") {
+		t.Errorf("did not expect a warning when HA confirms the write, got:\n%s", out)
+	}
 }
 
 // TestE2EAutoDeleteCLI verifies that `hactl auto delete --confirm <id>`
@@ -139,6 +170,68 @@ action:
 	}
 	if !strings.Contains(out, "deleted automation") {
 		t.Errorf("expected 'deleted automation' in output, got:\n%s", out)
+	}
+}
+
+// TestE2EAutoDeleteByAliasCLI verifies that `hactl auto delete --confirm
+// <alias>` — the display identifier, not the config id — both removes the
+// config entry AND cleans up the orphaned entity registry entry.
+//
+// Regression coverage: resolveAutomationEntityID originally matched only
+// entity_id/config-id/slug, silently skipping registry cleanup whenever a
+// caller deleted by alias (HA's attributes.friendly_name). That gap wasn't
+// caught by any mocked unit test — only a manual repro against real HA
+// surfaced it, hence this test exists at the real-HA E2E tier.
+func TestE2EAutoDeleteByAliasCLI(t *testing.T) {
+	ctx := context.Background()
+
+	const autoID = "e2e_delete_by_alias_target"
+	const alias = "E2E Delete By Alias Target"
+	const entityID = "automation.e2e_delete_by_alias_target"
+	content := `id: ` + autoID + `
+alias: ` + alias + `
+mode: single
+trigger:
+  - platform: time
+    at: "08:00:00"
+action:
+  - delay: "00:00:01"
+`
+	if _, err := testClient.CreateAutomationDef(ctx, content); err != nil {
+		t.Fatalf("seeding automation for alias-delete test: %v", err)
+	}
+
+	present, err := entityRegistryContains(ctx, entityID)
+	if err != nil {
+		t.Fatalf("checking entity registry before delete: %v", err)
+	}
+	if !present {
+		t.Fatalf("expected %s to be registered before delete", entityID)
+	}
+
+	out, execErr := runHactlE2E(t, "auto", "delete", "--confirm", alias)
+	if execErr != nil {
+		t.Fatalf("hactl auto delete --confirm <alias> failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, "deleted automation") {
+		t.Errorf("expected 'deleted automation' in output, got:\n%s", out)
+	}
+
+	// Give the WS entity_registry/remove call (best-effort, async from the
+	// CLI's perspective) a moment to land before checking.
+	var stillPresent bool
+	for range 10 {
+		stillPresent, err = entityRegistryContains(ctx, entityID)
+		if err != nil {
+			t.Fatalf("checking entity registry after delete: %v", err)
+		}
+		if !stillPresent {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if stillPresent {
+		t.Errorf("expected %s to be removed from the entity registry after delete-by-alias", entityID)
 	}
 }
 
