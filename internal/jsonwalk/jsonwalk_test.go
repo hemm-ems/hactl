@@ -96,7 +96,7 @@ func TestReplace(t *testing.T) {
 	}
 
 	// changed paths reported (deterministic order)
-	var gotPaths []string
+	gotPaths := make([]string, 0, len(changed))
 	for _, p := range changed {
 		gotPaths = append(gotPaths, p.String())
 	}

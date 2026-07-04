@@ -360,7 +360,8 @@ type dashScanTarget struct {
 
 // dashboardScanTargets returns the default dashboard plus every listed dashboard.
 func dashboardScanTargets(dashboards []haapi.LovelaceDashboard) []dashScanTarget {
-	targets := []dashScanTarget{{label: "(default)", urlPath: ""}}
+	targets := make([]dashScanTarget, 0, 1+len(dashboards))
+	targets = append(targets, dashScanTarget{label: "(default)", urlPath: ""})
 	for _, d := range dashboards {
 		targets = append(targets, dashScanTarget{label: d.URLPath, urlPath: d.URLPath})
 	}
@@ -430,8 +431,8 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 		return fmt.Errorf("fetching dashboard config: %w", err)
 	}
 	var root any
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return fmt.Errorf("parsing dashboard config: %w", err)
+	if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
+		return fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
 	}
 
 	result, changed := jsonwalk.Replace(root, oldVal, newVal)
