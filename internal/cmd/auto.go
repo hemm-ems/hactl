@@ -636,7 +636,40 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintf(w, "created automation %q\n", resp.ID)
+	switch {
+	case !resp.Reloaded:
+		_, _ = fmt.Fprintln(w, "warning: automation written but HA did not confirm reload")
+	case resp.EntityID == "":
+		_, _ = fmt.Fprintln(w, "warning: automation reloaded but its live entity_id could not be confirmed")
+	default:
+		_, _ = fmt.Fprintf(w, "entity_id: %s\n", resp.EntityID)
+		if resp.EntityID != resp.ID {
+			_, _ = fmt.Fprintf(w, "note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id\n", resp.EntityID, resp.ID)
+		}
+	}
 	return nil
+}
+
+// resolveAutomationEntityID resolves a config id, alias, or entity_id
+// reference to the automation's live entity_id via /api/states. HA derives
+// entity_id from alias (not the config id), so a caller working from
+// `hactl auto` output may only have the display identifier — which could be
+// the alias itself (HA exposes it as attributes.friendly_name verbatim).
+// Returns ("", false) if no live automation matches or the states fetch fails.
+func resolveAutomationEntityID(ctx context.Context, client *haapi.Client, ref string) (string, bool) {
+	autos, err := fetchAutomations(ctx, client)
+	if err != nil {
+		return "", false
+	}
+	for _, a := range autos {
+		if a.EntityID == ref ||
+			a.Attributes.ID == ref ||
+			a.Attributes.FriendlyName == ref ||
+			strings.TrimPrefix(a.EntityID, "automation.") == ref {
+			return a.EntityID, true
+		}
+	}
+	return "", false
 }
 
 func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
@@ -647,16 +680,37 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 		return nil
 	}
 
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
 	}
+
+	restClient := haapi.New(cfg.URL, cfg.Token)
+	liveEntityID, hadLiveEntity := resolveAutomationEntityID(ctx, restClient, autoID)
 
 	if _, err := cc.DeleteAutomationDef(ctx, autoID); err != nil {
 		return fmt.Errorf("deleting automation: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "deleted automation %q\n", autoID)
+
+	if hadLiveEntity {
+		ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+		if connErr := ws.Connect(ctx); connErr != nil {
+			slog.Warn("could not connect to HA to clean up entity registry", "entity_id", liveEntityID, "error", connErr)
+		} else {
+			defer func() { _ = ws.Close() }()
+			if rmErr := ws.EntityRegistryRemove(ctx, liveEntityID); rmErr != nil {
+				slog.Warn("could not remove orphaned entity registry entry", "entity_id", liveEntityID, "error", rmErr)
+			}
+		}
+	}
+
 	return nil
 }
 

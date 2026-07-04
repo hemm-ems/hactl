@@ -1918,13 +1918,138 @@ func TestRunLabelDelete_Confirm(t *testing.T) {
 // --- runAutoDelete (confirm=true, companion) ---
 
 func TestRunAutoDelete_Confirm(t *testing.T) {
-	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
+	const configID = "automation.climate_schedule"
+	const liveEntityID = "automation.climate_schedule_live"
+
+	statesJSON, _ := json.Marshal([]map[string]any{
+		{
+			"entity_id":  liveEntityID,
+			"state":      "on",
+			"attributes": map[string]any{"id": configID, "friendly_name": "Climate Schedule"},
+		},
+	})
+
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/remove": nil,
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"status":"deleted"}`)
-		} else {
+			_, _ = w.Write(statesJSON)
+		},
+	})
+
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Query().Get("id") != configID {
 			http.Error(w, "not found", http.StatusNotFound)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"status":"deleted","reloaded":true}`)
+	}))
+	defer companionSrv.Close()
+
+	envContent, err := os.ReadFile(filepath.Join(ts.dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envContent = fmt.Appendf(envContent, "COMPANION_URL=%s\n", companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil { //nolint:gosec // test fixture dir from t.TempDir(), not user input
+		t.Fatal(err)
+	}
+	withFlagDir(t, ts.dir)
+
+	old := flagAutoConfirm
+	flagAutoConfirm = true
+	defer func() { flagAutoConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runAutoDelete(context.Background(), &buf, configID); err != nil {
+		t.Fatalf("runAutoDelete confirm failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "deleted") {
+		t.Errorf("output missing 'deleted': %q", buf.String())
+	}
+
+	if count := ts.commandCount("config/entity_registry/remove"); count != 1 {
+		t.Errorf("expected EntityRegistryRemove to be called once, got %d", count)
+	}
+}
+
+// TestRunAutoDelete_Confirm_ByAlias covers deleting by the human-readable
+// alias (HA's attributes.friendly_name), not just config id or entity_id —
+// resolveAutomationEntityID previously only matched entity_id/attributes.id/
+// the entity_id slug, silently skipping registry cleanup for this case.
+func TestRunAutoDelete_Confirm_ByAlias(t *testing.T) {
+	const alias = "Climate Schedule Alias Case"
+	const liveEntityID = "automation.climate_schedule_alias_case"
+
+	statesJSON, _ := json.Marshal([]map[string]any{
+		{
+			"entity_id":  liveEntityID,
+			"state":      "on",
+			"attributes": map[string]any{"id": "climate_schedule_config_id", "friendly_name": alias},
+		},
+	})
+
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/remove": nil,
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Query().Get("id") != alias {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"status":"deleted","reloaded":true}`)
+	}))
+	defer companionSrv.Close()
+
+	envContent, err := os.ReadFile(filepath.Join(ts.dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envContent = fmt.Appendf(envContent, "COMPANION_URL=%s\n", companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil { //nolint:gosec // test fixture dir from t.TempDir(), not user input
+		t.Fatal(err)
+	}
+	withFlagDir(t, ts.dir)
+
+	old := flagAutoConfirm
+	flagAutoConfirm = true
+	defer func() { flagAutoConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runAutoDelete(context.Background(), &buf, alias); err != nil {
+		t.Fatalf("runAutoDelete confirm failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "deleted") {
+		t.Errorf("output missing 'deleted': %q", buf.String())
+	}
+
+	if count := ts.commandCount("config/entity_registry/remove"); count != 1 {
+		t.Errorf("expected EntityRegistryRemove to be called once when deleting by alias, got %d", count)
+	}
+}
+
+// --- runHelperCreate (confirm=true, companion) ---
+
+func TestRunHelperCreate_Confirm(t *testing.T) {
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Query().Get("domain") != "input_boolean" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(
+			w,
+			`{"status":"created","id":"party_mode","entity_id":"input_boolean.party_mode","reloaded":true,"entity_created":true}`,
+		)
 	}))
 	defer companionSrv.Close()
 
@@ -1933,23 +2058,81 @@ func TestRunAutoDelete_Confirm(t *testing.T) {
 	}))
 	defer haSrv.Close()
 
-	envDir := t.TempDir()
+	dir := t.TempDir()
 	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=tok\nCOMPANION_URL=%s\n", haSrv.URL, companionSrv.URL)
-	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	withFlagDir(t, envDir)
+	withFlagDir(t, dir)
 
-	old := flagAutoConfirm
-	flagAutoConfirm = true
-	defer func() { flagAutoConfirm = old }()
+	yamlFile := filepath.Join(dir, "helper.yaml")
+	if err := os.WriteFile(yamlFile, []byte("party_mode:\n  name: Party Mode\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldFile := flagHelperFile
+	flagHelperFile = yamlFile
+	defer func() { flagHelperFile = oldFile }()
+
+	old := flagHelperConfirm
+	flagHelperConfirm = true
+	defer func() { flagHelperConfirm = old }()
 
 	var buf bytes.Buffer
-	if err := runAutoDelete(context.Background(), &buf, "climate_schedule"); err != nil {
-		t.Fatalf("runAutoDelete confirm failed: %v", err)
+	if err := runHelperCreate(context.Background(), &buf, "input_boolean"); err != nil {
+		t.Fatalf("runHelperCreate confirm failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "deleted") {
-		t.Errorf("output missing 'deleted': %q", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "created helper") {
+		t.Errorf("output missing 'created helper': %q", out)
+	}
+	if !strings.Contains(out, "entity_id: input_boolean.party_mode") {
+		t.Errorf("output missing entity_id confirmation: %q", out)
+	}
+	if strings.Contains(out, "warning") {
+		t.Errorf("did not expect a warning when entity_created is true: %q", out)
+	}
+}
+
+func TestRunHelperCreate_Confirm_EntityNotCreated(t *testing.T) {
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(
+			w,
+			`{"status":"created","id":"party_mode","entity_id":"input_boolean.party_mode","reloaded":true,"entity_created":false}`,
+		)
+	}))
+	defer companionSrv.Close()
+
+	haSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer haSrv.Close()
+
+	dir := t.TempDir()
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=tok\nCOMPANION_URL=%s\n", haSrv.URL, companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlagDir(t, dir)
+
+	yamlFile := filepath.Join(dir, "helper.yaml")
+	if err := os.WriteFile(yamlFile, []byte("party_mode:\n  name: Party Mode\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldFile := flagHelperFile
+	flagHelperFile = yamlFile
+	defer func() { flagHelperFile = oldFile }()
+
+	old := flagHelperConfirm
+	flagHelperConfirm = true
+	defer func() { flagHelperConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runHelperCreate(context.Background(), &buf, "input_boolean"); err != nil {
+		t.Fatalf("runHelperCreate confirm failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "warning") {
+		t.Errorf("expected a warning when entity_created is false: %q", buf.String())
 	}
 }
 

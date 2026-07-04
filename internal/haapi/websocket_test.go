@@ -748,6 +748,28 @@ func TestWSClient_EntityRegistryUpdate(t *testing.T) {
 	}
 }
 
+func TestWSClient_EntityRegistryRemove(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if cmd["type"] != "config/entity_registry/remove" {
+			t.Errorf("expected entity remove, got %q", cmd["type"])
+			return
+		}
+		if cmd["entity_id"] != "automation.orphaned" {
+			t.Errorf("entity_id = %q, want 'automation.orphaned'", cmd["entity_id"])
+		}
+		sendWSResult(t, c, cmd, nil)
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	err := ws.EntityRegistryRemove(context.Background(), "automation.orphaned")
+	if err != nil {
+		t.Fatalf("EntityRegistryRemove failed: %v", err)
+	}
+}
+
 func TestWSClient_TraceGet(t *testing.T) {
 	traceJSON := json.RawMessage(`{"run_id":"run1","domain":"automation","item_id":"test","state":"stopped"}`)
 

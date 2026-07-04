@@ -336,6 +336,13 @@ func (ws *WSClient) EntityRegistryUpdate(ctx context.Context, entityID string, c
 	return err
 }
 
+// EntityRegistryRemove deletes an entity registry entry via WS.
+// WS command: config/entity_registry/remove
+func (ws *WSClient) EntityRegistryRemove(ctx context.Context, entityID string) error {
+	_, err := ws.sendCommand(ctx, "config/entity_registry/remove", map[string]any{"entity_id": entityID})
+	return err
+}
+
 // LabelRegistryCreate creates a new label in the HA label registry.
 // WS command: config/label_registry/create
 // Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/label_registry.py

@@ -127,8 +127,10 @@ type AutomationResponse struct {
 
 // AutomationCreateResponse is the response from POST /v1/config/automation.
 type AutomationCreateResponse struct {
-	Status string `json:"status"`
-	ID     string `json:"id"`
+	Status   string `json:"status"`
+	ID       string `json:"id"`
+	EntityID string `json:"entity_id"` // live entity_id, empty if HA never confirmed it
+	Reloaded bool   `json:"reloaded"`
 }
 
 // ConfigDeleteResponse is the response from DELETE endpoints.
@@ -158,8 +160,11 @@ type HelperResponse struct {
 
 // HelperCreateResponse is the response from POST /v1/config/helper.
 type HelperCreateResponse struct {
-	Status string `json:"status"`
-	ID     string `json:"id"`
+	Status        string `json:"status"`
+	ID            string `json:"id"`
+	EntityID      string `json:"entity_id"`
+	Reloaded      bool   `json:"reloaded"`
+	EntityCreated bool   `json:"entity_created"`
 }
 
 // --- WireGuard ---
