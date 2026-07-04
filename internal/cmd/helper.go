@@ -156,6 +156,14 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	}
 
 	_, _ = fmt.Fprintf(w, "created helper %q (domain=%s)\n", resp.ID, domain)
+	switch {
+	case !resp.Reloaded:
+		_, _ = fmt.Fprintln(w, "warning: helper written but HA did not confirm reload")
+	case !resp.EntityCreated:
+		_, _ = fmt.Fprintf(w, "warning: helper reloaded but entity %q was not found in HA's live state\n", resp.EntityID)
+	default:
+		_, _ = fmt.Fprintf(w, "entity_id: %s\n", resp.EntityID)
+	}
 	return nil
 }
 
