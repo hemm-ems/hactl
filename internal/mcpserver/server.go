@@ -26,6 +26,10 @@ type Options struct {
 	ResolvePath func(args []string) (string, error)
 	// AllowWrites permits mutating commands.
 	AllowWrites bool
+	// NoManualInject disables prepending the manual to the first tool
+	// result of the session (the default self-teaching mechanism; clients
+	// that inject hactl://manual themselves can turn it off).
+	NoManualInject bool
 	// Dir pins the server to one instance directory; empty means normal
 	// discovery (CWD walk, HACTL_DIR, ~/.hactl/default).
 	Dir     string
@@ -79,12 +83,19 @@ func toolDescription(opts Options) string {
 		"Pass the command line without the binary name, e.g. 'ent ls --domain light' or " +
 		"'auto show <id>'. Useful global flags: --json (structured output), --tokens " +
 		"(compact token estimate), --tokensmax N " +
-		"(raise/remove the output cap, 0 = uncapped), --since 7d, --top N, --full.\n\n" +
-		"Start by running 'rtfm' once: it prints the full manual of all commands and is also " +
-		"available as the MCP resource hactl://manual.\n\n")
+		"(raise/remove the output cap, 0 = uncapped), --since 7d, --top N, --full.\n\n")
+	if opts.NoManualInject {
+		b.WriteString("Start by running 'rtfm' once: it prints the full manual of all commands and is also " +
+			"available as the MCP resource hactl://manual.\n\n")
+	} else {
+		b.WriteString("The full manual is delivered together with your first tool result — read it before " +
+			"interpreting anything; it documents every command, flag, and workflow. " +
+			"(Also available on demand via 'rtfm' or the MCP resource hactl://manual.)\n\n")
+	}
 	if opts.AllowWrites {
 		b.WriteString("Writes are ENABLED: mutating commands (svc call, auto apply/create/delete, script apply, ...) " +
-			"are permitted. Config writes are still dry-run unless --confirm is given.")
+			"are permitted. Every write is still dry-run unless --confirm is given; only pass --confirm " +
+			"after the user explicitly confirmed the exact action — the original request is not that confirmation.")
 	} else {
 		b.WriteString("READ-ONLY: mutating commands (svc call, auto apply/create/delete, script apply/run, " +
 			"helper/dash/area/floor/label create/delete, ...) are blocked; do not attempt them. " +
@@ -97,6 +108,10 @@ func toolDescription(opts Options) string {
 }
 
 func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
+	// Per-server session state: the first tool result carries the manual so
+	// the agent self-teaches without spending a round on rtfm (measured best
+	// delivery mechanism, see docs/llm-tuning.md). Guarded by runMu.
+	manualDelivered := opts.NoManualInject
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in toolInput) (*mcp.CallToolResult, any, error) {
 		tokens, err := shlex.Split(in.Command)
 		if err != nil {
@@ -126,10 +141,21 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 		defer runMu.Unlock()
 		var buf bytes.Buffer
 		runErr := opts.Runner(ctx, append([]string{"hactl"}, tokens...), &buf)
+		out := buf.String()
+		if !manualDelivered {
+			// First result of the session: prepend the manual (unless the
+			// call was rtfm — its output already is the manual). Injected
+			// even on errors: that's when the agent needs the manual most.
+			manualDelivered = true
+			if path != "hactl rtfm" {
+				out = "[hactl manual — delivered once with this first tool result. Use it for every " +
+					"subsequent command, flag, and workflow decision.]\n\n" + docs.Manual +
+					"\n\n=== RESULT of '" + in.Command + "' ===\n" + out
+			}
+		}
 		if runErr != nil {
 			// The root command silences errors; surface them here, keeping
 			// any partial output the command produced.
-			out := buf.String()
 			if out != "" && !strings.HasSuffix(out, "\n") {
 				out += "\n"
 			}
@@ -139,7 +165,7 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 			}, nil, nil
 		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: buf.String()}},
+			Content: []mcp.Content{&mcp.TextContent{Text: out}},
 		}, nil, nil
 	}
 }

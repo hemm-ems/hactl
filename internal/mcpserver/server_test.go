@@ -212,6 +212,122 @@ func TestToolDescriptionReflectsMode(t *testing.T) {
 	}
 }
 
+// newSession connects a client to a fresh server and returns a CallTool
+// helper bound to that single session, for tests that need call sequencing.
+func newSession(t *testing.T, opts Options) func(command string) *mcp.CallToolResult {
+	t.Helper()
+	ctx := context.Background()
+	serverT, clientT := mcp.NewInMemoryTransports()
+	srv := NewServer(opts)
+	srvSession, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = srvSession.Wait() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return func(command string) *mcp.CallToolResult {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "hactl",
+			Arguments: map[string]any{"command": command},
+		})
+		if err != nil {
+			t.Fatalf("CallTool(%q): %v", command, err)
+		}
+		return res
+	}
+}
+
+const injectMarker = "[hactl manual — delivered once"
+
+func TestManualInjectedOnFirstResultOnly(t *testing.T) {
+	call := newSession(t, Options{
+		Runner: func(_ context.Context, _ []string, w io.Writer) error {
+			_, _ = fmt.Fprint(w, "id state\nlight.x on\n")
+			return nil
+		},
+		ResolvePath: fakeResolver,
+	})
+
+	first := textOf(t, call("ent ls"))
+	if !strings.Contains(first, injectMarker) || !strings.Contains(first, "=== RESULT of 'ent ls' ===") {
+		t.Errorf("first result should carry the manual and the result separator, got %.200q", first)
+	}
+	if !strings.Contains(first, "light.x") {
+		t.Errorf("first result should still contain the command output, got %.200q", first)
+	}
+
+	second := textOf(t, call("ent ls"))
+	if strings.Contains(second, injectMarker) {
+		t.Errorf("second result must not re-deliver the manual, got %.200q", second)
+	}
+}
+
+func TestManualNotDoubledWhenRtfmIsFirst(t *testing.T) {
+	call := newSession(t, Options{
+		Runner: func(_ context.Context, args []string, w io.Writer) error {
+			_, _ = fmt.Fprint(w, "manual body from rtfm")
+			return nil
+		},
+		ResolvePath: fakeResolver,
+	})
+
+	first := textOf(t, call("rtfm"))
+	if strings.Contains(first, injectMarker) {
+		t.Errorf("rtfm output must not get the manual prepended again, got %.200q", first)
+	}
+	second := textOf(t, call("ent ls"))
+	if strings.Contains(second, injectMarker) {
+		t.Errorf("rtfm counts as delivery; second call must be clean, got %.200q", second)
+	}
+}
+
+func TestManualInjectionDisabled(t *testing.T) {
+	call := newSession(t, Options{
+		Runner: func(_ context.Context, _ []string, w io.Writer) error {
+			_, _ = fmt.Fprint(w, "plain output")
+			return nil
+		},
+		ResolvePath:    fakeResolver,
+		NoManualInject: true,
+	})
+	if got := textOf(t, call("ent ls")); strings.Contains(got, injectMarker) {
+		t.Errorf("--no-manual-inject must suppress delivery, got %.200q", got)
+	}
+}
+
+func TestManualInjectedEvenOnFirstError(t *testing.T) {
+	call := newSession(t, Options{
+		Runner: func(_ context.Context, _ []string, w io.Writer) error {
+			return errors.New("no .env found")
+		},
+		ResolvePath: fakeResolver,
+	})
+	res := call("ent ls")
+	if !res.IsError {
+		t.Fatal("expected IsError result")
+	}
+	got := textOf(t, res)
+	if !strings.Contains(got, injectMarker) || !strings.Contains(got, "no .env found") {
+		t.Errorf("error result should carry manual and error, got %.200q", got)
+	}
+}
+
+func TestToolDescriptionReflectsInjection(t *testing.T) {
+	def := toolDescription(Options{})
+	if !strings.Contains(def, "delivered together with your first tool result") {
+		t.Errorf("default description should announce manual delivery, got %q", def)
+	}
+	off := toolDescription(Options{NoManualInject: true})
+	if !strings.Contains(off, "Start by running 'rtfm' once") {
+		t.Errorf("no-inject description should point at rtfm, got %q", off)
+	}
+}
+
 func TestManualResource(t *testing.T) {
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
