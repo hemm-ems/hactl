@@ -8,6 +8,101 @@ hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense t
 
 **Token budget:** Output is capped at 500 tokens by default (`--tokensmax=500`). Raise the cap (`--tokensmax=2000`) or remove it entirely (`--tokensmax=0`) when you need full output. Add `--tokens` to print a compact `[~N tok]` estimate, or `--stats` to see response size + estimated token count on stderr.
 
+## Agent workflows
+
+> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax. `hactl rtfm` is uncapped by default — pass `--tokensmax=N` only when you want to truncate it.
+
+### "Why did my automation fail?"
+```
+hactl auto ls --failing
+# if --failing is empty: check the error log for automation names
+hactl log --errors --unique
+hactl auto show <id>
+hactl trace show <trc:XX>
+```
+
+### "Is this sensor behaving normally?"
+```
+hactl ent hist <id> --since 7d
+hactl ent anomalies <id>
+```
+
+### "What else is related to this entity?"
+```
+hactl ent related <entity_id>
+hactl ent ls --area <area> --domain sensor
+```
+
+### "Which entities belong to <concept>?" (find things by concept)
+```
+hactl device ls --name <term>
+hactl device show <closest match>
+```
+Search with the shortest distinctive substring — `heat`, not `heat pump`; device and entity names are often localized or vendor-specific. When a listing returns near-miss candidates, inspect the closest match with `device show` before asking the user. If devices yield nothing, fall back to `hactl label ls`, then `hactl ent ls --pattern '*<term>*'`.
+
+### "Deploy an automation change"
+```
+hactl auto diff <id> -f new.yaml
+hactl auto apply <id> -f new.yaml --confirm
+hactl auto show <id>
+```
+
+### "Deploy a script change"
+```
+hactl script diff <id> -f new.yaml
+hactl script apply <id> -f new.yaml --confirm
+hactl script show <id>
+```
+
+### "Create a new automation / script / helper"
+```
+hactl auto create -f auto.yaml              # dry-run preview
+hactl auto create -f auto.yaml --confirm    # create + reload
+hactl script create -f script.yaml --confirm
+hactl helper create input_boolean -f toggle.yaml --confirm
+```
+
+### "Delete an automation / helper"
+```
+hactl auto delete <id>                      # dry-run preview
+hactl auto delete <id> --confirm            # delete + reload
+hactl helper delete <id> --confirm
+```
+
+### "Organize entities with labels"
+```
+hactl label ls
+hactl label create "Solar" --icon mdi:solar-power
+hactl ent ls --pattern 'sensor.solar_*'
+hactl ent set-label sensor.solar_power solar
+hactl auto ls --label solar
+```
+
+### "Find and act on a group of automations"
+```
+hactl auto ls --pattern victron
+hactl svc call automation.turn_off -d '{"entity_id":"automation.victron_charge"}'
+hactl auto ls --label victron            # verify
+```
+
+### "What went wrong recently?" / "What broke?"
+```
+hactl health
+hactl log --errors --unique
+hactl changes --since 24h
+```
+
+### "Build a dashboard" / "Design or modify a dashboard"
+```
+hactl ent ls --pattern <topic>             # discover entities (one call, stop here)
+# --- confirm with user before writing ---
+hactl dash create --url-path <path> --title "<title>" --icon mdi:home --confirm
+hactl dash save <url_path> --file dash.json --confirm
+hactl dash show <url_path>                 # verify (url_path from `dash ls`)
+```
+
+---
+
 ## Setup
 
 ```
@@ -425,94 +520,6 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 | `--tokens` | off | Print compact token estimate |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
 | `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
-
----
-
-## Agent workflows
-
-> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax. `hactl rtfm` is uncapped by default — pass `--tokensmax=N` only when you want to truncate it.
-
-### "Why did my automation fail?"
-```
-hactl auto ls --failing
-# if --failing is empty: check the error log for automation names
-hactl log --errors --unique
-hactl auto show <id>
-hactl trace show <trc:XX>
-```
-
-### "Is this sensor behaving normally?"
-```
-hactl ent hist <id> --since 7d
-hactl ent anomalies <id>
-```
-
-### "What else is related to this entity?"
-```
-hactl ent related <entity_id>
-hactl ent ls --area <area> --domain sensor
-```
-
-### "Deploy an automation change"
-```
-hactl auto diff <id> -f new.yaml
-hactl auto apply <id> -f new.yaml --confirm
-hactl auto show <id>
-```
-
-### "Deploy a script change"
-```
-hactl script diff <id> -f new.yaml
-hactl script apply <id> -f new.yaml --confirm
-hactl script show <id>
-```
-
-### "Create a new automation / script / helper"
-```
-hactl auto create -f auto.yaml              # dry-run preview
-hactl auto create -f auto.yaml --confirm    # create + reload
-hactl script create -f script.yaml --confirm
-hactl helper create input_boolean -f toggle.yaml --confirm
-```
-
-### "Delete an automation / helper"
-```
-hactl auto delete <id>                      # dry-run preview
-hactl auto delete <id> --confirm            # delete + reload
-hactl helper delete <id> --confirm
-```
-
-### "Organize entities with labels"
-```
-hactl label ls
-hactl label create "Solar" --icon mdi:solar-power
-hactl ent ls --pattern 'sensor.solar_*'
-hactl ent set-label sensor.solar_power solar
-hactl auto ls --label solar
-```
-
-### "Find and act on a group of automations"
-```
-hactl auto ls --pattern victron
-hactl svc call automation.turn_off -d '{"entity_id":"automation.victron_charge"}'
-hactl auto ls --label victron            # verify
-```
-
-### "What went wrong recently?" / "What broke?"
-```
-hactl health
-hactl log --errors --unique
-hactl changes --since 24h
-```
-
-### "Build a dashboard" / "Design or modify a dashboard"
-```
-hactl ent ls --pattern <topic>             # discover entities (one call, stop here)
-# --- confirm with user before writing ---
-hactl dash create --url-path <path> --title "<title>" --icon mdi:home --confirm
-hactl dash save <url_path> --file dash.json --confirm
-hactl dash show <url_path>                 # verify (url_path from `dash ls`)
-```
 
 ---
 
