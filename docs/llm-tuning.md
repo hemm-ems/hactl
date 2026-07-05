@@ -94,3 +94,64 @@ The comment caused the model to first try `hactl log --component automation` (em
 **Model side:**
 - The eval was done with a 4-bit local Qwen. Frontier models (Claude Sonnet, GPT-4o) follow workflow examples more reliably and handle empty results more gracefully. Expect the same manual to score 6–7/8 with a frontier model.
 - Chain limit of 6 calls is tight for complex queries. Raising to 8 would reduce F3 failures on multi-step workflows without hurting precision.
+
+---
+
+# Session 2 — 2026-07-05, qwen3.5-122b (rapid-mlx), cold-start rtfm
+
+Second tuning session, new setup: **qwen3.5-122b-mxfp4** on rapid-mlx
+(M3 Ultra, 262k ctx, hermes tool parser) called directly via the `llm` CLI —
+~5 s per tool turn, a full 8-prompt eval in ~7 min (was 42). Architecture
+switched from manual-as-system-prompt to **cold start**: minimal system
+prompt (`dev/tuning/system-cold.md`), manual delivered by the tool layer.
+
+## What was measured (runs 1–9, `dev/tuning/patterns.md` has details)
+
+| Config | Result |
+|---|---|
+| Manual in system prompt + rtfm tool exposed | Model re-reads rtfm mid-chain, 7k redundant tokens, chain death |
+| Cold start, rtfm-first as prompt rule | Obeyed ~50%; skippers spiral (8 calls), readers excel |
+| Cold start, hard rtfm gate (tools error until rtfm) | Compliance 100% but gate errors burn rounds — net worse |
+| Cold start, **manual auto-injected with first tool result** | Best: 4/8 strict + 2 behaviorally-correct CHECKs, no wasted rounds |
+
+## Rules for future manual (rtfm) updates
+
+1. **Write for mid-conversation delivery.** The manual arrives inside a tool
+   result (injection, rtfm, MCP resource) — not as a system prompt. Order:
+   behavioral rules and workflows first, command reference after,
+   human-only setup content last. The model reads the head and skims the tail.
+2. **Workflows are the load-bearing part.** Headings must match verbatim user
+   phrasings ("What went wrong recently?"). No comments inside code blocks —
+   they are executed as instructions (May finding, still true). Guidance goes
+   in prose after the block.
+3. **Every PR that adds/changes a command must update the manual AND append
+   an eval prompt.** The May→July drift (device/ref/tpl/config landed, eval
+   never heard of them) silently invalidated half the eval set. Eval ids are
+   append-only; never renumber.
+4. **Re-anchor the eval set to the live instance before each session.**
+   Prompts referencing entities/automations that no longer exist measure
+   nothing. `uv run dev/tuning/grade.py <run-dir>` grades a run in seconds.
+5. **One hypothesis per run, but judge on repeats.** At this model size,
+   2–3 prompts flip per run stochastically; an n=1 delta is noise. Runs are
+   cheap now — verify any conclusion on at least 2 runs.
+6. **Tool surface must match the manual's promises.** If the manual documents
+   a write path, expose a confirm-gated wrapper (confirm=False → plan text
+   only, never executes). Documented-but-unexposed paths (svc call, dash *)
+   produce stalls or honest refusals — fine behavior, failed task.
+7. **Smart models need affordances, not scripts.** The frontier-vs-local gap
+   moved: qwen3.5 reasons through workflows fine but needs *facts* it cannot
+   guess — localized/vendor names ("search the shortest distinctive
+   substring"), which tools exist, what confirmation protocol applies.
+
+## Open items (next session)
+
+- `hactl_svc_call` gated wrapper in tools.py + e04 contract update.
+- Dash wrappers (e08) — same pattern.
+- e01: workflow adherence — model drills into `log show` before finishing
+  the health/log/changes sweep; consider a prose ordering hint.
+- `hactl svc call` has no CLI-level dry-run/--confirm — inconsistent with
+  every other write path; consider an issue.
+- Deployable: `hactl mcp` could inject the manual into the first tool
+  response of a session (mirrors the winning eval architecture).
+- Manual is 27 KB; human-only content (Setup/Windows/companion
+  troubleshooting) could move out of the LLM manual entirely.
