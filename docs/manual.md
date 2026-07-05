@@ -91,15 +91,25 @@ hactl health
 hactl log --errors --unique
 hactl changes --since 24h
 ```
+Complete all three before drilling into a single entry with `log show` — breadth first, depth only where the sweep flagged something.
+
+### "Show me the daily report" / "Morning check" / "Status summary"
+```
+hactl health
+hactl issues
+hactl log --errors --unique
+hactl changes --since 24h
+```
+Run all four, then summarize per section: system health, open issues, errors, notable changes.
 
 ### "Build a dashboard" / "Design or modify a dashboard"
 ```
-hactl ent ls --pattern <topic>             # discover entities (one call, stop here)
-# --- confirm with user before writing ---
-hactl dash create --url-path <path> --title "<title>" --icon mdi:home --confirm
-hactl dash save <url_path> --file dash.json --confirm
-hactl dash show <url_path>                 # verify (url_path from `dash ls`)
+hactl ent ls --pattern <topic>
+hactl dash create --url-path <path-with-hyphen> --title "<title>"
+hactl dash save <url_path> -f dash.json
+hactl dash show <url_path>
 ```
+One discovery call, then stop. `dash create` and `dash save` are dry-run by default: they preview without writing. Present the dry-run plan and wait for the user's explicit confirmation before repeating a command with `--confirm`. The original request ("build me a dashboard") is not that confirmation.
 
 ---
 
