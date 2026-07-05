@@ -65,3 +65,87 @@ Format:
 | e08 "build energy dashboard" | F7 | F7-safe (1 call, good output) | Better behavior; formal pass requires write tool confirmation |
 
 Net: baseline 2/8 → best stable 4/8 strict (4/8 e01, e03, e05, e07).
+
+---
+
+# Session 2026-07-05 — qwen3.5-122b on rapid-mlx (direct, no dirigent)
+
+Model switch: Qwen3.6-27B/LM Studio → qwen3.5-122b-mxfp4 on rapid-mlx
+(192.168.42.114:8000/v1, hermes tool parser). ~5 s/tool-turn instead of
+2–4 min: a full 8-prompt eval now takes ~7 min, not 42.
+
+## 2026-07-05 Run 1 (2046) — new-model baseline, old eval set
+- Old eval set scored 2/8 strict, but most FAILs were stale expectations,
+  not model errors: e06 solved via NEW `device ls` path (May's "concept gap"
+  gone), e02/e04 honest "nothing failed / not found" against data gaps.
+- e08 revealed architecture bug: manual in system prompt AND rtfm exposed as
+  tool → model called rtfm mid-chain, 7k redundant tokens, chain-limit death.
+
+## 2026-07-05 Run 2 (2053) — eval-set refresh (no manual change)
+- Re-anchored e03→sensor.aussen_temperatur_mittel, e04→automation.standby_nachts;
+  e02 drops unachievable trace_show; e06 accepts device path (expect_any).
+  Added grade.py (automated grading, expect_any support). 3/8 + 2 CHECK.
+- e05 "daily report" collapsed to a single `changes` dump — no Daily-report
+  workflow anchor in manual (May backlog item, still open). Chain limit of 6
+  aborts runs invisibly (llm counts responses, incl. final answer) → raised
+  harness --cl to 8 (grader still enforces per-prompt budgets).
+
+## 2026-07-05 Run 3 — cold start (manual OUT of system prompt, rtfm-first)
+- New: system-cold.md (compact agent rules), HACTL_LLM_SYSTEM_FILE in
+  install.sh. Rationale: MCP-era agents get no hactl system prompt; the
+  manual only works if fetched via rtfm. prompts.yaml call budgets already
+  assumed the rtfm call.
+- Result 2/8 strict but crisp signal: prompts WHERE THE MODEL READ rtfm were
+  excellent (e04: exact svc-call proposal + confirmation question; e05 full
+  report at budget). Prompts where it skipped rtfm spiraled (e01 8 calls,
+  e06 7 calls) — prompt-level "call rtfm first" is obeyed ~50%.
+
+## 2026-07-05 Run 4 — rtfm gate in tools.py
+- All tools return "ERROR: read the manual first" until hactl_rtfm() ran
+  (per-process = per-conversation). Deterministic rtfm-first instead of
+  prompt persuasion. Result: see below.
+
+## 2026-07-05 Run 4 — hard rtfm gate: REJECTED
+- Gate enforced compliance but taxed the eval: models leading with a work
+  tool burned a failed round on the gate error (e07 3/2 over budget; e01
+  truncated its workflow under budget pressure). 2/8. Mechanism wrong.
+
+## 2026-07-05 Run 5 — manual auto-injection: WINNER (4/8 + 2 correct CHECKs)
+- First real tool call gets the manual prepended to its result: zero wasted
+  rounds, deterministic delivery. Best run of the day; e04/e08 CHECKs are
+  behaviorally correct (exact command proposed + confirmation asked).
+- New failure mode: model re-called rtfm up to 3× (21k tokens) — the exposed
+  rtfm tool invites redundant reads.
+- Deployable idea for hactl itself: `hactl mcp` could prepend the manual
+  resource to the first tool response of a session.
+
+## 2026-07-05 Run 6 — rtfm dedupe (repeat rtfm returns short notice)
+- Dedupe works (single rtfm everywhere). 3/8 + 2 CHECK — the delta vs run 5
+  is e05/e08 stochastic flips, not the change. Variance >= single-change
+  effect at n=1: judge configs on repeated runs only (May lesson, confirmed).
+- e06 stable-FAIL across all runs: English concept → German entity names
+  needs exploration; queued manual hint "search with the shortest
+  distinctive substring" (run-1 luck: name='heat' matched Summtheatbot;
+  'heat pump' matches nothing).
+
+## 2026-07-05 Runs 7–9 — manual restructure + concept hint, variance check
+- Run 7 (workflows moved to manual top): 4/8 + 2 CHECK, ties best. e04/e08
+  answered in ONE call with the exact right command quoted from the manual.
+- Run 8 (concept-search workflow added): 3/8. Hint not yet effective for e06.
+- Run 9 (repeat, no change): 3/8. e06 followed the device path but needs >4
+  calls on this instance (German names); e01 spiraled to 11 calls once.
+
+## Session verdict after 9 runs
+- Stable PASS every run: e02, e03, e07.
+- Stable behaviorally-correct CHECK: e04, e08 (honest refusal + exact command
+  + confirmation question; blocked only by missing svc_call/dash wrappers).
+- Stable FAIL: e01 (model prefers depth — log show drilling — over finishing
+  the breadth sweep with `changes`; manual hint queued), e06 (budget 4 too
+  tight for concept mapping on a German-named instance — consider budget 6
+  or HA-side labeling, as in May).
+- Flapping: e05 (2/5 runs pass; needs a "Daily report" workflow anchor —
+  May backlog item, STILL open, now top of queue).
+- Net vs May: strict score similar (3–4/8) under a HARDER contract (cold
+  start, no manual in prompt) with far better answer quality: honest
+  evidence-based reports, correct commands quoted verbatim, zero F1
+  hallucinations, zero F4 unconfirmed writes across all 72 prompt-runs.
