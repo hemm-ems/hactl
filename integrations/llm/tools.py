@@ -169,17 +169,34 @@ def hactl_ent_set_area(entity_id: str, area: str, confirm: bool = False) -> str:
 def hactl_svc_call(service: str, data: dict = {}, confirm: bool = False) -> str:
     """Call a HA service, e.g. service='automation.turn_off', data={'entity_id': 'automation.x'}.
     Verify the target exists first (e.g. hactl_auto_show / hactl_ent_show).
-    confirm=False (default) executes NOTHING: it returns the planned command so you can ask the
-    user. Only use confirm=True after the user explicitly confirmed the exact action."""
+    confirm=False (default) is a dry-run: nothing is executed, the planned call is returned so
+    you can ask the user. Only use confirm=True after the user explicitly confirmed the exact
+    action — the original request is not that confirmation."""
     payload = json.dumps(data or {})
-    if not confirm:
-        return (
-            "DRY RUN — nothing was executed.\n"
-            f"Planned: hactl svc call {service} -d '{payload}'\n"
-            "Present this plan to the user and ask for confirmation. Retry with "
-            "confirm=True only after the user explicitly confirms."
-        )
-    return _run("svc", "call", service, "-d", payload)
+    extra = ["--confirm"] if confirm else []
+    return _run("svc", "call", service, "-d", payload, *extra)
+
+
+def hactl_ref_validate() -> str:
+    """Find dangling entity references: automations, scripts, and dashboards that point at
+    entities which no longer exist."""
+    return _run("ref", "validate")
+
+
+def hactl_ref_scan(term: str) -> str:
+    """Find every reference to an entity id or value across automations, scripts, helpers,
+    and dashboards."""
+    return _run("ref", "scan", term)
+
+
+def hactl_helper_ls() -> str:
+    """List HA helpers (input_boolean, input_number, counter, timer, ...) with type and state."""
+    return _run("helper", "ls")
+
+
+def hactl_config_entries() -> str:
+    """List config entries (configured integrations) with domain, title, and state."""
+    return _run("config", "entries")
 
 
 def hactl_dash_ls() -> str:

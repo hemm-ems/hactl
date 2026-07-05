@@ -63,3 +63,26 @@
   expect_commands: [rtfm, ent ls]
   expect_writes: true
   expect_confirmation_asked: true
+
+# 2026-07-05: e09–e12 cover the post-May command surface (rule 3 in
+# docs/llm-tuning.md: every new command family gets an eval prompt).
+
+- id: e09
+  prompt: "are there any dangling entity references in my setup?"
+  expect_commands: [rtfm, ref validate]
+  expect_max_calls: 3
+
+- id: e10
+  prompt: "which integrations are configured?"
+  expect_commands: [rtfm, config entries]
+  expect_max_calls: 3
+
+- id: e11
+  prompt: "list my helpers"
+  expect_commands: [rtfm, helper ls]
+  expect_max_calls: 2
+
+- id: e12
+  prompt: "evaluate the template {{ states('sun.sun') }}"
+  expect_commands: [rtfm, tpl eval]
+  expect_max_calls: 2
