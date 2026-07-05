@@ -10,8 +10,10 @@ Env:
   HACTL_DIR  instance directory (forwarded as --dir; overrides auto-discovery)
 """
 
+import json
 import os
 import subprocess
+import tempfile
 
 HACTL_BIN = os.environ.get("HACTL_BIN", "hactl")
 HACTL_DIR = os.environ.get("HACTL_DIR")
@@ -162,6 +164,59 @@ def hactl_ent_set_area(entity_id: str, area: str, confirm: bool = False) -> str:
     Only use confirm=True after the user explicitly confirms the exact entity and target area."""
     extra = ["--confirm"] if confirm else []
     return _run("ent", "set-area", entity_id, area, *extra)
+
+
+def hactl_svc_call(service: str, data: dict = {}, confirm: bool = False) -> str:
+    """Call a HA service, e.g. service='automation.turn_off', data={'entity_id': 'automation.x'}.
+    confirm=False (default) executes NOTHING: it returns the planned command so you can ask the
+    user. Only use confirm=True after the user explicitly confirmed the exact action."""
+    payload = json.dumps(data or {})
+    if not confirm:
+        return (
+            "DRY RUN — nothing was executed.\n"
+            f"Planned: hactl svc call {service} -d '{payload}'\n"
+            "Present this plan to the user and ask for confirmation. Retry with "
+            "confirm=True only after the user explicitly confirms."
+        )
+    return _run("svc", "call", service, "-d", payload)
+
+
+def hactl_dash_ls() -> str:
+    """List Lovelace dashboards with url_path, title, and mode."""
+    return _run("dash", "ls")
+
+
+def hactl_dash_show(url_path: str) -> str:
+    """Show a dashboard's config (views, cards). url_path from dash ls."""
+    return _run("dash", "show", url_path)
+
+
+def hactl_dash_create(url_path: str, title: str, icon: str = "", confirm: bool = False) -> str:
+    """Create a dashboard. url_path must contain a hyphen (e.g. 'energy-dash').
+    confirm=False returns the dry-run plan without creating anything. Only use
+    confirm=True after the user explicitly confirmed."""
+    extra = ["--url-path", url_path, "--title", title]
+    if icon:
+        extra += ["--icon", icon]
+    if confirm:
+        extra.append("--confirm")
+    return _run("dash", "create", *extra)
+
+
+def hactl_dash_save(url_path: str, config: dict, confirm: bool = False) -> str:
+    """Save a dashboard's full config (JSON object with 'views'). confirm=False
+    returns the dry-run diff without writing. Only use confirm=True after the
+    user explicitly confirmed the exact config."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(config, f)
+        path = f.name
+    try:
+        extra = ["-f", path]
+        if confirm:
+            extra.append("--confirm")
+        return _run("dash", "save", url_path, *extra)
+    finally:
+        os.unlink(path)
 
 
 def hactl_device_ls(name: str = "", area: str = "", label: str = "", pattern: str = "") -> str:
