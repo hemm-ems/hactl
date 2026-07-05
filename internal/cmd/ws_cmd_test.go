@@ -3597,6 +3597,10 @@ func TestRunSvcCall_Success(t *testing.T) {
 	flagSvcData = "{}"
 	defer func() { flagSvcData = old }()
 
+	oldConfirm := flagSvcConfirm
+	flagSvcConfirm = true
+	defer func() { flagSvcConfirm = oldConfirm }()
+
 	var buf bytes.Buffer
 	if err := runSvcCall(context.Background(), &buf, "group.reload"); err != nil {
 		t.Fatalf("runSvcCall success failed: %v", err)

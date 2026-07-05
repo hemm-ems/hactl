@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -11,6 +13,34 @@ func TestSvcCallCmd_InvalidFormat(t *testing.T) {
 	err := rootCmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for invalid service format")
+	}
+}
+
+func TestSvcCallCmd_DryRunByDefault(t *testing.T) {
+	// No --confirm: prints the plan and returns before any config load or
+	// network call, so it must succeed even without an instance .env.
+	var buf bytes.Buffer
+	err := RunWithOutput([]string{"hactl", "svc", "call", "automation.turn_off",
+		"--dir", t.TempDir(), "--data", `{"entity_id":"automation.x"}`}, &buf)
+	if err != nil {
+		t.Fatalf("dry-run must not error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"dry-run", "automation.turn_off", `"automation.x"`, "--confirm"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output missing %q, got %q", want, out)
+		}
+	}
+}
+
+func TestSvcCallCmd_ConfirmRequiresInstance(t *testing.T) {
+	// With --confirm the call proceeds past the dry-run gate and fails on
+	// the missing instance config — proving the gate no longer short-circuits.
+	var buf bytes.Buffer
+	err := RunWithOutput([]string{"hactl", "svc", "call", "automation.turn_off",
+		"--dir", t.TempDir(), "--confirm"}, &buf)
+	if err == nil {
+		t.Fatal("expected config error for --confirm without instance")
 	}
 }
 
