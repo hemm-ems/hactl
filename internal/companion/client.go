@@ -174,6 +174,18 @@ func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, 
 	return &r, json.Unmarshal(data, &r)
 }
 
+// RefEntities calls GET /v1/ref/entities and returns every entity_id-shaped
+// value across the config file !include graph, each tagged with its enclosing
+// key. Unfiltered by design — the caller decides which keys are real entities.
+func (c *Client) RefEntities(ctx context.Context) (*RefEntitiesResponse, error) {
+	data, err := c.doGet(ctx, "/v1/ref/entities", nil)
+	if err != nil {
+		return nil, err
+	}
+	var r RefEntitiesResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
 // RefReplace calls POST /v1/ref/replace to rewrite oldVal to newVal across the
 // config file !include graph. With dryRun the companion reports the changes
 // without writing; otherwise it rewrites each owning file.

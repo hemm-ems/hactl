@@ -38,6 +38,20 @@ func (p Path) String() string {
 	return b.String()
 }
 
+// TerminalKey is the nearest enclosing mapping key: the last string segment of
+// the path. For views[0].cards[2].entity it is "entity"; for a list item such as
+// entities[0] it is "entities" (trailing indices are skipped). Empty for a path
+// with no string segment (e.g. the root or a pure index path). Mirrors the
+// companion refscan's _terminal_key so both sources filter references the same way.
+func (p Path) TerminalKey() string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if s, ok := p[i].(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // clone returns an independent copy of p so a visitor may retain it safely.
 func (p Path) clone() Path {
 	out := make(Path, len(p))
