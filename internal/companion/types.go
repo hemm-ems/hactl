@@ -68,6 +68,23 @@ type RefScanHit struct {
 	MatchedValue string `json:"matched_value"`
 }
 
+// RefEntitiesResponse is the response from GET /v1/ref/entities: every
+// entity_id-shaped leaf across the config !include graph, unfiltered.
+type RefEntitiesResponse struct {
+	Entities []RefEntity `json:"entities"`
+}
+
+// RefEntity is one entity_id-shaped value found in a config file. Unlike
+// RefScanHit it carries Key — the nearest enclosing mapping key — so the caller
+// can tell a true entity position (entity_id/entity) from a same-shaped service
+// name (service: light.turn_on).
+type RefEntity struct {
+	Location     string `json:"location"`
+	Path         string `json:"path"`
+	Key          string `json:"key"`
+	MatchedValue string `json:"matched_value"`
+}
+
 // RefReplaceResponse is the response from POST /v1/ref/replace.
 type RefReplaceResponse struct {
 	Status  string      `json:"status"` // "dry_run" | "applied"

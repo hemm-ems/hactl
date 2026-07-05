@@ -183,6 +183,55 @@ action:
 	}
 }
 
+// TestE2ERefValidateCLI drives the full Go↔companion↔HA path for `ref validate`:
+// seed an automation referencing a non-existent entity (dangling) plus a real,
+// state-only entity (sun.sun, which exists in HA's live states but has no entity
+// registry entry), then assert validate reports the ghost and not the live one.
+// This proves both the /v1/ref/entities primitive over real config and that the
+// live set is the registry∪states union (registry alone would flag sun.sun) —
+// a boundary a mocked companion can't cover.
+func TestE2ERefValidateCLI(t *testing.T) {
+	const ghost = "binary_sensor.ref_validate_ghost"
+	content := fmt.Sprintf(`id: ref_validate_probe
+alias: Ref Validate Probe
+mode: single
+trigger:
+  - platform: state
+    entity_id: %s
+condition:
+  - condition: state
+    entity_id: sun.sun
+    state: above_horizon
+action:
+  - delay: "00:00:01"
+`, ghost)
+	f, err := os.CreateTemp(t.TempDir(), "ref-validate-e2e-*.yaml")
+	if err != nil {
+		t.Fatalf("creating temp YAML: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("writing temp YAML: %v", err)
+	}
+	f.Close()
+
+	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
+		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
+	}
+
+	out, execErr := runHactlE2E(t, "ref", "validate")
+	if execErr != nil {
+		t.Fatalf("hactl ref validate failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, ghost) {
+		t.Fatalf("expected dangling %s in validate output:\n%s", ghost, out)
+	}
+	// sun.sun is a live state-only entity; the registry∪states union must not
+	// flag it. If this fails, the states half of the live set regressed.
+	if strings.Contains(out, "sun.sun") {
+		t.Fatalf("live state-only entity sun.sun must not be reported dangling:\n%s", out)
+	}
+}
+
 // TestE2EAutoCreateCLI verifies that `hactl auto create --confirm -f <yaml>`
 // calls the companion API and creates an automation.
 func TestE2EAutoCreateCLI(t *testing.T) {

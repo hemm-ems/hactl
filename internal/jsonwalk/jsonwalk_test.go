@@ -34,6 +34,26 @@ func TestPathString(t *testing.T) {
 	}
 }
 
+func TestPathTerminalKey(t *testing.T) {
+	cases := []struct {
+		path Path
+		want string
+	}{
+		{Path{}, ""},
+		{Path{"entity"}, "entity"},
+		{Path{"views", 0, "cards", 2, "entity"}, "entity"},
+		{Path{"entities", 0}, "entities"},          // bare list item → enclosing key
+		{Path{"trigger", 0, "entity_id", 1}, "entity_id"}, // list-valued entity_id
+		{Path{0, "a"}, "a"},
+		{Path{0}, ""}, // pure index path has no enclosing key
+	}
+	for _, c := range cases {
+		if got := c.path.TerminalKey(); got != c.want {
+			t.Errorf("Path%v.TerminalKey() = %q, want %q", []any(c.path), got, c.want)
+		}
+	}
+}
+
 func TestFindString(t *testing.T) {
 	root := decode(t, `{
 		"views": [

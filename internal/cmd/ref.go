@@ -3,9 +3,13 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +20,11 @@ import (
 	"github.com/hemm-ems/hactl/internal/jsonwalk"
 )
 
-var flagRefConfirm bool
+var (
+	flagRefConfirm      bool
+	flagRefExitCode     bool
+	flagRefAllowPartial bool
+)
 
 var refCmd = &cobra.Command{
 	Use:   "ref",
@@ -48,17 +56,42 @@ var refReplaceCmd = &cobra.Command{
 	},
 }
 
+var refValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Find dangling entity references — pointers to entities that no longer exist",
+	Long: "Sweep every YAML config file (via the companion, following !include) and every dashboard for " +
+		"entity_id references, then report the ones that no longer map to a live Home Assistant entity. " +
+		"The live set is the union of the entity registry and the current states, so state-only entities " +
+		"(sun.sun, zone.home, weather.*, template sensors) are not falsely flagged.\n\n" +
+		"Conservative by design: only values in known entity-holding positions are checked " +
+		"(entity_id/entity in config; entity/entities/badges/camera_image in dashboards), so service " +
+		"names like `light.turn_on` are never mistaken for entities. Two blind spots are the accepted " +
+		"trade for zero false positives: entities embedded in templates (`{{ states('sensor.x') }}`) and " +
+		"entities under non-standard custom-card keys are not detected. validate reports; it does not fix " +
+		"— rename each dangling id with `hactl ref replace <old> <new>`.",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRefValidate(cmd.Context(), cmd.OutOrStdout())
+	},
+}
+
 func init() {
 	refReplaceCmd.Flags().BoolVar(&flagRefConfirm, "confirm", false, "actually apply changes (default is dry-run)")
-	refCmd.AddCommand(refScanCmd, refReplaceCmd)
+	refValidateCmd.Flags().BoolVar(&flagRefExitCode, "exit-code", false, "exit 1 if any dangling reference is found (for CI/pre-commit gating)")
+	refValidateCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
+		"validate even when live states are unavailable and only the entity registry can be read "+
+			"(higher false-positive risk: state-only entities are omitted from the registry)")
+	refCmd.AddCommand(refScanCmd, refReplaceCmd, refValidateCmd)
 	rootCmd.AddCommand(refCmd)
 }
 
 // refSources bundles the connections a ref command needs: a live WS client for
-// dashboards and a companion client for config files.
+// dashboards (and the entity registry), a companion client for config files, and
+// a REST client for /api/states (used by `ref validate` to build the live set).
 type refSources struct {
-	ws *haapi.WSClient
-	cc *companion.Client
+	ws   *haapi.WSClient
+	cc   *companion.Client
+	rest *haapi.Client
 }
 
 func (s *refSources) close() {
@@ -83,7 +116,8 @@ func connectRefSources(ctx context.Context) (*refSources, error) {
 		return nil, fmt.Errorf("companion discovery: %w", err)
 	}
 	cc := companion.New(companionURL, cfg.CompanionToken).WithIngressAuth(ws)
-	return &refSources{ws: ws, cc: cc}, nil
+	rest := haapi.New(cfg.URL, cfg.Token)
+	return &refSources{ws: ws, cc: cc, rest: rest}, nil
 }
 
 // refRow is one merged reference across sources for `ref scan`.
@@ -282,4 +316,255 @@ func dashboardStatus(ctx context.Context, ws *haapi.WSClient, p dashReplacePlan,
 		return "error: " + err.Error()
 	}
 	return "saved"
+}
+
+// --- ref validate ---
+
+// entityIDShapeRe matches the entity_id shape domain.object_id. It is
+// deliberately identical to the companion's _ENTITY_ID_RE so both reference
+// sources classify leaves the same way. Note the shape also matches service
+// names (light.turn_on) — the key allowlists below, not this regex, exclude those.
+var entityIDShapeRe = regexp.MustCompile(`^[a-z_]+\.[a-z0-9_]+$`)
+
+func isEntityIDShaped(s string) bool { return entityIDShapeRe.MatchString(s) }
+
+// configEntityKeys / dashEntityKeys are ALLOWLISTS of the mapping keys whose
+// entity_id-shaped values are real entity references. An allowlist (not a
+// denylist) is deliberate: for a safety sweep, false positives erode trust worse
+// than a missed exotic position, so favor precision. Services drop out for free
+// — `service`/`action`/`service_template`/`tap_action.service` are simply absent.
+// These are conservative by design and miss template-embedded entities and
+// non-standard custom-card keys; extend them as real configs reveal gaps.
+var (
+	configEntityKeys = map[string]bool{"entity_id": true, "entity": true}
+	dashEntityKeys   = map[string]bool{
+		"entity": true, "entity_id": true, "camera_image": true, "entities": true, "badges": true,
+	}
+)
+
+// danglingRef is one entity reference found in a known entity position whose
+// value is not in the live set.
+type danglingRef struct {
+	source   string // "config" | "dashboard"
+	location string
+	path     string
+	entity   string
+}
+
+// danglingRefsError makes `ref validate --exit-code` exit non-zero when
+// references are found, without treating the finding as a command failure
+// (the report is still printed normally before this is returned).
+type danglingRefsError struct{ n int }
+
+func (e *danglingRefsError) Error() string {
+	return fmt.Sprintf("%d dangling reference(s) found", e.n)
+}
+func (e *danglingRefsError) ExitCode() int { return 1 }
+
+func runRefValidate(ctx context.Context, w io.Writer) error {
+	src, err := connectRefSources(ctx)
+	if err != nil {
+		return err
+	}
+	defer src.close()
+
+	live, err := liveEntitySet(ctx, src)
+	if err != nil {
+		return err
+	}
+
+	var refs []danglingRef
+
+	// Config files (companion). A companion failure is a warning, not fatal —
+	// a partial validate over dashboards alone still has value.
+	if resp, entErr := src.cc.RefEntities(ctx); entErr != nil {
+		slog.Warn("companion config entity scan failed; config files were not validated", "error", entErr)
+	} else {
+		for _, e := range resp.Entities {
+			if configEntityKeys[e.Key] {
+				refs = append(refs, danglingRef{"config", e.Location, e.Path, e.MatchedValue})
+			}
+		}
+	}
+
+	// Dashboards (WS).
+	dashboards, err := src.ws.DashboardList(ctx)
+	if err != nil {
+		return fmt.Errorf("listing dashboards: %w", err)
+	}
+	refs = append(refs, collectDashboardEntityRefs(ctx, src.ws, dashboardScanTargets(dashboards))...)
+
+	var dangling []danglingRef
+	for _, r := range refs {
+		if !live[r.entity] {
+			dangling = append(dangling, r)
+		}
+	}
+	dangling = dedupeSortRefs(dangling)
+
+	if len(dangling) == 0 {
+		if flagJSON {
+			return renderValidateTable(w, nil)
+		}
+		_, _ = fmt.Fprintln(w, "no dangling references found")
+		_, _ = fmt.Fprintln(w, "(note: entities embedded in templates like \"{{ states('sensor.x') }}\" are not checked)")
+		return nil
+	}
+
+	if err := renderValidateTable(w, dangling); err != nil {
+		return err
+	}
+
+	uniq := uniqueDanglingEntities(dangling)
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "\n%d dangling reference(s) to %d entity(ies): %s\n",
+			len(dangling), len(uniq), strings.Join(uniq, ", "))
+		_, _ = fmt.Fprintln(w, "rename each with `hactl ref replace <old> <new>`")
+	}
+
+	if flagRefExitCode {
+		return &danglingRefsError{len(uniq)}
+	}
+	return nil
+}
+
+// liveEntitySet builds the set of entity_ids that currently exist, as the union
+// of the entity registry (catches disabled and currently-unloaded entities) and
+// /api/states (catches state-only entities with no registry entry — sun.sun,
+// zone.home, weather.*, template sensors). The two half-failures are NOT
+// symmetric: states alone is a near-complete live set, but the registry alone
+// omits every state-only entity and would flag them all as dangling — so a
+// registry-only fallback is refused unless --allow-partial is set.
+func liveEntitySet(ctx context.Context, src *refSources) (map[string]bool, error) {
+	live := make(map[string]bool)
+
+	reg, regErr := src.ws.EntityRegistryList(ctx)
+	if regErr == nil {
+		for _, e := range reg {
+			if e.EntityID != "" {
+				live[e.EntityID] = true
+			}
+		}
+	}
+	states, statesErr := fetchStateEntityIDs(ctx, src.rest)
+	if statesErr == nil {
+		for _, id := range states {
+			live[id] = true
+		}
+	}
+
+	switch {
+	case regErr != nil && statesErr != nil:
+		return nil, fmt.Errorf("cannot validate: no live entity set available: %w",
+			errors.Join(fmt.Errorf("registry: %w", regErr), fmt.Errorf("states: %w", statesErr)))
+	case statesErr != nil:
+		if !flagRefAllowPartial {
+			return nil, fmt.Errorf("cannot fetch live states: %w; the entity registry alone omits state-only "+
+				"entities (sun.sun, zone.home, weather.*, template sensors) and would report them all as "+
+				"dangling. Re-run with --allow-partial to validate against the registry anyway", statesErr)
+		}
+		slog.Warn("validating against the entity registry only; state-only entities may be falsely reported as dangling", "error", statesErr)
+	case regErr != nil:
+		slog.Warn("entity registry unavailable; validating against live states only", "error", regErr)
+	}
+	return live, nil
+}
+
+// fetchStateEntityIDs pulls every entity_id from /api/states via REST.
+func fetchStateEntityIDs(ctx context.Context, rest *haapi.Client) ([]string, error) {
+	data, err := rest.GetStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var states []entityState
+	if err := json.Unmarshal(data, &states); err != nil {
+		return nil, fmt.Errorf("parsing states: %w", err)
+	}
+	ids := make([]string, 0, len(states))
+	for _, s := range states {
+		ids = append(ids, s.EntityID)
+	}
+	return ids, nil
+}
+
+// collectDashboardEntityRefs walks each dashboard for entity_id-shaped string
+// leaves in a known entity position (per dashEntityKeys). Unlike scanDashboards
+// it matches by shape+position rather than an exact target. Dashboards that
+// cannot be fetched or parsed are skipped rather than aborting the sweep.
+func collectDashboardEntityRefs(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget) []danglingRef {
+	var refs []danglingRef
+	for _, t := range targets {
+		raw, rawErr := ws.DashboardConfigRaw(ctx, t.urlPath)
+		if rawErr != nil {
+			slog.Debug("could not fetch dashboard config", "dashboard", t.label, "error", rawErr)
+			continue
+		}
+		var root any
+		if json.Unmarshal(raw, &root) != nil {
+			continue
+		}
+		jsonwalk.Walk(root, func(p jsonwalk.Path, v any) {
+			s, ok := v.(string)
+			if !ok || !isEntityIDShaped(s) || !dashEntityKeys[p.TerminalKey()] {
+				return
+			}
+			refs = append(refs, danglingRef{"dashboard", t.label, p.String(), s})
+		})
+	}
+	return refs
+}
+
+// dedupeSortRefs removes exact duplicate rows and sorts deterministically.
+func dedupeSortRefs(refs []danglingRef) []danglingRef {
+	seen := make(map[danglingRef]bool, len(refs))
+	out := make([]danglingRef, 0, len(refs))
+	for _, r := range refs {
+		if seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		switch {
+		case a.source != b.source:
+			return a.source < b.source
+		case a.location != b.location:
+			return a.location < b.location
+		case a.path != b.path:
+			return a.path < b.path
+		default:
+			return a.entity < b.entity
+		}
+	})
+	return out
+}
+
+// uniqueDanglingEntities returns the distinct dangling entity_ids, sorted — the
+// list a user renames one at a time with `ref replace`.
+func uniqueDanglingEntities(refs []danglingRef) []string {
+	seen := make(map[string]bool, len(refs))
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		if !seen[r.entity] {
+			seen[r.entity] = true
+			out = append(out, r.entity)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// renderValidateTable renders the dangling-reference rows (or an empty table in
+// JSON mode) with the same options as the other ref commands.
+func renderValidateTable(w io.Writer, refs []danglingRef) error {
+	tbl := &format.Table{
+		Headers: []string{"source", "location", "path", "entity"},
+		Rows:    make([][]string, len(refs)),
+	}
+	for i, r := range refs {
+		tbl.Rows[i] = []string{r.source, r.location, r.path, r.entity}
+	}
+	return tbl.Render(w, format.RenderOpts{Top: flagTop, Full: true, JSON: flagJSON})
 }
