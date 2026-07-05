@@ -125,6 +125,9 @@ Tool-surface completion (runs 10–14, on the winning architecture):
 | Sweep-completion manual edit | **F4: real dashboard created on the live instance** — the manual's own workflow block contained `--confirm` |
 | F4 fix: dry-run forms in blocks, "the original request is not confirmation" in prose + system prompt | 5/8, write held at dry-run boundary |
 | Verify-first docstring, honest e06 budget | **7/8, zero CHECK, zero F4** (May best: 4/8 with the manual in the system prompt) |
+| 2× repeat runs | 7/8 both — confirmed; e01 the only stable fail (17 runs) |
+| Routing table at manual top; CLI svc gate; wrappers + 4 new-surface prompts | **12/12** — first perfect run, and e01's first pass |
+| Manual diet (human setup content → docs/setup.md) | 10/12 + 1 correct CHECK — no regression; e01 passed again |
 
 ## Rules for future manual (rtfm) updates
 
@@ -173,18 +176,20 @@ Tool-surface completion (runs 10–14, on the winning architecture):
 
 ## Open items (next session)
 
-- e01 never passed (14/14): the model drills into individual `log show`
-  entries before finishing the health/log/changes sweep; prose hints don't
-  override the instinct. Untested idea: a routing table at the very top of
-  the manual ("question → exact call sequence").
-- Verify the 7/8 result holds across repeat runs (single-run scores flip
-  ±1–2 prompts).
-- `hactl svc call` has no CLI-level dry-run/--confirm — the only ungated
-  write path; consider an issue.
-- Deployable: `hactl mcp` could inject the manual into the first tool
-  response of a session (mirrors the winning eval architecture).
-- Manual is 27 KB; human-only content (Setup/Windows/companion
-  troubleshooting) could move out of the LLM manual entirely.
+- e01: after 17 straight fails, passed twice in a row once the **routing
+  table** landed at the manual top ("question → exact call sequence").
+  Promising but n=2 — keep watching before declaring it solved.
+- e06 still flaps: the model keeps searching full phrases ("heat pump")
+  despite the shortest-substring rule; its ask-back answers are reasonable.
+  HA-side labeling (label: heat_pump) remains the robust fix (May idea).
+- Auto-generate the Command Reference from cobra definitions — the largest
+  manual section, the only one that can silently drift from the binary.
+- grade.py could aggregate pass-rates across N runs (variance dashboard).
+- CI regression eval against a fixture instance (no live HA dependency).
+- MCP elicitation (spec feature) would move write confirmation to the
+  client UI instead of trusting the model to relay it.
 
-Done since the first draft of this list: `svc_call` + dash gated wrappers
-(runs 10–11), e04 contract via dry-run auto-grading, e06 budget honesty.
+Done this session (part 2): `svc_call` + dash gated wrappers; CLI-level
+`svc call` dry-run gate (breaking); `hactl mcp` manual injection with
+tests; e09–e12 new-surface prompts + wrappers; routing table; manual diet
+(human setup → docs/setup.md); 7/8 → 12/12 on the extended set.

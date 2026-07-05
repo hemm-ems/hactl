@@ -2,6 +2,21 @@
 
 > For agents using hactl as a tool. Assumes familiarity with Home Assistant concepts.
 
+## Quick routing
+
+Match the user's question here first and run exactly the listed sequence — complete it before drilling into any single finding.
+
+| User asks | Run, in order | Notes |
+|---|---|---|
+| "What went wrong?" / "What broke?" | `health`, `log --errors --unique`, `changes --since 24h` | All three first; `log show <id>` only afterwards |
+| "Daily report" / "Morning check" / "Status" | `health`, `issues`, `log --errors --unique`, `changes --since 24h` | Summarize per section |
+| "Which automation failed?" | `auto ls --failing`; if empty `log --errors --unique` | `trace show` only when a failure appears |
+| "Is <sensor> behaving normally?" | `ent anomalies <id>` | `ent hist <id>` if anomalies found |
+| "Which entities belong to <concept>?" | `device ls --name <shortest-term>`, `device show <closest match>` | Fallbacks: `label ls`, `ent ls --pattern '*<term>*'` |
+| "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
+| "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
+| "List labels / areas / helpers / scripts" | the matching `ls` command | One call, answer |
+
 ## Mental model
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
@@ -82,8 +97,9 @@ hactl auto ls --label solar
 ```
 hactl auto ls --pattern victron
 hactl svc call automation.turn_off -d '{"entity_id":"automation.victron_charge"}'
-hactl auto ls --label victron            # verify
+hactl auto ls --label victron
 ```
+`svc call` is dry-run by default: it prints the planned call without executing. Repeat with `--confirm` only after the user confirms the plan; the final `auto ls` verifies the result.
 
 ### "What went wrong recently?" / "What broke?"
 ```
@@ -115,31 +131,9 @@ One discovery call, then stop. `dash create` and `dash save` are dry-run by defa
 
 ## Setup
 
-```
-HA_URL=http://homeassistant.local:8123
-HA_TOKEN=<long_lived_access_token>
-```
+Your instance is normally configured already — verify with `hactl health`. Instance selection: a directory with a `.env` (`HA_URL`, `HA_TOKEN`) is one instance; select it with `--dir <path>` or `HACTL_DIR`, otherwise hactl walks up from the current directory and falls back to `~/.hactl/default/`.
 
-> **Windows users:** Use `HA_URL=http://127.0.0.1:8123` instead of `localhost`.
-> Windows may resolve `localhost` to `::1` (IPv6), but HA typically listens on `0.0.0.0` (IPv4 only), causing connection failures.
-
-Point hactl at the directory containing `.env`:
-```bash
-export HACTL_DIR=/path/to/instance   # or
-hactl --dir /path/to/instance <cmd>  # or cd into it
-```
-Without `--dir`/`HACTL_DIR`, hactl uses the `.env` in the current directory, then walks parent directories (git-style; parent `.env` files without `HA_URL` are skipped), then falls back to `~/.hactl/default/`.
-
-For debugging, set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on stderr (accepts `debug`, `info`, `warn`, `error`; defaults to `info`).
-
-Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why. Typical failure reasons:
-
-- `auth_denied` — your long-lived token lacks admin scope. Re-issue from an HA owner account.
-- `addon_missing` — the add-on isn't installed. HA → Settings → Add-ons → install `hactl-companion`.
-- `protocol_mismatch` — HA Container without Supervisor. Set `COMPANION_URL` in `.env` directly.
-- `unreachable` — Supervisor is there but the add-on URL isn't responding. Check Ingress / network.
-
-Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be available). External access works automatically via Supervisor-issued `ingress_session` cookies — no manual port-forwarding or signed-URL setup needed.
+If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic. Human-facing installation and troubleshooting live in `docs/setup.md`.
 
 ---
 
@@ -330,12 +324,15 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
 hactl tpl eval '{{ states("sensor.temperature") | float * 2 }}'
 hactl tpl eval -f my_template.j2          # read from file
 
-hactl svc call weather.get_forecasts -d '{"entity_id":"weather.home","type":"daily"}' --return   # prints service response (use --return for services that support return_response, e.g. weather.get_forecasts, calendar.get_events)
 hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}'
-hactl svc call light.turn_on -d @payload.json   # read JSON from file (avoids quoting)
+hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}' --confirm
+hactl svc call weather.get_forecasts -d '{"entity_id":"weather.home","type":"daily"}' --return --confirm
+hactl svc call light.turn_on -d @payload.json --confirm
 ```
 
 Templates evaluated server-side by HA's Jinja engine — semantically correct, including `states()` and custom filters.
+
+`svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
 
 ### Config entries & flows
 

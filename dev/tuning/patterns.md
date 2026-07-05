@@ -176,3 +176,15 @@ Model switch: Qwen3.6-27B/LM Studio → qwen3.5-122b-mxfp4 on rapid-mlx
   drills into individual errors before finishing the health/log/changes
   sweep. Manual prose alone doesn't override it. Backlog idea: routing
   table at manual top ("question → exact call sequence"), untested.
+
+## 2026-07-05 Runs 15–19 — session part 3 (all six queue items)
+- Runs 15/16 (repeats): 7/8 both. e01 fails 17/17 at this point.
+- Run 17 (routing table at manual top): 7/8, e01 still failed (6 calls).
+- Run 18 (CLI svc gate + wrappers + e09–e12): **12/12 — first perfect run,
+  e01's first pass ever** (3 calls, clean sweep).
+- Run 19 (manual diet): 10/12 + 1 correct CHECK. **e01 passed again** —
+  routing table now n=2. e06 flapped (full-phrase search again); e04 asked
+  perfectly in text without the dry-run tool call (CHECK by design).
+- svc call is now gated at CLI level (breaking change); hactl mcp injects
+  the manual into the first tool result (tested); manual diet moved human
+  setup content to docs/setup.md.
