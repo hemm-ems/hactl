@@ -149,3 +149,30 @@ Model switch: Qwen3.6-27B/LM Studio → qwen3.5-122b-mxfp4 on rapid-mlx
   start, no manual in prompt) with far better answer quality: honest
   evidence-based reports, correct commands quoted verbatim, zero F1
   hallucinations, zero F4 unconfirmed writes across all 72 prompt-runs.
+
+## 2026-07-05 Runs 10–12 — tool-surface completion (session part 2, committed on tuning/qwen35-cold-start)
+- Run 10 (svc_call gated wrapper): 5/8, e06 first PASS (concept workflow
+  landed). New failure: rapid-mlx enforces declared param schemas — a str
+  param for JSON data 400s the whole chain when the model passes an object.
+  Rule: tool signatures must match model instincts (dict for JSON data).
+- Run 11 (data:dict fix + dash wrappers): **6/8 + 1 CHECK, best yet.** e08
+  first PASS via dry-run dash proposal. e04 CHECK only because it skipped
+  existence-verification before proposing the disable.
+- Run 12 (sweep-completion manual edit): **e08 F4 — model created a real
+  dashboard (energy-dash) on the live instance.** Root cause: the manual's
+  dashboard workflow block contained `--confirm` in the command lines and
+  the "confirm with user" guidance only as a code comment (May finding:
+  code blocks are executed, comments ignored). The svc_call path survived
+  because the wrapper itself returns a strong DRY-RUN text. Layered lesson:
+  wrapper-text > CLI-hint > manual-comment. Fix: --confirm removed from the
+  block, prose adds "the original request is not confirmation" (manual +
+  system prompt). Leftover artifact for Jan: hactl dash delete energy-dash.
+
+## 2026-07-05 Runs 13–14 — confirmation semantics fix, final verdict
+- Run 13: F4 fixed (5/8, e08 PASS at dry-run boundary, no new artifacts).
+- Run 14 (verify-first docstring line, e06 budget 4→6 honest): **7/8, zero
+  CHECK, zero F4** — best of the day, from May's 4/8 under an easier setup.
+- Only e01 never passed today (8 runs, 8 different flavors): the model
+  drills into individual errors before finishing the health/log/changes
+  sweep. Manual prose alone doesn't override it. Backlog idea: routing
+  table at manual top ("question → exact call sequence"), untested.

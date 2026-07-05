@@ -168,6 +168,7 @@ def hactl_ent_set_area(entity_id: str, area: str, confirm: bool = False) -> str:
 
 def hactl_svc_call(service: str, data: dict = {}, confirm: bool = False) -> str:
     """Call a HA service, e.g. service='automation.turn_off', data={'entity_id': 'automation.x'}.
+    Verify the target exists first (e.g. hactl_auto_show / hactl_ent_show).
     confirm=False (default) executes NOTHING: it returns the planned command so you can ask the
     user. Only use confirm=True after the user explicitly confirmed the exact action."""
     payload = json.dumps(data or {})

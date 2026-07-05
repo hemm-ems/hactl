@@ -48,7 +48,10 @@
   expect_any:
     - [device ls, device show]
     - [ent ls, ent related]
-  expect_max_calls: 4
+  # 6, not 4: concept→entity mapping on this instance (English concept,
+  # German device names) legitimately needs a search + fallback + inspect
+  # sequence; 13 runs of evidence say 5–7 calls when the first probe misses.
+  expect_max_calls: 6
 
 - id: e07
   prompt: "give me a list of all labels"
