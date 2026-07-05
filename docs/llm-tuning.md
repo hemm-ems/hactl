@@ -105,14 +105,26 @@ Second tuning session, new setup: **qwen3.5-122b-mxfp4** on rapid-mlx
 switched from manual-as-system-prompt to **cold start**: minimal system
 prompt (`dev/tuning/system-cold.md`), manual delivered by the tool layer.
 
-## What was measured (runs 1–9, `dev/tuning/patterns.md` has details)
+## What was measured (14 runs, `dev/tuning/patterns.md` has per-run details)
+
+Manual-delivery architectures (runs 1–9):
 
 | Config | Result |
 |---|---|
 | Manual in system prompt + rtfm tool exposed | Model re-reads rtfm mid-chain, 7k redundant tokens, chain death |
 | Cold start, rtfm-first as prompt rule | Obeyed ~50%; skippers spiral (8 calls), readers excel |
 | Cold start, hard rtfm gate (tools error until rtfm) | Compliance 100% but gate errors burn rounds — net worse |
-| Cold start, **manual auto-injected with first tool result** | Best: 4/8 strict + 2 behaviorally-correct CHECKs, no wasted rounds |
+| Cold start, **manual auto-injected with first tool result** | Winner: no wasted rounds, deterministic delivery |
+
+Tool-surface completion (runs 10–14, on the winning architecture):
+
+| Change | Result |
+|---|---|
+| Confirm-gated `svc_call` wrapper | 5/8; str param for JSON data 400'd the chain (schema-enforcing server) |
+| `data: dict` fix + gated dash wrappers | 6/8 + 1 CHECK — first e08 pass via dry-run proposal |
+| Sweep-completion manual edit | **F4: real dashboard created on the live instance** — the manual's own workflow block contained `--confirm` |
+| F4 fix: dry-run forms in blocks, "the original request is not confirmation" in prose + system prompt | 5/8, write held at dry-run boundary |
+| Verify-first docstring, honest e06 budget | **7/8, zero CHECK, zero F4** (May best: 4/8 with the manual in the system prompt) |
 
 ## Rules for future manual (rtfm) updates
 
@@ -142,16 +154,37 @@ prompt (`dev/tuning/system-cold.md`), manual delivered by the tool layer.
    moved: qwen3.5 reasons through workflows fine but needs *facts* it cannot
    guess — localized/vendor names ("search the shortest distinctive
    substring"), which tools exist, what confirmation protocol applies.
+8. **Nothing goes in a code block that must not be executed.** Run 12: the
+   dashboard workflow block contained `--confirm`, the "confirm with user"
+   guidance sat in a code comment — the model executed the flag and ignored
+   the comment, creating a real dashboard on the live instance. Blocks show
+   the dry-run form; prose carries the protocol.
+9. **Spell out confirmation semantics: the original request is not
+   confirmation.** The model treated "build me a dashboard" as consent to
+   write. Safety text is strongest in the tool's own response (the svc_call
+   DRY-RUN text held every run), then the system prompt, then the manual —
+   in that order. Manual comments rank last and lose.
+10. **Design tool signatures for how models call them.** Strict
+    schema-enforcing servers (rapid-mlx) turn type mismatches into fatal
+    chain errors: JSON payloads are `dict` parameters, never stringified
+    JSON. Error messages must teach the next step — the "+N more (try
+    --pattern)" cap hint and the url-path hyphen error both steered the
+    model to self-correct.
 
 ## Open items (next session)
 
-- `hactl_svc_call` gated wrapper in tools.py + e04 contract update.
-- Dash wrappers (e08) — same pattern.
-- e01: workflow adherence — model drills into `log show` before finishing
-  the health/log/changes sweep; consider a prose ordering hint.
-- `hactl svc call` has no CLI-level dry-run/--confirm — inconsistent with
-  every other write path; consider an issue.
+- e01 never passed (14/14): the model drills into individual `log show`
+  entries before finishing the health/log/changes sweep; prose hints don't
+  override the instinct. Untested idea: a routing table at the very top of
+  the manual ("question → exact call sequence").
+- Verify the 7/8 result holds across repeat runs (single-run scores flip
+  ±1–2 prompts).
+- `hactl svc call` has no CLI-level dry-run/--confirm — the only ungated
+  write path; consider an issue.
 - Deployable: `hactl mcp` could inject the manual into the first tool
   response of a session (mirrors the winning eval architecture).
 - Manual is 27 KB; human-only content (Setup/Windows/companion
   troubleshooting) could move out of the LLM manual entirely.
+
+Done since the first draft of this list: `svc_call` + dash gated wrappers
+(runs 10–11), e04 contract via dry-run auto-grading, e06 budget honesty.
