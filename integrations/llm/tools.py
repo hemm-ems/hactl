@@ -17,8 +17,15 @@ HACTL_BIN = os.environ.get("HACTL_BIN", "hactl")
 HACTL_DIR = os.environ.get("HACTL_DIR")
 TIMEOUT_S = 120
 
+# Manual auto-delivery: the first tool call in this process (one process per
+# conversation) gets the full manual prepended to its result, so the agent is
+# guaranteed to have accurate syntax without spending a round on rtfm.
+# Set HACTL_NO_RTFM_GATE=1 to disable, e.g. when the manual is already in the
+# system prompt.
+_manual_delivered = os.environ.get("HACTL_NO_RTFM_GATE") == "1"
 
-def _run(*args: str) -> str:
+
+def _exec(*args: str) -> str:
     cmd = [HACTL_BIN]
     if HACTL_DIR:
         cmd += ["--dir", HACTL_DIR]
@@ -32,10 +39,31 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
+def _run(*args: str) -> str:
+    global _manual_delivered
+    out = _exec(*args)
+    if not _manual_delivered:
+        _manual_delivered = True
+        if args[0] != "rtfm":
+            manual = _exec("rtfm")
+            out = (
+                "[hactl manual — delivered once with your first tool call. Use it "
+                "for every subsequent command, flag, and workflow decision.]\n\n"
+                f"{manual}\n\n"
+                f"=== RESULT of hactl {' '.join(args)} ===\n{out}"
+            )
+    return out
+
+
 def hactl_rtfm() -> str:
-    """Print the full hactl manual. Call this once, first, before any other hactl tool:
-    it documents every command, flag, and workflow pattern with accurate syntax."""
-    return _run("rtfm")
+    """Print the full hactl manual. Rarely needed: the manual is delivered
+    automatically with your first tool call's result."""
+    global _manual_delivered
+    if _manual_delivered:
+        return ("Manual already delivered earlier in this conversation — re-read it "
+                "there instead of re-fetching.")
+    _manual_delivered = True
+    return _exec("rtfm")
 
 
 def hactl_health() -> str:
