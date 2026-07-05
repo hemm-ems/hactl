@@ -2195,6 +2195,113 @@ func TestRunDashShow_RawMode(t *testing.T) {
 	}
 }
 
+// --- runDashGrep / runDashReplace (reference rename) ---
+
+func TestRunDashGrep_FindsReferences(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"type":"entity","entity":"light.gone"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []map[string]any{{"url_path": "lovelace-home", "title": "Home", "mode": "storage"}},
+		"lovelace/config":          json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashGrep(context.Background(), &buf, "light.gone"); err != nil {
+		t.Fatalf("runDashGrep failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "views[0].cards[0].entity") {
+		t.Errorf("expected the reference path, got: %q", out)
+	}
+	if !strings.Contains(out, "lovelace-home") {
+		t.Errorf("expected the dashboard label, got: %q", out)
+	}
+}
+
+func TestRunDashGrep_NoReferences(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.other"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashGrep(context.Background(), &buf, "light.gone"); err != nil {
+		t.Fatalf("runDashGrep failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "not referenced") {
+		t.Errorf("expected 'not referenced', got: %q", buf.String())
+	}
+}
+
+func TestRunDashReplace_DryRunDoesNotSave(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashConfirm
+	flagDashConfirm = false
+	defer func() { flagDashConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace dry-run failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "dry-run") || !strings.Contains(out, "views[0].cards[0].entity") {
+		t.Errorf("dry-run should show the path-level diff, got: %q", out)
+	}
+	if !strings.Contains(out, "light.old") || !strings.Contains(out, "light.new") {
+		t.Errorf("dry-run should show old→new, got: %q", out)
+	}
+	if n := ts.commandCount("lovelace/config/save"); n != 0 {
+		t.Errorf("dry-run must not save, but save was called %d time(s)", n)
+	}
+}
+
+func TestRunDashReplace_ConfirmSaves(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config":      json.RawMessage(cfg),
+		"lovelace/config/save": nil,
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashConfirm
+	flagDashConfirm = true
+	defer func() { flagDashConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace confirm failed: %v", err)
+	}
+	if n := ts.commandCount("lovelace/config/save"); n != 1 {
+		t.Errorf("confirm should save exactly once, got %d", n)
+	}
+	if !strings.Contains(buf.String(), "replaced") {
+		t.Errorf("expected 'replaced' confirmation, got: %q", buf.String())
+	}
+}
+
+func TestRunDashReplace_NotFound(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.other"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "not found") {
+		t.Errorf("expected 'not found', got: %q", buf.String())
+	}
+}
+
 // --- resolveTraceID with trc: prefix ---
 
 func TestResolveTraceID_TrcPrefix_NotFound(t *testing.T) {
