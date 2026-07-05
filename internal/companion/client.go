@@ -162,6 +162,34 @@ func (c *Client) RelatedEntity(ctx context.Context, entityID string) (*RelatedEn
 	return &r, json.Unmarshal(data, &r)
 }
 
+// RefScan calls GET /v1/ref/scan?target=<target> and returns every literal
+// reference to target across the config file !include graph.
+func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, error) {
+	q := url.Values{"target": {target}}
+	data, err := c.doGet(ctx, "/v1/ref/scan", q)
+	if err != nil {
+		return nil, err
+	}
+	var r RefScanResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
+// RefReplace calls POST /v1/ref/replace to rewrite oldVal to newVal across the
+// config file !include graph. With dryRun the companion reports the changes
+// without writing; otherwise it rewrites each owning file.
+func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun bool) (*RefReplaceResponse, error) {
+	body, err := json.Marshal(map[string]any{"old": oldVal, "new": newVal, "dry_run": dryRun})
+	if err != nil {
+		return nil, fmt.Errorf("encoding ref replace body: %w", err)
+	}
+	data, err := c.doPostBody(ctx, "/v1/ref/replace", nil, string(body))
+	if err != nil {
+		return nil, err
+	}
+	var r RefReplaceResponse
+	return &r, json.Unmarshal(data, &r)
+}
+
 // --- Template CRUD ---
 
 // ListTemplates calls GET /v1/config/templates.

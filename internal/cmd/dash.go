@@ -368,22 +368,15 @@ func dashboardScanTargets(dashboards []haapi.LovelaceDashboard) []dashScanTarget
 	return targets
 }
 
-// runDashGrep scans every dashboard for an exact entity_id reference.
-func runDashGrep(ctx context.Context, w io.Writer, target string) error {
-	ws, err := connectWS(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ws.Close() }()
+// dashHit is one dashboard reference: the dashboard label and the path within it.
+type dashHit struct{ dashboard, path string }
 
-	dashboards, err := ws.DashboardList(ctx)
-	if err != nil {
-		return fmt.Errorf("listing dashboards: %w", err)
-	}
-
-	type dashHit struct{ dashboard, path string }
+// scanDashboards walks each target dashboard for exact string leaves equal to
+// target, returning every hit. Dashboards that cannot be fetched or parsed are
+// skipped rather than aborting the whole scan. Shared by `dash grep` and `ref scan`.
+func scanDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget, target string) []dashHit {
 	var hits []dashHit
-	for _, t := range dashboardScanTargets(dashboards) {
+	for _, t := range targets {
 		raw, rawErr := ws.DashboardConfigRaw(ctx, t.urlPath)
 		if rawErr != nil {
 			slog.Debug("could not fetch dashboard config", "dashboard", t.label, "error", rawErr)
@@ -397,6 +390,40 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 			hits = append(hits, dashHit{t.label, p.String()})
 		})
 	}
+	return hits
+}
+
+// dashReplaceOne fetches one dashboard's raw config and returns a deep copy with
+// every exact occurrence of oldVal rewritten to newVal, along with the changed
+// paths. It never saves. A nil error with no changed paths means no match.
+// Shared by `dash replace` and `ref replace`.
+func dashReplaceOne(ctx context.Context, ws *haapi.WSClient, urlPath, oldVal, newVal string) (result any, changed []jsonwalk.Path, err error) {
+	raw, err := ws.DashboardConfigRaw(ctx, urlPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching dashboard config: %w", err)
+	}
+	var root any
+	if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
+		return nil, nil, fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
+	}
+	result, changed = jsonwalk.Replace(root, oldVal, newVal)
+	return result, changed, nil
+}
+
+// runDashGrep scans every dashboard for an exact entity_id reference.
+func runDashGrep(ctx context.Context, w io.Writer, target string) error {
+	ws, err := connectWS(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ws.Close() }()
+
+	dashboards, err := ws.DashboardList(ctx)
+	if err != nil {
+		return fmt.Errorf("listing dashboards: %w", err)
+	}
+
+	hits := scanDashboards(ctx, ws, dashboardScanTargets(dashboards), target)
 
 	if len(hits) == 0 {
 		_, _ = fmt.Fprintf(w, "%s: not referenced in any dashboard\n", target)
@@ -426,16 +453,10 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 	}
 	defer func() { _ = ws.Close() }()
 
-	raw, err := ws.DashboardConfigRaw(ctx, urlPath)
+	result, changed, err := dashReplaceOne(ctx, ws, urlPath, oldVal, newVal)
 	if err != nil {
-		return fmt.Errorf("fetching dashboard config: %w", err)
+		return err
 	}
-	var root any
-	if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
-		return fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
-	}
-
-	result, changed := jsonwalk.Replace(root, oldVal, newVal)
 	if len(changed) == 0 {
 		_, _ = fmt.Fprintf(w, "%q not found in dashboard %s\n", oldVal, dashDisplayPath(urlPath))
 		return nil
