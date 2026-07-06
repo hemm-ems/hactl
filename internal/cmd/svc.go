@@ -17,6 +17,7 @@ import (
 
 var flagSvcData string
 var flagSvcReturn bool
+var flagSvcConfirm bool
 
 var svcCmd = &cobra.Command{
 	Use:   "svc",
@@ -26,8 +27,8 @@ var svcCmd = &cobra.Command{
 
 var svcCallCmd = &cobra.Command{
 	Use:   "call <domain>.<service>",
-	Short: "Call a service",
-	Long:  "Call a HA service. Use --data for JSON service data.",
+	Short: "Call a service (dry-run by default)",
+	Long:  "Call a HA service. Use --data for JSON service data. Dry-run by default: prints the planned call without executing it; pass --confirm to actually call.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSvcCall(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -37,6 +38,7 @@ var svcCallCmd = &cobra.Command{
 func init() {
 	svcCallCmd.Flags().StringVarP(&flagSvcData, "data", "d", "{}", "JSON service data (use @file.json to read from file)")
 	svcCallCmd.Flags().BoolVar(&flagSvcReturn, "return", false, "request and print the service response (return_response=true)")
+	svcCallCmd.Flags().BoolVar(&flagSvcConfirm, "confirm", false, "actually call the service (default is dry-run)")
 	svcCmd.AddCommand(svcCallCmd)
 	rootCmd.AddCommand(svcCmd)
 }
@@ -55,6 +57,12 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 	var data map[string]any
 	if unmarshalErr := json.Unmarshal(jsonData, &data); unmarshalErr != nil {
 		return fmt.Errorf("invalid --data JSON: %w", unmarshalErr)
+	}
+
+	if !flagSvcConfirm {
+		_, _ = fmt.Fprintf(w, "dry-run: no service was called\nwould call: %s.%s\ndata: %s\n", domain, service, jsonData)
+		_, _ = fmt.Fprintln(w, "re-run with --confirm after the user explicitly confirms this exact action")
+		return nil
 	}
 
 	cfg, err := config.Load(flagDir)

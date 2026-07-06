@@ -94,3 +94,168 @@ The comment caused the model to first try `hactl log --component automation` (em
 **Model side:**
 - The eval was done with a 4-bit local Qwen. Frontier models (Claude Sonnet, GPT-4o) follow workflow examples more reliably and handle empty results more gracefully. Expect the same manual to score 6–7/8 with a frontier model.
 - Chain limit of 6 calls is tight for complex queries. Raising to 8 would reduce F3 failures on multi-step workflows without hurting precision.
+
+---
+
+# Session 2 — 2026-07-05, qwen3.5-122b (rapid-mlx), cold-start rtfm
+
+Second tuning session, new setup: **qwen3.5-122b-mxfp4** on rapid-mlx
+(M3 Ultra, 262k ctx, hermes tool parser) called directly via the `llm` CLI —
+~5 s per tool turn, a full 8-prompt eval in ~7 min (was 42). Architecture
+switched from manual-as-system-prompt to **cold start**: minimal system
+prompt (`dev/tuning/system-cold.md`), manual delivered by the tool layer.
+
+## What was measured (14 runs, `dev/tuning/patterns.md` has per-run details)
+
+Manual-delivery architectures (runs 1–9):
+
+| Config | Result |
+|---|---|
+| Manual in system prompt + rtfm tool exposed | Model re-reads rtfm mid-chain, 7k redundant tokens, chain death |
+| Cold start, rtfm-first as prompt rule | Obeyed ~50%; skippers spiral (8 calls), readers excel |
+| Cold start, hard rtfm gate (tools error until rtfm) | Compliance 100% but gate errors burn rounds — net worse |
+| Cold start, **manual auto-injected with first tool result** | Winner: no wasted rounds, deterministic delivery |
+
+Tool-surface completion (runs 10–14, on the winning architecture):
+
+| Change | Result |
+|---|---|
+| Confirm-gated `svc_call` wrapper | 5/8; str param for JSON data 400'd the chain (schema-enforcing server) |
+| `data: dict` fix + gated dash wrappers | 6/8 + 1 CHECK — first e08 pass via dry-run proposal |
+| Sweep-completion manual edit | **F4: real dashboard created on the live instance** — the manual's own workflow block contained `--confirm` |
+| F4 fix: dry-run forms in blocks, "the original request is not confirmation" in prose + system prompt | 5/8, write held at dry-run boundary |
+| Verify-first docstring, honest e06 budget | **7/8, zero CHECK, zero F4** (May best: 4/8 with the manual in the system prompt) |
+| 2× repeat runs | 7/8 both — confirmed; e01 the only stable fail (17 runs) |
+| Routing table at manual top; CLI svc gate; wrappers + 4 new-surface prompts | **12/12** — first perfect run, and e01's first pass |
+| Manual diet (human setup content → docs/setup.md) | 10/12 + 1 correct CHECK — no regression; e01 passed again |
+
+## Rules for future manual (rtfm) updates
+
+1. **Write for mid-conversation delivery.** The manual arrives inside a tool
+   result (injection, rtfm, MCP resource) — not as a system prompt. Order:
+   behavioral rules and workflows first, command reference after,
+   human-only setup content last. The model reads the head and skims the tail.
+2. **Workflows are the load-bearing part.** Headings must match verbatim user
+   phrasings ("What went wrong recently?"). No comments inside code blocks —
+   they are executed as instructions (May finding, still true). Guidance goes
+   in prose after the block.
+3. **Every PR that adds/changes a command must update the manual AND append
+   an eval prompt.** The May→July drift (device/ref/tpl/config landed, eval
+   never heard of them) silently invalidated half the eval set. Eval ids are
+   append-only; never renumber.
+4. **Re-anchor the eval set to the live instance before each session.**
+   Prompts referencing entities/automations that no longer exist measure
+   nothing. `uv run dev/tuning/grade.py <run-dir>` grades a run in seconds.
+5. **One hypothesis per run, but judge on repeats.** At this model size,
+   2–3 prompts flip per run stochastically; an n=1 delta is noise. Runs are
+   cheap now — verify any conclusion on at least 2 runs.
+6. **Tool surface must match the manual's promises.** If the manual documents
+   a write path, expose a confirm-gated wrapper (confirm=False → plan text
+   only, never executes). Documented-but-unexposed paths (svc call, dash *)
+   produce stalls or honest refusals — fine behavior, failed task.
+7. **Smart models need affordances, not scripts.** The frontier-vs-local gap
+   moved: qwen3.5 reasons through workflows fine but needs *facts* it cannot
+   guess — localized/vendor names ("search the shortest distinctive
+   substring"), which tools exist, what confirmation protocol applies.
+8. **Nothing goes in a code block that must not be executed.** Run 12: the
+   dashboard workflow block contained `--confirm`, the "confirm with user"
+   guidance sat in a code comment — the model executed the flag and ignored
+   the comment, creating a real dashboard on the live instance. Blocks show
+   the dry-run form; prose carries the protocol.
+9. **Spell out confirmation semantics: the original request is not
+   confirmation.** The model treated "build me a dashboard" as consent to
+   write. Safety text is strongest in the tool's own response (the svc_call
+   DRY-RUN text held every run), then the system prompt, then the manual —
+   in that order. Manual comments rank last and lose.
+10. **Design tool signatures for how models call them.** Strict
+    schema-enforcing servers (rapid-mlx) turn type mismatches into fatal
+    chain errors: JSON payloads are `dict` parameters, never stringified
+    JSON. Error messages must teach the next step — the "+N more (try
+    --pattern)" cap hint and the url-path hyphen error both steered the
+    model to self-correct.
+
+## Open items (next session)
+
+- e01: after 17 straight fails, passed twice in a row once the **routing
+  table** landed at the manual top ("question → exact call sequence").
+  Promising but n=2 — keep watching before declaring it solved.
+- e06 still flaps: the model keeps searching full phrases ("heat pump")
+  despite the shortest-substring rule; its ask-back answers are reasonable.
+  HA-side labeling (label: heat_pump) remains the robust fix (May idea).
+- Auto-generate the Command Reference from cobra definitions — the largest
+  manual section, the only one that can silently drift from the binary.
+- grade.py could aggregate pass-rates across N runs (variance dashboard).
+- CI regression eval against a fixture instance (no live HA dependency).
+- MCP elicitation (spec feature) would move write confirmation to the
+  client UI instead of trusting the model to relay it.
+
+Done this session (part 2): `svc_call` + dash gated wrappers; CLI-level
+`svc call` dry-run gate (breaking); `hactl mcp` manual injection with
+tests; e09–e12 new-surface prompts + wrappers; routing table; manual diet
+(human setup → docs/setup.md); 7/8 → 12/12 on the extended set.
+
+---
+
+# Session 3 — 2026-07-06, progressive manual delivery
+
+**Hypothesis (Jan):** don't inject the full 7k-token manual with the first
+tool result — inject a ~1.4k core (routing table, mental model, filtering,
+output conventions, global flags, confirmation prose) and deliver each
+command family's how-to with the result of the *first* call into that
+family. The timing argument: the routing table + tool docstrings are enough
+to form a correct first call, every risky first call is dry-run-gated, and
+the family detail arrives exactly before calls 2..n of a workflow.
+
+Implemented in `integrations/llm/tools.py` behind `HACTL_MANUAL_MODE`
+(`full` = default, unchanged; `progressive` = core + per-family). Sections
+are parsed from `hactl rtfm` output by heading, so `docs/manual.md` needed
+no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
+
+## Results (6 progressive runs vs full-mode runs 18/19)
+
+| | full (n=2) | progressive (n=6) |
+|---|---|---|
+| PASS rate | 22/24 | 62/72 |
+| PASS rate excl. e01 | 20/22 | 62/66 |
+| injected tok/prompt | ~7.2k | ~2.1k (-71%) |
+| wall time/run | ~7 min | ~4–5 min |
+| F4 unconfirmed writes | 0 | 0 |
+
+- Quality is on par outside e01; the entire gap is e01 (0/6 progressive vs
+  2/2 in runs 18/19 — but 2/19 lifetime; see patterns.md for why that
+  comparison is regression to the mean). e01 remains the unsolved
+  sweep-completion prompt in both modes.
+- Two refinements tested, neither measurable at n=2: a "complete the
+  routing-table sequence before drilling" line in family headers, and
+  moving the cross-family sweep workflows into the core. The latter is kept
+  anyway as the more principled split (cross-family behavior in core,
+  single-family workflows with their family).
+- Injection adjacency cuts both ways: the device section landing next to a
+  missed search helped e06 (5/6, better than full mode); log-show examples
+  landing next to log results tempt mid-sweep drill-downs (e01/e02 budget
+  fails).
+
+## Rule 11 (extends "Rules for future manual updates")
+
+11. **Deliver reference lazily, behavior eagerly.** The routing table and
+    cross-family workflows must be in the first injection; per-family
+    reference can arrive with the family's first result at ~30% of the
+    context cost and no measured quality loss. When editing the manual,
+    keep family sections self-contained (they are injected standalone) and
+    keep heading names stable — `tools.py` maps families to headings
+    verbatim.
+
+## Open items
+
+- ~~Decide default for the `llm` tools path~~ DECIDED 2026-07-06:
+  progressive is the default (quality-neutral at -71% context cost);
+  full-mode baseline runs now need explicit `HACTL_MANUAL_MODE=full`. The
+  `hactl mcp` port (core with first tool result; family sections keyed on
+  the first token of the `command` string) stays LOW PRIORITY per Jan.
+- e01: unchanged. Next idea after routing table did not confirm: put the
+  sweep sequence in the *system* prompt for chat-style agents, or accept
+  6-call budget.
+- A `ref` family section does not exist in the manual (e09 passes on
+  docstrings alone) — write one if ref grows beyond validate/scan.
+- Variance dashboard (grade.py over N runs) got more urgent: run 25 shows
+  single-run noise still dominates variant deltas at n=2.

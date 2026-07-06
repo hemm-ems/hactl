@@ -38,6 +38,10 @@ func TestSvcCall_ReturnFlag(t *testing.T) {
 	flagSvcReturn = true
 	defer func() { flagSvcReturn = oldReturn }()
 
+	oldConfirm := flagSvcConfirm
+	flagSvcConfirm = true
+	defer func() { flagSvcConfirm = oldConfirm }()
+
 	var out bytes.Buffer
 	if err := runSvcCall(t.Context(), &out, "homeassistant.check_config"); err != nil {
 		t.Fatalf("runSvcCall --return: %v", err)
@@ -64,6 +68,10 @@ func TestSvcCall_NoReturn(t *testing.T) {
 	oldReturn := flagSvcReturn
 	flagSvcReturn = false
 	defer func() { flagSvcReturn = oldReturn }()
+
+	oldConfirm := flagSvcConfirm
+	flagSvcConfirm = true
+	defer func() { flagSvcConfirm = oldConfirm }()
 
 	var out bytes.Buffer
 	if err := runSvcCall(t.Context(), &out, "homeassistant.check_config"); err != nil {

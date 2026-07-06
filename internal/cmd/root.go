@@ -231,6 +231,7 @@ func resetSubcommandFlags() {
 	flagCCLogsUnique = false
 	flagSvcData = "{}"
 	flagSvcReturn = false
+	flagSvcConfirm = false
 	flagScriptPattern = ""
 	flagScriptLabel = ""
 	flagScriptFailing = false

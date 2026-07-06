@@ -10,6 +10,11 @@
 #   HACTL_LLM_BASE_URL  default http://192.168.42.119:1234/v1
 #   HACTL_LLM_MODEL     default qwen3.6-27b-jang_4m-crack
 #   HACTL_LLM_ALIAS     default hactl-qwen
+#   HACTL_LLM_API_KEY   default lm-studio (LM Studio ignores auth; set a real
+#                       key for authenticated endpoints like rapid-mlx)
+#   HACTL_LLM_SYSTEM_FILE  optional path: use this file as the system prompt
+#                       instead of docs/manual.md (cold-start mode — the
+#                       agent must self-teach via `hactl rtfm`)
 #
 # Usage: ./integrations/llm/install.sh
 
@@ -21,6 +26,7 @@ MANUAL="$REPO_ROOT/docs/manual.md"
 BASE_URL="${HACTL_LLM_BASE_URL:-http://192.168.42.119:1234/v1}"
 MODEL_NAME="${HACTL_LLM_MODEL:-qwen3.6-27b-jang_4m-crack}"
 ALIAS="${HACTL_LLM_ALIAS:-hactl-qwen}"
+API_KEY="${HACTL_LLM_API_KEY:-lm-studio}"
 KEY_NAME="lmstudio-dummy"
 
 if ! command -v llm >/dev/null 2>&1; then
@@ -52,13 +58,19 @@ cat > "$EXTRA_MODELS" <<EOF
 EOF
 
 # LM Studio doesn't enforce auth, but the OpenAI client requires *some* value.
-llm keys set "$KEY_NAME" --value "lm-studio" >/dev/null
+llm keys set "$KEY_NAME" --value "$API_KEY" >/dev/null
 
-# Build the template: model alias + manual.md as system prompt.
+# Build the template: model alias + system prompt (manual.md by default,
+# or HACTL_LLM_SYSTEM_FILE for cold-start evals where the agent rtfm's).
+SYSTEM_SRC="${HACTL_LLM_SYSTEM_FILE:-$MANUAL}"
+if [ ! -f "$SYSTEM_SRC" ]; then
+  echo "error: system prompt file not found at $SYSTEM_SRC" >&2
+  exit 1
+fi
 {
   echo "model: $ALIAS"
   echo "system: |"
-  sed 's/^/  /' "$MANUAL"
+  sed 's/^/  /' "$SYSTEM_SRC"
 } > "$TEMPLATE_FILE"
 
 echo "✓ extra-openai-models.yaml → $EXTRA_MODELS"
