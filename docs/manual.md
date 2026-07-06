@@ -17,6 +17,19 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
 | "List labels / areas / helpers / scripts" | the matching `ls` command | One call, answer |
 
+Full command set (family → subcommands):
+
+- `health` · `issues` · `changes` · `log [show <id>]` · `cc ls|show|logs` · `trace show <id>`
+- `ent ls|show|hist|anomalies|related|who|set-label|set-area`
+- `auto ls|show|diff|apply|create|delete|rollback` · `script ls|show|run|diff|apply|create|delete`
+- `helper ls|show|create|delete` · `tpl eval|create|delete` · `svc call`
+- `dash ls|show|save|create|delete|resources|grep|replace`
+- `device ls|show` · `label|area|floor ls|create|delete`
+- `config entries|options|delete|flow-start|flow-step|flow-inspect`
+- `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
+
+No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
+
 ## Mental model
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
