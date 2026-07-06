@@ -64,6 +64,16 @@ var scriptRunCmd = &cobra.Command{
 	},
 }
 
+var scriptCatCmd = &cobra.Command{
+	Use:   "cat <id>",
+	Short: "Print a script's remote config as YAML",
+	Long:  "Fetch and print the current remote YAML definition of a script (via the companion).",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runScriptCat(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 var scriptDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote script config",
@@ -113,8 +123,24 @@ func init() {
 	scriptCreateCmd.Flags().StringVarP(&flagScriptFile, "file", "f", "", "local YAML file for the new script")
 	scriptCreateCmd.Flags().BoolVar(&flagScriptConfirm, "confirm", false, "actually create (default is dry-run)")
 	scriptDeleteCmd.Flags().BoolVar(&flagScriptConfirm, "confirm", false, "actually delete (default is dry-run)")
-	scriptCmd.AddCommand(scriptLsCmd, scriptShowCmd, scriptRunCmd, scriptDiffCmd, scriptApplyCmd, scriptCreateCmd, scriptDeleteCmd)
+	scriptCmd.AddCommand(scriptLsCmd, scriptShowCmd, scriptCatCmd, scriptRunCmd, scriptDiffCmd, scriptApplyCmd, scriptCreateCmd, scriptDeleteCmd)
 	rootCmd.AddCommand(scriptCmd)
+}
+
+// runScriptCat prints a script's remote YAML config verbatim (pipe-friendly,
+// round-trippable with `script diff -f`). The companion returns the definition
+// as YAML text in resp.Content.
+func runScriptCat(ctx context.Context, w io.Writer, scriptID string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.GetScriptDef(ctx, scriptID)
+	if err != nil {
+		return fmt.Errorf("fetching script: %w", err)
+	}
+	_, _ = fmt.Fprint(w, resp.Content)
+	return nil
 }
 
 // scriptEntity is a script from /api/states.

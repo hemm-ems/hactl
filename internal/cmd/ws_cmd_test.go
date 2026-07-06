@@ -2195,6 +2195,62 @@ func TestRunDashShow_RawMode(t *testing.T) {
 	}
 }
 
+// --- runDashShow (yaml mode) ---
+
+func TestRunDashShow_YAMLMode(t *testing.T) {
+	rawConfig := `{"title":"Home","views":[{"title":"Main","path":"main"}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(rawConfig),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashYAML
+	flagDashYAML = true
+	defer func() { flagDashYAML = old }()
+	oldView := flagDashView
+	flagDashView = ""
+	defer func() { flagDashView = oldView }()
+
+	var buf bytes.Buffer
+	if err := runDashShow(context.Background(), &buf, ""); err != nil {
+		t.Fatalf("runDashShow yaml mode failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "title: Home") || !strings.Contains(out, "views:") {
+		t.Errorf("expected YAML output, got: %q", out)
+	}
+	if strings.Contains(out, `"title"`) {
+		t.Errorf("output looks like JSON, not YAML: %q", out)
+	}
+}
+
+func TestRunDashShow_YAMLView(t *testing.T) {
+	rawConfig := `{"title":"Home","views":[{"title":"Main","path":"main"},{"title":"Other","path":"other"}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(rawConfig),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashYAML
+	flagDashYAML = true
+	defer func() { flagDashYAML = old }()
+	oldView := flagDashView
+	flagDashView = "other"
+	defer func() { flagDashView = oldView }()
+
+	var buf bytes.Buffer
+	if err := runDashShow(context.Background(), &buf, ""); err != nil {
+		t.Fatalf("runDashShow yaml --view failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Other") {
+		t.Errorf("expected the 'other' view in output, got: %q", out)
+	}
+	if strings.Contains(out, "Main") {
+		t.Errorf("--view should narrow to a single view, got: %q", out)
+	}
+}
+
 // --- runDashGrep / runDashReplace (reference rename) ---
 
 func TestRunDashGrep_FindsReferences(t *testing.T) {

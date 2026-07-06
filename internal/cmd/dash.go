@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
@@ -21,6 +22,7 @@ import (
 
 var flagDashView string
 var flagDashRaw bool
+var flagDashYAML bool
 var flagDashFile string
 var flagDashConfirm bool
 var flagDashTitle string
@@ -47,7 +49,7 @@ var dashLsCmd = &cobra.Command{
 var dashShowCmd = &cobra.Command{
 	Use:   "show [url_path]",
 	Short: "Show dashboard config",
-	Long:  "Display dashboard views summary or raw JSON config. Omit url_path for the default dashboard.",
+	Long:  "Display dashboard views summary, or the full config as raw JSON (--raw/--json) or YAML (--yaml). Omit url_path for the default dashboard.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""
@@ -127,6 +129,7 @@ var dashReplaceCmd = &cobra.Command{
 func init() {
 	dashShowCmd.Flags().StringVar(&flagDashView, "view", "", "show only the view with this path")
 	dashShowCmd.Flags().BoolVar(&flagDashRaw, "raw", false, "output raw HA JSON (for LLM round-trip editing)")
+	dashShowCmd.Flags().BoolVar(&flagDashYAML, "yaml", false, "output the dashboard config as YAML")
 	dashReplaceCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually save (default is dry-run)")
 	dashSaveCmd.Flags().StringVarP(&flagDashFile, "file", "f", "", "JSON config file (default: read from stdin)")
 	dashSaveCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually save (default is dry-run)")
@@ -204,8 +207,8 @@ func runDashShow(ctx context.Context, w io.Writer, urlPath string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Raw mode: output unmodified HA JSON
-	if flagDashRaw || flagJSON {
+	// Raw / JSON / YAML mode: output the machine-readable config
+	if flagDashRaw || flagJSON || flagDashYAML {
 		raw, rawErr := ws.DashboardConfigRaw(ctx, urlPath)
 		if rawErr != nil {
 			return fmt.Errorf("fetching dashboard config: %w", rawErr)
@@ -218,6 +221,18 @@ func runDashShow(ctx context.Context, w io.Writer, urlPath string) error {
 		}
 		if flagDashRaw {
 			_, writeErr := w.Write(append(raw, '\n'))
+			return writeErr
+		}
+		if flagDashYAML {
+			var v any
+			if unmarshalErr := json.Unmarshal(raw, &v); unmarshalErr != nil {
+				return fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
+			}
+			out, marshalErr := yaml.Marshal(v)
+			if marshalErr != nil {
+				return fmt.Errorf("marshaling dashboard config to YAML: %w", marshalErr)
+			}
+			_, writeErr := w.Write(out)
 			return writeErr
 		}
 		// --json: pretty-print

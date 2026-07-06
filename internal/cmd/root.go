@@ -223,6 +223,7 @@ func resetSubcommandFlags() {
 	flagEntArea = ""
 	flagEntLabel = ""
 	flagEntConfirm = false
+	flagEntStale = false
 	flagDevicePattern = ""
 	flagDeviceName = ""
 	flagDeviceArea = ""
@@ -250,6 +251,8 @@ func resetSubcommandFlags() {
 	flagFloorConfirm = false
 	flagDashView = ""
 	flagDashRaw = false
+	flagDashYAML = false
+	flagConfigFileRaw = false
 	flagDashFile = ""
 	flagDashConfirm = false
 	flagDashTitle = ""

@@ -95,13 +95,45 @@ Without --options, the inspect reads from the config flow endpoint instead of th
 	},
 }
 
+var flagConfigFileRaw bool
+
+var configFilesCmd = &cobra.Command{
+	Use:   "files",
+	Short: "List config files",
+	Long:  "List configuration.yaml and its !include'd files (via the companion).",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigFiles(cmd.Context(), cmd.OutOrStdout())
+	},
+}
+
+var configFileCmd = &cobra.Command{
+	Use:   "file <path>",
+	Short: "Print a config file as YAML",
+	Long:  "Print the contents of a config file. Use --raw to leave !include directives unresolved.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigFile(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
+var configBlockCmd = &cobra.Command{
+	Use:   "block <path> <id>",
+	Short: "Print a single keyed config block as YAML",
+	Long:  "Print a single block (matched by id/unique_id/key) from a config file.",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigBlock(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+	},
+}
+
 func init() {
 	configEntriesCmd.Flags().StringVar(&flagConfigDomain, "domain", "", "filter entries by integration domain")
 	configDeleteCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually delete (default is dry-run)")
 	configFlowStepCmd.Flags().StringVar(&flagFlowData, "data", "{}", "JSON data to submit to the flow step")
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFlowInspectCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
-	configCmd.AddCommand(configEntriesCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd)
+	configFileCmd.Flags().BoolVar(&flagConfigFileRaw, "raw", false, "leave !include directives unresolved")
+	configCmd.AddCommand(configEntriesCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
@@ -255,6 +287,73 @@ func runConfigFlowInspect(ctx context.Context, w io.Writer, flowID string) error
 		return fmt.Errorf("inspecting flow: %w", err)
 	}
 	return renderFlowResult(w, data)
+}
+
+func runConfigFiles(ctx context.Context, w io.Writer) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.ListConfigFiles(ctx)
+	if err != nil {
+		return fmt.Errorf("listing config files: %w", err)
+	}
+	if len(resp.Files) == 0 {
+		_, _ = fmt.Fprintln(w, "no config files")
+		return nil
+	}
+	tbl := &format.Table{
+		Headers: []string{"path"},
+		Rows:    make([][]string, len(resp.Files)),
+	}
+	for i, f := range resp.Files {
+		tbl.Rows[i] = []string{f}
+	}
+	return tbl.Render(w, format.RenderOpts{
+		Top:     flagTop,
+		Full:    flagFull,
+		JSON:    flagJSON,
+		Compact: true,
+	})
+}
+
+// runConfigFile prints a config file's contents verbatim. With --raw the
+// companion leaves !include directives unresolved; otherwise they are inlined.
+func runConfigFile(ctx context.Context, w io.Writer, path string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	var content string
+	if flagConfigFileRaw {
+		resp, readErr := cc.ReadConfigFileRaw(ctx, path)
+		if readErr != nil {
+			return fmt.Errorf("reading config file: %w", readErr)
+		}
+		content = resp.Content
+	} else {
+		resp, readErr := cc.ReadConfigFile(ctx, path)
+		if readErr != nil {
+			return fmt.Errorf("reading config file: %w", readErr)
+		}
+		content = resp.Content
+	}
+	_, _ = fmt.Fprint(w, content)
+	return nil
+}
+
+// runConfigBlock prints a single keyed block from a config file as YAML.
+func runConfigBlock(ctx context.Context, w io.Writer, path, id string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.ReadConfigBlock(ctx, path, id)
+	if err != nil {
+		return fmt.Errorf("reading config block: %w", err)
+	}
+	_, _ = fmt.Fprint(w, resp.Content)
+	return nil
 }
 
 func renderFlowResult(w io.Writer, data []byte) error {

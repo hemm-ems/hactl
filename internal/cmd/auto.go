@@ -54,6 +54,16 @@ var autoShowCmd = &cobra.Command{
 	},
 }
 
+var autoCatCmd = &cobra.Command{
+	Use:   "cat <id>",
+	Short: "Print an automation's remote config as YAML",
+	Long:  "Fetch and print the current remote YAML definition of an automation (via the companion).",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAutoCat(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 var autoDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote automation config",
@@ -103,8 +113,24 @@ func init() {
 	autoCreateCmd.Flags().StringVarP(&flagAutoFile, "file", "f", "", "local YAML file for the new automation")
 	autoCreateCmd.Flags().BoolVar(&flagAutoConfirm, "confirm", false, "actually create (default is dry-run)")
 	autoDeleteCmd.Flags().BoolVar(&flagAutoConfirm, "confirm", false, "actually delete (default is dry-run)")
-	autoCmd.AddCommand(autoLsCmd, autoShowCmd, autoDiffCmd, autoApplyCmd, autoCreateCmd, autoDeleteCmd)
+	autoCmd.AddCommand(autoLsCmd, autoShowCmd, autoCatCmd, autoDiffCmd, autoApplyCmd, autoCreateCmd, autoDeleteCmd)
 	rootCmd.AddCommand(autoCmd)
+}
+
+// runAutoCat prints an automation's remote YAML config verbatim (pipe-friendly,
+// round-trippable with `auto diff -f`). The companion returns the definition as
+// YAML text in resp.Content.
+func runAutoCat(ctx context.Context, w io.Writer, automationID string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.GetAutomationDef(ctx, automationID)
+	if err != nil {
+		return fmt.Errorf("fetching automation: %w", err)
+	}
+	_, _ = fmt.Fprint(w, resp.Content)
+	return nil
 }
 
 // automationEntity is an automation from /api/states.
