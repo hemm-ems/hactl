@@ -41,6 +41,16 @@ var helperShowCmd = &cobra.Command{
 	},
 }
 
+var helperCatCmd = &cobra.Command{
+	Use:   "cat <id>",
+	Short: "Print a helper's remote config as YAML",
+	Long:  "Fetch and print the current remote YAML definition of a helper, with no header (pipe-friendly).",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runHelperCat(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 var helperCreateCmd = &cobra.Command{
 	Use:   "create <domain>",
 	Short: "Create a new helper (dry-run by default)",
@@ -69,8 +79,24 @@ func init() {
 	helperCreateCmd.Flags().StringVarP(&flagHelperFile, "file", "f", "", "YAML file for the new helper")
 	helperCreateCmd.Flags().BoolVar(&flagHelperConfirm, "confirm", false, "actually create (default is dry-run)")
 	helperDeleteCmd.Flags().BoolVar(&flagHelperConfirm, "confirm", false, "actually delete (default is dry-run)")
-	helperCmd.AddCommand(helperLsCmd, helperShowCmd, helperCreateCmd, helperDeleteCmd)
+	helperCmd.AddCommand(helperLsCmd, helperShowCmd, helperCatCmd, helperCreateCmd, helperDeleteCmd)
 	rootCmd.AddCommand(helperCmd)
+}
+
+// runHelperCat prints a helper's remote YAML config verbatim, without the
+// id/domain header that `helper show` prints — pipe-friendly and consistent
+// with `auto cat` / `script cat` / `tpl cat`.
+func runHelperCat(ctx context.Context, w io.Writer, helperID string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.GetHelper(ctx, helperID)
+	if err != nil {
+		return fmt.Errorf("fetching helper: %w", err)
+	}
+	_, _ = fmt.Fprint(w, resp.Content)
+	return nil
 }
 
 func runHelperLs(ctx context.Context, w io.Writer) error {

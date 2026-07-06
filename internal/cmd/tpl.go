@@ -33,14 +33,39 @@ var tplEvalCmd = &cobra.Command{
 	},
 }
 
+var tplCatCmd = &cobra.Command{
+	Use:   "cat <unique_id>",
+	Short: "Print a template sensor's remote config as YAML",
+	Long:  "Fetch and print the current remote YAML definition of a template sensor (via the companion).",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runTplCat(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 func init() {
 	tplEvalCmd.Flags().StringVarP(&flagTplFile, "file", "f", "", "read template from file")
 	tplCreateCmd.Flags().StringVarP(&flagTplFile, "file", "f", "", "YAML file for the new template sensor")
 	tplCreateCmd.Flags().StringVar(&flagTplDomain, "domain", "sensor", "template domain (sensor or binary_sensor)")
 	tplCreateCmd.Flags().BoolVar(&flagTplConfirm, "confirm", false, "actually create (default is dry-run)")
 	tplDeleteCmd.Flags().BoolVar(&flagTplConfirm, "confirm", false, "actually delete (default is dry-run)")
-	tplCmd.AddCommand(tplEvalCmd, tplCreateCmd, tplDeleteCmd)
+	tplCmd.AddCommand(tplEvalCmd, tplCatCmd, tplCreateCmd, tplDeleteCmd)
 	rootCmd.AddCommand(tplCmd)
+}
+
+// runTplCat prints a template sensor's remote YAML config verbatim. The
+// companion returns the definition as YAML text in resp.Content.
+func runTplCat(ctx context.Context, w io.Writer, uniqueID string) error {
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := cc.GetTemplate(ctx, uniqueID)
+	if err != nil {
+		return fmt.Errorf("fetching template: %w", err)
+	}
+	_, _ = fmt.Fprint(w, resp.Content)
+	return nil
 }
 
 var tplCreateCmd = &cobra.Command{
