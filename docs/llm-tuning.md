@@ -304,6 +304,33 @@ Residual B non-passes are known-flaky prompts (e06 discovery, e10 budget),
 not CLI-mode-specific. The command-index manual diff needs Jan's OK before
 commit (Rule: manual changes are shown as diffs first).
 
+### Delivery-mode matrix (same passthrough tool, +index manual, 2 runs each)
+
+The passthrough tool is token-equivalent to what an MCP client sees (JSON-RPC
+framing never enters the model context), so these proxy the `hactl mcp`
+modes: `full` ≈ today's MCP injection, `off`+rtfm-docstring-hint ≈
+`mcp --no-manual-inject` / pre-injection era.
+
+| mode | PASS/12 | F4 | injected tok/prompt | uncached input/run | wall |
+|---|---|---|---|---|---|
+| progressive (runs 1949/1955) | 11, 10 (+1C) | **0** | ~2 500 | 69–117k | 252–379s |
+| full (runs 2044/2102) | 10, 8 | 1 | 7 468 | 253–296k | 586–605s |
+| off + "run rtfm first" hint (2054/2112) | 6, 5 (+2C) | 1 | 0 (rtfm returns ~7.5k as result) | 113–168k | 346–505s |
+
+- **rtfm obedience is the failure mode of hint mode:** rtfm was the *first*
+  call in only 4/12 resp. 1/12 prompts; the rest started with hallucinated
+  commands (`report daily`, `labels ls`, `state show`, `int ls`,
+  `dashboard ls`) and only sometimes recovered. Confirms the session-1/2
+  decision against instruction-gated delivery, now with numbers.
+- **Full-mode economics are the worst of both:** 3× the injected tokens of
+  progressive AND every later turn re-reads them (uncached input 3–4× of
+  progressive), runs ~2× slower, and quality drops — the confirm rule gets
+  buried mid-dump (both F4s of this session happened in non-progressive
+  modes; progressive stayed F4-free across all four runs).
+- **Sweet spot: progressive injection, regardless of transport.** For MCP
+  parity, the progressive port (using `internal/manual`) would move
+  `hactl mcp` from worst-economics to par — priority still Jan's call.
+
 ## Open items
 
 - ~~Decide default for the `llm` tools path~~ DECIDED 2026-07-06:

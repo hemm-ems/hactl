@@ -26,6 +26,7 @@ HACTL_BIN = os.environ.get("HACTL_BIN", "hactl")
 HACTL_DIR = os.environ.get("HACTL_DIR")
 TIMEOUT_S = 120
 SESSION = os.environ.get("HACTL_SESSION") or f"llm-{os.getpid()}-{int(time.time())}"
+_MANUAL_MODE = os.environ.get("HACTL_MANUAL_MODE", "progressive")
 
 
 def hactl(command: str) -> str:
@@ -59,3 +60,15 @@ def hactl(command: str) -> str:
     if result.returncode != 0:
         out += f"\n(exit {result.returncode})"
     return out
+
+
+# With delivery disabled, tell the model to fetch the manual itself — the
+# same description switch hactl mcp --no-manual-inject makes (server.go).
+if _MANUAL_MODE == "off":
+    hactl.__doc__ = hactl.__doc__.replace(
+        "The manual is delivered together with your first results — read it "
+        "before interpreting anything; it documents every command, flag, and "
+        "workflow. (Also available on demand via 'rtfm'.)",
+        "Start by running 'rtfm' once: it prints the full manual of all "
+        "commands — read it before interpreting anything.",
+    )
