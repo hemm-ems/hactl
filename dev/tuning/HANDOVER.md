@@ -8,7 +8,9 @@ Supersedes the 2026-05-04 handover. Full run-by-run history in
 > quality on par with full injection except the historically unsolved e01,
 > at ~2.1k instead of ~7.2k injected tokens per prompt. Details in
 > `docs/llm-tuning.md` session-3 section and `patterns.md` runs 20–25.
-> Not yet ported to `hactl mcp`; default stays `full`.
+> Progressive is now the DEFAULT for the llm tools path (Jan approved);
+> full-mode baseline runs need explicit `HACTL_MANUAL_MODE=full`. The
+> `hactl mcp` port is low priority — Jan prefers the llm-CLI path.
 
 ## State
 

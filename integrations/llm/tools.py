@@ -24,14 +24,14 @@ TIMEOUT_S = 120
 # conversation) gets the manual prepended to its result, so the agent is
 # guaranteed to have accurate syntax without spending a round on rtfm.
 # HACTL_MANUAL_MODE selects what "the manual" means:
-#   full         (default) the entire manual, once, with the first result
-#   progressive  core only (routing, conventions, flags) with the first result;
-#                each command family's how-to section is delivered with the
-#                result of the first call into that family
+#   progressive  (default) core only (routing, conventions, flags) with the
+#                first result; each command family's how-to section is
+#                delivered with the result of the first call into that family
+#   full         the entire manual, once, with the first result
 # Set HACTL_NO_RTFM_GATE=1 to disable delivery entirely, e.g. when the manual
 # is already in the system prompt.
 _manual_delivered = os.environ.get("HACTL_NO_RTFM_GATE") == "1"
-_MANUAL_MODE = os.environ.get("HACTL_MANUAL_MODE", "full")
+_MANUAL_MODE = os.environ.get("HACTL_MANUAL_MODE", "progressive")
 
 # --- progressive mode: manual sectioning ------------------------------------
 

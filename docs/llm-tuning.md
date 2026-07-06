@@ -247,11 +247,11 @@ no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
 
 ## Open items
 
-- Decide default for the `llm` tools path: progressive is validated there
-  and quality-neutral at -71% context cost. The `hactl mcp` port (core with
-  first tool result; family sections keyed on the first token of the
-  `command` string) is LOW PRIORITY per Jan (2026-07-06) — decide the llm
-  path default independently of it.
+- ~~Decide default for the `llm` tools path~~ DECIDED 2026-07-06:
+  progressive is the default (quality-neutral at -71% context cost);
+  full-mode baseline runs now need explicit `HACTL_MANUAL_MODE=full`. The
+  `hactl mcp` port (core with first tool result; family sections keyed on
+  the first token of the `command` string) stays LOW PRIORITY per Jan.
 - e01: unchanged. Next idea after routing table did not confirm: put the
   sweep sequence in the *system* prompt for chat-style agents, or accept
   6-call budget.
