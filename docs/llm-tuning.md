@@ -260,9 +260,49 @@ key). `tools.py` keeps doing its own injection and pins the child binary to
 `integrations/llm/tools_cli.py`, selected via `HACTL_TOOLS_PY` in `hactl-llm`.
 
 A/B (arm A = multi-function tools.py progressive, arm B = single-function
-tools_cli.py + binary injection), e01–e12, ≥2 runs per arm: **PENDING — table
-goes here** (pass rate, injected tok/prompt via `inject_tokens.py`, total
-prompt tokens via `llm logs`, wall time).
+tools_cli.py + binary injection), e01–e12, qwen3.5-122b, 2026-07-06:
+
+| run | arm | manual | PASS/12 | injected tok/prompt | turns | wall |
+|---|---|---|---|---|---|---|
+| 1911 | A | as-is | 11 | 2261 | 32 | 639s |
+| 1928 | A | as-is | 11 | 2279 | 30 | 301s |
+| 1921 | B | as-is | 7 | 2283 | 49 | 379s |
+| 1933 | B | as-is | 6 (+1 CHECK) | 2452 | 36 | 689s |
+| 1949 | B | +cmd index | 11 | 2554 | 42 | 379s |
+| 1955 | B | +cmd index | 10 (+1 CHECK) | 2524 | 33 | 252s |
+| 2000 | A | +cmd index | **12** | 2415 | 33 | 237s |
+
+Findings (each confirmed on 2 runs unless noted):
+
+1. **Vocabulary gap, the one real CLI-mode failure mode.** tools.py's ~20
+   function *names* (hactl_helper_ls, hactl_tpl_eval, …) are an implicit
+   command index in the tool schema. The bare passthrough has none, and
+   progressive family docs only arrive after the first *correct* family
+   command — chicken-and-egg. Baseline B failures were all of this shape:
+   `ent ls --domain helper` instead of `helper ls` (e11), `template eval`
+   (e12), `refs`/`ent refs`/`int ls` flailing (e09/e10) burning budget.
+2. **Fix: "Full command set" index appended to `## Quick routing`**
+   (~150 tok, core-injected, no heading/map changes). B jumps 7/6 → 11/10,
+   on par with arm A; the A control run with the index scored 12/12
+   (single run — lifetime best, grain of salt). The models self-corrected
+   via `--help` and `rtfm` even without the index, just over budget.
+3. **Token economics.** Tool-schema prefix per request: A ≈ 3286 tok,
+   B ≈ 825 tok (first-turn input, median) — the passthrough saves ~2.5k
+   tok of schema on every request, but rapid-mlx prefix-caches A's
+   identical schema across conversations (~60% cached input vs ~25% for
+   B), so total *uncached* input per run comes out comparable (A ≈ 58–66k,
+   B ≈ 69–117k, noisy with turn count). Verdict: CLI mode ≈ wrapper mode
+   on end-to-end tokens and quality, with a far smaller fixed schema and
+   zero client-side wrapper code — any agent with a shell tool gets the
+   tuned cold start. Injection overhead itself is unchanged
+   (~2.3–2.6k tok/prompt; the eval re-pays the core every prompt because
+   each prompt is a fresh HACTL_SESSION; a real conversation pays it once).
+4. **Write discipline held in CLI mode:** no F4 in any of the 4 B runs;
+   e08 proposed dry-runs and stopped for confirmation (CHECK by design).
+
+Residual B non-passes are known-flaky prompts (e06 discovery, e10 budget),
+not CLI-mode-specific. The command-index manual diff needs Jan's OK before
+commit (Rule: manual changes are shown as diffs first).
 
 ## Open items
 
