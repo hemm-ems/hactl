@@ -155,4 +155,7 @@ func sanitizeGolden(s string) string {
 func init() {
 	// Suppress slog output during tests
 	os.Setenv("HACTL_LOG_LEVEL", "error") //nolint:errcheck // test setup
+	// Tests run through RunWithOutput, which never triggers CLI manual
+	// injection — pinned off anyway so goldens survive entry-point drift.
+	os.Setenv("HACTL_MANUAL_MODE", "off") //nolint:errcheck // test setup
 }

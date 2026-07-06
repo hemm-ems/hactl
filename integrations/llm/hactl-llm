@@ -11,14 +11,16 @@
 #   hactl-llm --cl 6 "..."       # raise chain-limit (default 5)
 #
 # Env overrides:
-#   HACTL_BIN  path to the hactl binary (defaults to repo's ./hactl)
-#   HACTL_DIR  instance directory (forwarded into tools.py)
+#   HACTL_BIN       path to the hactl binary (defaults to repo's ./hactl)
+#   HACTL_DIR       instance directory (forwarded into tools.py)
+#   HACTL_TOOLS_PY  tool wrappers to load (defaults to tools.py; set to
+#                   tools_cli.py for the single-passthrough CLI-mode harness)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TOOLS_PY="$SCRIPT_DIR/tools.py"
+TOOLS_PY="${HACTL_TOOLS_PY:-$SCRIPT_DIR/tools.py}"
 
 # Default to the repo's dev binary so we exercise the latest fixes.
 export HACTL_BIN="${HACTL_BIN:-$REPO_ROOT/hactl}"

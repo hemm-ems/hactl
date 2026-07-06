@@ -33,11 +33,13 @@ See the [manual](docs/manual.md) for the full command reference.
 
 Every response is capped at 500 tokens by default, and compact token estimates are available with `--tokens` (`[~N tok]`). Extended output is opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
 
-`hactl manual` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
+`hactl rtfm` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
+
+Agents don't even have to ask for it: when hactl detects a tool harness (both stdout and stderr captured, i.e. not a terminal), it auto-delivers the manual on stderr, progressively — the ~1.4k-token core with the first command of a session, each command family's how-to with the first command of that family. stdout stays byte-identical, humans at a terminal never see it, and scripts that capture stderr and want silence set `HACTL_MANUAL_MODE=off`.
 
 ## How it works
 
-Point any LLM agent at hactl. It reads the manual once (`hactl rtfm`), then uses hactl commands as tools to answer your questions.
+Point any LLM agent at hactl. The manual reaches it automatically (or explicitly via `hactl rtfm`), then it uses hactl commands as tools to answer your questions.
 
 ![hactl demo](docs/demo.gif)
 

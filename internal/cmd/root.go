@@ -140,7 +140,12 @@ func Execute() error {
 	rootCmd.SetOut(&capBuf)
 	defer rootCmd.SetOut(nil)
 
-	if err := rootCmd.Execute(); err != nil {
+	executed, err := rootCmd.ExecuteC()
+	// Manual delivery goes to stderr first, so a merged capture reads
+	// manual → marker → result/error (the layout the tuning evals measured);
+	// injection happens on errors too — that's when the agent needs it most.
+	maybeInjectManual(executed, os.Args[1:])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// Name the instance the failing command was talking to — with
 		// multi-instance discovery the target is otherwise invisible.
@@ -152,7 +157,13 @@ func Execute() error {
 	}
 
 	if capBuf.Len() > 0 {
-		applyTokenPolicy(os.Stdout, capBuf.Bytes(), rootCmd.CommandPath())
+		cmdPath := rootCmd.CommandPath()
+		if executed != nil {
+			// The leaf path, so truncationHint can give command-specific
+			// advice (rootCmd.CommandPath() is always just "hactl").
+			cmdPath = executed.CommandPath()
+		}
+		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
 
 	if flagStats {
@@ -217,6 +228,9 @@ func resetSubcommandFlags() {
 	flagAutoLabel = ""
 	flagAutoFile = ""
 	flagAutoConfirm = false
+	flagRtfmCore = false
+	flagRtfmFamily = nil
+	flagRtfmFamilies = false
 	flagTplFile = ""
 	flagEntPattern = ""
 	flagEntDomain = ""
@@ -275,7 +289,13 @@ func resetSubcommandFlags() {
 // flag which, once set to true, causes all subsequent calls to print help.
 func resetCobraFlags(cmd *cobra.Command) {
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
+		// Slice flags append on Set, so Set(DefValue) would grow them with a
+		// literal "[]" element instead of clearing.
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			_ = sv.Replace(nil)
+		} else {
+			_ = f.Value.Set(f.DefValue)
+		}
 		f.Changed = false
 	})
 	for _, sub := range cmd.Commands() {

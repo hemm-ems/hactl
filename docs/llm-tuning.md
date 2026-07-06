@@ -242,8 +242,27 @@ no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
     reference can arrive with the family's first result at ~30% of the
     context cost and no measured quality loss. When editing the manual,
     keep family sections self-contained (they are injected standalone) and
-    keep heading names stable — `tools.py` maps families to headings
-    verbatim.
+    keep heading names stable — `tools.py` **and**
+    `internal/manual/families.go` map families to headings verbatim. The Go
+    side is CI-enforced: `internal/manual` guardrail tests fail on renamed
+    headings, and `TestTopLevelCommandsHaveManualCoverage` fails when a new
+    top-level command is neither mapped nor exempt.
+
+## Session 4 — progressive delivery in the Go binary (CLI mode, 2026-07-06)
+
+The progressive scheme now lives in the binary itself (`internal/manual`,
+stderr hook in `internal/cmd/inject.go`): any agent running `hactl` through a
+shell tool (both streams captured, no TTY) gets the core with its first
+command and family how-tos on first family use, tracked per instance in
+`cache/manual-state.json` (session = `HACTL_SESSION` or a 30-min-TTL shared
+key). `tools.py` keeps doing its own injection and pins the child binary to
+`HACTL_MANUAL_MODE=off`. CLI-mode eval harness: single passthrough
+`integrations/llm/tools_cli.py`, selected via `HACTL_TOOLS_PY` in `hactl-llm`.
+
+A/B (arm A = multi-function tools.py progressive, arm B = single-function
+tools_cli.py + binary injection), e01–e12, ≥2 runs per arm: **PENDING — table
+goes here** (pass rate, injected tok/prompt via `inject_tokens.py`, total
+prompt tokens via `llm logs`, wall time).
 
 ## Open items
 
@@ -251,7 +270,9 @@ no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
   progressive is the default (quality-neutral at -71% context cost);
   full-mode baseline runs now need explicit `HACTL_MANUAL_MODE=full`. The
   `hactl mcp` port (core with first tool result; family sections keyed on
-  the first token of the `command` string) stays LOW PRIORITY per Jan.
+  the first token of the `command` string) stays LOW PRIORITY per Jan —
+  when it happens, `internal/manual` (Session 4) already has the
+  sectioning/state pieces.
 - e01: unchanged. Next idea after routing table did not confirm: put the
   sweep sequence in the *system* prompt for chat-style agents, or accept
   6-call budget.

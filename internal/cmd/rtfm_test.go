@@ -26,6 +26,59 @@ func TestRtfm_DefaultPrintsFullManual(t *testing.T) {
 	}
 }
 
+// TestRtfm_CorePrintsCoreOnly verifies --core prints routing/conventions but no
+// per-family reference sections.
+func TestRtfm_CorePrintsCoreOnly(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "rtfm", "--core"}, &buf); err != nil {
+		t.Fatalf("rtfm --core failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "## Quick routing") {
+		t.Error("--core output missing '## Quick routing'")
+	}
+	if strings.Contains(out, "### Automations") {
+		t.Error("--core output leaks family section '### Automations'")
+	}
+}
+
+// TestRtfm_FamilyPrintsFamilySections verifies --family is alias-aware and
+// prints only that family's sections.
+func TestRtfm_FamilyPrintsFamilySections(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "rtfm", "--family", "trace"}, &buf); err != nil {
+		t.Fatalf("rtfm --family trace failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "### Write path (automations)") {
+		t.Error("--family trace (alias of auto) missing automation write path")
+	}
+	if strings.Contains(out, "## Quick routing") {
+		t.Error("--family output leaks core section")
+	}
+
+	var errBuf bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "rtfm", "--family", "nosuch"}, &errBuf); err == nil {
+		t.Error("unknown family should error")
+	} else if !strings.Contains(err.Error(), "auto") {
+		t.Errorf("unknown-family error should list valid families: %v", err)
+	}
+}
+
+// TestRtfm_FamiliesListsSplit verifies the --families overview.
+func TestRtfm_FamiliesListsSplit(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "rtfm", "--families"}, &buf); err != nil {
+		t.Fatalf("rtfm --families failed: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"core", "auto", "aliases: rollback, trace", "tok"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--families output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestRtfm_ExplicitCapTruncates verifies that an explicit --tokensmax still works.
 func TestRtfm_ExplicitCapTruncates(t *testing.T) {
 	var buf bytes.Buffer
