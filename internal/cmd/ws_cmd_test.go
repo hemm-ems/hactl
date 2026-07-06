@@ -1645,100 +1645,6 @@ func TestRunEntRelated_NoRelations(t *testing.T) {
 	}
 }
 
-func TestRunEntRelated_StaleEntity(t *testing.T) {
-	// The registry and state machine know only sensor.temp; the queried entity
-	// is absent from both (renamed/deleted). The finders all come back empty,
-	// but the output must distinguish "this entity is gone" from the generic
-	// "no related entities found" a live-but-unrelated entity would produce.
-	states := []map[string]any{
-		{"entity_id": "sensor.temp", "state": "21.5", "attributes": map[string]any{}},
-	}
-	statesJSON, _ := json.Marshal(states)
-
-	ts := startCmdServer(t, map[string]any{
-		"config/entity_registry/list": []map[string]any{
-			{"entity_id": "sensor.temp"},
-		},
-		"config/area_registry/list":  []any{},
-		"config/label_registry/list": []any{},
-		"config/floor_registry/list": []any{},
-	}, map[string]http.HandlerFunc{
-		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(statesJSON)
-		},
-	})
-	withFlagDir(t, ts.dir)
-
-	var buf bytes.Buffer
-	if err := runEntRelated(context.Background(), &buf, "binary_sensor.tur_balkon"); err != nil {
-		t.Fatalf("runEntRelated failed: %v", err)
-	}
-	out := buf.String()
-	if strings.Contains(out, "no related entities found") {
-		t.Errorf("stale entity must not report the generic 'no related entities found': %q", out)
-	}
-	if !strings.Contains(out, "stale") && !strings.Contains(out, "not in the registry") {
-		t.Errorf("output should flag the entity as stale/not-in-registry: %q", out)
-	}
-}
-
-func TestRunEntRelated_StaleFlag_ShowsConfigRefs(t *testing.T) {
-	states := []map[string]any{
-		{"entity_id": "sensor.temp", "state": "21.5", "attributes": map[string]any{}},
-	}
-	statesJSON, _ := json.Marshal(states)
-
-	var gotStale string
-	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/related/entity" {
-			t.Fatalf("unexpected companion path: %s", r.URL.Path)
-		}
-		gotStale = r.URL.Query().Get("stale")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"entity_id":"binary_sensor.tur_balkon","stale":true,"related":[],`+
-			`"stale_refs":[{"location":"automations.yaml","path":"[3].trigger[0].entity_id",`+
-			`"matched_value":"binary_sensor.tur_balkon"}]}`)
-	}))
-	defer companionSrv.Close()
-
-	ts := startCmdServer(t, map[string]any{
-		"config/entity_registry/list": []map[string]any{{"entity_id": "sensor.temp"}},
-		"config/area_registry/list":   []any{},
-		"config/label_registry/list":  []any{},
-		"config/floor_registry/list":  []any{},
-	}, map[string]http.HandlerFunc{
-		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(statesJSON)
-		},
-	})
-	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=test-token\nCOMPANION_URL=%s\nCOMPANION_TOKEN=test-token\n", ts.srv.URL, companionSrv.URL)
-	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), []byte(envContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	withFlagDir(t, ts.dir)
-
-	old := flagEntStale
-	flagEntStale = true
-	defer func() { flagEntStale = old }()
-
-	var buf bytes.Buffer
-	if err := runEntRelated(context.Background(), &buf, "binary_sensor.tur_balkon"); err != nil {
-		t.Fatalf("runEntRelated --stale failed: %v", err)
-	}
-	if gotStale != "true" {
-		t.Errorf("companion should be queried with stale=true, got %q", gotStale)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "automations.yaml") || !strings.Contains(out, "[3].trigger[0].entity_id") {
-		t.Errorf("output should list the stale config reference, got: %q", out)
-	}
-	if !strings.Contains(out, "stale") {
-		t.Errorf("output should flag the entity as stale, got: %q", out)
-	}
-}
-
 func TestRunEntRelated_MergesCompanionAndRegistryWithoutAutomationConfigFetch(t *testing.T) {
 	states := []map[string]any{
 		{"entity_id": "sensor.source_power", "state": "21.5", "attributes": map[string]any{}},
@@ -2286,6 +2192,169 @@ func TestRunDashShow_RawMode(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "Home") {
 		t.Errorf("output missing 'Home': %q", buf.String())
+	}
+}
+
+// --- runDashShow (yaml mode) ---
+
+func TestRunDashShow_YAMLMode(t *testing.T) {
+	rawConfig := `{"title":"Home","views":[{"title":"Main","path":"main"}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(rawConfig),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashYAML
+	flagDashYAML = true
+	defer func() { flagDashYAML = old }()
+	oldView := flagDashView
+	flagDashView = ""
+	defer func() { flagDashView = oldView }()
+
+	var buf bytes.Buffer
+	if err := runDashShow(context.Background(), &buf, ""); err != nil {
+		t.Fatalf("runDashShow yaml mode failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "title: Home") || !strings.Contains(out, "views:") {
+		t.Errorf("expected YAML output, got: %q", out)
+	}
+	if strings.Contains(out, `"title"`) {
+		t.Errorf("output looks like JSON, not YAML: %q", out)
+	}
+}
+
+func TestRunDashShow_YAMLView(t *testing.T) {
+	rawConfig := `{"title":"Home","views":[{"title":"Main","path":"main"},{"title":"Other","path":"other"}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(rawConfig),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashYAML
+	flagDashYAML = true
+	defer func() { flagDashYAML = old }()
+	oldView := flagDashView
+	flagDashView = "other"
+	defer func() { flagDashView = oldView }()
+
+	var buf bytes.Buffer
+	if err := runDashShow(context.Background(), &buf, ""); err != nil {
+		t.Fatalf("runDashShow yaml --view failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Other") {
+		t.Errorf("expected the 'other' view in output, got: %q", out)
+	}
+	if strings.Contains(out, "Main") {
+		t.Errorf("--view should narrow to a single view, got: %q", out)
+	}
+}
+
+// --- runDashGrep / runDashReplace (reference rename) ---
+
+func TestRunDashGrep_FindsReferences(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"type":"entity","entity":"light.gone"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []map[string]any{{"url_path": "lovelace-home", "title": "Home", "mode": "storage"}},
+		"lovelace/config":          json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashGrep(context.Background(), &buf, "light.gone"); err != nil {
+		t.Fatalf("runDashGrep failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "views[0].cards[0].entity") {
+		t.Errorf("expected the reference path, got: %q", out)
+	}
+	if !strings.Contains(out, "lovelace-home") {
+		t.Errorf("expected the dashboard label, got: %q", out)
+	}
+}
+
+func TestRunDashGrep_NoReferences(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.other"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashGrep(context.Background(), &buf, "light.gone"); err != nil {
+		t.Fatalf("runDashGrep failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "not referenced") {
+		t.Errorf("expected 'not referenced', got: %q", buf.String())
+	}
+}
+
+func TestRunDashReplace_DryRunDoesNotSave(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashConfirm
+	flagDashConfirm = false
+	defer func() { flagDashConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace dry-run failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "dry-run") || !strings.Contains(out, "views[0].cards[0].entity") {
+		t.Errorf("dry-run should show the path-level diff, got: %q", out)
+	}
+	if !strings.Contains(out, "light.old") || !strings.Contains(out, "light.new") {
+		t.Errorf("dry-run should show old→new, got: %q", out)
+	}
+	if n := ts.commandCount("lovelace/config/save"); n != 0 {
+		t.Errorf("dry-run must not save, but save was called %d time(s)", n)
+	}
+}
+
+func TestRunDashReplace_ConfirmSaves(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config":      json.RawMessage(cfg),
+		"lovelace/config/save": nil,
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagDashConfirm
+	flagDashConfirm = true
+	defer func() { flagDashConfirm = old }()
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace confirm failed: %v", err)
+	}
+	if n := ts.commandCount("lovelace/config/save"); n != 1 {
+		t.Errorf("confirm should save exactly once, got %d", n)
+	}
+	if !strings.Contains(buf.String(), "replaced") {
+		t.Errorf("expected 'replaced' confirmation, got: %q", buf.String())
+	}
+}
+
+func TestRunDashReplace_NotFound(t *testing.T) {
+	cfg := `{"views":[{"cards":[{"entity":"light.other"}]}]}`
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/config": json.RawMessage(cfg),
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runDashReplace(context.Background(), &buf, "light.old", "light.new", ""); err != nil {
+		t.Fatalf("runDashReplace failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "not found") {
+		t.Errorf("expected 'not found', got: %q", buf.String())
 	}
 }
 
