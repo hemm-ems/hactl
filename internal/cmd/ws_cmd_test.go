@@ -2909,6 +2909,18 @@ func TestPrintVersion_WithTestedHA(t *testing.T) {
 	}
 }
 
+func TestPrintVersion_ProjectURLs(t *testing.T) {
+	var buf bytes.Buffer
+	printVersion(&buf)
+	out := buf.String()
+	if !strings.Contains(out, "https://github.com/hemm-ems/hactl") {
+		t.Errorf("printVersion missing project URL: %q", out)
+	}
+	if !strings.Contains(out, "https://github.com/hemm-ems/hactl/issues") {
+		t.Errorf("printVersion missing issues URL: %q", out)
+	}
+}
+
 func TestPrintVersion_NoTestedHA(t *testing.T) {
 	old := testedHA
 	testedHA = ""

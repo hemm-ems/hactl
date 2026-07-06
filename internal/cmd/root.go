@@ -32,9 +32,11 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "hactl",
-	Short:         "CLI for Home Assistant analysis & development",
-	Long:          "hactl – LLM-friendly CLI for Home Assistant analysis, debugging, and controlled automation management.",
+	Use:   "hactl",
+	Short: "CLI for Home Assistant analysis & development",
+	Long: "hactl – LLM-friendly CLI for Home Assistant analysis, debugging, and controlled automation management.\n\n" +
+		"project: " + projectURL + "\n" +
+		"issues:  " + issuesURL,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {

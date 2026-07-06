@@ -15,6 +15,14 @@ var (
 	testedHA = "" // comma-separated HA versions tested against (e.g. "2026.4, 2026.3")
 )
 
+// Canonical project URLs. Printed by `hactl version` and the root help so
+// agents and users can find the issue tracker without inferring it from
+// local remotes or forks (hemm-ems/hactl#43).
+const (
+	projectURL = "https://github.com/hemm-ems/hactl"
+	issuesURL  = projectURL + "/issues"
+)
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print hactl version",
@@ -28,6 +36,8 @@ func printVersion(w io.Writer) {
 	if testedHA != "" {
 		_, _ = fmt.Fprintf(w, "tested: HA %s\n", testedHA)
 	}
+	_, _ = fmt.Fprintf(w, "project: %s\n", projectURL)
+	_, _ = fmt.Fprintf(w, "issues:  %s\n", issuesURL)
 }
 
 func init() {
