@@ -1,1 +1,3 @@
 hactl dev (commit none, built unknown)
+project: https://github.com/hemm-ems/hactl
+issues:  https://github.com/hemm-ems/hactl/issues
