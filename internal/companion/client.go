@@ -151,9 +151,13 @@ func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryR
 	return &r, json.Unmarshal(data, &r)
 }
 
-// RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>.
-func (c *Client) RelatedEntity(ctx context.Context, entityID string) (*RelatedEntityResponse, error) {
+// RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>[&stale=true].
+// With stale=true a renamed/deleted entity returns 200 + StaleRefs instead of 404.
+func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool) (*RelatedEntityResponse, error) {
 	q := url.Values{"entity_id": {entityID}}
+	if stale {
+		q.Set("stale", "true")
+	}
 	data, err := c.doGet(ctx, "/v1/related/entity", q)
 	if err != nil {
 		return nil, err
