@@ -20,23 +20,30 @@ func TestSvcCallInvalidFormat(t *testing.T) {
 	}
 }
 
+func TestSvcCallDryRunDefault(t *testing.T) {
+	// Without --confirm nothing is executed; the planned call is printed.
+	out := runHactl(t, "svc", "call", "homeassistant.check_config")
+	assertContains(t, out, "dry-run: no service was called")
+	assertContains(t, out, "would call: homeassistant.check_config")
+}
+
 func TestSvcCallCheckConfig(t *testing.T) {
 	// homeassistant.check_config is a safe, read-like service
-	out := runHactl(t, "svc", "call", "homeassistant.check_config")
+	out := runHactl(t, "svc", "call", "homeassistant.check_config", "--confirm")
 	assertContains(t, out, "called homeassistant.check_config")
 }
 
 func TestSvcCallGroupSet(t *testing.T) {
 	// Call persistent_notification.create with --data to test service calls with JSON data
 	out := runHactl(t, "svc", "call", "persistent_notification.create",
-		"--data", `{"title":"Test","message":"hello from hactl"}`)
+		"--data", `{"title":"Test","message":"hello from hactl"}`, "--confirm")
 	assertContains(t, out, "called persistent_notification.create")
 }
 
 func TestSvcCallGroupSetFull(t *testing.T) {
 	// Call persistent_notification.create with complex data to verify JSON payload handling
 	out := runHactl(t, "svc", "call", "persistent_notification.create",
-		"--data", `{"title":"Full Test","message":"complex payload","notification_id":"hactl_test"}`)
+		"--data", `{"title":"Full Test","message":"complex payload","notification_id":"hactl_test"}`, "--confirm")
 	assertContains(t, out, "called persistent_notification.create")
 }
 
@@ -62,7 +69,7 @@ func TestSvcCallDataFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := runHactl(t, "svc", "call", "persistent_notification.create", "--data", "@"+dataFile)
+	out := runHactl(t, "svc", "call", "persistent_notification.create", "--data", "@"+dataFile, "--confirm")
 	assertContains(t, out, "called persistent_notification.create")
 }
 
