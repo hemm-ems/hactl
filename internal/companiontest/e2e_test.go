@@ -105,6 +105,133 @@ func assertEntRelatedOutput(t *testing.T, out string, wants ...string) {
 	}
 }
 
+// TestE2ERefReplaceCLI drives the full Go↔companion↔HA path for `ref scan` and
+// `ref replace`: seed a literal entity reference into automations.yaml (in HA's
+// default !include graph) via `auto create`, then scan for it, dry-run a rename
+// (must not change the file), apply it, and confirm the literal moved. This is
+// the class of boundary a mocked companion can't prove.
+func TestE2ERefReplaceCLI(t *testing.T) {
+	const (
+		stale = "binary_sensor.ref_e2e_stale"
+		fresh = "binary_sensor.ref_e2e_fresh"
+	)
+	content := fmt.Sprintf(`id: ref_e2e_probe
+alias: Ref E2E Probe
+mode: single
+trigger:
+  - platform: state
+    entity_id: %s
+condition: []
+action:
+  - delay: "00:00:01"
+`, stale)
+	f, err := os.CreateTemp(t.TempDir(), "ref-e2e-*.yaml")
+	if err != nil {
+		t.Fatalf("creating temp YAML: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("writing temp YAML: %v", err)
+	}
+	f.Close()
+
+	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
+		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
+	}
+
+	// Scan finds the literal in the config file it lives in.
+	out, execErr := runHactlE2E(t, "ref", "scan", stale)
+	if execErr != nil {
+		t.Fatalf("hactl ref scan failed (exit: %v):\n%s", execErr, out)
+	}
+	// Scan output is source/location/path (the matched value is the target
+	// itself, so it is not repeated as a column — same contract as `dash grep`).
+	for _, want := range []string{"config", "automations.yaml", "trigger[0].entity_id"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ref scan output missing %q:\n%s", want, out)
+		}
+	}
+
+	// Dry-run reports the rename but must not change anything on disk.
+	if out, execErr := runHactlE2E(t, "ref", "replace", stale, fresh); execErr != nil {
+		t.Fatalf("hactl ref replace (dry-run) failed (exit: %v):\n%s", execErr, out)
+	} else if !strings.Contains(out, "dry-run") {
+		t.Fatalf("expected dry-run notice, got:\n%s", out)
+	}
+	if out, execErr := runHactlE2E(t, "ref", "scan", stale); execErr != nil {
+		t.Fatalf("hactl ref scan after dry-run failed (exit: %v):\n%s", execErr, out)
+	} else if !strings.Contains(out, "automations.yaml") {
+		t.Fatalf("dry-run must not modify the file; reference no longer found:\n%s", out)
+	}
+
+	// Apply the rename for real.
+	if out, execErr := runHactlE2E(t, "ref", "replace", stale, fresh, "--confirm"); execErr != nil {
+		t.Fatalf("hactl ref replace --confirm failed (exit: %v):\n%s", execErr, out)
+	} else if !strings.Contains(out, "renamed") {
+		t.Fatalf("expected 'renamed' in confirm output, got:\n%s", out)
+	}
+
+	// The literal moved: the old id is gone, the new id is present.
+	if out, execErr := runHactlE2E(t, "ref", "scan", stale); execErr != nil {
+		t.Fatalf("hactl ref scan (old) failed (exit: %v):\n%s", execErr, out)
+	} else if !strings.Contains(out, "not referenced") {
+		t.Fatalf("expected %s to be gone after confirm, got:\n%s", stale, out)
+	}
+	if out, execErr := runHactlE2E(t, "ref", "scan", fresh); execErr != nil {
+		t.Fatalf("hactl ref scan (new) failed (exit: %v):\n%s", execErr, out)
+	} else if !strings.Contains(out, "automations.yaml") {
+		t.Fatalf("expected %s in automations.yaml after confirm, got:\n%s", fresh, out)
+	}
+}
+
+// TestE2ERefValidateCLI drives the full Go↔companion↔HA path for `ref validate`:
+// seed an automation referencing a non-existent entity (dangling) plus a real,
+// state-only entity (sun.sun, which exists in HA's live states but has no entity
+// registry entry), then assert validate reports the ghost and not the live one.
+// This proves both the /v1/ref/entities primitive over real config and that the
+// live set is the registry∪states union (registry alone would flag sun.sun) —
+// a boundary a mocked companion can't cover.
+func TestE2ERefValidateCLI(t *testing.T) {
+	const ghost = "binary_sensor.ref_validate_ghost"
+	content := fmt.Sprintf(`id: ref_validate_probe
+alias: Ref Validate Probe
+mode: single
+trigger:
+  - platform: state
+    entity_id: %s
+condition:
+  - condition: state
+    entity_id: sun.sun
+    state: above_horizon
+action:
+  - delay: "00:00:01"
+`, ghost)
+	f, err := os.CreateTemp(t.TempDir(), "ref-validate-e2e-*.yaml")
+	if err != nil {
+		t.Fatalf("creating temp YAML: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("writing temp YAML: %v", err)
+	}
+	f.Close()
+
+	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
+		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
+	}
+
+	out, execErr := runHactlE2E(t, "ref", "validate")
+	if execErr != nil {
+		t.Fatalf("hactl ref validate failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, ghost) {
+		t.Fatalf("expected dangling %s in validate output:\n%s", ghost, out)
+	}
+	// sun.sun is a live state-only entity; the registry∪states union must not
+	// flag it. If this fails, the states half of the live set regressed.
+	if strings.Contains(out, "sun.sun") {
+		t.Fatalf("live state-only entity sun.sun must not be reported dangling:\n%s", out)
+	}
+}
+
 // TestE2EAutoCreateCLI verifies that `hactl auto create --confirm -f <yaml>`
 // calls the companion API and creates an automation.
 func TestE2EAutoCreateCLI(t *testing.T) {

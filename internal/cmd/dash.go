@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/jsonwalk"
 )
 
 var flagDashView string
@@ -100,10 +102,35 @@ var dashResourcesCmd = &cobra.Command{
 	},
 }
 
+var dashGrepCmd = &cobra.Command{
+	Use:   "grep <entity_id>",
+	Short: "Find where an entity is referenced across dashboards",
+	Long:  "Scan every dashboard (default + storage) for an exact entity_id and report the dashboard and path of each reference.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runDashGrep(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
+var dashReplaceCmd = &cobra.Command{
+	Use:   "replace <old> <new> [url_path]",
+	Short: "Rename an entity reference within a dashboard (dry-run by default)",
+	Long:  "Replace every exact occurrence of <old> with <new> in one dashboard's config. Omit url_path for the default dashboard. Use --confirm to save.",
+	Args:  cobra.RangeArgs(2, 3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		urlPath := ""
+		if len(args) > 2 {
+			urlPath = args[2]
+		}
+		return runDashReplace(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], urlPath)
+	},
+}
+
 func init() {
 	dashShowCmd.Flags().StringVar(&flagDashView, "view", "", "show only the view with this path")
 	dashShowCmd.Flags().BoolVar(&flagDashRaw, "raw", false, "output raw HA JSON (for LLM round-trip editing)")
 	dashShowCmd.Flags().BoolVar(&flagDashYAML, "yaml", false, "output the dashboard config as YAML")
+	dashReplaceCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually save (default is dry-run)")
 	dashSaveCmd.Flags().StringVarP(&flagDashFile, "file", "f", "", "JSON config file (default: read from stdin)")
 	dashSaveCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually save (default is dry-run)")
 	dashCreateCmd.Flags().StringVar(&flagDashURLPath, "url-path", "", "dashboard URL path (must contain a hyphen)")
@@ -117,7 +144,7 @@ func init() {
 	_ = dashCreateCmd.MarkFlagRequired("url-path")
 	_ = dashCreateCmd.MarkFlagRequired("title")
 
-	dashCmd.AddCommand(dashLsCmd, dashShowCmd, dashSaveCmd, dashCreateCmd, dashDeleteCmd, dashResourcesCmd)
+	dashCmd.AddCommand(dashLsCmd, dashShowCmd, dashSaveCmd, dashCreateCmd, dashDeleteCmd, dashResourcesCmd, dashGrepCmd, dashReplaceCmd)
 	rootCmd.AddCommand(dashCmd)
 }
 
@@ -337,6 +364,136 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 	}
 
 	_, _ = fmt.Fprintf(w, "saved dashboard config for %s\n", dashDisplayPath(urlPath))
+	return nil
+}
+
+// dashScanTarget is a dashboard to scan: its display label and WS url_path.
+type dashScanTarget struct {
+	label   string
+	urlPath string
+}
+
+// dashboardScanTargets returns the default dashboard plus every listed dashboard.
+func dashboardScanTargets(dashboards []haapi.LovelaceDashboard) []dashScanTarget {
+	targets := make([]dashScanTarget, 0, 1+len(dashboards))
+	targets = append(targets, dashScanTarget{label: "(default)", urlPath: ""})
+	for _, d := range dashboards {
+		targets = append(targets, dashScanTarget{label: d.URLPath, urlPath: d.URLPath})
+	}
+	return targets
+}
+
+// dashHit is one dashboard reference: the dashboard label and the path within it.
+type dashHit struct{ dashboard, path string }
+
+// scanDashboards walks each target dashboard for exact string leaves equal to
+// target, returning every hit. Dashboards that cannot be fetched or parsed are
+// skipped rather than aborting the whole scan. Shared by `dash grep` and `ref scan`.
+func scanDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget, target string) []dashHit {
+	var hits []dashHit
+	for _, t := range targets {
+		raw, rawErr := ws.DashboardConfigRaw(ctx, t.urlPath)
+		if rawErr != nil {
+			slog.Debug("could not fetch dashboard config", "dashboard", t.label, "error", rawErr)
+			continue
+		}
+		var root any
+		if json.Unmarshal(raw, &root) != nil {
+			continue
+		}
+		jsonwalk.FindString(root, target, func(p jsonwalk.Path) {
+			hits = append(hits, dashHit{t.label, p.String()})
+		})
+	}
+	return hits
+}
+
+// dashReplaceOne fetches one dashboard's raw config and returns a deep copy with
+// every exact occurrence of oldVal rewritten to newVal, along with the changed
+// paths. It never saves. A nil error with no changed paths means no match.
+// Shared by `dash replace` and `ref replace`.
+func dashReplaceOne(ctx context.Context, ws *haapi.WSClient, urlPath, oldVal, newVal string) (result any, changed []jsonwalk.Path, err error) {
+	raw, err := ws.DashboardConfigRaw(ctx, urlPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching dashboard config: %w", err)
+	}
+	var root any
+	if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
+		return nil, nil, fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
+	}
+	result, changed = jsonwalk.Replace(root, oldVal, newVal)
+	return result, changed, nil
+}
+
+// runDashGrep scans every dashboard for an exact entity_id reference.
+func runDashGrep(ctx context.Context, w io.Writer, target string) error {
+	ws, err := connectWS(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ws.Close() }()
+
+	dashboards, err := ws.DashboardList(ctx)
+	if err != nil {
+		return fmt.Errorf("listing dashboards: %w", err)
+	}
+
+	hits := scanDashboards(ctx, ws, dashboardScanTargets(dashboards), target)
+
+	if len(hits) == 0 {
+		_, _ = fmt.Fprintf(w, "%s: not referenced in any dashboard\n", target)
+		return nil
+	}
+
+	tbl := &format.Table{
+		Headers: []string{"dashboard", "path"},
+		Rows:    make([][]string, len(hits)),
+	}
+	for i, h := range hits {
+		tbl.Rows[i] = []string{h.dashboard, h.path}
+	}
+	return tbl.Render(w, format.RenderOpts{
+		Top:  flagTop,
+		Full: true,
+		JSON: flagJSON,
+	})
+}
+
+// runDashReplace renames every exact occurrence of oldVal to newVal within one
+// dashboard, gated by --confirm with a path-level dry-run diff.
+func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath string) error {
+	ws, err := connectWS(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ws.Close() }()
+
+	result, changed, err := dashReplaceOne(ctx, ws, urlPath, oldVal, newVal)
+	if err != nil {
+		return err
+	}
+	if len(changed) == 0 {
+		_, _ = fmt.Fprintf(w, "%q not found in dashboard %s\n", oldVal, dashDisplayPath(urlPath))
+		return nil
+	}
+
+	if !flagDashConfirm {
+		_, _ = fmt.Fprintf(w, "dry-run: would replace in dashboard %s (%d occurrence(s)):\n", dashDisplayPath(urlPath), len(changed))
+		for _, p := range changed {
+			_, _ = fmt.Fprintf(w, "  %s: %q → %q\n", p.String(), oldVal, newVal)
+		}
+		_, _ = fmt.Fprintln(w, "use --confirm to apply")
+		return nil
+	}
+
+	out, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("encoding dashboard config: %w", err)
+	}
+	if err := ws.DashboardConfigSave(ctx, urlPath, out); err != nil {
+		return fmt.Errorf("saving dashboard config: %w", err)
+	}
+	_, _ = fmt.Fprintf(w, "replaced %q → %q in dashboard %s (%d occurrence(s))\n", oldVal, newVal, dashDisplayPath(urlPath), len(changed))
 	return nil
 }
 

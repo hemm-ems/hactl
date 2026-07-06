@@ -54,6 +54,52 @@ type RelatedEntityEntry struct {
 	Detail       string `json:"detail"`
 }
 
+// RefScanResponse is the response from GET /v1/ref/scan.
+type RefScanResponse struct {
+	Target string       `json:"target"`
+	Hits   []RefScanHit `json:"hits"`
+}
+
+// RefScanHit is one literal reference found in a config file, reported against
+// the file it actually lives in (mirrors the Go jsonwalk hit shape).
+type RefScanHit struct {
+	Location     string `json:"location"`
+	Path         string `json:"path"`
+	MatchedValue string `json:"matched_value"`
+}
+
+// RefEntitiesResponse is the response from GET /v1/ref/entities: every
+// entity_id-shaped leaf across the config !include graph, unfiltered.
+type RefEntitiesResponse struct {
+	Entities []RefEntity `json:"entities"`
+}
+
+// RefEntity is one entity_id-shaped value found in a config file. Unlike
+// RefScanHit it carries Key — the nearest enclosing mapping key — so the caller
+// can tell a true entity position (entity_id/entity) from a same-shaped service
+// name (service: light.turn_on).
+type RefEntity struct {
+	Location     string `json:"location"`
+	Path         string `json:"path"`
+	Key          string `json:"key"`
+	MatchedValue string `json:"matched_value"`
+}
+
+// RefReplaceResponse is the response from POST /v1/ref/replace.
+type RefReplaceResponse struct {
+	Status  string      `json:"status"` // "dry_run" | "applied"
+	Changes []RefChange `json:"changes"`
+}
+
+// RefChange is one literal rewritten (or, in dry-run, that would be rewritten)
+// in a config file.
+type RefChange struct {
+	Location string `json:"location"`
+	Path     string `json:"path"`
+	Before   string `json:"before"`
+	After    string `json:"after"`
+}
+
 // TemplateDefinition represents a template sensor definition.
 type TemplateDefinition struct {
 	UniqueID          string `json:"unique_id"`
