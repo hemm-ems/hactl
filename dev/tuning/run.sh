@@ -44,7 +44,7 @@ for x in items:
       echo "=== $id"
       echo "prompt: $prompt"
       echo "---"
-      ./integrations/llm/hactl-llm --td --no-stream --cl 6 "$prompt" </dev/null 2>&1 || echo "(llm exited non-zero)"
+      ./integrations/llm/hactl-llm --td --no-stream --cl "${HACTL_LLM_CHAIN_LIMIT:-8}" "$prompt" </dev/null 2>&1 || echo "(llm exited non-zero)"
     } | tee "$log_file"
     echo
 done

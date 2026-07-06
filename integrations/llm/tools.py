@@ -10,15 +10,157 @@ Env:
   HACTL_DIR  instance directory (forwarded as --dir; overrides auto-discovery)
 """
 
+import json
 import os
+import re
 import subprocess
+import tempfile
 
 HACTL_BIN = os.environ.get("HACTL_BIN", "hactl")
 HACTL_DIR = os.environ.get("HACTL_DIR")
 TIMEOUT_S = 120
 
+# Manual auto-delivery: the first tool call in this process (one process per
+# conversation) gets the manual prepended to its result, so the agent is
+# guaranteed to have accurate syntax without spending a round on rtfm.
+# HACTL_MANUAL_MODE selects what "the manual" means:
+#   progressive  (default) core only (routing, conventions, flags) with the
+#                first result; each command family's how-to section is
+#                delivered with the result of the first call into that family
+#   full         the entire manual, once, with the first result
+# Set HACTL_NO_RTFM_GATE=1 to disable delivery entirely, e.g. when the manual
+# is already in the system prompt.
+_manual_delivered = os.environ.get("HACTL_NO_RTFM_GATE") == "1"
+_MANUAL_MODE = os.environ.get("HACTL_MANUAL_MODE", "progressive")
 
-def _run(*args: str) -> str:
+# --- progressive mode: manual sectioning ------------------------------------
+
+_CORE_HEADINGS = [
+    "## Quick routing",
+    "## Mental model",
+    # Cross-family workflows (they span health/log/changes) stay in the core;
+    # single-family workflows travel with their family section.
+    '### "What went wrong recently?" / "What broke?"',
+    '### "Show me the daily report" / "Morning check" / "Status summary"',
+    "## Filtering & discovery",
+    "## Output conventions",
+    "## Global flags",
+]
+
+# Family -> manual headings, workflows before reference (the model reads the
+# head and skims the tail). Headings must match docs/manual.md verbatim.
+_GROUP_SECTIONS = {
+    "auto": [
+        '### "Why did my automation fail?"',
+        '### "Deploy an automation change"',
+        '### "Create a new automation / script / helper"',
+        '### "Delete an automation / helper"',
+        '### "Find and act on a group of automations"',
+        "### Automations",
+        "### Automations — create & delete",
+        "### Write path (automations)",
+    ],
+    "script": [
+        '### "Deploy a script change"',
+        "### Scripts",
+        "### Scripts — create & delete",
+        "### Write path (scripts)",
+    ],
+    "ent": [
+        '### "Is this sensor behaving normally?"',
+        '### "What else is related to this entity?"',
+        '### "Organize entities with labels"',
+        "### Entities & history",
+    ],
+    "device": [
+        '### "Which entities belong to <concept>?" (find things by concept)',
+        "### Devices",
+    ],
+    "label": [
+        '### "Organize entities with labels"',
+        "### Registry: labels, areas, floors",
+    ],
+    "dash": [
+        '### "Build a dashboard" / "Design or modify a dashboard"',
+        "### Dashboards (Lovelace)",
+    ],
+    "svc": [
+        '### "Find and act on a group of automations"',
+        "### Templates & services",
+    ],
+    "tpl": [
+        "### Templates & services",
+        "### Templates — create & delete",
+    ],
+    "config": ["### Config entries & flows"],
+    "helper": [
+        '### "Create a new automation / script / helper"',
+        "### Helpers",
+    ],
+    "log": ["### Logs & custom components"],
+    "health": ["### Setup & health"],
+    "cache": ["### Cache & version"],
+    "companion": ["### WireGuard (companion lifeline)"],
+    "ref": [],  # no manual section yet; the tool docstrings carry it
+}
+_GROUP_ALIASES = {"trace": "auto", "cc": "log", "issues": "health",
+                  "changes": "health", "setup": "health", "area": "label",
+                  "floor": "label"}
+
+_CORE_NOTE = (
+    "[hactl manual core — delivered once with your first tool call. Detailed "
+    "how-to sections for each command family arrive automatically with the "
+    "result of your first call into that family. Every write command is "
+    "dry-run by default; repeat it with confirm=True only after the user "
+    "explicitly confirms the plan — the original request is not that "
+    "confirmation.]"
+)
+
+_manual_sections = None  # heading -> section text, parsed once from rtfm
+_delivered_headings = set()
+_core_delivered = False
+
+
+def _parse_manual():
+    global _manual_sections
+    if _manual_sections is not None:
+        return
+    parts = re.split(r"^(#{2,3} .+)$", _exec("rtfm"), flags=re.M)
+    _manual_sections = {"(preamble)": parts[0].strip()}
+    for i in range(1, len(parts) - 1, 2):
+        _manual_sections[parts[i].strip()] = (parts[i] + parts[i + 1]).rstrip()
+
+
+def _progressive_injection(args) -> str:
+    """Manual text due with this call's result ('' if nothing new)."""
+    global _core_delivered
+    if args[0] == "rtfm":
+        return ""
+    _parse_manual()
+    blocks = []
+    if not _core_delivered:
+        _core_delivered = True
+        core = [_manual_sections["(preamble)"]]
+        core += [_manual_sections[h] for h in _CORE_HEADINGS
+                 if h in _manual_sections]
+        blocks.append(_CORE_NOTE + "\n\n" + "\n\n".join(core))
+    group = _GROUP_ALIASES.get(args[0], args[0])
+    headings = [h for h in _GROUP_SECTIONS.get(group, ())
+                if h in _manual_sections and h not in _delivered_headings]
+    if headings:
+        _delivered_headings.update(headings)
+        body = "\n\n".join(_manual_sections[h] for h in headings)
+        blocks.append(
+            f"[hactl manual — '{group}' family how-to, delivered with your "
+            f"first {group} command. Use it for every subsequent {group} "
+            f"call. Complete the routing-table sequence for the user's "
+            f"question before drilling into anything from this section.]"
+            f"\n\n{body}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _exec(*args: str) -> str:
     cmd = [HACTL_BIN]
     if HACTL_DIR:
         cmd += ["--dir", HACTL_DIR]
@@ -32,10 +174,46 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
+def _run(*args: str) -> str:
+    global _manual_delivered
+    out = _exec(*args)
+    if _MANUAL_MODE == "progressive":
+        # _manual_delivered doubles as the HACTL_NO_RTFM_GATE=1 opt-out here;
+        # it is never set True by delivery in this mode (delivery is per-family).
+        if not _manual_delivered:
+            inject = _progressive_injection(args)
+            if inject:
+                out = f"{inject}\n\n=== RESULT of hactl {' '.join(args)} ===\n{out}"
+        return out
+    if not _manual_delivered:
+        _manual_delivered = True
+        if args[0] != "rtfm":
+            manual = _exec("rtfm")
+            out = (
+                "[hactl manual — delivered once with your first tool call. Use it "
+                "for every subsequent command, flag, and workflow decision.]\n\n"
+                f"{manual}\n\n"
+                f"=== RESULT of hactl {' '.join(args)} ===\n{out}"
+            )
+    return out
+
+
 def hactl_rtfm() -> str:
-    """Print the full hactl manual. Call this once, first, before any other hactl tool:
-    it documents every command, flag, and workflow pattern with accurate syntax."""
-    return _run("rtfm")
+    """Print the full hactl manual. Rarely needed: the manual is delivered
+    automatically with your first tool call's result."""
+    global _manual_delivered, _core_delivered
+    if _MANUAL_MODE == "progressive":
+        # Explicit escape hatch: full manual now, nothing more to inject later.
+        _parse_manual()
+        _core_delivered = True
+        _delivered_headings.update(
+            h for headings in _GROUP_SECTIONS.values() for h in headings)
+        return _exec("rtfm")
+    if _manual_delivered:
+        return ("Manual already delivered earlier in this conversation — re-read it "
+                "there instead of re-fetching.")
+    _manual_delivered = True
+    return _exec("rtfm")
 
 
 def hactl_health() -> str:
@@ -134,6 +312,77 @@ def hactl_ent_set_area(entity_id: str, area: str, confirm: bool = False) -> str:
     Only use confirm=True after the user explicitly confirms the exact entity and target area."""
     extra = ["--confirm"] if confirm else []
     return _run("ent", "set-area", entity_id, area, *extra)
+
+
+def hactl_svc_call(service: str, data: dict = {}, confirm: bool = False) -> str:
+    """Call a HA service, e.g. service='automation.turn_off', data={'entity_id': 'automation.x'}.
+    Verify the target exists first (e.g. hactl_auto_show / hactl_ent_show).
+    confirm=False (default) is a dry-run: nothing is executed, the planned call is returned so
+    you can ask the user. Only use confirm=True after the user explicitly confirmed the exact
+    action — the original request is not that confirmation."""
+    payload = json.dumps(data or {})
+    extra = ["--confirm"] if confirm else []
+    return _run("svc", "call", service, "-d", payload, *extra)
+
+
+def hactl_ref_validate() -> str:
+    """Find dangling entity references: automations, scripts, and dashboards that point at
+    entities which no longer exist."""
+    return _run("ref", "validate")
+
+
+def hactl_ref_scan(term: str) -> str:
+    """Find every reference to an entity id or value across automations, scripts, helpers,
+    and dashboards."""
+    return _run("ref", "scan", term)
+
+
+def hactl_helper_ls() -> str:
+    """List HA helpers (input_boolean, input_number, counter, timer, ...) with type and state."""
+    return _run("helper", "ls")
+
+
+def hactl_config_entries() -> str:
+    """List config entries (configured integrations) with domain, title, and state."""
+    return _run("config", "entries")
+
+
+def hactl_dash_ls() -> str:
+    """List Lovelace dashboards with url_path, title, and mode."""
+    return _run("dash", "ls")
+
+
+def hactl_dash_show(url_path: str) -> str:
+    """Show a dashboard's config (views, cards). url_path from dash ls."""
+    return _run("dash", "show", url_path)
+
+
+def hactl_dash_create(url_path: str, title: str, icon: str = "", confirm: bool = False) -> str:
+    """Create a dashboard. url_path must contain a hyphen (e.g. 'energy-dash').
+    confirm=False returns the dry-run plan without creating anything. Only use
+    confirm=True after the user explicitly confirmed."""
+    extra = ["--url-path", url_path, "--title", title]
+    if icon:
+        extra += ["--icon", icon]
+    if confirm:
+        extra.append("--confirm")
+    return _run("dash", "create", *extra)
+
+
+def hactl_dash_save(url_path: str, config: dict, confirm: bool = False) -> str:
+    """Save a dashboard's full config (JSON object with 'views'). confirm=False
+    returns the dry-run diff without writing. Only use confirm=True after the
+    user explicitly confirmed the exact config."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(config, f)
+        path = f.name
+    try:
+        extra = ["-f", path]
+        if confirm:
+            extra.append("--confirm")
+        return _run("dash", "save", url_path, *extra)
+    finally:
+        os.unlink(path)
 
 
 def hactl_device_ls(name: str = "", area: str = "", label: str = "", pattern: str = "") -> str:

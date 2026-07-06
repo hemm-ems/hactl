@@ -2,39 +2,138 @@
 
 > For agents using hactl as a tool. Assumes familiarity with Home Assistant concepts.
 
+## Quick routing
+
+Match the user's question here first and run exactly the listed sequence — complete it before drilling into any single finding.
+
+| User asks | Run, in order | Notes |
+|---|---|---|
+| "What went wrong?" / "What broke?" | `health`, `log --errors --unique`, `changes --since 24h` | All three first; `log show <id>` only afterwards |
+| "Daily report" / "Morning check" / "Status" | `health`, `issues`, `log --errors --unique`, `changes --since 24h` | Summarize per section |
+| "Which automation failed?" | `auto ls --failing`; if empty `log --errors --unique` | `trace show` only when a failure appears |
+| "Is <sensor> behaving normally?" | `ent anomalies <id>` | `ent hist <id>` if anomalies found |
+| "Which entities belong to <concept>?" | `device ls --name <shortest-term>`, `device show <closest match>` | Fallbacks: `label ls`, `ent ls --pattern '*<term>*'` |
+| "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
+| "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
+| "List labels / areas / helpers / scripts" | the matching `ls` command | One call, answer |
+
 ## Mental model
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
 
 **Token budget:** Output is capped at 500 tokens by default (`--tokensmax=500`). Raise the cap (`--tokensmax=2000`) or remove it entirely (`--tokensmax=0`) when you need full output. Add `--tokens` to print a compact `[~N tok]` estimate, or `--stats` to see response size + estimated token count on stderr.
 
+## Agent workflows
+
+> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax. `hactl rtfm` is uncapped by default — pass `--tokensmax=N` only when you want to truncate it.
+
+### "Why did my automation fail?"
+```
+hactl auto ls --failing
+# if --failing is empty: check the error log for automation names
+hactl log --errors --unique
+hactl auto show <id>
+hactl trace show <trc:XX>
+```
+
+### "Is this sensor behaving normally?"
+```
+hactl ent hist <id> --since 7d
+hactl ent anomalies <id>
+```
+
+### "What else is related to this entity?"
+```
+hactl ent related <entity_id>
+hactl ent ls --area <area> --domain sensor
+```
+
+### "Which entities belong to <concept>?" (find things by concept)
+```
+hactl device ls --name <term>
+hactl device show <closest match>
+```
+Search with the shortest distinctive substring — `heat`, not `heat pump`; device and entity names are often localized or vendor-specific. When a listing returns near-miss candidates, inspect the closest match with `device show` before asking the user. If devices yield nothing, fall back to `hactl label ls`, then `hactl ent ls --pattern '*<term>*'`.
+
+### "Deploy an automation change"
+```
+hactl auto diff <id> -f new.yaml
+hactl auto apply <id> -f new.yaml --confirm
+hactl auto show <id>
+```
+
+### "Deploy a script change"
+```
+hactl script diff <id> -f new.yaml
+hactl script apply <id> -f new.yaml --confirm
+hactl script show <id>
+```
+
+### "Create a new automation / script / helper"
+```
+hactl auto create -f auto.yaml              # dry-run preview
+hactl auto create -f auto.yaml --confirm    # create + reload
+hactl script create -f script.yaml --confirm
+hactl helper create input_boolean -f toggle.yaml --confirm
+```
+
+### "Delete an automation / helper"
+```
+hactl auto delete <id>                      # dry-run preview
+hactl auto delete <id> --confirm            # delete + reload
+hactl helper delete <id> --confirm
+```
+
+### "Organize entities with labels"
+```
+hactl label ls
+hactl label create "Solar" --icon mdi:solar-power
+hactl ent ls --pattern 'sensor.solar_*'
+hactl ent set-label sensor.solar_power solar
+hactl auto ls --label solar
+```
+
+### "Find and act on a group of automations"
+```
+hactl auto ls --pattern victron
+hactl svc call automation.turn_off -d '{"entity_id":"automation.victron_charge"}'
+hactl auto ls --label victron
+```
+`svc call` is dry-run by default: it prints the planned call without executing. Repeat with `--confirm` only after the user confirms the plan; the final `auto ls` verifies the result.
+
+### "What went wrong recently?" / "What broke?"
+```
+hactl health
+hactl log --errors --unique
+hactl changes --since 24h
+```
+Complete all three before drilling into a single entry with `log show` — breadth first, depth only where the sweep flagged something.
+
+### "Show me the daily report" / "Morning check" / "Status summary"
+```
+hactl health
+hactl issues
+hactl log --errors --unique
+hactl changes --since 24h
+```
+Run all four, then summarize per section: system health, open issues, errors, notable changes.
+
+### "Build a dashboard" / "Design or modify a dashboard"
+```
+hactl ent ls --pattern <topic>
+hactl dash create --url-path <path-with-hyphen> --title "<title>"
+hactl dash save <url_path> -f dash.json
+hactl dash show <url_path>
+```
+One discovery call, then stop. `dash create` and `dash save` are dry-run by default: they preview without writing. Present the dry-run plan and wait for the user's explicit confirmation before repeating a command with `--confirm`. The original request ("build me a dashboard") is not that confirmation.
+
+---
+
 ## Setup
 
-```
-HA_URL=http://homeassistant.local:8123
-HA_TOKEN=<long_lived_access_token>
-```
+Your instance is normally configured already — verify with `hactl health`. Instance selection: a directory with a `.env` (`HA_URL`, `HA_TOKEN`) is one instance; select it with `--dir <path>` or `HACTL_DIR`, otherwise hactl walks up from the current directory and falls back to `~/.hactl/default/`.
 
-> **Windows users:** Use `HA_URL=http://127.0.0.1:8123` instead of `localhost`.
-> Windows may resolve `localhost` to `::1` (IPv6), but HA typically listens on `0.0.0.0` (IPv4 only), causing connection failures.
-
-Point hactl at the directory containing `.env`:
-```bash
-export HACTL_DIR=/path/to/instance   # or
-hactl --dir /path/to/instance <cmd>  # or cd into it
-```
-Without `--dir`/`HACTL_DIR`, hactl uses the `.env` in the current directory, then walks parent directories (git-style; parent `.env` files without `HA_URL` are skipped), then falls back to `~/.hactl/default/`.
-
-For debugging, set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on stderr (accepts `debug`, `info`, `warn`, `error`; defaults to `info`).
-
-Companion connectivity issues? Run `hactl companion status` for a one-screen diagnostic showing which discovery path succeeded or failed and why. Typical failure reasons:
-
-- `auth_denied` — your long-lived token lacks admin scope. Re-issue from an HA owner account.
-- `addon_missing` — the add-on isn't installed. HA → Settings → Add-ons → install `hactl-companion`.
-- `protocol_mismatch` — HA Container without Supervisor. Set `COMPANION_URL` in `.env` directly.
-- `unreachable` — Supervisor is there but the add-on URL isn't responding. Check Ingress / network.
-
-Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be available). External access works automatically via Supervisor-issued `ingress_session` cookies — no manual port-forwarding or signed-URL setup needed.
+If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic. Human-facing installation and troubleshooting live in `docs/setup.md`.
 
 ---
 
@@ -225,12 +324,15 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
 hactl tpl eval '{{ states("sensor.temperature") | float * 2 }}'
 hactl tpl eval -f my_template.j2          # read from file
 
-hactl svc call weather.get_forecasts -d '{"entity_id":"weather.home","type":"daily"}' --return   # prints service response (use --return for services that support return_response, e.g. weather.get_forecasts, calendar.get_events)
 hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}'
-hactl svc call light.turn_on -d @payload.json   # read JSON from file (avoids quoting)
+hactl svc call light.turn_on -d '{"entity_id":"light.kitchen","brightness":200}' --confirm
+hactl svc call weather.get_forecasts -d '{"entity_id":"weather.home","type":"daily"}' --return --confirm
+hactl svc call light.turn_on -d @payload.json --confirm
 ```
 
 Templates evaluated server-side by HA's Jinja engine — semantically correct, including `states()` and custom filters.
+
+`svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
 
 ### Config entries & flows
 
@@ -425,94 +527,6 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 | `--tokens` | off | Print compact token estimate |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
 | `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
-
----
-
-## Agent workflows
-
-> **Rule:** Call `hactl rtfm` as the first tool call in every session. It prints the current manual so subsequent calls use accurate command syntax. `hactl rtfm` is uncapped by default — pass `--tokensmax=N` only when you want to truncate it.
-
-### "Why did my automation fail?"
-```
-hactl auto ls --failing
-# if --failing is empty: check the error log for automation names
-hactl log --errors --unique
-hactl auto show <id>
-hactl trace show <trc:XX>
-```
-
-### "Is this sensor behaving normally?"
-```
-hactl ent hist <id> --since 7d
-hactl ent anomalies <id>
-```
-
-### "What else is related to this entity?"
-```
-hactl ent related <entity_id>
-hactl ent ls --area <area> --domain sensor
-```
-
-### "Deploy an automation change"
-```
-hactl auto diff <id> -f new.yaml
-hactl auto apply <id> -f new.yaml --confirm
-hactl auto show <id>
-```
-
-### "Deploy a script change"
-```
-hactl script diff <id> -f new.yaml
-hactl script apply <id> -f new.yaml --confirm
-hactl script show <id>
-```
-
-### "Create a new automation / script / helper"
-```
-hactl auto create -f auto.yaml              # dry-run preview
-hactl auto create -f auto.yaml --confirm    # create + reload
-hactl script create -f script.yaml --confirm
-hactl helper create input_boolean -f toggle.yaml --confirm
-```
-
-### "Delete an automation / helper"
-```
-hactl auto delete <id>                      # dry-run preview
-hactl auto delete <id> --confirm            # delete + reload
-hactl helper delete <id> --confirm
-```
-
-### "Organize entities with labels"
-```
-hactl label ls
-hactl label create "Solar" --icon mdi:solar-power
-hactl ent ls --pattern 'sensor.solar_*'
-hactl ent set-label sensor.solar_power solar
-hactl auto ls --label solar
-```
-
-### "Find and act on a group of automations"
-```
-hactl auto ls --pattern victron
-hactl svc call automation.turn_off -d '{"entity_id":"automation.victron_charge"}'
-hactl auto ls --label victron            # verify
-```
-
-### "What went wrong recently?" / "What broke?"
-```
-hactl health
-hactl log --errors --unique
-hactl changes --since 24h
-```
-
-### "Build a dashboard" / "Design or modify a dashboard"
-```
-hactl ent ls --pattern <topic>             # discover entities (one call, stop here)
-# --- confirm with user before writing ---
-hactl dash create --url-path <path> --title "<title>" --icon mdi:home --confirm
-hactl dash save <url_path> --file dash.json --confirm
-hactl dash show <url_path>                 # verify (url_path from `dash ls`)
-```
 
 ---
 

@@ -47,3 +47,7 @@ dev/tuning/runs/
 # Local Claude Code session state
 .claude/
 
+
+# Python
+__pycache__/
+*.pyc

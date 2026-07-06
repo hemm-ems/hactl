@@ -65,3 +65,159 @@ Format:
 | e08 "build energy dashboard" | F7 | F7-safe (1 call, good output) | Better behavior; formal pass requires write tool confirmation |
 
 Net: baseline 2/8 → best stable 4/8 strict (4/8 e01, e03, e05, e07).
+
+---
+
+# Session 2026-07-05 — qwen3.5-122b on rapid-mlx (direct, no dirigent)
+
+Model switch: Qwen3.6-27B/LM Studio → qwen3.5-122b-mxfp4 on rapid-mlx
+(192.168.42.114:8000/v1, hermes tool parser). ~5 s/tool-turn instead of
+2–4 min: a full 8-prompt eval now takes ~7 min, not 42.
+
+## 2026-07-05 Run 1 (2046) — new-model baseline, old eval set
+- Old eval set scored 2/8 strict, but most FAILs were stale expectations,
+  not model errors: e06 solved via NEW `device ls` path (May's "concept gap"
+  gone), e02/e04 honest "nothing failed / not found" against data gaps.
+- e08 revealed architecture bug: manual in system prompt AND rtfm exposed as
+  tool → model called rtfm mid-chain, 7k redundant tokens, chain-limit death.
+
+## 2026-07-05 Run 2 (2053) — eval-set refresh (no manual change)
+- Re-anchored e03→sensor.aussen_temperatur_mittel, e04→automation.standby_nachts;
+  e02 drops unachievable trace_show; e06 accepts device path (expect_any).
+  Added grade.py (automated grading, expect_any support). 3/8 + 2 CHECK.
+- e05 "daily report" collapsed to a single `changes` dump — no Daily-report
+  workflow anchor in manual (May backlog item, still open). Chain limit of 6
+  aborts runs invisibly (llm counts responses, incl. final answer) → raised
+  harness --cl to 8 (grader still enforces per-prompt budgets).
+
+## 2026-07-05 Run 3 — cold start (manual OUT of system prompt, rtfm-first)
+- New: system-cold.md (compact agent rules), HACTL_LLM_SYSTEM_FILE in
+  install.sh. Rationale: MCP-era agents get no hactl system prompt; the
+  manual only works if fetched via rtfm. prompts.yaml call budgets already
+  assumed the rtfm call.
+- Result 2/8 strict but crisp signal: prompts WHERE THE MODEL READ rtfm were
+  excellent (e04: exact svc-call proposal + confirmation question; e05 full
+  report at budget). Prompts where it skipped rtfm spiraled (e01 8 calls,
+  e06 7 calls) — prompt-level "call rtfm first" is obeyed ~50%.
+
+## 2026-07-05 Run 4 — rtfm gate in tools.py
+- All tools return "ERROR: read the manual first" until hactl_rtfm() ran
+  (per-process = per-conversation). Deterministic rtfm-first instead of
+  prompt persuasion. Result: see below.
+
+## 2026-07-05 Run 4 — hard rtfm gate: REJECTED
+- Gate enforced compliance but taxed the eval: models leading with a work
+  tool burned a failed round on the gate error (e07 3/2 over budget; e01
+  truncated its workflow under budget pressure). 2/8. Mechanism wrong.
+
+## 2026-07-05 Run 5 — manual auto-injection: WINNER (4/8 + 2 correct CHECKs)
+- First real tool call gets the manual prepended to its result: zero wasted
+  rounds, deterministic delivery. Best run of the day; e04/e08 CHECKs are
+  behaviorally correct (exact command proposed + confirmation asked).
+- New failure mode: model re-called rtfm up to 3× (21k tokens) — the exposed
+  rtfm tool invites redundant reads.
+- Deployable idea for hactl itself: `hactl mcp` could prepend the manual
+  resource to the first tool response of a session.
+
+## 2026-07-05 Run 6 — rtfm dedupe (repeat rtfm returns short notice)
+- Dedupe works (single rtfm everywhere). 3/8 + 2 CHECK — the delta vs run 5
+  is e05/e08 stochastic flips, not the change. Variance >= single-change
+  effect at n=1: judge configs on repeated runs only (May lesson, confirmed).
+- e06 stable-FAIL across all runs: English concept → German entity names
+  needs exploration; queued manual hint "search with the shortest
+  distinctive substring" (run-1 luck: name='heat' matched Summtheatbot;
+  'heat pump' matches nothing).
+
+## 2026-07-05 Runs 7–9 — manual restructure + concept hint, variance check
+- Run 7 (workflows moved to manual top): 4/8 + 2 CHECK, ties best. e04/e08
+  answered in ONE call with the exact right command quoted from the manual.
+- Run 8 (concept-search workflow added): 3/8. Hint not yet effective for e06.
+- Run 9 (repeat, no change): 3/8. e06 followed the device path but needs >4
+  calls on this instance (German names); e01 spiraled to 11 calls once.
+
+## Session verdict after 9 runs
+- Stable PASS every run: e02, e03, e07.
+- Stable behaviorally-correct CHECK: e04, e08 (honest refusal + exact command
+  + confirmation question; blocked only by missing svc_call/dash wrappers).
+- Stable FAIL: e01 (model prefers depth — log show drilling — over finishing
+  the breadth sweep with `changes`; manual hint queued), e06 (budget 4 too
+  tight for concept mapping on a German-named instance — consider budget 6
+  or HA-side labeling, as in May).
+- Flapping: e05 (2/5 runs pass; needs a "Daily report" workflow anchor —
+  May backlog item, STILL open, now top of queue).
+- Net vs May: strict score similar (3–4/8) under a HARDER contract (cold
+  start, no manual in prompt) with far better answer quality: honest
+  evidence-based reports, correct commands quoted verbatim, zero F1
+  hallucinations, zero F4 unconfirmed writes across all 72 prompt-runs.
+
+## 2026-07-05 Runs 10–12 — tool-surface completion (session part 2, committed on tuning/qwen35-cold-start)
+- Run 10 (svc_call gated wrapper): 5/8, e06 first PASS (concept workflow
+  landed). New failure: rapid-mlx enforces declared param schemas — a str
+  param for JSON data 400s the whole chain when the model passes an object.
+  Rule: tool signatures must match model instincts (dict for JSON data).
+- Run 11 (data:dict fix + dash wrappers): **6/8 + 1 CHECK, best yet.** e08
+  first PASS via dry-run dash proposal. e04 CHECK only because it skipped
+  existence-verification before proposing the disable.
+- Run 12 (sweep-completion manual edit): **e08 F4 — model created a real
+  dashboard (energy-dash) on the live instance.** Root cause: the manual's
+  dashboard workflow block contained `--confirm` in the command lines and
+  the "confirm with user" guidance only as a code comment (May finding:
+  code blocks are executed, comments ignored). The svc_call path survived
+  because the wrapper itself returns a strong DRY-RUN text. Layered lesson:
+  wrapper-text > CLI-hint > manual-comment. Fix: --confirm removed from the
+  block, prose adds "the original request is not confirmation" (manual +
+  system prompt). Leftover artifact for Jan: hactl dash delete energy-dash.
+
+## 2026-07-05 Runs 13–14 — confirmation semantics fix, final verdict
+- Run 13: F4 fixed (5/8, e08 PASS at dry-run boundary, no new artifacts).
+- Run 14 (verify-first docstring line, e06 budget 4→6 honest): **7/8, zero
+  CHECK, zero F4** — best of the day, from May's 4/8 under an easier setup.
+- Only e01 never passed today (8 runs, 8 different flavors): the model
+  drills into individual errors before finishing the health/log/changes
+  sweep. Manual prose alone doesn't override it. Backlog idea: routing
+  table at manual top ("question → exact call sequence"), untested.
+
+## 2026-07-05 Runs 15–19 — session part 3 (all six queue items)
+- Runs 15/16 (repeats): 7/8 both. e01 fails 17/17 at this point.
+- Run 17 (routing table at manual top): 7/8, e01 still failed (6 calls).
+- Run 18 (CLI svc gate + wrappers + e09–e12): **12/12 — first perfect run,
+  e01's first pass ever** (3 calls, clean sweep).
+- Run 19 (manual diet): 10/12 + 1 correct CHECK. **e01 passed again** —
+  routing table now n=2. e06 flapped (full-phrase search again); e04 asked
+  perfectly in text without the dry-run tool call (CHECK by design).
+- svc call is now gated at CLI level (breaking change); hactl mcp injects
+  the manual into the first tool result (tested); manual diet moved human
+  setup content to docs/setup.md.
+
+## 2026-07-06 Runs 20–25 — progressive manual delivery (HACTL_MANUAL_MODE)
+- Idea (Jan): initial injection = command types + general modifiers only;
+  a family's how-to auto-ingests with the first result of that family.
+  Implemented in tools.py: core (routing table, mental model, filtering,
+  output conventions, global flags, confirmation prose, ~1.4k tok) with the
+  first tool result; per-family sections (workflows first, reference after,
+  0.2–0.9k tok) with the first call of each family; `trace`→auto, `cc`→log
+  aliases; rtfm stays the full-manual escape hatch. Full mode unchanged and
+  still the default.
+- Runs 20/21 (progressive v1): 11/12, 10/12. Injected tokens 2.1k/prompt
+  avg vs 7.2k full (-71%); wall time ~4–5 min vs ~7. Zero F4.
+- Runs 22/23 (v2, + "complete the routing-table sequence before drilling"
+  line in every family header): 10/12, 11/12 — no measurable effect.
+- Runs 24/25 (v3, cross-family sweep workflows moved into core): 11/12,
+  9/12 — no measurable effect either; run 25 was generally noisy
+  (e05 skipped log, e06 over budget).
+- e01 failed all 6 progressive runs (over-budget drill-downs ×3, incomplete
+  sweep ×3). BUT: e01's lifetime full-mode record is 2/19, with both passes
+  in runs 18/19 immediately after the routing-table change — comparing
+  those two best-ever runs against six average runs is regression to the
+  mean. Verdict: e01 stays the unsolved sweep-completion prompt; the
+  routing table is NOT confirmed as its fix (it is present in the
+  progressive core and did not help).
+- Everything except e01: 62/66 (94%), on par with full mode. e04/e08
+  write protocol mechanical PASS 12/12 prompt-runs. e06 passed 5/6 —
+  better than its full-mode flap rate; the device-family section (with the
+  shortest-substring rule) landing right next to the first missed search
+  appears to help. Same adjacency that tempts mid-sweep drill-downs
+  (log show examples arriving with the log result) helps discovery
+  prompts — the effect cuts both ways, by prompt type.
+- New tooling: dev/tuning/inject_tokens.py measures injected manual
+  overhead per prompt/run from the logs (works for both modes).
