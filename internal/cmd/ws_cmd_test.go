@@ -1645,6 +1645,44 @@ func TestRunEntRelated_NoRelations(t *testing.T) {
 	}
 }
 
+func TestRunEntRelated_StaleEntity(t *testing.T) {
+	// The registry and state machine know only sensor.temp; the queried entity
+	// is absent from both (renamed/deleted). The finders all come back empty,
+	// but the output must distinguish "this entity is gone" from the generic
+	// "no related entities found" a live-but-unrelated entity would produce.
+	states := []map[string]any{
+		{"entity_id": "sensor.temp", "state": "21.5", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.temp"},
+		},
+		"config/area_registry/list":  []any{},
+		"config/label_registry/list": []any{},
+		"config/floor_registry/list": []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntRelated(context.Background(), &buf, "binary_sensor.tur_balkon"); err != nil {
+		t.Fatalf("runEntRelated failed: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "no related entities found") {
+		t.Errorf("stale entity must not report the generic 'no related entities found': %q", out)
+	}
+	if !strings.Contains(out, "stale") && !strings.Contains(out, "not in the registry") {
+		t.Errorf("output should flag the entity as stale/not-in-registry: %q", out)
+	}
+}
+
 func TestRunEntRelated_MergesCompanionAndRegistryWithoutAutomationConfigFetch(t *testing.T) {
 	states := []map[string]any{
 		{"entity_id": "sensor.source_power", "state": "21.5", "attributes": map[string]any{}},
