@@ -91,7 +91,7 @@ func runRTFMFamilies(w io.Writer) error {
 	for alias, family := range manual.Aliases {
 		aliases[family] = append(aliases[family], alias)
 	}
-	fmt.Fprintf(w, "core%28s~%d tok  (always delivered first)\n", "",
+	_, _ = fmt.Fprintf(w, "core%28s~%d tok  (always delivered first)\n", "",
 		estimateTokens(int64(len(manual.CoreText()))))
 	for _, family := range manual.Families() {
 		text, headings := manual.FamilyText(family, nil)
@@ -101,7 +101,7 @@ func runRTFMFamilies(w io.Writer) error {
 		if len(a) > 0 {
 			aliasNote = " (aliases: " + strings.Join(a, ", ") + ")"
 		}
-		fmt.Fprintf(w, "%-12s%d sections  ~%d tok%s\n",
+		_, _ = fmt.Fprintf(w, "%-12s%d sections  ~%d tok%s\n",
 			family, len(headings), estimateTokens(int64(len(text))), aliasNote)
 	}
 	return nil

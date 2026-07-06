@@ -119,7 +119,7 @@ func TestMarkDelivered(t *testing.T) {
 func TestClaimFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, stateFileName)
-	if err := os.WriteFile(path, []byte("{corrupt"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("{corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if txt := Claim(dir, "s1", ModeProgressive, "health", t0); !strings.HasPrefix(txt, CoreNote) {
@@ -158,7 +158,7 @@ func TestPruneStaleSessions(t *testing.T) {
 	_ = Claim(dir, "old", ModeProgressive, "health", t0)
 	_ = Claim(dir, "new", ModeProgressive, "health", t0.Add(31*time.Minute))
 
-	raw, err := os.ReadFile(filepath.Join(dir, stateFileName))
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join(dir, stateFileName)))
 	if err != nil {
 		t.Fatal(err)
 	}

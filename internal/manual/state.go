@@ -14,6 +14,7 @@ import (
 // Mode selects what auto-delivery sends.
 type Mode int
 
+// Delivery modes, selected by HACTL_MANUAL_MODE.
 const (
 	ModeProgressive Mode = iota // core once, family how-tos on first use
 	ModeFull                    // whole manual once per session
@@ -133,7 +134,7 @@ func MarkDelivered(cacheDir, session string, now time.Time, scopes ...string) {
 func loadSession(cacheDir, session string, now time.Time) (*stateData, *sessionState) {
 	st := &stateData{Version: 1, Sessions: map[string]*sessionState{}}
 	if cacheDir != "" {
-		if raw, err := os.ReadFile(filepath.Join(cacheDir, stateFileName)); err == nil {
+		if raw, err := os.ReadFile(filepath.Clean(filepath.Join(cacheDir, stateFileName))); err == nil {
 			var loaded stateData
 			if json.Unmarshal(raw, &loaded) == nil && loaded.Sessions != nil {
 				st = &loaded
@@ -170,7 +171,7 @@ func saveState(cacheDir string, st *stateData) {
 		return
 	}
 	tmp := filepath.Join(cacheDir, fmt.Sprintf("%s.tmp.%d", stateFileName, os.Getpid()))
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return
 	}
 	if err := os.Rename(tmp, filepath.Join(cacheDir, stateFileName)); err != nil {
