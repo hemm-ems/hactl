@@ -165,8 +165,14 @@ def _exec(*args: str) -> str:
     if HACTL_DIR:
         cmd += ["--dir", HACTL_DIR]
     cmd += list(args)
+    # Manual delivery happens in this layer; silence the binary's own CLI
+    # injection (it fires on captured stdout+stderr and would burn session
+    # state on stderr that _exec discards on success).
+    env = {**os.environ, "HACTL_MANUAL_MODE": "off", "HACTL_LOG_LEVEL": "error"}
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=TIMEOUT_S, env=env
+        )
     except subprocess.TimeoutExpired:
         return f"ERROR: hactl {' '.join(args)} timed out after {TIMEOUT_S}s"
     if result.returncode != 0:

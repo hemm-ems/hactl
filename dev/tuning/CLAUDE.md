@@ -17,6 +17,12 @@ Architecture: cold start. The manual is NOT in the system prompt; the tool
 layer injects it with the first tool call's result (`integrations/llm/tools.py`).
 Set `HACTL_NO_RTFM_GATE=1` to disable injection (manual-in-prompt mode).
 
+CLI-mode arm (Session 4): `export HACTL_TOOLS_PY=integrations/llm/tools_cli.py`
+before `run.sh` swaps the multi-function wrappers for a single passthrough
+tool; the manual then comes from the Go binary itself (progressive stderr
+injection, fresh `HACTL_SESSION` per prompt). `grade.py` and
+`inject_tokens.py` work unchanged on such runs.
+
 ## Per-session workflow
 
 1. Re-anchor first: verify eval prompts still reference entities/automations

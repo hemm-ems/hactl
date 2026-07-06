@@ -79,3 +79,12 @@ manual auto-injected with the first tool call's result** (tools.py).
   elicitation support (MCP spec) would move confirmation to the client.
 - **Model watch**: rapid-mlx model slots change quarterly; re-baseline when
   the slug changes (qwen35.env pins the current one).
+
+## Session 4 (2026-07-06, branch feat/cli-manual-inject)
+
+Progressive delivery ported into the Go binary (stderr injection for
+agent-shaped CLI runs, `internal/manual`); CLI-mode harness =
+`HACTL_TOOLS_PY=integrations/llm/tools_cli.py`. A/B results + the
+command-vocabulary finding: `docs/llm-tuning.md` Session 4. The
+"Full command set" index in `docs/manual.md` is the load-bearing fix for
+CLI mode (7/12 → 11/12) — uncommitted, awaiting Jan's OK.

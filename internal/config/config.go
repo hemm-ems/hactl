@@ -76,6 +76,22 @@ func Load(dirFlag string) (*Config, error) {
 	}, nil
 }
 
+// BestEffortDir resolves the instance directory with the same candidate order
+// as Load but without requiring a .env — for callers that only need a state
+// location (e.g. manual-delivery session tracking) even when the command
+// never loaded config. Returns "" when resolution fails entirely.
+func BestEffortDir(dirFlag string) string {
+	dir, err := resolveDir(dirFlag)
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
 // resolveDir determines the instance directory by checking candidates in order:
 // 1. --dir flag, 2. HACTL_DIR env var, 3. cwd and its parents, 4. ~/.hactl/default/
 //

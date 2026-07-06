@@ -242,8 +242,94 @@ no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
     reference can arrive with the family's first result at ~30% of the
     context cost and no measured quality loss. When editing the manual,
     keep family sections self-contained (they are injected standalone) and
-    keep heading names stable — `tools.py` maps families to headings
-    verbatim.
+    keep heading names stable — `tools.py` **and**
+    `internal/manual/families.go` map families to headings verbatim. The Go
+    side is CI-enforced: `internal/manual` guardrail tests fail on renamed
+    headings, and `TestTopLevelCommandsHaveManualCoverage` fails when a new
+    top-level command is neither mapped nor exempt.
+
+## Session 4 — progressive delivery in the Go binary (CLI mode, 2026-07-06)
+
+The progressive scheme now lives in the binary itself (`internal/manual`,
+stderr hook in `internal/cmd/inject.go`): any agent running `hactl` through a
+shell tool (both streams captured, no TTY) gets the core with its first
+command and family how-tos on first family use, tracked per instance in
+`cache/manual-state.json` (session = `HACTL_SESSION` or a 30-min-TTL shared
+key). `tools.py` keeps doing its own injection and pins the child binary to
+`HACTL_MANUAL_MODE=off`. CLI-mode eval harness: single passthrough
+`integrations/llm/tools_cli.py`, selected via `HACTL_TOOLS_PY` in `hactl-llm`.
+
+A/B (arm A = multi-function tools.py progressive, arm B = single-function
+tools_cli.py + binary injection), e01–e12, qwen3.5-122b, 2026-07-06:
+
+| run | arm | manual | PASS/12 | injected tok/prompt | turns | wall |
+|---|---|---|---|---|---|---|
+| 1911 | A | as-is | 11 | 2261 | 32 | 639s |
+| 1928 | A | as-is | 11 | 2279 | 30 | 301s |
+| 1921 | B | as-is | 7 | 2283 | 49 | 379s |
+| 1933 | B | as-is | 6 (+1 CHECK) | 2452 | 36 | 689s |
+| 1949 | B | +cmd index | 11 | 2554 | 42 | 379s |
+| 1955 | B | +cmd index | 10 (+1 CHECK) | 2524 | 33 | 252s |
+| 2000 | A | +cmd index | **12** | 2415 | 33 | 237s |
+
+Findings (each confirmed on 2 runs unless noted):
+
+1. **Vocabulary gap, the one real CLI-mode failure mode.** tools.py's ~20
+   function *names* (hactl_helper_ls, hactl_tpl_eval, …) are an implicit
+   command index in the tool schema. The bare passthrough has none, and
+   progressive family docs only arrive after the first *correct* family
+   command — chicken-and-egg. Baseline B failures were all of this shape:
+   `ent ls --domain helper` instead of `helper ls` (e11), `template eval`
+   (e12), `refs`/`ent refs`/`int ls` flailing (e09/e10) burning budget.
+2. **Fix: "Full command set" index appended to `## Quick routing`**
+   (~150 tok, core-injected, no heading/map changes). B jumps 7/6 → 11/10,
+   on par with arm A; the A control run with the index scored 12/12
+   (single run — lifetime best, grain of salt). The models self-corrected
+   via `--help` and `rtfm` even without the index, just over budget.
+3. **Token economics.** Tool-schema prefix per request: A ≈ 3286 tok,
+   B ≈ 825 tok (first-turn input, median) — the passthrough saves ~2.5k
+   tok of schema on every request, but rapid-mlx prefix-caches A's
+   identical schema across conversations (~60% cached input vs ~25% for
+   B), so total *uncached* input per run comes out comparable (A ≈ 58–66k,
+   B ≈ 69–117k, noisy with turn count). Verdict: CLI mode ≈ wrapper mode
+   on end-to-end tokens and quality, with a far smaller fixed schema and
+   zero client-side wrapper code — any agent with a shell tool gets the
+   tuned cold start. Injection overhead itself is unchanged
+   (~2.3–2.6k tok/prompt; the eval re-pays the core every prompt because
+   each prompt is a fresh HACTL_SESSION; a real conversation pays it once).
+4. **Write discipline held in CLI mode:** no F4 in any of the 4 B runs;
+   e08 proposed dry-runs and stopped for confirmation (CHECK by design).
+
+Residual B non-passes are known-flaky prompts (e06 discovery, e10 budget),
+not CLI-mode-specific. The command-index manual diff needs Jan's OK before
+commit (Rule: manual changes are shown as diffs first).
+
+### Delivery-mode matrix (same passthrough tool, +index manual, 2 runs each)
+
+The passthrough tool is token-equivalent to what an MCP client sees (JSON-RPC
+framing never enters the model context), so these proxy the `hactl mcp`
+modes: `full` ≈ today's MCP injection, `off`+rtfm-docstring-hint ≈
+`mcp --no-manual-inject` / pre-injection era.
+
+| mode | PASS/12 | F4 | injected tok/prompt | uncached input/run | wall |
+|---|---|---|---|---|---|
+| progressive (runs 1949/1955) | 11, 10 (+1C) | **0** | ~2 500 | 69–117k | 252–379s |
+| full (runs 2044/2102) | 10, 8 | 1 | 7 468 | 253–296k | 586–605s |
+| off + "run rtfm first" hint (2054/2112) | 6, 5 (+2C) | 1 | 0 (rtfm returns ~7.5k as result) | 113–168k | 346–505s |
+
+- **rtfm obedience is the failure mode of hint mode:** rtfm was the *first*
+  call in only 4/12 resp. 1/12 prompts; the rest started with hallucinated
+  commands (`report daily`, `labels ls`, `state show`, `int ls`,
+  `dashboard ls`) and only sometimes recovered. Confirms the session-1/2
+  decision against instruction-gated delivery, now with numbers.
+- **Full-mode economics are the worst of both:** 3× the injected tokens of
+  progressive AND every later turn re-reads them (uncached input 3–4× of
+  progressive), runs ~2× slower, and quality drops — the confirm rule gets
+  buried mid-dump (both F4s of this session happened in non-progressive
+  modes; progressive stayed F4-free across all four runs).
+- **Sweet spot: progressive injection, regardless of transport.** For MCP
+  parity, the progressive port (using `internal/manual`) would move
+  `hactl mcp` from worst-economics to par — priority still Jan's call.
 
 ## Open items
 
@@ -251,7 +337,9 @@ no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
   progressive is the default (quality-neutral at -71% context cost);
   full-mode baseline runs now need explicit `HACTL_MANUAL_MODE=full`. The
   `hactl mcp` port (core with first tool result; family sections keyed on
-  the first token of the `command` string) stays LOW PRIORITY per Jan.
+  the first token of the `command` string) stays LOW PRIORITY per Jan —
+  when it happens, `internal/manual` (Session 4) already has the
+  sectioning/state pieces.
 - e01: unchanged. Next idea after routing table did not confirm: put the
   sweep sequence in the *system* prompt for chat-style agents, or accept
   6-call budget.

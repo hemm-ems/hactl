@@ -33,11 +33,13 @@ See the [manual](docs/manual.md) for the full command reference.
 
 Every response is capped at 500 tokens by default, and compact token estimates are available with `--tokens` (`[~N tok]`). Extended output is opt-in — the idea is that an LLM working through a task shouldn't have its context blown out by a single command.
 
-`hactl manual` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
+`hactl rtfm` prints a guide that's specifically written for LLMs: how HA is structured, what the API does and doesn't expose, common pitfalls. The intention is that you can hand an LLM this manual once and it can navigate HA confidently from there.
+
+The manual also delivers itself: when stdout and stderr are both captured (an agent harness, not a terminal), hactl writes it to stderr progressively — the ~1.4k-token core with the first command of a session, each command family's how-to with the first command from that family. stdout is untouched; humans at a terminal see nothing. `HACTL_MANUAL_MODE=off` disables it, `full` sends the whole manual once; sessions are per instance (`HACTL_SESSION`, or a 30-minute idle window).
 
 ## How it works
 
-Point any LLM agent at hactl. It reads the manual once (`hactl rtfm`), then uses hactl commands as tools to answer your questions.
+Point any LLM agent at hactl. The manual reaches it automatically (or explicitly via `hactl rtfm`), then it uses hactl commands as tools to answer your questions.
 
 ![hactl demo](docs/demo.gif)
 
@@ -55,11 +57,11 @@ $ claw "balcony watering didn't run yesterday — why?"
   Likely dead Zigbee battery.
 ```
 
-The transcript above is illustrative (the GIF is scripted), but it shows the intended shape: the manual (~6.2k tok) is loaded once and cached, after which each tool call costs tens of tokens. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py) — they expose read-only commands; config writes go through a separate dry-run + `--confirm` step.
+The transcript above is illustrative (the GIF is scripted), but it shows the intended shape: the manual arrives once per session (~1.4k-token core, family sections on first use), after which each tool call costs tens of tokens. Tool wrappers in [`integrations/llm/tools.py`](integrations/llm/tools.py) — they expose read-only commands; config writes go through a separate dry-run + `--confirm` step.
 
 ## MCP server
 
-`hactl mcp` serves the whole CLI over the [Model Context Protocol](https://modelcontextprotocol.io) on stdio — one `hactl` tool that takes a command line, for clients like Claude Code or Claude Desktop. No wrapper scripts; the manual is self-served (`rtfm`, also exposed as the `hactl://manual` resource).
+`hactl mcp` serves the whole CLI over the [Model Context Protocol](https://modelcontextprotocol.io) on stdio — one `hactl` tool that takes a command line, for clients like Claude Code or Claude Desktop. The full manual is injected with the first tool result (also available via `rtfm` or the `hactl://manual` resource); `--no-manual-inject` turns that off.
 
 ```bash
 claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
@@ -70,6 +72,18 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 ```
 
 The server is read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, …) are rejected. Start it with `hactl mcp --allow-writes` to permit them — the dry-run + `--confirm` write path still applies on top. One instance per server process; pin it with `--dir`.
+
+## CLI vs MCP, measured
+
+A tuning loop (`dev/tuning/`: 12 tasks against a live instance, graded on command choice, call budget, and write discipline, run with a local qwen3.5-122b) compares how the manual reaches the model. Same tasks, two runs per mode:
+
+| manual delivery | tasks passed | manual tok/task | notes |
+|---|---|---|---|
+| progressive injection (CLI default) | 11, 10 / 12 | ~2.5k | no unconfirmed writes in any run |
+| full manual once (`hactl mcp` today) | 10, 8 / 12 | ~7.5k | 3–4× the uncached input, ~2× slower |
+| "run `rtfm` first" instruction, no injection | 6, 5 / 12 | 0 | the model actually ran `rtfm` first in 4/12 resp. 1/12 tasks |
+
+To the model, CLI-over-shell and MCP differ only in tool schema (~0.1k vs ~2.5k tokens per request for the bundled multi-function wrappers; MCP's JSON-RPC framing never enters the context). The delivery mode is what matters: an agent with a plain shell tool gets the best-measured setup with zero client configuration. Methodology and full numbers: [LLM tuning notes](docs/llm-tuning.md).
 
 ## Safety
 

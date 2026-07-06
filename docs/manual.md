@@ -17,6 +17,19 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
 | "List labels / areas / helpers / scripts" | the matching `ls` command | One call, answer |
 
+Full command set (family → subcommands):
+
+- `health` · `issues` · `changes` · `log [show <id>]` · `cc ls|show|logs` · `trace show <id>`
+- `ent ls|show|hist|anomalies|related|who|set-label|set-area`
+- `auto ls|show|diff|apply|create|delete|rollback` · `script ls|show|run|diff|apply|create|delete`
+- `helper ls|show|create|delete` · `tpl eval|create|delete` · `svc call`
+- `dash ls|show|save|create|delete|resources|grep|replace`
+- `device ls|show` · `label|area|floor ls|create|delete`
+- `config entries|options|delete|flow-start|flow-step|flow-inspect`
+- `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
+
+No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
+
 ## Mental model
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
@@ -548,9 +561,19 @@ No global config, no profiles. Directory = instance.
 
 ---
 
+## Manual delivery
+
+Parts of this manual may already have reached you automatically: when both stdout and stderr are captured (agent/shell-tool usage), hactl delivers the manual progressively on stderr — the core (routing table, conventions, flags) with the first command of a session, each family's how-to with the first command of that family, ending with a `=== RESULT of hactl … ===` marker before the real output. Sessions are per instance, keyed by `HACTL_SESSION` (default: a shared key with a 30-minute idle timeout).
+
+- `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
+- `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand
+- Humans at a terminal never see it; stdout (incl. `--json`) stays untouched; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
+
+---
+
 ## MCP server
 
-`hactl mcp` serves this CLI over the Model Context Protocol on stdio. MCP clients see a single `hactl` tool that takes a command line (without the binary name), e.g. `{"command": "ent ls --domain light"}`. All commands and flags in this manual work unchanged; this manual is also available as the MCP resource `hactl://manual`.
+`hactl mcp` serves this CLI over the Model Context Protocol on stdio. MCP clients see a single `hactl` tool that takes a command line (without the binary name), e.g. `{"command": "ent ls --domain light"}`. All commands and flags in this manual work unchanged; this manual is also available as the MCP resource `hactl://manual`. Over MCP the full manual arrives once with the first tool result — the progressive stderr delivery above applies to plain CLI usage only.
 
 ```bash
 claude mcp add hactl -- hactl mcp --dir ~/.hactl/default

@@ -23,6 +23,8 @@ mkdir -p "$RUN_DIR"
 
 cp docs/manual.md "$RUN_DIR/manual.md.snapshot"
 cp dev/tuning/prompts.yaml "$RUN_DIR/prompts.yaml.snapshot"
+# Record which tool layer this run used (tools.py vs tools_cli.py arm).
+cp "${HACTL_TOOLS_PY:-integrations/llm/tools.py}" "$RUN_DIR/tools.py.snapshot"
 
 # Recompile hactl so `hactl rtfm` returns the current docs/manual.md.
 echo "→ building hactl..."
