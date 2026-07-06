@@ -256,6 +256,9 @@ func resetSubcommandFlags() {
 	flagDashIcon = ""
 	flagDashSidebar = true
 	flagDashAdmin = false
+	flagRefConfirm = false
+	flagRefExitCode = false
+	flagRefAllowPartial = false
 	// Reset all cobra internal flags (including --help) on every command
 	// to prevent stale flag state between repeated Execute() calls.
 	resetCobraFlags(rootCmd)
