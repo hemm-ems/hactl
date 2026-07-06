@@ -188,3 +188,36 @@ Model switch: Qwen3.6-27B/LM Studio → qwen3.5-122b-mxfp4 on rapid-mlx
 - svc call is now gated at CLI level (breaking change); hactl mcp injects
   the manual into the first tool result (tested); manual diet moved human
   setup content to docs/setup.md.
+
+## 2026-07-06 Runs 20–25 — progressive manual delivery (HACTL_MANUAL_MODE)
+- Idea (Jan): initial injection = command types + general modifiers only;
+  a family's how-to auto-ingests with the first result of that family.
+  Implemented in tools.py: core (routing table, mental model, filtering,
+  output conventions, global flags, confirmation prose, ~1.4k tok) with the
+  first tool result; per-family sections (workflows first, reference after,
+  0.2–0.9k tok) with the first call of each family; `trace`→auto, `cc`→log
+  aliases; rtfm stays the full-manual escape hatch. Full mode unchanged and
+  still the default.
+- Runs 20/21 (progressive v1): 11/12, 10/12. Injected tokens 2.1k/prompt
+  avg vs 7.2k full (-71%); wall time ~4–5 min vs ~7. Zero F4.
+- Runs 22/23 (v2, + "complete the routing-table sequence before drilling"
+  line in every family header): 10/12, 11/12 — no measurable effect.
+- Runs 24/25 (v3, cross-family sweep workflows moved into core): 11/12,
+  9/12 — no measurable effect either; run 25 was generally noisy
+  (e05 skipped log, e06 over budget).
+- e01 failed all 6 progressive runs (over-budget drill-downs ×3, incomplete
+  sweep ×3). BUT: e01's lifetime full-mode record is 2/19, with both passes
+  in runs 18/19 immediately after the routing-table change — comparing
+  those two best-ever runs against six average runs is regression to the
+  mean. Verdict: e01 stays the unsolved sweep-completion prompt; the
+  routing table is NOT confirmed as its fix (it is present in the
+  progressive core and did not help).
+- Everything except e01: 62/66 (94%), on par with full mode. e04/e08
+  write protocol mechanical PASS 12/12 prompt-runs. e06 passed 5/6 —
+  better than its full-mode flap rate; the device-family section (with the
+  shortest-substring rule) landing right next to the first missed search
+  appears to help. Same adjacency that tempts mid-sweep drill-downs
+  (log show examples arriving with the log result) helps discovery
+  prompts — the effect cuts both ways, by prompt type.
+- New tooling: dev/tuning/inject_tokens.py measures injected manual
+  overhead per prompt/run from the logs (works for both modes).

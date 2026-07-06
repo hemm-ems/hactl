@@ -193,3 +193,67 @@ Done this session (part 2): `svc_call` + dash gated wrappers; CLI-level
 `svc call` dry-run gate (breaking); `hactl mcp` manual injection with
 tests; e09–e12 new-surface prompts + wrappers; routing table; manual diet
 (human setup → docs/setup.md); 7/8 → 12/12 on the extended set.
+
+---
+
+# Session 3 — 2026-07-06, progressive manual delivery
+
+**Hypothesis (Jan):** don't inject the full 7k-token manual with the first
+tool result — inject a ~1.4k core (routing table, mental model, filtering,
+output conventions, global flags, confirmation prose) and deliver each
+command family's how-to with the result of the *first* call into that
+family. The timing argument: the routing table + tool docstrings are enough
+to form a correct first call, every risky first call is dry-run-gated, and
+the family detail arrives exactly before calls 2..n of a workflow.
+
+Implemented in `integrations/llm/tools.py` behind `HACTL_MANUAL_MODE`
+(`full` = default, unchanged; `progressive` = core + per-family). Sections
+are parsed from `hactl rtfm` output by heading, so `docs/manual.md` needed
+no changes. `dev/tuning/inject_tokens.py` measures injection overhead.
+
+## Results (6 progressive runs vs full-mode runs 18/19)
+
+| | full (n=2) | progressive (n=6) |
+|---|---|---|
+| PASS rate | 22/24 | 62/72 |
+| PASS rate excl. e01 | 20/22 | 62/66 |
+| injected tok/prompt | ~7.2k | ~2.1k (-71%) |
+| wall time/run | ~7 min | ~4–5 min |
+| F4 unconfirmed writes | 0 | 0 |
+
+- Quality is on par outside e01; the entire gap is e01 (0/6 progressive vs
+  2/2 in runs 18/19 — but 2/19 lifetime; see patterns.md for why that
+  comparison is regression to the mean). e01 remains the unsolved
+  sweep-completion prompt in both modes.
+- Two refinements tested, neither measurable at n=2: a "complete the
+  routing-table sequence before drilling" line in family headers, and
+  moving the cross-family sweep workflows into the core. The latter is kept
+  anyway as the more principled split (cross-family behavior in core,
+  single-family workflows with their family).
+- Injection adjacency cuts both ways: the device section landing next to a
+  missed search helped e06 (5/6, better than full mode); log-show examples
+  landing next to log results tempt mid-sweep drill-downs (e01/e02 budget
+  fails).
+
+## Rule 11 (extends "Rules for future manual updates")
+
+11. **Deliver reference lazily, behavior eagerly.** The routing table and
+    cross-family workflows must be in the first injection; per-family
+    reference can arrive with the family's first result at ~30% of the
+    context cost and no measured quality loss. When editing the manual,
+    keep family sections self-contained (they are injected standalone) and
+    keep heading names stable — `tools.py` maps families to headings
+    verbatim.
+
+## Open items
+
+- Decide default: progressive is validated for the `llm` tools path; port
+  to `hactl mcp` (inject core with first tool result; family sections keyed
+  on the first token of the `command` string) before flipping any default.
+- e01: unchanged. Next idea after routing table did not confirm: put the
+  sweep sequence in the *system* prompt for chat-style agents, or accept
+  6-call budget.
+- A `ref` family section does not exist in the manual (e09 passes on
+  docstrings alone) — write one if ref grows beyond validate/scan.
+- Variance dashboard (grade.py over N runs) got more urgent: run 25 shows
+  single-run noise still dominates variant deltas at n=2.

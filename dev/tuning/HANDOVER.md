@@ -3,6 +3,13 @@
 Supersedes the 2026-05-04 handover. Full run-by-run history in
 `patterns.md`; durable rules in `docs/llm-tuning.md` (session-2 section).
 
+> **Session-3 addendum (2026-07-06):** progressive manual delivery
+> (`HACTL_MANUAL_MODE=progressive` in tools.py) validated over 6 runs:
+> quality on par with full injection except the historically unsolved e01,
+> at ~2.1k instead of ~7.2k injected tokens per prompt. Details in
+> `docs/llm-tuning.md` session-3 section and `patterns.md` runs 20–25.
+> Not yet ported to `hactl mcp`; default stays `full`.
+
 ## State
 
 - Branch `tuning/qwen35-cold-start`, NOT pushed (local only by request).
