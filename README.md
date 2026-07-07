@@ -142,4 +142,4 @@ Run `hactl companion status` to diagnose connectivity.
 
 ---
 
-[Manual](docs/manual.md) · [Setup](docs/setup.md) · [LLM tuning notes](docs/llm-tuning.md) · [Testing](docs/testing.md)
+[Manual](docs/manual.md) · [Setup](docs/setup.md) · [Local LLMs](docs/local-llm.md) · [LLM tuning notes](docs/llm-tuning.md) · [Testing](docs/testing.md)
