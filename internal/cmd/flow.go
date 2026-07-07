@@ -16,8 +16,9 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage config entries and flows",
+	Use:        "config",
+	SuggestFor: []string{"integrations", "integration", "entries"},
+	Short:      "Manage config entries and flows",
 	Long:  "List config entries and start, step through, and inspect config entry options flows and config flows.",
 }
 

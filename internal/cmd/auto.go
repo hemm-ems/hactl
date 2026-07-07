@@ -30,8 +30,9 @@ var flagAutoFile string
 var flagAutoConfirm bool
 
 var autoCmd = &cobra.Command{
-	Use:   "auto",
-	Short: "Manage and inspect automations",
+	Use:        "auto",
+	SuggestFor: []string{"automation", "automations"},
+	Short:      "Manage and inspect automations",
 	Long:  "List, filter, inspect, diff, and apply Home Assistant automations.",
 }
 

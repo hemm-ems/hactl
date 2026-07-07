@@ -32,8 +32,9 @@ var flagDashSidebar bool
 var flagDashAdmin bool
 
 var dashCmd = &cobra.Command{
-	Use:   "dash",
-	Short: "Manage Lovelace dashboards",
+	Use:        "dash",
+	SuggestFor: []string{"dashboard", "dashboards", "lovelace"},
+	Short:      "Manage Lovelace dashboards",
 	Long:  "List, inspect, create, and modify Home Assistant Lovelace dashboards.",
 }
 

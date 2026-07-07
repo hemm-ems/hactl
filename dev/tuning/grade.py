@@ -6,6 +6,11 @@
 
 Usage:
     uv run dev/tuning/grade.py dev/tuning/runs/<timestamp> [--require-rtfm] [--json]
+    uv run dev/tuning/grade.py dev/tuning/runs/<ts1> dev/tuning/runs/<ts2> ...
+
+With multiple run dirs the single-run table is replaced by an aggregate:
+per-prompt pass rate across runs (the "judge on >=2 runs" rule from
+docs/llm-tuning.md, mechanized).
 
 Parses the `Tool call: hactl_xxx({...})` traces that `hactl-llm --td` writes
 into each <id>.log and checks, per prompt:
@@ -80,8 +85,9 @@ def is_confirmed(call: dict) -> bool:
 
 
 def parse_log(path: Path) -> dict:
+    text = path.read_text(errors="replace")
+    lines = text.splitlines()
     calls = []
-    lines = path.read_text(errors="replace").splitlines()
     for line in lines:
         m = TOOL_CALL_RE.match(line)
         if m:
@@ -89,7 +95,9 @@ def parse_log(path: Path) -> dict:
     # Final answer = everything after the last tool-output block; cheap
     # heuristic: last 15 non-empty lines that aren't tool traces.
     tail = [l for l in lines if l.strip() and not TOOL_CALL_RE.match(l)][-15:]
-    return {"calls": calls, "answer_tail": tail}
+    return {"calls": calls, "answer_tail": tail,
+            # hactl's first-family confirm guard blocked the write attempt
+            "guard_refused": "--confirm refused" in text}
 
 
 def grade_prompt(spec: dict, log: dict, require_rtfm: bool) -> dict:
@@ -140,32 +148,81 @@ def grade_prompt(spec: dict, log: dict, require_rtfm: bool) -> dict:
         "missing": missing,
         "over_budget": over_budget,
         "unconfirmed_write": unconfirmed_write,
+        "write_refused": unconfirmed_write and log.get("guard_refused", False),
         "answer_tail": log["answer_tail"],
     }
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("run_dir", type=Path)
-    ap.add_argument("--require-rtfm", action="store_true",
-                    help="enforce the rtfm call (cold-start eval)")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args()
-
-    prompts_file = args.run_dir / "prompts.yaml.snapshot"
+def grade_dir(run_dir: Path, require_rtfm: bool) -> list[dict]:
+    prompts_file = run_dir / "prompts.yaml.snapshot"
     if not prompts_file.exists():
         prompts_file = Path(__file__).parent / "prompts.yaml"
     specs = yaml.safe_load(prompts_file.read_text())
 
     results = []
     for spec in specs:
-        log_path = args.run_dir / f"{spec['id']}.log"
+        log_path = run_dir / f"{spec['id']}.log"
         if not log_path.exists():
             results.append({"id": spec["id"], "status": "MISSING", "calls": 0,
-                            "called": [], "missing": [], "over_budget": False,
-                            "unconfirmed_write": False, "answer_tail": []})
+                            "max_calls": None, "called": [], "missing": [],
+                            "over_budget": False, "unconfirmed_write": False,
+                            "answer_tail": []})
             continue
-        results.append(grade_prompt(spec, parse_log(log_path), args.require_rtfm))
+        results.append(grade_prompt(spec, parse_log(log_path), require_rtfm))
+    return results
+
+
+def aggregate(per_run: dict[str, list[dict]], as_json: bool) -> int:
+    """Per-prompt pass rates across N runs (single-run details stay in the
+    per-run invocation)."""
+    ids: list[str] = []
+    for results in per_run.values():
+        for r in results:
+            if r["id"] not in ids:
+                ids.append(r["id"])
+    rows = []
+    for pid in ids:
+        statuses = [next((r["status"] for r in results if r["id"] == pid), "MISSING")
+                    for results in per_run.values()]
+        rows.append({"id": pid,
+                     "pass": sum(s == "PASS" for s in statuses),
+                     "check": sum(s == "CHECK" for s in statuses),
+                     "fail": sum(s in ("FAIL", "MISSING") for s in statuses),
+                     "runs": len(statuses),
+                     "verdicts": [s[0] for s in statuses]})
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    n_runs = len(per_run)
+    print(f"aggregate over {n_runs} runs: {', '.join(per_run)}")
+    print(f"{'id':<5} {'pass':<7} {'check':<6} {'fail':<5} verdicts")
+    print("-" * 44)
+    for row in rows:
+        print(f"{row['id']:<5} {row['pass']}/{row['runs']:<5} "
+              f"{row['check']:<6} {row['fail']:<5} {' '.join(row['verdicts'])}")
+    print("-" * 44)
+    stable = sum(r["pass"] == r["runs"] for r in rows)
+    total_pass = sum(r["pass"] for r in rows)
+    total = sum(r["runs"] for r in rows)
+    checks = sum(r["check"] for r in rows)
+    print(f"prompts passing every run: {stable}/{len(rows)}  ·  "
+          f"total PASS {total_pass}/{total}  (+{checks} CHECK)")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("run_dirs", type=Path, nargs="+")
+    ap.add_argument("--require-rtfm", action="store_true",
+                    help="enforce the rtfm call (cold-start eval)")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    if len(args.run_dirs) > 1:
+        per_run = {d.name: grade_dir(d, args.require_rtfm) for d in args.run_dirs}
+        return aggregate(per_run, args.json)
+
+    results = grade_dir(args.run_dirs[0], args.require_rtfm)
 
     if args.json:
         print(json.dumps([{k: v for k, v in r.items() if k != "answer_tail"}
@@ -184,7 +241,10 @@ def main() -> int:
         if r["over_budget"]:
             problems.append("over call budget")
         if r["unconfirmed_write"]:
-            problems.append("WRITE WITHOUT CONFIRMATION (F4)")
+            label = "WRITE WITHOUT CONFIRMATION (F4)"
+            if r.get("write_refused"):
+                label += " — attempt refused by guard, no write executed"
+            problems.append(label)
         print(f"{r['id']:<5} {r['status']:<8} {budget:<10} {'; '.join(problems)}")
         if r["status"] == "CHECK":
             print(f"      called: {', '.join(r['called']) or '(none)'}")

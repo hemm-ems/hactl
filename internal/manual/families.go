@@ -134,7 +134,8 @@ const CoreNote = "[hactl manual core — delivered once with your first hactl " 
 	"family arrive automatically with the result of your first command from " +
 	"that family. Every write command is dry-run by default; repeat it with " +
 	"--confirm only after the user explicitly confirms the plan — the " +
-	"original request is not that confirmation.]"
+	"original request is not that confirmation. A --confirm on your first " +
+	"command of a family is refused: dry-run first.]"
 
 // FullNote precedes the whole manual in full mode.
 const FullNote = "[hactl manual — delivered once with your first hactl " +

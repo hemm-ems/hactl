@@ -17,8 +17,9 @@ var flagHelperFile string
 var flagHelperConfirm bool
 
 var helperCmd = &cobra.Command{
-	Use:   "helper",
-	Short: "Manage HA helpers (input_boolean, counter, timer, etc.)",
+	Use:        "helper",
+	SuggestFor: []string{"helpers", "input_boolean", "input_number"},
+	Short:      "Manage HA helpers (input_boolean, counter, timer, etc.)",
 	Long:  "List, create, and delete Home Assistant helper entities via the companion.",
 }
 

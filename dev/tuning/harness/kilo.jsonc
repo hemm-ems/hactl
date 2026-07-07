@@ -1,0 +1,38 @@
+// Kilo CLI project config for the harness-comparison arm (dirigent).
+// Copied into the scratch workspace by run-kilo.sh; rapid-mlx is the same
+// backend the hactl-llm and codex arms use. API key via env, never inline.
+// NB: Kilo CLI is OpenCode-derived — this is the OpenCode provider schema
+// (npm SDK package, baseURL in options, models as object), not the array
+// form shown in kilo.ai's CLI docs.
+{
+  "model": "rapid-mlx/qwen3.5-122b-mxfp4",
+  "provider": {
+    "rapid-mlx": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "rapid-mlx on M3Ultra",
+      "options": {
+        "baseURL": "http://192.168.42.114:8000/v1",
+        "apiKey": "{env:RAPID_MLX_API_KEY}"
+      },
+      "models": {
+        "qwen3.5-122b-mxfp4": {
+          "name": "Qwen3.5 122B (rapid-mlx M3Ultra)"
+        }
+      }
+    }
+  },
+  // Scoped autonomy: the eval needs hactl and nothing else. Everything
+  // else is denied — Kilo's tool-level allowlist is this harness's
+  // guardrail (codex's equivalent is its OS sandbox).
+  // No skip/auto flags at runtime: explicit allow means hactl runs without
+  // approval; everything else stays "ask", which non-interactive kilo
+  // auto-rejects — the gates stay active. (An explicit "*": "deny" entry
+  // shadowed the hactl allow rule, so it is deliberately absent.)
+  "permission": {
+    "bash": {
+      "hactl *": "allow"
+    },
+    "edit": "deny",
+    "webfetch": "deny"
+  }
+}

@@ -45,6 +45,10 @@ func runHactlE2E(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	fullArgs := append([]string{"--dir", instanceDir}, args...)
 	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
+	// These tests exercise command mechanics, not the agent protocol: piped
+	// output would otherwise trigger manual injection and the first-family
+	// --confirm guard.
+	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -388,9 +392,13 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	}
 	f.Close()
 
-	// Override instanceDir just for this invocation
+	// Override instanceDir just for this invocation. Manual delivery off:
+	// this must reach the companion error path, not the --confirm guard
+	// (and the injected how-to happens to contain "companion", which would
+	// let the assertion below pass for the wrong reason).
 	fullArgs := []string{"--dir", badDir, "auto", "create", "--confirm", "-f", f.Name()}
 	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source
+	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
 	out, execErr := cmd.CombinedOutput()
 
 	if execErr == nil {

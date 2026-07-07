@@ -15,7 +15,7 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Which entities belong to <concept>?" | `device ls --name <shortest-term>`, `device show <closest match>` | Fallbacks: `label ls`, `ent ls --pattern '*<term>*'` |
 | "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
-| "List labels / areas / helpers / scripts" | the matching `ls` command | One call, answer |
+| "List labels / areas / helpers / scripts" | exactly: `label ls` · `area ls` · `helper ls` · `script ls` | One call, answer. `helper` is not an entity domain — never `ent ls --domain helper` |
 
 Full command set (family → subcommands):
 
@@ -476,6 +476,8 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 ## Filtering & discovery
 
 > **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop. Do not chain fallback patterns or broaden the search unless the user explicitly asks.
+
+> **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area name), confirm it exists (`--help`, the matching registry `ls`, or `rtfm`) before reporting a negative result — that one verification call is exempt from the stop-at-first-miss rule.
 
 Three commands support `--pattern` (glob or substring on the item ID):
 

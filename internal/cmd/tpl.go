@@ -18,8 +18,9 @@ var flagTplConfirm bool
 var flagTplDomain string
 
 var tplCmd = &cobra.Command{
-	Use:   "tpl",
-	Short: "Manage templates (eval, create, delete)",
+	Use:        "tpl",
+	SuggestFor: []string{"template", "templates"},
+	Short:      "Manage templates (eval, create, delete)",
 	Long:  "Evaluate Jinja2 templates and manage template sensor definitions.",
 }
 

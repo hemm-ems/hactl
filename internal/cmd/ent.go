@@ -35,8 +35,9 @@ var (
 )
 
 var entCmd = &cobra.Command{
-	Use:   "ent",
-	Short: "Browse and inspect entities",
+	Use:        "ent",
+	SuggestFor: []string{"entity", "entities", "states", "sensor", "sensors"},
+	Short:      "Browse and inspect entities",
 	Long:  "List, inspect, and analyze Home Assistant entities and their history.",
 }
 
@@ -151,7 +152,12 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if flagEntDomain != "" {
-		states = filterEntitiesByDomain(states, flagEntDomain)
+		filtered := filterEntitiesByDomain(states, flagEntDomain)
+		if len(filtered) == 0 {
+			_, _ = fmt.Fprintln(w, domainNotFoundHint(flagEntDomain))
+			return nil
+		}
+		states = filtered
 	}
 
 	if flagEntPattern != "" {
@@ -895,6 +901,16 @@ func filterEntitiesByArea(states []entityState, rc *registryContext, area string
 // labelNotFoundHint returns the user-facing message when a --label value isn't in the registry.
 func labelNotFoundHint(label string) string {
 	return fmt.Sprintf("label %q not found in registry (try: hactl label ls)", label)
+}
+
+// domainNotFoundHint returns the user-facing message when --domain matches no
+// entities. "helper" is the common trap: helpers live in input_* / counter /
+// timer / schedule domains and have their own listing command.
+func domainNotFoundHint(domain string) string {
+	if domain == "helper" || domain == "helpers" {
+		return fmt.Sprintf("%q is not an entity domain — list helpers with: hactl helper ls", domain)
+	}
+	return fmt.Sprintf("no entities in domain %q — verify the domain exists (e.g. sensor, light, input_boolean) before reporting a negative result", domain)
 }
 
 // labelExistsInRegistry returns true if the given label name or ID exists in the registry.

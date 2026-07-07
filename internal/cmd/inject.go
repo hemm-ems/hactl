@@ -40,7 +40,7 @@ func maybeInjectManual(executed *cobra.Command, rawArgs []string) {
 	}
 
 	family, _ := manual.FamilyFor(top) // unknown command ⇒ "" ⇒ core only
-	text := manual.Claim(stateCacheDir(), manual.SessionKey(), mode, family, time.Now())
+	text := manual.Claim(stateCacheDir(flagDir), manual.SessionKey(), mode, family, time.Now())
 	if text == "" {
 		return
 	}
@@ -93,8 +93,73 @@ func markRTFMDelivered() {
 		scopes = []string{"all"}
 	}
 	if len(scopes) > 0 {
-		manual.MarkDelivered(stateCacheDir(), manual.SessionKey(), time.Now(), scopes...)
+		manual.MarkDelivered(stateCacheDir(flagDir), manual.SessionKey(), time.Now(), scopes...)
 	}
+}
+
+// confirmGuard refuses a --confirm write fired as the first command of its
+// family in an agent-shaped session: the family how-to is only delivered
+// *with* that command's result, so nothing informed the write (the measured
+// F4 shape — dev/tuning e08). The refusal delivers core + how-to in the
+// usual layout and exits 1, making the retry an informed one; a proper
+// dry-run→confirm sequence never triggers it because the dry-run call
+// delivers the how-to first. Agent-shaped scripts that intend blind writes
+// opt out with HACTL_MANUAL_MODE=off.
+func confirmGuard(rawArgs []string) error {
+	if !hasConfirmArg(rawArgs) {
+		return nil
+	}
+	mode := manual.ModeFromEnv()
+	if mode == manual.ModeOff || isTerminal(os.Stdout) || isTerminal(os.Stderr) {
+		return nil
+	}
+	cmd, _, err := rootCmd.Find(rawArgs)
+	if err != nil || cmd == nil || cmd.Flags().Lookup("confirm") == nil {
+		//nolint:nilerr // fail-open by design: not a write command, or an unknown command that must error in cobra, not here
+		return nil
+	}
+	top := topCommandName(cmd)
+	family, ok := manual.FamilyFor(top)
+	if !ok || len(manual.FamilySections[family]) == 0 {
+		return nil
+	}
+	// The guard runs before cobra parses flags, so --dir must come from the
+	// raw args; stateless delivery (cacheDir "") cannot track "seen" and the
+	// guard would refuse forever — fail open like delivery itself does.
+	cacheDir := stateCacheDir(dirFromArgs(rawArgs))
+	if cacheDir == "" {
+		return nil
+	}
+	if !manual.HowToPending(cacheDir, manual.SessionKey(), mode, family, time.Now()) {
+		return nil
+	}
+	if text := manual.Claim(cacheDir, manual.SessionKey(), mode, family, time.Now()); text != "" {
+		fmt.Fprintf(os.Stderr, "%s\n\n=== RESULT of hactl %s ===\n", text, strings.Join(rawArgs, " "))
+	}
+	return fmt.Errorf("--confirm refused: this is the session's first %q command, so its how-to (delivered above) could not have informed the call — run the dry-run form, present the plan to the user, and repeat with --confirm only after the user explicitly confirms (scripts: HACTL_MANUAL_MODE=off)", family)
+}
+
+// hasConfirmArg scans unparsed args for the --confirm flag.
+func hasConfirmArg(args []string) bool {
+	for _, a := range args {
+		if a == "--confirm" || a == "--confirm=true" {
+			return true
+		}
+	}
+	return false
+}
+
+// dirFromArgs extracts a --dir value from unparsed args.
+func dirFromArgs(args []string) string {
+	for i, a := range args {
+		if a == "--dir" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "--dir="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // stateCacheDir locates the per-instance cache dir for session state. It
@@ -102,8 +167,8 @@ func markRTFMDelivered() {
 // rtfm never set. May create ~/.hactl/default/cache before setup ever ran —
 // harmless, setup uses the same directory. "" (unresolvable) makes delivery
 // stateless (fail-open).
-func stateCacheDir() string {
-	dir := config.BestEffortDir(flagDir)
+func stateCacheDir(dirFlag string) string {
+	dir := config.BestEffortDir(dirFlag)
 	if dir == "" {
 		return ""
 	}
