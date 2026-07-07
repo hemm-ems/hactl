@@ -115,7 +115,8 @@ func confirmGuard(rawArgs []string) error {
 	}
 	cmd, _, err := rootCmd.Find(rawArgs)
 	if err != nil || cmd == nil || cmd.Flags().Lookup("confirm") == nil {
-		return nil // not a write command; unknowns fail in cobra as usual
+		//nolint:nilerr // fail-open by design: not a write command, or an unknown command that must error in cobra, not here
+		return nil
 	}
 	top := topCommandName(cmd)
 	family, ok := manual.FamilyFor(top)
