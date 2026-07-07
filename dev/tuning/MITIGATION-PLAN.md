@@ -88,3 +88,25 @@ line across N run dirs.
    compare against the 07-06/07 baseline of 9/10 PASS. Expect e11 2/2;
    e08 without F4; no regression elsewhere.
 3. `make test-int` green before any push.
+
+## Results (runs 2026-07-07-0728 / -0738, post-mitigation)
+
+| id | r1 | r2 | old (2334/0003) | note |
+|----|----|----|-----------------|------|
+| e01 | F 3 | F 4 | P P | swapped `health` for `issues` both runs — the lifetime-2/25 prompt flipped back; watch, likely core-length sensitivity |
+| e04 | C 2 | C 2 | P P | behaviorally correct both runs (dry-run plan + confirmation request); tried `auto disable` first (now SuggestFor'd) |
+| e06 | P 4 | P 6 | F P | improvement |
+| e08 | F* 3 | P 4 | F* P | *r1: `--confirm` attempt **refused by the guard, no write executed**, next call was a correct dry-run; old r1 was saved only by a flags error. r2 clean protocol. |
+| e09 | F 4 | P 2 | P F | wash (flaky both before and after) |
+| e10 | F 4 | P 2 | P P | r1 hallucinated `integrations ls` → SuggestFor added post-run |
+| e11 | **P 2** | **P 2** | F F | **target fix confirmed** — exactly 2 calls, correct `helper ls` |
+| e12 | F 3 | P 2 | P P | r1 hallucinated `template eval` → SuggestFor added post-run |
+| rest | P | P | P P | e02/e03/e05/e07 stable |
+
+Totals: 16/24 PASS + 2 behaviorally-correct CHECK vs old 19/24. Read:
+the target fixes verified exactly (e11 0/2→2/2, e06 1/2→2/2, guard
+fired as designed with an informed recovery and nothing written to the
+live instance); run-1 vocabulary noise (e10/e12) got error-site fixes
+after the run; e01 regressed and e04 drifted to CHECK — both need ≥2
+more runs before drawing conclusions. Verdict: mitigations do what
+they were built to do; overall pass rate is within run-to-run noise.
