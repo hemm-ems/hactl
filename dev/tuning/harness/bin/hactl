@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# Call-ledger shim for the harness comparison (dirigent): logs every hactl
+# invocation in the exact `Tool call:` line format that dev/tuning/grade.py
+# parses, then execs the real binary. Harness-neutral: works under codex,
+# Kilo Code, or any other executor whose shell has this dir first in PATH.
+#
+#   HACTL_REAL      absolute path to the real hactl binary (required)
+#   HACTL_CALL_LOG  file to append Tool-call lines to (optional; no log if unset)
+
+if [[ -n "${HACTL_CALL_LOG:-}" ]]; then
+  args="$*"
+  args="${args//$'\n'/ }"   # keep the ledger line single-line
+  args="${args//\"/\'}"     # keep grade.py's command regex parseable
+  printf 'Tool call: hactl({"command": "%s"})\n' "$args" >> "$HACTL_CALL_LOG"
+fi
+
+exec "${HACTL_REAL:?HACTL_REAL not set (path to real hactl binary)}" "$@"
