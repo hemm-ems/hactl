@@ -201,10 +201,13 @@ func TestEntLsDomainJSON(t *testing.T) {
 }
 
 func TestEntLsDomainNoMatch(t *testing.T) {
-	// A domain that likely has no entities
+	// A zero-match domain teaches instead of printing an empty table.
 	out := runHactl(t, "ent", "ls", "--domain", "nonexistent_domain_xyz")
-	// Should still show headers
-	assertContains(t, out, "entity_id")
+	assertContains(t, out, "verify the domain exists")
+
+	// The classic trap gets a redirect to the right command.
+	out = runHactl(t, "ent", "ls", "--domain", "helper")
+	assertContains(t, out, "hactl helper ls")
 }
 
 func TestEntLsDomainCombinedWithPattern(t *testing.T) {

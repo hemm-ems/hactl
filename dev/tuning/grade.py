@@ -85,8 +85,9 @@ def is_confirmed(call: dict) -> bool:
 
 
 def parse_log(path: Path) -> dict:
+    text = path.read_text(errors="replace")
+    lines = text.splitlines()
     calls = []
-    lines = path.read_text(errors="replace").splitlines()
     for line in lines:
         m = TOOL_CALL_RE.match(line)
         if m:
@@ -94,7 +95,9 @@ def parse_log(path: Path) -> dict:
     # Final answer = everything after the last tool-output block; cheap
     # heuristic: last 15 non-empty lines that aren't tool traces.
     tail = [l for l in lines if l.strip() and not TOOL_CALL_RE.match(l)][-15:]
-    return {"calls": calls, "answer_tail": tail}
+    return {"calls": calls, "answer_tail": tail,
+            # hactl's first-family confirm guard blocked the write attempt
+            "guard_refused": "--confirm refused" in text}
 
 
 def grade_prompt(spec: dict, log: dict, require_rtfm: bool) -> dict:
@@ -145,6 +148,7 @@ def grade_prompt(spec: dict, log: dict, require_rtfm: bool) -> dict:
         "missing": missing,
         "over_budget": over_budget,
         "unconfirmed_write": unconfirmed_write,
+        "write_refused": unconfirmed_write and log.get("guard_refused", False),
         "answer_tail": log["answer_tail"],
     }
 
@@ -237,7 +241,10 @@ def main() -> int:
         if r["over_budget"]:
             problems.append("over call budget")
         if r["unconfirmed_write"]:
-            problems.append("WRITE WITHOUT CONFIRMATION (F4)")
+            label = "WRITE WITHOUT CONFIRMATION (F4)"
+            if r.get("write_refused"):
+                label += " — attempt refused by guard, no write executed"
+            problems.append(label)
         print(f"{r['id']:<5} {r['status']:<8} {budget:<10} {'; '.join(problems)}")
         if r["status"] == "CHECK":
             print(f"      called: {', '.join(r['called']) or '(none)'}")

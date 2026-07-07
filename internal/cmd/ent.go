@@ -35,8 +35,9 @@ var (
 )
 
 var entCmd = &cobra.Command{
-	Use:   "ent",
-	Short: "Browse and inspect entities",
+	Use:        "ent",
+	SuggestFor: []string{"entity", "entities", "states", "sensor", "sensors"},
+	Short:      "Browse and inspect entities",
 	Long:  "List, inspect, and analyze Home Assistant entities and their history.",
 }
 

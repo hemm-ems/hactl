@@ -20,8 +20,9 @@ var flagSvcReturn bool
 var flagSvcConfirm bool
 
 var svcCmd = &cobra.Command{
-	Use:   "svc",
-	Short: "Call Home Assistant services",
+	Use:        "svc",
+	SuggestFor: []string{"service", "services", "call"},
+	Short:      "Call Home Assistant services",
 	Long:  "Invoke HA service calls (e.g. group.set, input_boolean.turn_on).",
 }
 
