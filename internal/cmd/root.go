@@ -136,6 +136,13 @@ func truncationHint(cmdPath string) string {
 
 // Execute runs the root command.
 func Execute() error {
+	// Before anything runs: a first-of-family --confirm from an agent-shaped
+	// caller is refused (see confirmGuard) — the write must not execute.
+	if err := confirmGuard(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
+
 	var capBuf bytes.Buffer
 	rootCmd.SetOut(&capBuf)
 	defer rootCmd.SetOut(nil)

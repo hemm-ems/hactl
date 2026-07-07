@@ -724,3 +724,15 @@ func TestRunEntShow_JSON_PreservesContext(t *testing.T) {
 		t.Errorf("context.user_id = %v, want %s", ctx["user_id"], janUUID)
 	}
 }
+
+func TestDomainNotFoundHint(t *testing.T) {
+	for _, d := range []string{"helper", "helpers"} {
+		if got := domainNotFoundHint(d); !strings.Contains(got, "hactl helper ls") {
+			t.Errorf("domainNotFoundHint(%q) must redirect to helper ls, got %q", d, got)
+		}
+	}
+	got := domainNotFoundHint("sonsor")
+	if !strings.Contains(got, `"sonsor"`) || !strings.Contains(got, "verify the domain") {
+		t.Errorf("generic hint must name the domain and ask for verification, got %q", got)
+	}
+}

@@ -105,6 +105,26 @@ func Claim(cacheDir, session string, mode Mode, family string, now time.Time) st
 	return text
 }
 
+// HowToPending reports whether manual content covering family is still
+// undelivered in the session — i.e. an agent issuing a command of that family
+// right now cannot have seen its how-to yet. Read-only: unlike Claim it
+// neither refreshes the session TTL nor persists. Fail-open: an unresolvable
+// cacheDir or delivery off reports nothing pending.
+func HowToPending(cacheDir, session string, mode Mode, family string, now time.Time) bool {
+	if cacheDir == "" || mode == ModeOff {
+		return false
+	}
+	_, sess := loadSession(cacheDir, session, now)
+	if sess.Full {
+		return false
+	}
+	if mode == ModeFull {
+		return true
+	}
+	text, _ := FamilyText(family, sess.deliveredSet())
+	return text != ""
+}
+
 // MarkDelivered records delivery without emitting anything (rtfm printed the
 // content itself). Scopes: "all" (full manual), "core", or a family name.
 func MarkDelivered(cacheDir, session string, now time.Time, scopes ...string) {

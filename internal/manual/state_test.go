@@ -169,3 +169,40 @@ func TestPruneStaleSessions(t *testing.T) {
 		t.Error("active session missing from state file")
 	}
 }
+
+func TestHowToPending(t *testing.T) {
+	dir := t.TempDir()
+
+	if !HowToPending(dir, "s1", ModeProgressive, "dash", t0) {
+		t.Error("fresh session: dash how-to must be pending")
+	}
+	// Read-only: the check itself must not mark anything delivered.
+	if !HowToPending(dir, "s1", ModeProgressive, "dash", t0) {
+		t.Error("HowToPending must not consume the pending state")
+	}
+
+	_ = Claim(dir, "s1", ModeProgressive, "dash", t0)
+	if HowToPending(dir, "s1", ModeProgressive, "dash", t0.Add(time.Minute)) {
+		t.Error("after Claim the dash how-to is delivered, nothing pending")
+	}
+	if !HowToPending(dir, "s1", ModeProgressive, "svc", t0.Add(time.Minute)) {
+		t.Error("svc how-to still pending after only dash was delivered")
+	}
+
+	// Full mode pends until the full manual went out.
+	if !HowToPending(dir, "s2", ModeFull, "dash", t0) {
+		t.Error("full mode, nothing delivered: pending")
+	}
+	_ = Claim(dir, "s2", ModeFull, "dash", t0)
+	if HowToPending(dir, "s2", ModeFull, "dash", t0.Add(time.Minute)) {
+		t.Error("full manual delivered: nothing pending")
+	}
+
+	// Fail-open cases.
+	if HowToPending("", "s1", ModeProgressive, "dash", t0) {
+		t.Error("stateless delivery must report nothing pending")
+	}
+	if HowToPending(dir, "s3", ModeOff, "dash", t0) {
+		t.Error("mode off must report nothing pending")
+	}
+}
