@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,5 +33,41 @@ func TestWriteDashboardSnapshot(t *testing.T) {
 	}
 	if name := filepath.Base(p2); name[:len("lovelace_energy.")] != "lovelace_energy." {
 		t.Errorf("slash not sanitized in snapshot name: %s", name)
+	}
+
+	// A traversal-style url_path must never escape the snapshot dir.
+	p3, err := writeDashboardSnapshot(dir, "../../../etc/hosts", raw)
+	if err != nil {
+		t.Fatalf("writeDashboardSnapshot traversal: %v", err)
+	}
+	wantPrefix := filepath.Join(dir, "backups", "dashboards") + string(os.PathSeparator)
+	if !strings.HasPrefix(p3, wantPrefix) {
+		t.Errorf("traversal url_path escaped snapshot dir: %s (want under %s)", p3, wantPrefix)
+	}
+	if strings.ContainsRune(filepath.Base(p3), os.PathSeparator) {
+		t.Errorf("snapshot filename contains a path separator: %s", p3)
+	}
+}
+
+func TestSanitizeSnapshotName(t *testing.T) {
+	cases := map[string]string{
+		"":                "default",
+		"lovelace":        "lovelace",
+		"lovelace-dev":    "lovelace-dev",
+		"lovelace/energy": "lovelace_energy",
+		"..":              "default",
+		"...":             "default",
+		"../../etc/hosts": "_.._etc_hosts",
+		"a\\b":            "a_b",
+		"weird name!$":    "weird_name__",
+	}
+	for in, want := range cases {
+		if got := sanitizeSnapshotName(in); got != want {
+			t.Errorf("sanitizeSnapshotName(%q) = %q, want %q", in, got, want)
+		}
+		// Invariant: the result is always a single, separator-free component.
+		if strings.ContainsAny(sanitizeSnapshotName(in), `/\`) {
+			t.Errorf("sanitizeSnapshotName(%q) leaked a separator", in)
+		}
 	}
 }

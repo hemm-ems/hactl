@@ -47,15 +47,40 @@ func writeDashboardSnapshot(dirFlag, urlPath string, raw []byte) (string, error)
 	if err := os.MkdirAll(filepath.Clean(dir), 0o750); err != nil {
 		return "", fmt.Errorf("creating snapshot dir: %w", err)
 	}
-	name := urlPath
-	if name == "" {
-		name = "default"
-	}
-	name = strings.ReplaceAll(name, "/", "_")
+	// url_path comes from HA's dashboard list, but it still flows into a file
+	// path, so reduce it to a single safe filename component and then verify the
+	// result stays inside the snapshot dir (defense in depth against traversal).
+	name := sanitizeSnapshotName(urlPath)
 	ts := time.Now().UTC().Format("20060102T150405")
 	path := filepath.Join(dir, name+"."+ts+".json")
+	if !strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+		return "", fmt.Errorf("refusing to write snapshot outside %s", dir)
+	}
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		return "", fmt.Errorf("writing snapshot: %w", err)
 	}
 	return path, nil
+}
+
+// sanitizeSnapshotName reduces an arbitrary dashboard url_path to a single safe
+// path component: every byte outside [A-Za-z0-9._-] becomes "_", and leading/
+// trailing dots are stripped so the result can never be "", ".", ".." or any
+// traversal sequence.
+func sanitizeSnapshotName(urlPath string) string {
+	b := make([]byte, 0, len(urlPath))
+	for i := range len(urlPath) {
+		c := urlPath[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '.', c == '-', c == '_':
+			b = append(b, c)
+		default:
+			b = append(b, '_')
+		}
+	}
+	name := strings.Trim(string(b), ".")
+	if name == "" {
+		return "default"
+	}
+	return name
 }
