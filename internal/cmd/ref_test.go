@@ -373,3 +373,24 @@ func TestRunRefValidate_ExitCodeFlagReturnsNonZero(t *testing.T) {
 		t.Errorf("report should print before exit-code error\n%s", buf.String())
 	}
 }
+
+func TestConfigScanGateError(t *testing.T) {
+	boom := errors.New("companion unreachable")
+
+	// No error from the scan -> never a gate error.
+	if got := configScanGateError(nil, true, false); got != nil {
+		t.Errorf("nil scan error should not gate, got %v", got)
+	}
+	// Interactive (no --exit-code): a scan failure is only a warning, not fatal.
+	if got := configScanGateError(boom, false, false); got != nil {
+		t.Errorf("without --exit-code the scan failure must not be fatal, got %v", got)
+	}
+	// --exit-code without --allow-partial: a scan failure must fail the gate.
+	if got := configScanGateError(boom, true, false); got == nil {
+		t.Error("--exit-code with a failed config scan must return an error (vacuous gate)")
+	}
+	// --exit-code with --allow-partial: explicitly opted into a partial gate.
+	if got := configScanGateError(boom, true, true); got != nil {
+		t.Errorf("--allow-partial should permit a partial gate, got %v", got)
+	}
+}

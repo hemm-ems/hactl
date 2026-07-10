@@ -199,6 +199,15 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	// --- Dashboard side (WS) ---
 	dashboards, err := src.ws.DashboardList(ctx)
 	if err != nil {
+		if confirm && len(cfgResp.Changes) > 0 {
+			// The config half is already written; be explicit so the operator
+			// knows the run was partial. Re-running is idempotent (the literal is
+			// gone from config, so only dashboards get rewritten on the retry).
+			return fmt.Errorf("config files were already updated (%d change(s)); dashboards could not be "+
+				"listed, so dashboard references were left unchanged: %w; re-run "+
+				"`hactl ref replace %q %q --confirm` (idempotent) once HA is reachable",
+				len(cfgResp.Changes), err, oldVal, newVal)
+		}
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
 	plans := planDashboardReplacements(ctx, src.ws, dashboards, oldVal, newVal)
@@ -312,6 +321,9 @@ func dashboardStatus(ctx context.Context, ws *haapi.WSClient, p dashReplacePlan,
 	if err != nil {
 		return "error: " + err.Error()
 	}
+	// Snapshot the current config before overwriting (asymmetric with the YAML
+	// side otherwise, which always backs up first).
+	snapshotDashboardBeforeSave(ctx, ws, p.urlPath)
 	if err := ws.DashboardConfigSave(ctx, p.urlPath, out); err != nil {
 		return "error: " + err.Error()
 	}
@@ -361,6 +373,20 @@ func (e *danglingRefsError) Error() string {
 }
 func (e *danglingRefsError) ExitCode() int { return 1 }
 
+// configScanGateError decides whether a failed config-file scan must fail the
+// command. Interactively a partial validate (dashboards only) still has value,
+// so the failure is a warning. But under --exit-code (CI/pre-commit gating) a
+// silently-skipped config half makes the gate vacuous — a companion outage would
+// let dangling config references pass green — so it is fatal unless the caller
+// opts into a partial gate with --allow-partial (mirroring the live-set flag).
+func configScanGateError(entErr error, exitCode, allowPartial bool) error {
+	if entErr == nil || !exitCode || allowPartial {
+		return nil
+	}
+	return fmt.Errorf("config files could not be scanned, so --exit-code cannot certify they are free of "+
+		"dangling references: %w; re-run with --allow-partial to gate on dashboards alone", entErr)
+}
+
 func runRefValidate(ctx context.Context, w io.Writer) error {
 	src, err := connectRefSources(ctx)
 	if err != nil {
@@ -378,6 +404,9 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 	// Config files (companion). A companion failure is a warning, not fatal —
 	// a partial validate over dashboards alone still has value.
 	if resp, entErr := src.cc.RefEntities(ctx); entErr != nil {
+		if gateErr := configScanGateError(entErr, flagRefExitCode, flagRefAllowPartial); gateErr != nil {
+			return gateErr
+		}
 		slog.Warn("companion config entity scan failed; config files were not validated", "error", entErr)
 	} else {
 		for _, e := range resp.Entities {

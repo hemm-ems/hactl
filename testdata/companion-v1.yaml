@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: hactl-companion API
-  version: 0.2.0
+  version: 2026.7.1
   description: YAML file access API for Home Assistant. Provides structured CRUD
     for templates, scripts, and automations, plus raw config file read/write 
     with !include resolution.
@@ -26,6 +26,51 @@ paths:
                     type: string
                   version:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+  /v1/status:
+    get:
+      summary: Companion capability report
+      tags:
+      - health
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - version
+                - supervisor_reachable
+                - has_ha_cli
+                - config_writable
+                - ingress_active
+                - auth_mode
+                properties:
+                  version:
+                    type: string
+                  supervisor_reachable:
+                    type: boolean
+                  has_ha_cli:
+                    type: boolean
+                  config_writable:
+                    type: boolean
+                  ingress_active:
+                    type: boolean
+                  auth_mode:
+                    type: string
+                    enum:
+                    - ingress
+                    - bearer
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      description: Returns version and capability flags. Auth-exempt (same 
+        policy as /v1/health).
   /v1/config/files:
     get:
       summary: List YAML config files
@@ -43,6 +88,10 @@ paths:
                     type: array
                     items:
                       type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
   /v1/config/file:
     get:
       summary: Read a config file (with optional !include resolution)
@@ -60,6 +109,10 @@ paths:
                     type: string
                   content:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: path
         in: query
@@ -70,8 +123,8 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-          default: 'true'
+          type: boolean
+          default: true
     put:
       summary: Write a config file (dry-run or apply)
       tags:
@@ -83,11 +136,21 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                - status
                 properties:
                   status:
                     type: string
                   diff:
                     type: string
+                  validated:
+                    type: boolean
+                  backup:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: path
         in: query
@@ -98,8 +161,8 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-          default: 'true'
+          type: boolean
+          default: true
       requestBody:
         content:
           text/plain:
@@ -125,6 +188,10 @@ paths:
                     type: string
                   content:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: path
         in: query
@@ -136,6 +203,214 @@ paths:
         required: true
         schema:
           type: string
+  /v1/related/entity:
+    get:
+      summary: Find entities related to an entity from HA config and storage 
+        metadata
+      tags:
+      - related
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - entity_id
+                - stale
+                - related
+                - stale_refs
+                properties:
+                  entity_id:
+                    type: string
+                  stale:
+                    type: boolean
+                  related:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - entity_id
+                      - relationship
+                      - detail
+                      properties:
+                        entity_id:
+                          type: string
+                        relationship:
+                          type: string
+                        detail:
+                          type: string
+                  stale_refs:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - path
+                      - matched_value
+                      properties:
+                        location:
+                          type: string
+                        path:
+                          type: string
+                        matched_value:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: stale
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+  /v1/ref/scan:
+    get:
+      summary: Find every literal reference to a value across the config file 
+        graph
+      tags:
+      - ref
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - target
+                - hits
+                properties:
+                  target:
+                    type: string
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - path
+                      - matched_value
+                      properties:
+                        location:
+                          type: string
+                        path:
+                          type: string
+                        matched_value:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: target
+        in: query
+        required: true
+        schema:
+          type: string
+  /v1/ref/entities:
+    get:
+      summary: Enumerate every entity_id-shaped reference across config files
+      tags:
+      - ref
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - entities
+                properties:
+                  entities:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - path
+                      - key
+                      - matched_value
+                      properties:
+                        location:
+                          type: string
+                        path:
+                          type: string
+                        key:
+                          type: string
+                        matched_value:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+  /v1/ref/replace:
+    post:
+      summary: Rewrite a literal reference across config files (dry-run or 
+        apply)
+      tags:
+      - ref
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - changes
+                properties:
+                  status:
+                    type: string
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - path
+                      - before
+                      - after
+                      properties:
+                        location:
+                          type: string
+                        path:
+                          type: string
+                        before:
+                          type: string
+                        after:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - old
+              - new
+              properties:
+                old:
+                  type: string
+                new:
+                  type: string
+                dry_run:
+                  type: boolean
+                  default: true
+        required: true
   /v1/config/templates:
     get:
       summary: List all template sensor definitions
@@ -166,6 +441,10 @@ paths:
                           type: string
                         device_class:
                           type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
   /v1/config/template:
     get:
       summary: Get single template definition
@@ -183,6 +462,10 @@ paths:
                     type: string
                   content:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -200,9 +483,19 @@ paths:
             application/json:
               schema: &id001
                 type: object
+                required:
+                - status
                 properties:
                   status:
                     type: string
+                  diff:
+                    type: string
+                  reloaded:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -213,8 +506,8 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-          default: 'true'
+          type: boolean
+          default: true
       requestBody:
         content:
           text/plain:
@@ -232,11 +525,19 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                - status
                 properties:
                   status:
                     type: string
                   unique_id:
                     type: string
+                  reloaded:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: domain
         in: query
@@ -259,7 +560,19 @@ paths:
           description: Successful response
           content:
             application/json:
-              schema: *id001
+              schema: &id002
+                type: object
+                required:
+                - status
+                properties:
+                  status:
+                    type: string
+                  reloaded:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -294,6 +607,10 @@ paths:
                           type: array
                           items:
                             type: object
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
   /v1/config/script:
     get:
       summary: Get single script definition
@@ -311,6 +628,10 @@ paths:
                     type: string
                   content:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -327,6 +648,10 @@ paths:
           content:
             application/json:
               schema: *id001
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -337,8 +662,8 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-          default: 'true'
+          type: boolean
+          default: true
       requestBody:
         content:
           text/plain:
@@ -354,13 +679,21 @@ paths:
           description: Successful response
           content:
             application/json:
-              schema: &id002
+              schema:
                 type: object
+                required:
+                - status
                 properties:
                   status:
                     type: string
                   id:
                     type: string
+                  reloaded:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       requestBody:
         content:
           text/plain:
@@ -376,7 +709,11 @@ paths:
           description: Successful response
           content:
             application/json:
-              schema: *id001
+              schema: *id002
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -409,6 +746,10 @@ paths:
                           type: string
                         description:
                           type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
   /v1/config/automation:
     get:
       summary: Get single automation definition
@@ -426,6 +767,10 @@ paths:
                     type: string
                   content:
                     type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -442,6 +787,10 @@ paths:
           content:
             application/json:
               schema: *id001
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
@@ -452,8 +801,8 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-          default: 'true'
+          type: boolean
+          default: true
       requestBody:
         content:
           text/plain:
@@ -469,7 +818,24 @@ paths:
           description: Successful response
           content:
             application/json:
-              schema: *id002
+              schema:
+                type: object
+                required:
+                - status
+                properties:
+                  status:
+                    type: string
+                  id:
+                    type: string
+                  entity_id:
+                    type: string
+                    nullable: true
+                  reloaded:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       requestBody:
         content:
           text/plain:
@@ -485,17 +851,524 @@ paths:
           description: Successful response
           content:
             application/json:
-              schema: *id001
+              schema: *id002
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
       parameters:
       - name: id
         in: query
         required: true
         schema:
           type: string
+  /v1/config/helpers:
+    get:
+      summary: List all helpers
+      tags:
+      - helpers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  helpers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        domain:
+                          type: string
+                        icon:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: domain
+        in: query
+        required: false
+        schema:
+          type: string
+  /v1/config/helper:
+    get:
+      summary: Get single helper definition
+      tags:
+      - helpers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  domain:
+                    type: string
+                  content:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Create new helper
+      tags:
+      - helpers
+      responses:
+        '201':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                properties:
+                  status:
+                    type: string
+                  id:
+                    type: string
+                  entity_id:
+                    type: string
+                  reloaded:
+                    type: boolean
+                  entity_created:
+                    type: boolean
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: domain
+        in: query
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
+    put:
+      summary: Update helper definition
+      tags:
+      - helpers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id002
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: domain
+        in: query
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
+    delete:
+      summary: Delete helper
+      tags:
+      - helpers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema: *id002
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: domain
+        in: query
+        required: false
+        schema:
+          type: string
+  /v1/ha/reload/{domain}:
+    post:
+      summary: Reload an HA integration domain
+      tags:
+      - ha
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  domain:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: domain
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/ha/check-config:
+    post:
+      summary: Validate HA configuration via the core API
+      tags:
+      - ha
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  valid:
+                    type: boolean
+                  errors:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+  /v1/wireguard/config:
+    post:
+      summary: Push WireGuard tunnel configuration
+      tags:
+      - wireguard
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  tunnel:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: tunnel
+        in: query
+        required: false
+        schema:
+          type: string
+          default: wg0
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tunnel_name:
+                  type: string
+                  default: wg0
+                interface:
+                  type: object
+                  required:
+                  - private_key
+                  - address
+                  properties:
+                    private_key:
+                      type: string
+                    address:
+                      type: string
+                    dns:
+                      type: string
+                peers:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                    - public_key
+                    - allowed_ips
+                    properties:
+                      public_key:
+                        type: string
+                      endpoint:
+                        type: string
+                      allowed_ips:
+                        type: string
+                      persistent_keepalive:
+                        type: integer
+          text/plain:
+            schema:
+              type: string
+        required: true
+  /v1/wireguard/start:
+    post:
+      summary: Start a WireGuard tunnel
+      tags:
+      - wireguard
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  tunnel:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: tunnel
+        in: query
+        required: false
+        schema:
+          type: string
+          default: wg0
+  /v1/wireguard/stop:
+    post:
+      summary: Stop a WireGuard tunnel
+      tags:
+      - wireguard
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  tunnel:
+                    type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: tunnel
+        in: query
+        required: false
+        schema:
+          type: string
+          default: wg0
+  /v1/wireguard/status:
+    get:
+      summary: Get WireGuard tunnel status
+      tags:
+      - wireguard
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tunnel:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                    - active
+                    - inactive
+                  interface:
+                    type: object
+                    properties:
+                      public_key:
+                        type: string
+                      listening_port:
+                        type: integer
+                  peers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        public_key:
+                          type: string
+                        endpoint:
+                          type: string
+                        allowed_ips:
+                          type: string
+                        latest_handshake:
+                          type: string
+                        latest_handshake_secs:
+                          type: integer
+                          nullable: true
+                        transfer_rx:
+                          type: string
+                        transfer_tx:
+                          type: string
+                        transfer_rx_bytes:
+                          type: integer
+                        transfer_tx_bytes:
+                          type: integer
+                  monitor:
+                    type: object
+                    description: Live dyndns re-resolution monitor state.
+                    properties:
+                      running:
+                        type: boolean
+                      hostnames:
+                        type: array
+                        items:
+                          type: string
+                      healthy:
+                        type: boolean
+                      resolved:
+                        type: object
+                        additionalProperties:
+                          type: string
+                      last_check_secs_ago:
+                        type: integer
+                        nullable: true
+                      last_reresolve_secs_ago:
+                        type: integer
+                        nullable: true
+                      attempt:
+                        type: integer
+                      next_retry_secs:
+                        type: integer
+                        nullable: true
+                      last_error:
+                        type: string
+                        nullable: true
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: tunnel
+        in: query
+        required: false
+        schema:
+          type: string
+          default: wg0
+  /v1/logs:
+    get:
+      summary: Query recent companion log records from the in-memory ring buffer
+      tags:
+      - logs
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts:
+                          type: number
+                        level:
+                          type: string
+                        name:
+                          type: string
+                        message:
+                          type: string
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: component
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: level
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
+  schemas:
+    Error:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              type: integer
+              description: HTTP status code
+            message:
+              type: string
+  responses:
+    Error:
+      description: Error response (JSON envelope)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
 security:
 - bearerAuth: []
