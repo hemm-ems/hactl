@@ -8,7 +8,11 @@ LDFLAGS := -s -w \
 	-X 'github.com/hemm-ems/hactl/internal/cmd.date=$(DATE)' \
 	-X 'github.com/hemm-ems/hactl/internal/cmd.testedHA=$(TESTED_HA)'
 
-.PHONY: build lint test test-int test-companion test-int-discovery test-matrix clean
+COMPANION_DIR  ?= ../hactl-companion
+COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
+VENDORED_SPEC  := testdata/companion-v1.yaml
+
+.PHONY: build lint test test-int test-companion test-int-discovery test-matrix clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -35,3 +39,13 @@ test-matrix:
 clean:
 	rm -f hactl hactl.exe
 	go clean -cache
+
+# Copy the companion's generated OpenAPI spec into testdata/ (the CLI's contract).
+sync-spec:
+	cp $(COMPANION_SPEC) $(VENDORED_SPEC)
+
+# Fail if the vendored spec has drifted from the companion's generated spec.
+# CI wires this so a released companion API change can't silently outrun the CLI.
+check-spec-drift:
+	@diff -u $(VENDORED_SPEC) $(COMPANION_SPEC) \
+		|| { echo "ERROR: $(VENDORED_SPEC) drifted from companion; run: make sync-spec"; exit 1; }

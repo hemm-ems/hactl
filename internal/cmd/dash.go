@@ -35,7 +35,7 @@ var dashCmd = &cobra.Command{
 	Use:        "dash",
 	SuggestFor: []string{"dashboard", "dashboards", "lovelace"},
 	Short:      "Manage Lovelace dashboards",
-	Long:  "List, inspect, create, and modify Home Assistant Lovelace dashboards.",
+	Long:       "List, inspect, create, and modify Home Assistant Lovelace dashboards.",
 }
 
 var dashLsCmd = &cobra.Command{
@@ -360,6 +360,7 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
+	snapshotDashboardBeforeSave(ctx, ws, urlPath)
 	if err := ws.DashboardConfigSave(ctx, urlPath, data); err != nil {
 		return fmt.Errorf("saving dashboard config: %w", err)
 	}
@@ -491,6 +492,7 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 	if err != nil {
 		return fmt.Errorf("encoding dashboard config: %w", err)
 	}
+	snapshotDashboardBeforeSave(ctx, ws, urlPath)
 	if err := ws.DashboardConfigSave(ctx, urlPath, out); err != nil {
 		return fmt.Errorf("saving dashboard config: %w", err)
 	}

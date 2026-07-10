@@ -48,82 +48,91 @@ func TestOpenAPISpecValid(t *testing.T) {
 	}
 }
 
-func TestAllSpecPathsCovered(t *testing.T) {
-	spec := loadSpec(t)
+// clientEndpoints is every (method, path) the hactl companion client calls
+// (internal/companion/client.go). The vendored spec must document each — this is
+// the real cross-repo contract, and it is maintained here rather than as a
+// hardcoded path count, so adding a client call without a spec entry fails.
+var clientEndpoints = []struct{ method, path string }{
+	{"GET", "/v1/health"},
+	{"GET", "/v1/status"},
+	{"GET", "/v1/config/files"},
+	{"GET", "/v1/config/file"},
+	{"PUT", "/v1/config/file"},
+	{"GET", "/v1/config/block"},
+	{"GET", "/v1/related/entity"},
+	{"GET", "/v1/ref/scan"},
+	{"GET", "/v1/ref/entities"},
+	{"POST", "/v1/ref/replace"},
+	{"GET", "/v1/config/templates"},
+	{"GET", "/v1/config/template"},
+	{"PUT", "/v1/config/template"},
+	{"POST", "/v1/config/template"},
+	{"DELETE", "/v1/config/template"},
+	{"GET", "/v1/config/scripts"},
+	{"GET", "/v1/config/script"},
+	{"PUT", "/v1/config/script"},
+	{"POST", "/v1/config/script"},
+	{"DELETE", "/v1/config/script"},
+	{"GET", "/v1/config/automations"},
+	{"GET", "/v1/config/automation"},
+	{"PUT", "/v1/config/automation"},
+	{"POST", "/v1/config/automation"},
+	{"DELETE", "/v1/config/automation"},
+	{"GET", "/v1/config/helpers"},
+	{"GET", "/v1/config/helper"},
+	{"POST", "/v1/config/helper"},
+	{"PUT", "/v1/config/helper"},
+	{"DELETE", "/v1/config/helper"},
+	{"POST", "/v1/ha/reload/{domain}"},
+	{"POST", "/v1/ha/check-config"},
+	{"POST", "/v1/wireguard/config"},
+	{"POST", "/v1/wireguard/start"},
+	{"POST", "/v1/wireguard/stop"},
+	{"GET", "/v1/wireguard/status"},
+	{"GET", "/v1/logs"},
+}
 
-	expectedPaths := []string{
-		"/v1/health",
-		"/v1/config/files",
-		"/v1/config/file",
-		"/v1/config/block",
-		"/v1/config/templates",
-		"/v1/config/template",
-		"/v1/config/scripts",
-		"/v1/config/script",
-		"/v1/config/automations",
-		"/v1/config/automation",
-	}
-
-	for _, p := range expectedPaths {
-		if spec.Paths.Find(p) == nil {
-			t.Errorf("path %s missing from OpenAPI spec", p)
-		}
-	}
-
-	// Verify no unexpected paths
-	if spec.Paths.Len() != len(expectedPaths) {
-		t.Errorf("spec has %d paths, want %d", spec.Paths.Len(), len(expectedPaths))
+func operationFor(pathItem *openapi3.PathItem, method string) *openapi3.Operation {
+	switch method {
+	case "GET":
+		return pathItem.Get
+	case "POST":
+		return pathItem.Post
+	case "PUT":
+		return pathItem.Put
+	case "DELETE":
+		return pathItem.Delete
+	default:
+		return nil
 	}
 }
 
-func TestSpecEndpointMethods(t *testing.T) {
+// TestClientEndpointsInSpec asserts every operation the CLI calls is documented.
+func TestClientEndpointsInSpec(t *testing.T) {
 	spec := loadSpec(t)
-
-	cases := []struct {
-		path   string
-		method string
-	}{
-		{"/v1/health", "GET"},
-		{"/v1/config/files", "GET"},
-		{"/v1/config/file", "GET"},
-		{"/v1/config/file", "PUT"},
-		{"/v1/config/block", "GET"},
-		{"/v1/config/templates", "GET"},
-		{"/v1/config/template", "GET"},
-		{"/v1/config/template", "PUT"},
-		{"/v1/config/template", "POST"},
-		{"/v1/config/template", "DELETE"},
-		{"/v1/config/scripts", "GET"},
-		{"/v1/config/script", "GET"},
-		{"/v1/config/script", "PUT"},
-		{"/v1/config/script", "POST"},
-		{"/v1/config/script", "DELETE"},
-		{"/v1/config/automations", "GET"},
-		{"/v1/config/automation", "GET"},
-		{"/v1/config/automation", "PUT"},
-		{"/v1/config/automation", "POST"},
-		{"/v1/config/automation", "DELETE"},
-	}
-
-	for _, tc := range cases {
-		pathItem := spec.Paths.Find(tc.path)
+	for _, ep := range clientEndpoints {
+		pathItem := spec.Paths.Find(ep.path)
 		if pathItem == nil {
-			t.Errorf("path %s not found in spec", tc.path)
+			t.Errorf("path %s missing from OpenAPI spec", ep.path)
 			continue
 		}
-		var op *openapi3.Operation
-		switch tc.method {
-		case "GET":
-			op = pathItem.Get
-		case "POST":
-			op = pathItem.Post
-		case "PUT":
-			op = pathItem.Put
-		case "DELETE":
-			op = pathItem.Delete
+		if operationFor(pathItem, ep.method) == nil {
+			t.Errorf("path %s has no %s operation in spec", ep.path, ep.method)
 		}
-		if op == nil {
-			t.Errorf("path %s has no %s operation", tc.path, tc.method)
-		}
+	}
+}
+
+// TestSpecPathCountMatchesClient derives the expected path count from the client
+// endpoint list rather than a hardcoded number, so drift in either direction
+// (a spec path the client doesn't use, or a client path missing from the spec)
+// is caught after `make sync-spec`.
+func TestSpecPathCountMatchesClient(t *testing.T) {
+	spec := loadSpec(t)
+	uniquePaths := map[string]bool{}
+	for _, ep := range clientEndpoints {
+		uniquePaths[ep.path] = true
+	}
+	if got, want := spec.Paths.Len(), len(uniquePaths); got != want {
+		t.Errorf("spec has %d paths, client covers %d — vendored spec may be stale (run: make sync-spec)", got, want)
 	}
 }

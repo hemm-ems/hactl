@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,9 +14,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hemm-ems/hactl/internal/haapi"
+)
+
+// Content-Type values sent per endpoint. Most write endpoints declare a
+// text/plain body (the companion parses it as YAML); the ref-replace and helper
+// endpoints declare application/json in the OpenAPI spec.
+const (
+	mimeText = "text/plain"
+	mimeJSON = "application/json"
 )
 
 // IngressAuth obtains a Supervisor-issued Ingress session token. Used to
@@ -143,7 +153,7 @@ func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryR
 		"path":    {path},
 		"dry_run": {strconv.FormatBool(dryRun)},
 	}
-	data, err := c.doPut(ctx, "/v1/config/file", q, content)
+	data, err := c.doPut(ctx, "/v1/config/file", q, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +208,7 @@ func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun b
 	if err != nil {
 		return nil, fmt.Errorf("encoding ref replace body: %w", err)
 	}
-	data, err := c.doPostBody(ctx, "/v1/ref/replace", nil, string(body))
+	data, err := c.doPostBody(ctx, "/v1/ref/replace", nil, string(body), mimeJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +245,7 @@ func (c *Client) WriteTemplate(ctx context.Context, id, content string, dryRun b
 		"id":      {id},
 		"dry_run": {strconv.FormatBool(dryRun)},
 	}
-	data, err := c.doPut(ctx, "/v1/config/template", q, content)
+	data, err := c.doPut(ctx, "/v1/config/template", q, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +259,7 @@ func (c *Client) CreateTemplate(ctx context.Context, content, domain string) (*T
 	if domain != "" {
 		q.Set("domain", domain)
 	}
-	data, err := c.doPostBody(ctx, "/v1/config/template", q, content)
+	data, err := c.doPostBody(ctx, "/v1/config/template", q, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +307,7 @@ func (c *Client) WriteScriptDef(ctx context.Context, id, content string, dryRun 
 		"id":      {id},
 		"dry_run": {strconv.FormatBool(dryRun)},
 	}
-	data, err := c.doPut(ctx, "/v1/config/script", q, content)
+	data, err := c.doPut(ctx, "/v1/config/script", q, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +317,7 @@ func (c *Client) WriteScriptDef(ctx context.Context, id, content string, dryRun 
 
 // CreateScriptDef calls POST /v1/config/script.
 func (c *Client) CreateScriptDef(ctx context.Context, content string) (*ScriptCreateResponse, error) {
-	data, err := c.doPostBody(ctx, "/v1/config/script", nil, content)
+	data, err := c.doPostBody(ctx, "/v1/config/script", nil, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +365,7 @@ func (c *Client) WriteAutomationDef(ctx context.Context, id, content string, dry
 		"id":      {id},
 		"dry_run": {strconv.FormatBool(dryRun)},
 	}
-	data, err := c.doPut(ctx, "/v1/config/automation", q, content)
+	data, err := c.doPut(ctx, "/v1/config/automation", q, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +375,7 @@ func (c *Client) WriteAutomationDef(ctx context.Context, id, content string, dry
 
 // CreateAutomationDef calls POST /v1/config/automation.
 func (c *Client) CreateAutomationDef(ctx context.Context, content string) (*AutomationCreateResponse, error) {
-	data, err := c.doPostBody(ctx, "/v1/config/automation", nil, content)
+	data, err := c.doPostBody(ctx, "/v1/config/automation", nil, content, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +424,7 @@ func (c *Client) GetHelper(ctx context.Context, id string) (*HelperResponse, err
 // CreateHelper calls POST /v1/config/helper?domain=<domain>.
 func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*HelperCreateResponse, error) {
 	q := url.Values{"domain": {domain}}
-	data, err := c.doPostBody(ctx, "/v1/config/helper", q, content)
+	data, err := c.doPostBody(ctx, "/v1/config/helper", q, content, mimeJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +435,7 @@ func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*Hel
 // UpdateHelper calls PUT /v1/config/helper?id=<id>.
 func (c *Client) UpdateHelper(ctx context.Context, id, content string) (*ConfigDeleteResponse, error) {
 	q := url.Values{"id": {id}}
-	data, err := c.doPut(ctx, "/v1/config/helper", q, content)
+	data, err := c.doPut(ctx, "/v1/config/helper", q, content, mimeJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +456,7 @@ func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResp
 
 // ReloadDomain calls POST /v1/ha/reload/<domain>.
 func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
-	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "")
+	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "", mimeText)
 	return err
 }
 
@@ -454,7 +464,7 @@ func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
 // config on disk is valid. The error is non-nil only when the check could
 // not be performed (companion or core API unreachable).
 func (c *Client) CheckConfig(ctx context.Context) (valid bool, errors string, err error) {
-	data, err := c.doPostBody(ctx, "/v1/ha/check-config", nil, "")
+	data, err := c.doPostBody(ctx, "/v1/ha/check-config", nil, "", mimeText)
 	if err != nil {
 		return false, "", err
 	}
@@ -489,7 +499,7 @@ func (c *Client) WireGuardStatus(ctx context.Context, tunnel string) (*WireGuard
 // WireGuardConfig calls POST /v1/wireguard/config?tunnel=<tunnel> with a raw
 // `.conf` body (text/plain).
 func (c *Client) WireGuardConfig(ctx context.Context, tunnel, conf string) (*WireGuardActionResponse, error) {
-	data, err := c.doPostBody(ctx, "/v1/wireguard/config", url.Values{"tunnel": {tunnel}}, conf)
+	data, err := c.doPostBody(ctx, "/v1/wireguard/config", url.Values{"tunnel": {tunnel}}, conf, mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +510,7 @@ func (c *Client) WireGuardConfig(ctx context.Context, tunnel, conf string) (*Wir
 // WireGuardStart calls POST /v1/wireguard/start?tunnel=<tunnel>.
 func (c *Client) WireGuardStart(ctx context.Context, tunnel string) (*WireGuardActionResponse, error) {
 	q := url.Values{"tunnel": {tunnel}}
-	data, err := c.doPostBody(ctx, "/v1/wireguard/start", q, "")
+	data, err := c.doPostBody(ctx, "/v1/wireguard/start", q, "", mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +521,7 @@ func (c *Client) WireGuardStart(ctx context.Context, tunnel string) (*WireGuardA
 // WireGuardStop calls POST /v1/wireguard/stop?tunnel=<tunnel>.
 func (c *Client) WireGuardStop(ctx context.Context, tunnel string) (*WireGuardActionResponse, error) {
 	q := url.Values{"tunnel": {tunnel}}
-	data, err := c.doPostBody(ctx, "/v1/wireguard/stop", q, "")
+	data, err := c.doPostBody(ctx, "/v1/wireguard/stop", q, "", mimeText)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +567,7 @@ func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]by
 	return c.doWithRetry(req)
 }
 
-func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, content string) ([]byte, error) {
+func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
 	u := c.baseURL + path
 	if query != nil {
 		u += "?" + query.Encode()
@@ -566,7 +576,7 @@ func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, 
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", contentType)
 	return c.doWithRetry(req)
 }
 
@@ -582,7 +592,7 @@ func (c *Client) doDelete(ctx context.Context, path string, query url.Values) ([
 	return c.doWithRetry(req)
 }
 
-func (c *Client) doPut(ctx context.Context, path string, query url.Values, content string) ([]byte, error) {
+func (c *Client) doPut(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
 	u := c.baseURL + path
 	if query != nil {
 		u += "?" + query.Encode()
@@ -591,7 +601,7 @@ func (c *Client) doPut(ctx context.Context, path string, query url.Values, conte
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", contentType)
 	return c.doWithRetry(req)
 }
 
@@ -645,7 +655,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		}
 
 		respBody, status, err := c.doOnce(req)
-		if shouldRetry(err, status, hasIngressAuth) && attempt < len(backoffs) {
+		if shouldRetry(err, status, hasIngressAuth, req.Method) && attempt < len(backoffs) {
 			slog.Warn("retrying companion request", "method", req.Method, "status", status, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue
@@ -696,14 +706,53 @@ func drainBody(req *http.Request) ([]byte, error) {
 }
 
 // shouldRetry decides whether the current failure warrants another attempt.
-// Transport errors and 5xx always retry; 401 retries only when the request
-// was signed (likely an expired signature).
-func shouldRetry(err error, status int, signed bool) bool {
+//
+// Retries are gated on idempotency so a non-idempotent create (POST) is never
+// silently duplicated. For POST, a transport error may mean the request reached
+// the server but the response was lost — retrying would create a second
+// automation/script/helper — so we retry only when the request provably never
+// left the client (dial/connection-refused class). A 5xx means the server
+// received the request, so only idempotent methods retry it. A signed 401
+// (expired signature) is safe to retry for any method: the server rejected the
+// request before acting on it.
+func shouldRetry(err error, status int, signed bool, method string) bool {
+	idempotent := isIdempotentMethod(method)
 	if err != nil {
-		return true
+		if idempotent {
+			return true
+		}
+		return neverSent(err)
 	}
 	if status >= 500 {
-		return true
+		return idempotent
 	}
 	return signed && status == http.StatusUnauthorized
+}
+
+// isIdempotentMethod reports whether retrying method cannot cause duplicate
+// side effects (per RFC 7231 idempotency).
+func isIdempotentMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+// neverSent reports whether a transport error occurred before the request was
+// put on the wire (a dial / connection-refused failure), making a retry safe
+// even for a non-idempotent method — the server cannot have acted on it.
+func neverSent(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	return false
 }

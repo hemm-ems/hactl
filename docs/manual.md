@@ -170,6 +170,7 @@ hactl auto ls                             # table: id, state, area, labels, runs
 hactl auto ls --failing                   # only automations with recent errors
 hactl auto ls --pattern 'ess_*'           # glob/substring filter on automation ID
 hactl auto ls --label victron             # filter by label name (substring)
+hactl auto ls --restored                  # only "ghost" automations (restored from registry, no live config)
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
 hactl trace show trc:a7 --full            # raw trace JSON
@@ -228,6 +229,7 @@ hactl ent ls --pattern 'sensor.wp_*'      # glob/substring on entity_id
 hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)
+hactl ent ls --restored                   # only "ghost" entities (restored from registry, no live entity)
 hactl ent show sensor.wp_vl               # state + key attributes + area + labels (+ hidden count)
 hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
@@ -505,6 +507,22 @@ hactl auto ls --label victron             # automations with label "victron"
 hactl auto ls --failing                   # automations with recent trace errors
 hactl script ls --label energy            # scripts with label "energy"
 hactl script ls --failing                 # scripts with recent trace errors
+```
+
+**Ghost entities (`--restored`).** HA marks a state `restored: true` when it was
+resurrected from the entity registry/recorder with no live platform entity behind
+its `unique_id` — the automation/helper/script was deleted or re-authored under a
+new `id`, so there is **no config left to repair** (nothing for `ref scan`/`ref
+replace` to find). These show as `state: unavailable` and are easy to confuse with
+a genuinely broken config. `ent ls --restored` / `auto ls --restored` list only
+these ghosts (and a `restored` column appears automatically whenever any listed
+row is one); `ent show` / `auto show` flag it on the single-item view. Use this to
+triage `unavailable` entities into "ghost, purge in the HA UI" vs. "broken
+reference, fix with `ref replace`" before spending repair effort:
+
+```bash
+hactl ent ls --restored --domain automation   # ghost automations to clean up
+hactl auto ls --restored                       # same, automation-scoped table
 ```
 
 For broader entity discovery when you have an entity but want context:

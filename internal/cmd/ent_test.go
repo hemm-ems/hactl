@@ -736,3 +736,87 @@ func TestDomainNotFoundHint(t *testing.T) {
 		t.Errorf("generic hint must name the domain and ask for verification, got %q", got)
 	}
 }
+
+// --- #54: restored / "ghost" entity surfacing ---
+
+func TestIsRestoredAttr(t *testing.T) {
+	cases := []struct {
+		name  string
+		attrs map[string]any
+		want  bool
+	}{
+		{"restored true", map[string]any{"restored": true}, true},
+		{"restored false", map[string]any{"restored": false}, false},
+		{"absent", map[string]any{"friendly_name": "x"}, false},
+		{"wrong type", map[string]any{"restored": "true"}, false},
+		{"nil map", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRestoredAttr(tc.attrs); got != tc.want {
+				t.Errorf("isRestoredAttr(%v) = %v, want %v", tc.attrs, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFilterEntitiesByRestored(t *testing.T) {
+	states := []entityState{
+		{EntityID: "automation.live", Attributes: map[string]any{}},
+		{EntityID: "automation.ghost", Attributes: map[string]any{"restored": true}},
+		{EntityID: "sensor.also_ghost", Attributes: map[string]any{"restored": true}},
+		{EntityID: "light.on", Attributes: map[string]any{"restored": false}},
+	}
+	result := filterEntitiesByRestored(states)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 restored, got %d", len(result))
+	}
+	for _, s := range result {
+		if !isRestoredAttr(s.Attributes) {
+			t.Errorf("non-restored entity %q leaked through filter", s.EntityID)
+		}
+	}
+}
+
+func TestBoolCell(t *testing.T) {
+	if got := boolCell(true); got != "yes" {
+		t.Errorf("boolCell(true) = %q, want %q", got, "yes")
+	}
+	if got := boolCell(false); got != "" {
+		t.Errorf("boolCell(false) = %q, want empty", got)
+	}
+}
+
+func TestRunEntShow_Restored_SurfacesGhost(t *testing.T) {
+	body := `{"entity_id":"light.kitchen","state":"unavailable",` +
+		`"attributes":{"friendly_name":"Kitchen Light","restored":true},` +
+		`"last_changed":"2026-05-21T10:00:00+00:00","last_updated":"2026-05-21T10:00:00+00:00",` +
+		`"context":{"id":"01HXYZ","parent_id":null,"user_id":null}}`
+	ts := entShowFixture(t, body, []map[string]any{})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "restored:     true") {
+		t.Errorf("expected a prominent 'restored:     true' line for a ghost entity:\n%s", out)
+	}
+	if !strings.Contains(out, "ghost") {
+		t.Errorf("restored line should explain the ghost/nothing-to-repair meaning:\n%s", out)
+	}
+}
+
+func TestRunEntShow_NotRestored_NoGhostLine(t *testing.T) {
+	ts := entShowFixture(t, stateJSON(""), []map[string]any{})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	if strings.Contains(buf.String(), "restored:") {
+		t.Errorf("live entity must not print a 'restored:' line:\n%s", buf.String())
+	}
+}
