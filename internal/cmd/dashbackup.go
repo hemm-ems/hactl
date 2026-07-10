@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -40,7 +41,7 @@ func snapshotDashboardBeforeSave(ctx context.Context, ws *haapi.WSClient, urlPat
 func writeDashboardSnapshot(dirFlag, urlPath string, raw []byte) (string, error) {
 	base := config.BestEffortDir(dirFlag)
 	if base == "" {
-		return "", fmt.Errorf("could not resolve hactl instance directory")
+		return "", errors.New("could not resolve hactl instance directory")
 	}
 	dir := filepath.Join(base, "backups", "dashboards")
 	if err := os.MkdirAll(filepath.Clean(dir), 0o750); err != nil {

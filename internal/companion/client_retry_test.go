@@ -61,9 +61,9 @@ func TestNeverSent(t *testing.T) {
 // TestPostNotRetriedOn5xx proves a non-idempotent create is issued exactly once
 // even when the server 5xxs — retrying could duplicate the create.
 func TestPostNotRetriedOn5xx(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -72,7 +72,7 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 	if _, err := c.CreateScriptDef(context.Background(), "probe:\n  alias: x\n"); err == nil {
 		t.Fatal("expected error from 500")
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
+	if got := calls.Load(); got != 1 {
 		t.Errorf("POST create issued %d times, want exactly 1 (no retry on 5xx)", got)
 	}
 }
@@ -80,9 +80,9 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 // TestGetRetriedOn5xx confirms idempotent reads still retry (recovering after a
 // transient 5xx).
 func TestGetRetriedOn5xx(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
+		if calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -95,7 +95,7 @@ func TestGetRetriedOn5xx(t *testing.T) {
 	if _, err := c.ListConfigFiles(context.Background()); err != nil {
 		t.Fatalf("GET should recover after one 5xx: %v", err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("GET issued %d times, want 2 (one retry)", got)
 	}
 }

@@ -15,7 +15,7 @@ func TestWriteDashboardSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeDashboardSnapshot: %v", err)
 	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != string(raw) {
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(raw) { //nolint:gosec // reads back a file just written under t.TempDir()
 		t.Fatalf("snapshot content mismatch: %q err=%v", got, err)
 	}
 	if base := filepath.Base(filepath.Dir(path)); base != "dashboards" {
