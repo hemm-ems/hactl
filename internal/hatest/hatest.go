@@ -209,6 +209,17 @@ func start(opts ...Option) (*Instance, error) {
 
 	slog.Info("hatest: onboarding complete, token acquired")
 
+	// Onboarding returns as soon as the API server answers, but HA is still
+	// booting: integrations and any !include'd automations/scripts load
+	// asynchronously afterward. Querying /api/states before that finishes yields
+	// a partial entity set — the race behind the flaky auto_ls golden test, which
+	// intermittently saw zero automations. Block until the core reports RUNNING.
+	if waitErr := waitForRunning(ctx, baseURL, token); waitErr != nil {
+		_ = container.Terminate(ctx)
+		return nil, fmt.Errorf("waiting for HA to finish starting: %w", waitErr)
+	}
+	slog.Info("hatest: HA core running")
+
 	// Create temp dir with .env
 	dir, err := createInstanceDir(baseURL, token)
 	if err != nil {
@@ -260,6 +271,63 @@ func completeOnboarding(ctx context.Context, baseURL string) (string, error) {
 	}
 
 	return llToken, nil
+}
+
+// waitForRunning blocks until HA finishes bootstrapping (core state "RUNNING")
+// or ctx expires. /api/config reports "STARTING" while integrations load and
+// flips to "RUNNING" once the homeassistant_started event fires — the point at
+// which all components, including !include'd automations and scripts, are set
+// up and present in /api/states.
+func waitForRunning(ctx context.Context, baseURL, token string) error {
+	const pollInterval = 200 * time.Millisecond
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	lastState := "<unknown>"
+	for {
+		if state, err := haCoreState(ctx, baseURL, token); err == nil {
+			if state == "RUNNING" {
+				return nil
+			}
+			lastState = state
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("HA not RUNNING before deadline (last state %q): %w", lastState, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// haCoreState returns HA's overall core state (e.g. "STARTING", "RUNNING") from
+// GET /api/config.
+func haCoreState(ctx context.Context, baseURL, token string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/config", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck // response body close
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+	}
+
+	var cfg struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", err
+	}
+	return cfg.State, nil
 }
 
 func createOwnerUser(ctx context.Context, baseURL string) (string, error) {

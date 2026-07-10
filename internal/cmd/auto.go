@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -480,6 +481,10 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 
 		rows = append(rows, row)
 	}
+	// HA's /api/states response order is not guaranteed to be stable, so sort by
+	// id for deterministic output (keeps `auto ls` listings and golden tests
+	// reproducible across runs).
+	sort.Slice(rows, func(i, j int) bool { return rows[i].id < rows[j].id })
 	return rows
 }
 

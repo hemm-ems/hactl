@@ -1,10 +1,17 @@
-# Basic automation test fixture
+# Basic automation test fixture.
+#
+# These automations exist to be *listed* (auto/ent ls, golden tests), not to
+# execute. Triggers are deliberately inert — an event trigger on an event type
+# HA never emits — so runs_24h stays deterministically 0. A live-firing trigger
+# (e.g. `time_pattern hours: "/1"`) intermittently fired during a test run and
+# flaked TestGoldenAutoLs (runs_24h 1 vs golden 0). Conditions/actions are kept
+# realistic so reference-scanning tests still have entities to find.
 - id: climate_schedule
   alias: Climate Schedule
   description: Manages climate based on time schedule
   trigger:
-    - platform: time_pattern
-      hours: "/1"
+    - platform: event
+      event_type: hactl_test_never_fires
   condition:
     - condition: state
       entity_id: person.owner
@@ -23,8 +30,8 @@
   alias: Morning Alarm
   description: Turns on lights at alarm time
   trigger:
-    - platform: time
-      at: "07:00:00"
+    - platform: event
+      event_type: hactl_test_never_fires
   condition: []
   action:
     - service: light.turn_on
@@ -38,9 +45,8 @@
   alias: Ventilation Boost
   description: Boosts ventilation on high humidity
   trigger:
-    - platform: numeric_state
-      entity_id: sensor.bathroom_humidity
-      above: 70
+    - platform: event
+      event_type: hactl_test_never_fires
   condition: []
   action:
     - service: fan.set_percentage
