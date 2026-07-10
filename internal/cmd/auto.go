@@ -28,12 +28,13 @@ var flagAutoPattern string
 var flagAutoLabel string
 var flagAutoFile string
 var flagAutoConfirm bool
+var flagAutoRestored bool
 
 var autoCmd = &cobra.Command{
 	Use:        "auto",
 	SuggestFor: []string{"automation", "automations"},
 	Short:      "Manage and inspect automations",
-	Long:  "List, filter, inspect, diff, and apply Home Assistant automations.",
+	Long:       "List, filter, inspect, diff, and apply Home Assistant automations.",
 }
 
 var autoLsCmd = &cobra.Command{
@@ -108,6 +109,7 @@ func init() {
 	autoLsCmd.Flags().BoolVar(&flagAutoFailing, "failing", false, "show only automations with recent errors")
 	autoLsCmd.Flags().StringVar(&flagAutoPattern, "pattern", "", "filter by name (substring or glob, e.g. ess_*)")
 	autoLsCmd.Flags().StringVar(&flagAutoLabel, "label", "", "filter automations by label (substring, e.g. ess)")
+	autoLsCmd.Flags().BoolVar(&flagAutoRestored, "restored", false, "show only restored 'ghost' automations (registry entry with no live config — deleted or re-authored under a new id)")
 	autoDiffCmd.Flags().StringVarP(&flagAutoFile, "file", "f", "", "local YAML file to diff/apply")
 	autoApplyCmd.Flags().StringVarP(&flagAutoFile, "file", "f", "", "local YAML file to apply")
 	autoApplyCmd.Flags().BoolVar(&flagAutoConfirm, "confirm", false, "actually write + reload (default is dry-run)")
@@ -148,18 +150,20 @@ type automationAttributes struct {
 	Mode          string   `json:"mode"`
 	Labels        []string `json:"labels"`
 	Current       int      `json:"current"`
+	Restored      bool     `json:"restored"`
 }
 
 // autoRow holds combined state+trace data for one automation.
 type autoRow struct {
-	id      string
-	state   string
-	lastErr string
-	area    string
-	traces  []haapi.TraceSummary
-	labels  []string
-	runs    int
-	errors  int
+	id       string
+	state    string
+	lastErr  string
+	area     string
+	traces   []haapi.TraceSummary
+	labels   []string
+	runs     int
+	errors   int
+	restored bool
 }
 
 func runAutoLs(ctx context.Context, w io.Writer) error {
@@ -230,12 +234,32 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		}
 	}
 
+	if flagAutoRestored {
+		rows = filterAutosRestored(rows)
+	}
+
+	// #54: HA marks an automation `restored: true` when its state was resurrected
+	// from the registry with no live config behind it — a "ghost" from a deleted
+	// or re-authored automation. Show the column only when at least one row is a
+	// ghost, so the common all-live listing keeps its narrower shape.
+	anyRestored := false
+	for i := range rows {
+		if rows[i].restored {
+			anyRestored = true
+			break
+		}
+	}
+
+	headers := []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"}
+	if anyRestored {
+		headers = append(headers, "restored")
+	}
 	tbl := &format.Table{
-		Headers: []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"},
+		Headers: headers,
 		Rows:    make([][]string, len(rows)),
 	}
 	for i, r := range rows {
-		tbl.Rows[i] = []string{
+		row := []string{
 			r.id,
 			r.state,
 			r.area,
@@ -244,6 +268,10 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 			strconv.Itoa(r.errors),
 			r.lastErr,
 		}
+		if anyRestored {
+			row = append(row, boolCell(r.restored))
+		}
+		tbl.Rows[i] = row
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -251,7 +279,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		Full:     flagFull,
 		JSON:     flagJSON,
 		Compact:  true,
-		MoreHint: "try --pattern '<glob>', --label <l>, --failing, or --top N",
+		MoreHint: "try --pattern '<glob>', --label <l>, --failing, --restored, or --top N",
 	})
 }
 
@@ -283,6 +311,10 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 		ent.EntityID, ent.State,
 		ent.Attributes.Mode,
 		formatShortTime(ent.Attributes.LastTriggered))
+	if ent.Attributes.Restored {
+		// #54: ghost entry — registry state with no live config; nothing to repair.
+		_, _ = fmt.Fprintln(w, "restored=true (ghost: no live config — deleted or re-authored under a new id; nothing to repair)")
+	}
 
 	// Fetch traces
 	traces, wsErr := fetchTraceList(ctx, cfg)
@@ -413,9 +445,10 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 		id := strings.TrimPrefix(a.EntityID, "automation.")
 
 		row := autoRow{
-			id:     id,
-			state:  a.State,
-			labels: a.Attributes.Labels,
+			id:       id,
+			state:    a.State,
+			labels:   a.Attributes.Labels,
+			restored: a.Attributes.Restored,
 		}
 
 		key := a.EntityID
@@ -483,6 +516,16 @@ func filterFailing(rows []autoRow) []autoRow {
 	result := make([]autoRow, 0, len(rows))
 	for _, r := range rows {
 		if r.errors > 0 {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+func filterAutosRestored(rows []autoRow) []autoRow {
+	result := make([]autoRow, 0, len(rows))
+	for _, r := range rows {
+		if r.restored {
 			result = append(result, r)
 		}
 	}

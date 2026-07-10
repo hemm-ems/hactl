@@ -340,3 +340,40 @@ func TestFilterAutosByPattern(t *testing.T) {
 		})
 	}
 }
+
+// --- #54: restored / "ghost" automation surfacing ---
+
+func TestBuildAutoRows_RestoredPropagates(t *testing.T) {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	autos := []automationEntity{
+		{EntityID: "automation.live", State: "on"},
+		{EntityID: "automation.ghost", State: "unavailable", Attributes: automationAttributes{Restored: true}},
+	}
+	rows := buildAutoRows(autos, nil, nil, cutoff)
+	byID := map[string]autoRow{}
+	for _, r := range rows {
+		byID[r.id] = r
+	}
+	if byID["live"].restored {
+		t.Errorf("live automation must not be marked restored")
+	}
+	if !byID["ghost"].restored {
+		t.Errorf("automation with restored:true attribute must propagate to row.restored")
+	}
+}
+
+func TestFilterAutosRestored(t *testing.T) {
+	rows := []autoRow{
+		{id: "a", restored: false},
+		{id: "b", restored: true},
+		{id: "c", restored: false},
+		{id: "d", restored: true},
+	}
+	result := filterAutosRestored(rows)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 restored, got %d", len(result))
+	}
+	if result[0].id != "b" || result[1].id != "d" {
+		t.Errorf("restored filter returned %q, %q; want b, d", result[0].id, result[1].id)
+	}
+}

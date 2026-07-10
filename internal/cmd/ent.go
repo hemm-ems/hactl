@@ -32,13 +32,14 @@ var (
 	flagEntLabel    string
 	flagEntConfirm  bool
 	flagEntStale    bool
+	flagEntRestored bool
 )
 
 var entCmd = &cobra.Command{
 	Use:        "ent",
 	SuggestFor: []string{"entity", "entities", "states", "sensor", "sensors"},
 	Short:      "Browse and inspect entities",
-	Long:  "List, inspect, and analyze Home Assistant entities and their history.",
+	Long:       "List, inspect, and analyze Home Assistant entities and their history.",
 }
 
 var entLsCmd = &cobra.Command{
@@ -115,6 +116,7 @@ func init() {
 	entLsCmd.Flags().StringVar(&flagEntDomain, "domain", "", "filter entities by domain (e.g. sensor, binary_sensor)")
 	entLsCmd.Flags().StringVar(&flagEntArea, "area", "", "filter entities by area/room name (substring)")
 	entLsCmd.Flags().StringVar(&flagEntLabel, "label", "", "filter entities by label name (substring)")
+	entLsCmd.Flags().BoolVar(&flagEntRestored, "restored", false, "show only restored 'ghost' entities (state resurrected from the registry with no live entity — deleted or re-authored)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
@@ -186,8 +188,29 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		states = filterEntitiesByLabel(states, rc, flagEntLabel)
 	}
 
+	if flagEntRestored {
+		states = filterEntitiesByRestored(states)
+	}
+
+	// #54: HA marks a state `restored: true` when it was resurrected from the
+	// registry/recorder with no live platform entity behind its unique_id — a
+	// "ghost" left by a deleted or re-authored automation/helper/script. Surface
+	// it as a column, but only when at least one entity is actually restored, so
+	// the common all-live listing keeps its narrower shape.
+	anyRestored := false
+	for i := range states {
+		if isRestoredAttr(states[i].Attributes) {
+			anyRestored = true
+			break
+		}
+	}
+
+	headers := []string{"entity_id", "state", "area", "labels", "last_changed"}
+	if anyRestored {
+		headers = append(headers, "restored")
+	}
 	tbl := &format.Table{
-		Headers: []string{"entity_id", "state", "area", "labels", "last_changed"},
+		Headers: headers,
 		Rows:    make([][]string, len(states)),
 	}
 	for i, s := range states {
@@ -196,13 +219,17 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 			areaName = rc.areaName(s.EntityID)
 			lblNames = rc.labelNames(s.EntityID)
 		}
-		tbl.Rows[i] = []string{
+		row := []string{
 			s.EntityID,
 			truncateState(s.State),
 			areaName,
 			lblNames,
 			formatShortTime(s.LastChanged),
 		}
+		if anyRestored {
+			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
+		}
+		tbl.Rows[i] = row
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -210,7 +237,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		Full:     flagFull,
 		JSON:     flagJSON,
 		Compact:  true,
-		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, or --top N",
+		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, --restored, or --top N",
 	})
 }
 
@@ -249,6 +276,11 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 
 	_, _ = fmt.Fprintf(w, "entity:       %s\n", ent.EntityID)
 	_, _ = fmt.Fprintf(w, "state:        %s\n", ent.State)
+	if isRestoredAttr(ent.Attributes) {
+		// #54: HA restored this from the registry with no live entity behind it —
+		// a ghost from a deleted/re-authored config, not a repairable reference.
+		_, _ = fmt.Fprintf(w, "restored:     true (ghost: restored from registry; no live entity — deleted or re-authored, nothing to repair)\n")
+	}
 	_, _ = fmt.Fprintf(w, "last_changed: %s\n", formatShortTime(ent.LastChanged))
 	_, _ = fmt.Fprintf(w, "last_updated: %s\n", formatShortTime(ent.LastUpdated))
 	_, _ = fmt.Fprintf(w, "changed_by:   %s\n",
@@ -273,11 +305,12 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	if flagFull {
-		// Show all remaining attributes
+		// Show all remaining attributes. "restored" is already surfaced above.
 		shown := map[string]bool{
 			"friendly_name":       true,
 			"unit_of_measurement": true,
 			"device_class":        true,
+			"restored":            true,
 		}
 		keys := make([]string, 0, len(ent.Attributes))
 		for k := range ent.Attributes {
@@ -298,7 +331,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	} else {
 		// Show hint if there are hidden attributes
 		numShown := 0
-		for _, k := range []string{"friendly_name", "unit_of_measurement", "device_class"} {
+		for _, k := range []string{"friendly_name", "unit_of_measurement", "device_class", "restored"} {
 			if _, ok := ent.Attributes[k]; ok {
 				numShown++
 			}
@@ -812,6 +845,36 @@ func filterEntitiesByPattern(states []entityState, pattern string) []entityState
 		}
 	}
 	return result
+}
+
+func filterEntitiesByRestored(states []entityState) []entityState {
+	result := make([]entityState, 0, len(states))
+	for _, s := range states {
+		if isRestoredAttr(s.Attributes) {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// isRestoredAttr reports whether HA flagged this state as restored — i.e. it was
+// resurrected from the entity registry/recorder because no active platform
+// entity backs its unique_id anymore. It is HA's own marker for an orphaned
+// "ghost" entry: the automation/script/helper was deleted or re-authored under a
+// new id, so there is no config left to repair (nothing for ref scan/replace to
+// find). See issue #54.
+func isRestoredAttr(attrs map[string]any) bool {
+	b, _ := attrs["restored"].(bool)
+	return b
+}
+
+// boolCell renders a boolean for table output: "yes" when true, empty otherwise
+// (so the compact renderer keeps the majority of rows quiet).
+func boolCell(b bool) string {
+	if b {
+		return "yes"
+	}
+	return ""
 }
 
 func filterEntitiesByDomain(states []entityState, domain string) []entityState {
