@@ -119,11 +119,6 @@ func (c *Client) CallServiceWithResponse(ctx context.Context, domain, service st
 	return c.doPost(ctx, "/api/services/"+domain+"/"+service+"?return_response=true", data)
 }
 
-// GetIssues calls GET /api/repairs/issues and returns the raw JSON body.
-func (c *Client) GetIssues(ctx context.Context) ([]byte, error) {
-	return c.doGet(ctx, "/api/repairs/issues")
-}
-
 // GetEvents calls GET /api/events and returns the raw JSON body.
 func (c *Client) GetEvents(ctx context.Context) ([]byte, error) {
 	return c.doGet(ctx, "/api/events")

@@ -21,6 +21,7 @@ import (
 
 var (
 	flagLogErrors    bool
+	flagLogWarnings  bool
 	flagLogUnique    bool
 	flagLogComponent string
 )
@@ -45,7 +46,8 @@ var logShowCmd = &cobra.Command{
 }
 
 func init() {
-	logCmd.Flags().BoolVar(&flagLogErrors, "errors", false, "show only error-level entries")
+	logCmd.Flags().BoolVar(&flagLogErrors, "errors", false, "show only ERROR-level entries")
+	logCmd.Flags().BoolVar(&flagLogWarnings, "warnings", false, "show only WARNING-level entries (combine with --errors for both)")
 	logCmd.Flags().BoolVar(&flagLogUnique, "unique", false, "deduplicate identical messages")
 	logCmd.Flags().StringVar(&flagLogComponent, "component", "", "filter by component name")
 	logCmd.AddCommand(logShowCmd)
@@ -63,9 +65,17 @@ func runLog(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
+	// --errors and --warnings are additive: either alone narrows to that
+	// level; together they surface both (the "what went wrong" signal, since
+	// operational warnings like "skipping solve" never reach ERROR).
+	var levels []string
 	if flagLogErrors {
-		entries = analyze.FilterByLevel(entries, "ERROR")
+		levels = append(levels, "ERROR")
 	}
+	if flagLogWarnings {
+		levels = append(levels, "WARNING")
+	}
+	entries = analyze.FilterByLevels(entries, levels...)
 	if flagLogComponent != "" {
 		entries = analyze.FilterByComponent(entries, flagLogComponent)
 	}

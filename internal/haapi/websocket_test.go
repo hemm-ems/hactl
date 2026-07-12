@@ -208,6 +208,33 @@ func TestWSClient_TraceList(t *testing.T) {
 	}
 }
 
+func TestWSClient_ListIssues(t *testing.T) {
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		if cmd["type"] != "repairs/list_issues" {
+			t.Errorf("expected repairs/list_issues, got %q", cmd["type"])
+			return
+		}
+		sendWSResult(t, c, cmd, map[string]any{"issues": []map[string]any{
+			{"domain": "myenergy", "issue_id": "price_unavailable", "severity": "warning"},
+		}})
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	raw, err := ws.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues failed: %v", err)
+	}
+	if !strings.Contains(string(raw), "price_unavailable") {
+		t.Errorf("ListIssues result missing issue: %s", raw)
+	}
+	if !strings.Contains(string(raw), "warning") {
+		t.Errorf("ListIssues result missing severity: %s", raw)
+	}
+}
+
 func TestWSClient_TraceList_Empty(t *testing.T) {
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
 		// HA returns [] when no traces exist.

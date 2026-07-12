@@ -35,7 +35,7 @@ func maybeInjectManual(executed *cobra.Command, rawArgs []string) {
 		}
 		return
 	}
-	if !shouldInject(mode, stdoutTTY, stderrTTY, top, len(rawArgs) == 0) {
+	if !shouldInject(mode, stdoutTTY, stderrTTY, flagJSON, top, len(rawArgs) == 0) {
 		return
 	}
 
@@ -55,8 +55,14 @@ func maybeInjectManual(executed *cobra.Command, rawArgs []string) {
 // is watching, a bare invocation is just the help screen, and exempt
 // commands handle the manual themselves or must stay clean (mcp, setup,
 // completion machinery).
-func shouldInject(mode manual.Mode, stdoutTTY, stderrTTY bool, top string, bareInvocation bool) bool {
-	if mode == manual.ModeOff || stdoutTTY || stderrTTY || bareInvocation {
+//
+// --json output is also exempt: the caller is a machine parsing structured
+// output that won't read prose, and (unlike a human's separate stderr) agent
+// harnesses routinely merge stdout+stderr, so injecting the manual there just
+// corrupts the JSON stream. The how-to is left un-consumed so a later
+// human-readable call can still receive it.
+func shouldInject(mode manual.Mode, stdoutTTY, stderrTTY, jsonOut bool, top string, bareInvocation bool) bool {
+	if mode == manual.ModeOff || stdoutTTY || stderrTTY || jsonOut || bareInvocation {
 		return false
 	}
 	return !manual.Exempt[top]

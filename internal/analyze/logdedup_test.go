@@ -112,6 +112,24 @@ func TestFilterByLevel_CaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestFilterByLevels(t *testing.T) {
+	entries := ParseLogLines(sampleLog) // 4 ERROR, 1 WARNING, 1 INFO
+
+	if got := FilterByLevels(entries, "WARNING"); len(got) != 1 {
+		t.Errorf("WARNING-only count = %d, want 1", len(got))
+	}
+	if got := FilterByLevels(entries, "ERROR", "WARNING"); len(got) != 5 {
+		t.Errorf("ERROR+WARNING count = %d, want 5", len(got))
+	}
+	// Case-insensitive, and no levels means no filtering.
+	if got := FilterByLevels(entries, "warning"); len(got) != 1 {
+		t.Errorf("lowercase warning count = %d, want 1", len(got))
+	}
+	if got := FilterByLevels(entries); len(got) != len(entries) {
+		t.Errorf("no-levels count = %d, want %d (unchanged)", len(got), len(entries))
+	}
+}
+
 func TestNormalizeMessage(t *testing.T) {
 	tests := []struct {
 		input string

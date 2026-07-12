@@ -3074,15 +3074,12 @@ func TestRunChanges_WithEntries(t *testing.T) {
 	}
 }
 
-// --- runIssues (HTTP) ---
+// --- runIssues (WS repairs/list_issues) ---
 
 func TestRunIssues_Empty(t *testing.T) {
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/repairs/issues": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"issues":[]}`)
-		},
-	})
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []any{}},
+	}, nil)
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
@@ -3095,13 +3092,11 @@ func TestRunIssues_Empty(t *testing.T) {
 }
 
 func TestRunIssues_WithIssues(t *testing.T) {
-	body := `{"issues":[{"domain":"recorder","issue_id":"setup_failed","severity":"error","is_fixable":false}]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/repairs/issues": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, body)
-		},
-	})
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []map[string]any{
+			{"domain": "recorder", "issue_id": "setup_failed", "severity": "error", "is_fixable": false},
+		}},
+	}, nil)
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
@@ -3117,20 +3112,60 @@ func TestRunIssues_WithIssues(t *testing.T) {
 	}
 }
 
-func TestRunIssues_404(t *testing.T) {
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/repairs/issues": func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "not found", http.StatusNotFound)
-		},
-	})
+// TestRunIssues_ShowsWarnings guards the reported regression: a genuinely
+// active WARNING-severity domain repair must appear (issues does not filter by
+// severity), not be swallowed into "no active issues".
+func TestRunIssues_ShowsWarnings(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []map[string]any{
+			{"domain": "myenergy", "issue_id": "price_unavailable", "severity": "warning", "is_fixable": false},
+		}},
+	}, nil)
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
 	if err := runIssues(context.Background(), &buf); err != nil {
-		t.Fatalf("runIssues 404 should not error: %v", err)
+		t.Fatalf("runIssues failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no active issues") {
-		t.Errorf("404 should say 'no active issues': %q", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "price_unavailable") {
+		t.Errorf("warning-severity repair missing from output: %q", out)
+	}
+	if !strings.Contains(out, "warning") {
+		t.Errorf("severity column missing 'warning': %q", out)
+	}
+}
+
+// TestRunIssues_IgnoredFiltered checks that ignored issues are hidden by
+// default and surfaced with --all.
+func TestRunIssues_IgnoredFiltered(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []map[string]any{
+			{"domain": "recorder", "issue_id": "setup_failed", "severity": "error", "is_fixable": false},
+			{"domain": "zwave", "issue_id": "old_dongle", "severity": "warning", "is_fixable": false, "ignored": true},
+		}},
+	}, nil)
+	withFlagDir(t, ts.dir)
+
+	old := flagIssuesAll
+	defer func() { flagIssuesAll = old }()
+
+	flagIssuesAll = false
+	var buf bytes.Buffer
+	if err := runIssues(context.Background(), &buf); err != nil {
+		t.Fatalf("runIssues failed: %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "old_dongle") {
+		t.Errorf("ignored issue should be hidden without --all: %q", out)
+	}
+
+	flagIssuesAll = true
+	buf.Reset()
+	if err := runIssues(context.Background(), &buf); err != nil {
+		t.Fatalf("runIssues --all failed: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "old_dongle") {
+		t.Errorf("ignored issue should appear with --all: %q", out)
 	}
 }
 
@@ -3595,6 +3630,53 @@ func TestRunLog_ErrorsFilter(t *testing.T) {
 	var buf bytes.Buffer
 	if err := runLog(context.Background(), &buf); err != nil {
 		t.Fatalf("runLog --errors failed: %v", err)
+	}
+}
+
+func TestRunLog_WarningsFilter(t *testing.T) {
+	logText := "2026-01-01 10:00:00.000 ERROR (Main) [comp.a] boom\n" +
+		"2026-01-01 10:00:01.000 WARNING (Main) [comp.b] skipping solve (no synthetic fallback)\n" +
+		"2026-01-01 10:00:02.000 INFO (Main) [comp.c] all good\n"
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = fmt.Fprint(w, logText)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	restore := func(errs, warns, uniq bool, comp string) {
+		flagLogErrors, flagLogWarnings, flagLogUnique, flagLogComponent = errs, warns, uniq, comp
+	}
+	oe, ow, ou, oc := flagLogErrors, flagLogWarnings, flagLogUnique, flagLogComponent
+	defer restore(oe, ow, ou, oc)
+
+	// --warnings alone: only the WARNING line.
+	restore(false, true, false, "")
+	var buf bytes.Buffer
+	if err := runLog(context.Background(), &buf); err != nil {
+		t.Fatalf("runLog --warnings failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "skipping solve") {
+		t.Errorf("--warnings should show the WARNING line: %q", out)
+	}
+	if strings.Contains(out, "boom") || strings.Contains(out, "all good") {
+		t.Errorf("--warnings should exclude ERROR/INFO: %q", out)
+	}
+
+	// --errors --warnings: both, but not INFO.
+	restore(true, true, false, "")
+	buf.Reset()
+	if err := runLog(context.Background(), &buf); err != nil {
+		t.Fatalf("runLog --errors --warnings failed: %v", err)
+	}
+	out = buf.String()
+	if !strings.Contains(out, "boom") || !strings.Contains(out, "skipping solve") {
+		t.Errorf("--errors --warnings should show both: %q", out)
+	}
+	if strings.Contains(out, "all good") {
+		t.Errorf("--errors --warnings should exclude INFO: %q", out)
 	}
 }
 

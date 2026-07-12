@@ -235,6 +235,21 @@ func (ws *WSClient) SystemLogList(ctx context.Context) ([]SystemLogEntry, error)
 	return result, nil
 }
 
+// ListIssues returns the raw {"issues":[...]} payload from the repairs
+// integration via WS. HA exposes the repair/issue registry only over the
+// WebSocket API (repairs/list_issues) — there is no REST list endpoint — and
+// the handler already filters to active issues, returning every severity
+// (ERROR and WARNING alike) plus the ignored/is_fixable/breaks_in_ha_version
+// flags. WS command: repairs/list_issues
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/repairs/websocket_api.py
+func (ws *WSClient) ListIssues(ctx context.Context) (json.RawMessage, error) {
+	result, err := ws.sendCommand(ctx, "repairs/list_issues", nil)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // EntityRegistryList returns all entity registry entries via WS.
 // WS command: config/entity_registry/list
 // Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/entity_registry.py

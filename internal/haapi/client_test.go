@@ -324,26 +324,6 @@ func TestCallService(t *testing.T) {
 	}
 }
 
-func TestGetIssues(t *testing.T) {
-	issuesJSON := `{"issues":[]}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/repairs/issues" {
-			t.Errorf("path = %q, want /api/repairs/issues", r.URL.Path)
-		}
-		_, _ = fmt.Fprint(w, issuesJSON)
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "tok")
-	body, err := c.GetIssues(context.Background())
-	if err != nil {
-		t.Fatalf("GetIssues: %v", err)
-	}
-	if string(body) != issuesJSON {
-		t.Errorf("body = %q, want %q", string(body), issuesJSON)
-	}
-}
-
 func TestGetEvents(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/events" {
