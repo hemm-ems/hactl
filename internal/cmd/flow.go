@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
+	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,7 +21,7 @@ var configCmd = &cobra.Command{
 	Use:        "config",
 	SuggestFor: []string{"integrations", "integration", "entries"},
 	Short:      "Manage config entries and flows",
-	Long:  "List config entries and start, step through, and inspect config entry options flows and config flows.",
+	Long:       "List config entries and start, step through, and inspect config entry options flows and config flows.",
 }
 
 var flagConfigDomain string
@@ -30,6 +32,21 @@ var configEntriesCmd = &cobra.Command{
 	Long:  "List all config entries. Use --domain to filter by integration domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigEntries(cmd.Context(), cmd.OutOrStdout())
+	},
+}
+
+var configShowCmd = &cobra.Command{
+	Use:   "show <entry_id>",
+	Short: "Show a config entry's setup and current configuration",
+	Long: "Show what an integration is set up as (domain, title, state, source, " +
+		"options/reconfigure support, disabled/failure reason) and how it is " +
+		"configured. The configuration is read from the integration's diagnostics " +
+		"dump (secrets redacted by the integration); when the integration ships no " +
+		"diagnostics platform, hactl falls back to reading current values from a " +
+		"transient options flow. Read-only; requires an admin token.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
 }
 
@@ -134,17 +151,23 @@ func init() {
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFlowInspectCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFileCmd.Flags().BoolVar(&flagConfigFileRaw, "raw", false, "leave !include directives unresolved")
-	configCmd.AddCommand(configEntriesCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
+	configCmd.AddCommand(configEntriesCmd, configShowCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
 // configEntry is the subset of a config entry we display.
 type configEntry struct {
-	EntryID string `json:"entry_id"`
-	Domain  string `json:"domain"`
-	Title   string `json:"title"`
-	State   string `json:"state"`
-	Version int    `json:"version"`
+	EntryID            string `json:"entry_id"`
+	Domain             string `json:"domain"`
+	Title              string `json:"title"`
+	State              string `json:"state"`
+	Version            int    `json:"version"`
+	Source             string `json:"source"`
+	SupportsOptions    bool   `json:"supports_options"`
+	SupportsReconfig   bool   `json:"supports_reconfigure"`
+	DisabledBy         string `json:"disabled_by"`
+	Reason             string `json:"reason"`
+	ReasonTranslateKey string `json:"error_reason_translation_key"`
 }
 
 func runConfigEntries(ctx context.Context, w io.Writer) error {
@@ -180,7 +203,7 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"entry_id", "domain", "title", "state", "version"},
+		Headers: []string{"entry_id", "domain", "title", "state", "source", "options", "disabled_by"},
 		Rows:    make([][]string, len(entries)),
 	}
 	for i, e := range entries {
@@ -189,7 +212,9 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 			e.Domain,
 			e.Title,
 			e.State,
-			strconv.Itoa(e.Version),
+			e.Source,
+			yesNo(e.SupportsOptions),
+			dashIfEmpty(e.DisabledBy),
 		}
 	}
 
@@ -199,6 +224,217 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+// configShowResult is the structured form of `config show`, used verbatim for
+// --json output.
+type configShowResult struct {
+	Entry        *configEntry    `json:"entry"`
+	ConfigSource string          `json:"config_source"`     // "diagnostics" | "options_flow" | "unavailable"
+	Config       json.RawMessage `json:"config,omitempty"`  // diagnostics: integration-redacted dump
+	Options      map[string]any  `json:"options,omitempty"` // options_flow: current field values
+	Note         string          `json:"note,omitempty"`
+}
+
+func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+	client := haapi.New(cfg.URL, cfg.Token)
+
+	data, err := client.GetConfigEntries(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching config entries: %w", err)
+	}
+	var entries []configEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return fmt.Errorf("parsing config entries: %w", err)
+	}
+	entry, ok := findConfigEntry(entries, entryID)
+	if !ok {
+		return fmt.Errorf("unknown config entry %q (list them with 'hactl config entries')", entryID)
+	}
+
+	result := &configShowResult{Entry: entry, ConfigSource: "unavailable"}
+
+	// Primary source: the integration's diagnostics dump (secrets redacted by
+	// the integration). Falls back to a transient options flow when the
+	// integration ships no diagnostics platform.
+	diag, diagErr := client.GetConfigEntryDiagnostics(ctx, entryID)
+	switch {
+	case diagErr == nil:
+		result.ConfigSource = "diagnostics"
+		result.Config = diagnosticsConfigData(diag)
+	default:
+		opts, note := readOptionsFlowValues(ctx, client, entryID)
+		if opts != nil {
+			result.ConfigSource = "options_flow"
+			result.Options = opts
+		}
+		result.Note = configShowNote(diagErr, note)
+	}
+
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+	return renderConfigShow(w, result)
+}
+
+// findConfigEntry returns the entry whose entry_id matches (case-sensitive).
+func findConfigEntry(entries []configEntry, entryID string) (*configEntry, bool) {
+	for i := range entries {
+		if entries[i].EntryID == entryID {
+			return &entries[i], true
+		}
+	}
+	return nil, false
+}
+
+// diagnosticsConfigData extracts the integration's own diagnostics payload (the
+// top-level "data" key of the download-diagnostics envelope) — the part that
+// describes how the entry is configured. Falls back to the whole dump if the
+// envelope shape is unexpected.
+func diagnosticsConfigData(raw []byte) json.RawMessage {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Data) > 0 {
+		return envelope.Data
+	}
+	return json.RawMessage(raw)
+}
+
+// readOptionsFlowValues starts an options flow, reads the current value of each
+// schema field, then aborts the flow so nothing dangles. Returns (values, "")
+// on success or (nil, reason) when there is nothing readable.
+func readOptionsFlowValues(ctx context.Context, client *haapi.Client, entryID string) (map[string]any, string) {
+	raw, err := client.StartOptionsFlow(ctx, entryID)
+	if err != nil {
+		return nil, "options flow unavailable: " + err.Error()
+	}
+	flow, parseErr := haapi.ParseFlowResult(raw)
+	if parseErr == nil && flow.FlowID != "" {
+		// Best-effort cleanup; a leaked read-only flow is harmless but untidy.
+		if abortErr := client.AbortOptionsFlow(ctx, flow.FlowID); abortErr != nil {
+			slog.Debug("aborting options flow failed", "flow_id", flow.FlowID, "error", abortErr)
+		}
+	}
+	if parseErr != nil {
+		return nil, "could not parse options flow: " + parseErr.Error()
+	}
+	if flow.Type != "form" {
+		return nil, "integration exposes no readable options form (flow type: " + flow.Type + ")"
+	}
+	values := optionsFlowCurrentValues(raw)
+	if len(values) == 0 {
+		return map[string]any{}, "options form has no pre-filled current values"
+	}
+	return values, ""
+}
+
+// optionsFlowCurrentValues extracts each schema field's current value from a
+// raw options-flow response. HA seeds an options form with the entry's current
+// values as either a field "default" or a "description.suggested_value".
+func optionsFlowCurrentValues(rawFlow []byte) map[string]any {
+	var raw struct {
+		DataSchema []json.RawMessage `json:"data_schema"`
+	}
+	if err := json.Unmarshal(rawFlow, &raw); err != nil {
+		return nil
+	}
+	values := make(map[string]any)
+	for _, fieldRaw := range raw.DataSchema {
+		var field struct {
+			Name        string `json:"name"`
+			Default     any    `json:"default"`
+			Description struct {
+				SuggestedValue any `json:"suggested_value"`
+			} `json:"description"`
+		}
+		if err := json.Unmarshal(fieldRaw, &field); err != nil || field.Name == "" {
+			continue
+		}
+		switch {
+		case field.Default != nil:
+			values[field.Name] = field.Default
+		case field.Description.SuggestedValue != nil:
+			values[field.Name] = field.Description.SuggestedValue
+		}
+	}
+	return values
+}
+
+// configShowNote builds the human note for the non-diagnostics path, folding in
+// why diagnostics was skipped.
+func configShowNote(diagErr error, fallbackNote string) string {
+	var reason string
+	switch {
+	case strings.Contains(diagErr.Error(), "404"):
+		reason = "integration ships no diagnostics platform"
+	case strings.Contains(diagErr.Error(), "401"), strings.Contains(diagErr.Error(), "403"):
+		reason = "diagnostics requires an admin token"
+	default:
+		reason = "diagnostics unavailable: " + diagErr.Error()
+	}
+	if fallbackNote != "" {
+		return reason + "; " + fallbackNote
+	}
+	return reason
+}
+
+func renderConfigShow(w io.Writer, r *configShowResult) error {
+	e := r.Entry
+	_, _ = fmt.Fprintf(w, "entry_id:     %s\n", e.EntryID)
+	_, _ = fmt.Fprintf(w, "domain:       %s\n", e.Domain)
+	_, _ = fmt.Fprintf(w, "title:        %s\n", e.Title)
+	_, _ = fmt.Fprintf(w, "state:        %s\n", e.State)
+	_, _ = fmt.Fprintf(w, "source:       %s\n", e.Source)
+	_, _ = fmt.Fprintf(w, "options:      %s\n", yesNo(e.SupportsOptions))
+	_, _ = fmt.Fprintf(w, "reconfigure:  %s\n", yesNo(e.SupportsReconfig))
+	if e.DisabledBy != "" {
+		_, _ = fmt.Fprintf(w, "disabled_by:  %s\n", e.DisabledBy)
+	}
+	if reason := e.Reason; reason != "" {
+		_, _ = fmt.Fprintf(w, "reason:       %s\n", reason)
+	} else if e.ReasonTranslateKey != "" {
+		_, _ = fmt.Fprintf(w, "reason:       %s\n", e.ReasonTranslateKey)
+	}
+
+	_, _ = fmt.Fprintf(w, "\nconfiguration (source: %s):\n", r.ConfigSource)
+	switch r.ConfigSource {
+	case "diagnostics":
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, r.Config, "  ", "  "); err == nil {
+			_, _ = fmt.Fprintf(w, "  %s\n", pretty.String())
+		} else {
+			_, _ = fmt.Fprintf(w, "  %s\n", string(r.Config))
+		}
+	case "options_flow":
+		if len(r.Options) == 0 {
+			_, _ = fmt.Fprintln(w, "  (no pre-filled current values in the options form)")
+		}
+		for _, k := range sortedKeys(r.Options) {
+			_, _ = fmt.Fprintf(w, "  %s: %v\n", k, r.Options[k])
+		}
+	default:
+		_, _ = fmt.Fprintln(w, "  (not available)")
+	}
+	if r.Note != "" {
+		_, _ = fmt.Fprintf(w, "\nnote: %s\n", r.Note)
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {

@@ -120,3 +120,11 @@ func yesNo(b bool) string {
 	}
 	return "no"
 }
+
+// dashIfEmpty renders an empty string as "-" for compact table cells.
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}

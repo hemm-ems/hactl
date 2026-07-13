@@ -567,6 +567,144 @@ func TestRunConfigEntries_Empty(t *testing.T) {
 	}
 }
 
+// --- runConfigShow (diagnostics + options-flow fallback) ---
+
+func configShowEntries() string {
+	entries := []map[string]any{
+		{"entry_id": "entry1", "domain": "myenergy", "title": "My Energy", "state": "loaded",
+			"source": "user", "supports_options": true, "supports_reconfigure": false},
+	}
+	b, _ := json.Marshal(entries)
+	return string(b)
+}
+
+func TestRunConfigShow_Diagnostics(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"home_assistant":{"version":"2026.7"},"data":{"entry":{"data":{"price_entity":"sensor.price"},"options":{"threshold":42}}}}`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "source: diagnostics") {
+		t.Errorf("expected diagnostics source: %q", out)
+	}
+	if !strings.Contains(out, "price_entity") || !strings.Contains(out, "sensor.price") {
+		t.Errorf("diagnostics config not surfaced: %q", out)
+	}
+	// The envelope's home_assistant block must be stripped, leaving the
+	// integration's own data dump.
+	if strings.Contains(out, "home_assistant") {
+		t.Errorf("envelope leaked into config output: %q", out)
+	}
+}
+
+func TestRunConfigShow_OptionsFlowFallback(t *testing.T) {
+	aborted := false
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		// No diagnostics platform for this integration.
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		// Options flow start (exact path) returns a form seeded with current values.
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"type":"form","flow_id":"flow123","handler":"entry1","step_id":"init","data_schema":[{"name":"price_entity","type":"select","default":"sensor.spot_price"},{"name":"threshold","description":{"suggested_value":42}}]}`)
+		},
+		// Options flow abort (subtree path) — must be hit for cleanup.
+		"/api/config/config_entries/options/flow/": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				aborted = true
+			}
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "source: options_flow") {
+		t.Errorf("expected options_flow source: %q", out)
+	}
+	if !strings.Contains(out, "price_entity: sensor.spot_price") {
+		t.Errorf("current value from 'default' not surfaced: %q", out)
+	}
+	if !strings.Contains(out, "threshold: 42") {
+		t.Errorf("current value from 'suggested_value' not surfaced: %q", out)
+	}
+	if !strings.Contains(out, "no diagnostics platform") {
+		t.Errorf("note should explain the diagnostics fallback: %q", out)
+	}
+	if !aborted {
+		t.Error("options flow was not aborted after readback")
+	}
+}
+
+func TestRunConfigShow_JSON(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"data":{"options":{"price_entity":"sensor.price"}}}`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow --json failed: %v", err)
+	}
+	var got configShowResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.ConfigSource != "diagnostics" {
+		t.Errorf("config_source = %q, want diagnostics", got.ConfigSource)
+	}
+	if got.Entry == nil || got.Entry.Domain != "myenergy" {
+		t.Errorf("entry not populated in JSON: %+v", got.Entry)
+	}
+	if !strings.Contains(string(got.Config), "price_entity") {
+		t.Errorf("config missing in JSON: %s", got.Config)
+	}
+}
+
+func TestRunConfigShow_UnknownEntry(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	err := runConfigShow(context.Background(), &buf, "nope")
+	if err == nil {
+		t.Fatal("expected error for unknown entry")
+	}
+	if !strings.Contains(err.Error(), "unknown config entry") {
+		t.Errorf("error = %q, want 'unknown config entry'", err.Error())
+	}
+}
+
 // --- truncateStr ---
 
 func TestTruncateStr_Short(t *testing.T) {

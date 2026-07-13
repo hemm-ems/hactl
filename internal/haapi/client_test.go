@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -384,6 +385,60 @@ func TestStartOptionsFlow(t *testing.T) {
 	}
 	if string(body) != flowJSON {
 		t.Errorf("body = %q, want %q", string(body), flowJSON)
+	}
+}
+
+func TestAbortOptionsFlow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/api/config/config_entries/options/flow/opt1" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	if err := c.AbortOptionsFlow(context.Background(), "opt1"); err != nil {
+		t.Fatalf("AbortOptionsFlow: %v", err)
+	}
+}
+
+func TestGetConfigEntryDiagnostics(t *testing.T) {
+	diagJSON := `{"data":{"options":{"price_entity":"sensor.price"}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/diagnostics/config_entry/entry-123" {
+			t.Errorf("path = %q, want /api/diagnostics/config_entry/entry-123", r.URL.Path)
+		}
+		_, _ = fmt.Fprint(w, diagJSON)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	body, err := c.GetConfigEntryDiagnostics(context.Background(), "entry-123")
+	if err != nil {
+		t.Fatalf("GetConfigEntryDiagnostics: %v", err)
+	}
+	if string(body) != diagJSON {
+		t.Errorf("body = %q, want %q", string(body), diagJSON)
+	}
+}
+
+func TestGetConfigEntryDiagnostics_404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	_, err := c.GetConfigEntryDiagnostics(context.Background(), "entry-123")
+	if err == nil {
+		t.Fatal("expected 404 error for missing diagnostics platform")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error = %q, want it to mention 404", err.Error())
 	}
 }
 
