@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: hactl-companion API
-  version: 2026.7.1
+  version: 2026.7.2
   description: YAML file access API for Home Assistant. Provides structured CRUD
     for templates, scripts, and automations, plus raw config file read/write 
     with !include resolution.
@@ -441,6 +441,10 @@ paths:
                           type: string
                         device_class:
                           type: string
+                        trigger:
+                          type: boolean
+                          description: true if the entity lives in a 
+                            trigger-based block
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -462,10 +466,16 @@ paths:
                     type: string
                   content:
                     type: string
+                  trigger:
+                    type: boolean
+                    description: true if the entry is trigger-based
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: For a trigger-based entry, `content` is the whole block 
+        (trigger + entity) so the trigger is visible; otherwise it is the entity
+        item.
       parameters:
       - name: id
         in: query
@@ -515,7 +525,7 @@ paths:
               type: string
         required: true
     post:
-      summary: Create new template sensor
+      summary: Create a new template entry
       tags:
       - templates
       responses:
@@ -538,10 +548,18 @@ paths:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: Body is either a bare entity item (placed into a state-based 
+        block for `domain`) or a full block (declares 
+        `sensor:`/`binary_sensor:`, optionally with block-level 
+        `triggers:`/`actions:`/`conditions:`), appended as its own list item. 
+        The latter is how trigger-based and multi-domain entries are created. A 
+        bare item carrying a block-level trigger key is rejected (400).
       parameters:
       - name: domain
         in: query
         required: false
+        description: domain for a bare entity item (sensor or binary_sensor); 
+          ignored for a full block
         schema:
           type: string
           default: sensor
