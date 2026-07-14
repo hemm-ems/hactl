@@ -101,7 +101,7 @@ var tplCatCmd = &cobra.Command{
 func init() {
 	tplEvalCmd.Flags().StringVarP(&flagTplFile, "file", "f", "", "read template from file")
 	tplCreateCmd.Flags().StringVarP(&flagTplFile, "file", "f", "", "YAML file for the new template (an entity item or a full block)")
-	tplCreateCmd.Flags().StringVar(&flagTplDomain, "domain", "sensor", "domain for a bare entity item (sensor or binary_sensor); ignored for a full block")
+	tplCreateCmd.Flags().StringVar(&flagTplDomain, "domain", "sensor", "domain for a bare entity item (default sensor); ignored for a full block")
 	tplCreateCmd.Flags().BoolVar(&flagTplConfirm, "confirm", false, "actually create (default is dry-run)")
 	tplDeleteCmd.Flags().BoolVar(&flagTplConfirm, "confirm", false, "actually delete (default is dry-run)")
 	tplCmd.AddCommand(tplEvalCmd, tplCatCmd, tplCreateCmd, tplDeleteCmd)
@@ -145,7 +145,11 @@ The file may be either:
       sensor:
         - name: Sampled
           unique_id: sampled
-          state: "{{ trigger.to_state.state }}"`,
+          state: "{{ trigger.to_state.state }}"
+
+A full block may declare any template entity domain (sensor, binary_sensor,
+number, select, button, weather, light, switch, cover, fan, lock, vacuum,
+alarm_control_panel, event, image, device_tracker, update).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplCreate(cmd.Context(), cmd.OutOrStdout())
 	},
