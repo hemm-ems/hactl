@@ -318,7 +318,10 @@ hactl tpl delete my_template_uid                     # dry-run
 hactl tpl delete my_template_uid --confirm           # delete via companion + reload
 ```
 
-Requires hactl-companion. Default domain is `sensor`. Supported: sensor, binary_sensor.
+Requires hactl-companion. Default domain is `sensor`. A full block may declare
+any template entity domain (sensor, binary_sensor, number, select, button,
+weather, light, switch, cover, fan, lock, vacuum, alarm_control_panel, event,
+image, device_tracker, update).
 
 The `-f` file is either a **bare entity item** (state-based; placed into a block
 for `--domain`) or a **full block** for trigger-based / multi-domain entries. In

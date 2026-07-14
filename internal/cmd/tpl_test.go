@@ -134,6 +134,35 @@ func TestClassifyTemplate_MultiDomainBlock(t *testing.T) {
 	}
 }
 
+func TestClassifyTemplate_NumberBlock(t *testing.T) {
+	// A non-sensor domain block is still classified as a full block.
+	content := "number:\n  - unique_id: n\n    state: \"{{ 1 }}\"\n    set_value: []\n"
+	k, err := classifyTemplate(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !k.isBlock || k.triggerBased {
+		t.Errorf("state-based number block misclassified: %+v", k)
+	}
+	if len(k.domains) != 1 || k.domains[0] != "number" {
+		t.Errorf("domains = %v, want [number]", k.domains)
+	}
+}
+
+func TestClassifyTemplate_NonSensorMultiDomainBlock(t *testing.T) {
+	content := "select:\n  - unique_id: s\n    state: x\nbutton:\n  - unique_id: b\n"
+	k, err := classifyTemplate(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !k.isBlock || k.triggerBased {
+		t.Errorf("non-sensor multi-domain block misclassified: %+v", k)
+	}
+	if len(k.domains) != 2 {
+		t.Errorf("domains = %v, want 2 entries (select, button)", k.domains)
+	}
+}
+
 func TestClassifyTemplate_InvalidYAML(t *testing.T) {
 	if _, err := classifyTemplate("- this is\n  a: list\n"); err == nil {
 		t.Fatal("expected error for a top-level list (not a single mapping)")
