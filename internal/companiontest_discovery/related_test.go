@@ -33,14 +33,14 @@ func TestRelatedEntityThroughDiscoveredIngress(t *testing.T) {
 	}
 
 	plain := companion.New(url, "any-token-accepted")
-	if _, err := plain.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID); err == nil {
+	if _, err := plain.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID, false); err == nil {
 		t.Fatal("plain RelatedEntity unexpectedly succeeded without Ingress auth")
 	} else if !strings.Contains(err.Error(), "401") {
 		t.Fatalf("plain RelatedEntity error = %v, want 401", err)
 	}
 
 	authed := companion.New(url, "any-token-accepted").WithIngressAuth(ws)
-	source, err := authed.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID)
+	source, err := authed.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID, false)
 	if err != nil {
 		t.Fatalf("RelatedEntity source through Ingress: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestRelatedEntityThroughDiscoveredIngress(t *testing.T) {
 		"configuration.yaml",
 	)
 
-	reverse, err := authed.RelatedEntity(ctx, companiontestutil.RelatedGeneratedEntityID)
+	reverse, err := authed.RelatedEntity(ctx, companiontestutil.RelatedGeneratedEntityID, false)
 	if err != nil {
 		t.Fatalf("RelatedEntity reverse through Ingress: %v", err)
 	}
