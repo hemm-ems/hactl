@@ -156,7 +156,7 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	}
 
 	if len(rows) == 0 {
-		return emitEmptyList(w, fmt.Sprintf("%s: not referenced in any config file or dashboard", target))
+		return emitEmptyList(w, target+": not referenced in any config file or dashboard")
 	}
 
 	tbl := &format.Table{
