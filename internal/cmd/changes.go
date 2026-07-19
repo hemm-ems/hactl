@@ -76,13 +76,15 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("parsing logbook: %w", err)
 	}
 
-	if len(entries) == 0 {
+	if len(entries) == 0 && !flagJSON {
 		_, _ = fmt.Fprintln(w, "no changes in the last "+flagSince)
 		return nil
 	}
 
 	// JSON mode emits the raw entries (including all context_* fields) so
 	// LLM consumers get the full structured data, not just the table cells.
+	// entries is a non-nil (possibly empty) slice here, so this always
+	// produces valid JSON — "[]" when there are no changes.
 	if flagJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")

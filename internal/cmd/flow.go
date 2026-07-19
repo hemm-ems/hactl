@@ -211,8 +211,7 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(entries) == 0 {
-		_, _ = fmt.Fprintln(w, "no config entries")
-		return nil
+		return emitEmptyList(w, "no config entries")
 	}
 
 	tbl := &format.Table{
@@ -641,8 +640,7 @@ func runConfigFiles(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("listing config files: %w", err)
 	}
 	if len(resp.Files) == 0 {
-		_, _ = fmt.Fprintln(w, "no config files")
-		return nil
+		return emitEmptyList(w, "no config files")
 	}
 	tbl := &format.Table{
 		Headers: []string{"path"},

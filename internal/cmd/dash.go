@@ -174,8 +174,7 @@ func runDashLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(dashboards) == 0 {
-		_, _ = fmt.Fprintln(w, "no dashboards")
-		return nil
+		return emitEmptyList(w, "no dashboards")
 	}
 
 	tbl := &format.Table{
@@ -443,8 +442,7 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 	hits := scanDashboards(ctx, ws, dashboardScanTargets(dashboards), target)
 
 	if len(hits) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: not referenced in any dashboard\n", target)
-		return nil
+		return emitEmptyList(w, target+": not referenced in any dashboard")
 	}
 
 	tbl := &format.Table{
@@ -585,8 +583,7 @@ func runDashResources(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(resources) == 0 {
-		_, _ = fmt.Fprintln(w, "no resources")
-		return nil
+		return emitEmptyList(w, "no resources")
 	}
 
 	tbl := &format.Table{

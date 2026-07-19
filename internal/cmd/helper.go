@@ -112,8 +112,7 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(resp.Helpers) == 0 {
-		_, _ = fmt.Fprintln(w, "no helpers")
-		return nil
+		return emitEmptyList(w, "no helpers")
 	}
 
 	tbl := &format.Table{

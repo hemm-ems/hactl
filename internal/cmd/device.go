@@ -83,8 +83,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 
 	devices := filterDevices(rc.devices, rc)
 	if len(devices) == 0 {
-		_, _ = fmt.Fprintln(w, "no devices")
-		return nil
+		return emitEmptyList(w, "no devices")
 	}
 
 	sort.Slice(devices, func(i, j int) bool {

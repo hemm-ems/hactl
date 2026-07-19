@@ -89,11 +89,9 @@ func runIssues(ctx context.Context, w io.Writer) error {
 
 	if len(issues) == 0 {
 		if didFilter {
-			_, _ = fmt.Fprintln(w, "no active issues (use --all to include ignored)")
-		} else {
-			_, _ = fmt.Fprintln(w, "no active issues")
+			return emitEmptyList(w, "no active issues (use --all to include ignored)")
 		}
-		return nil
+		return emitEmptyList(w, "no active issues")
 	}
 
 	tbl := &format.Table{

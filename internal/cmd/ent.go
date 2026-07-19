@@ -393,8 +393,7 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
-			_, _ = fmt.Fprintln(w, "no history data")
-			return nil
+			return emitEmptyList(w, "no history data")
 		}
 		return renderStateTimeline(w, entityID, changes)
 	}
@@ -431,8 +430,7 @@ func runEntHistAttr(ctx context.Context, w io.Writer, client *haapi.Client, enti
 	}
 
 	if len(points) == 0 {
-		_, _ = fmt.Fprintf(w, "no attribute data for %q\n", flagEntAttr)
-		return nil
+		return emitEmptyList(w, fmt.Sprintf("no attribute data for %q", flagEntAttr))
 	}
 
 	// Resample
@@ -482,8 +480,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
-			_, _ = fmt.Fprintln(w, "no history data")
-			return nil
+			return emitEmptyList(w, "no history data")
 		}
 		return renderStateAnomalies(w, entityID, cfg.Dir, changes)
 	}
@@ -502,8 +499,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 	)
 
 	if len(anomalies) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no anomalies detected\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
@@ -751,8 +747,7 @@ func renderStateAnomalies(w io.Writer, entityID, instanceDir string, changes []a
 	}
 
 	if len(anomalies) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no anomalies detected\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
@@ -1234,6 +1229,9 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	if len(related) == 0 {
+		if flagJSON {
+			return writeEmptyJSONArray(w)
+		}
 		if known {
 			_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
 		} else {
@@ -1316,8 +1314,7 @@ func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.W
 // renderStaleRefs reports where a gone entity is still referenced in config.
 func renderStaleRefs(w io.Writer, entityID string, refs []companion.StaleRef) error {
 	if len(refs) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no stale references found (entity fully cleaned up or config unavailable)\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no stale references found (entity fully cleaned up or config unavailable)")
 	}
 	_, _ = fmt.Fprintf(w, "%s: stale (renamed/deleted); %d config reference(s):\n", entityID, len(refs))
 	tbl := &format.Table{

@@ -78,8 +78,7 @@ func runCCLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(components) == 0 {
-		_, _ = fmt.Fprintln(w, "no custom components")
-		return nil
+		return emitEmptyList(w, "no custom components")
 	}
 
 	tbl := &format.Table{
@@ -162,8 +161,7 @@ func runCCLogs(ctx context.Context, w io.Writer, name string) error {
 	entries = analyze.FilterByComponent(entries, name)
 
 	if len(entries) == 0 {
-		_, _ = fmt.Fprintf(w, "no log entries for %s\n", name)
-		return nil
+		return emitEmptyList(w, "no log entries for "+name)
 	}
 
 	if flagCCLogsUnique {
