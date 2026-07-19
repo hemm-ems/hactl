@@ -181,6 +181,25 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	}, nil
 }
 
+// PlanRollback resolves which backup Rollback would restore, without applying
+// it — the dry-run preview for `hactl rollback`. It needs neither the HA client
+// nor the WS connection, so a Writer built with nil clients is sufficient.
+func (w *Writer) PlanRollback(automationID string) (*ApplyResult, error) {
+	backupFile, err := w.findLatestBackup(automationID)
+	if err != nil {
+		return nil, err
+	}
+	id := automationID
+	if id == "" {
+		id = extractAutoIDFromBackup(backupFile)
+	}
+	return &ApplyResult{
+		AutomationID: id,
+		BackupPath:   backupFile,
+		DryRun:       true,
+	}, nil
+}
+
 // validateCandidate checks the automation's trigger/condition/action blocks
 // against HA's real config schema via WS validate_config — this validates
 // the *candidate* config, not what is already installed. Returns whether

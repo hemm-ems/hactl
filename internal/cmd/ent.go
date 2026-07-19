@@ -93,8 +93,8 @@ var entRelatedCmd = &cobra.Command{
 
 var entSetLabelCmd = &cobra.Command{
 	Use:   "set-label <entity_id> <label>...",
-	Short: "Assign labels to an entity",
-	Long:  "Set one or more labels on an entity via the HA entity registry.",
+	Short: "Assign labels to an entity (dry-run by default)",
+	Long:  "Set one or more labels on an entity via the HA entity registry. Dry-run by default: previews the merged label set; use --confirm to apply.",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
@@ -119,6 +119,7 @@ func init() {
 	entLsCmd.Flags().BoolVar(&flagEntRestored, "restored", false, "show only restored 'ghost' entities (state resurrected from the registry with no live entity — deleted or re-authored)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
+	entSetLabelCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set labels (default is dry-run)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
 	entRelatedCmd.Flags().BoolVar(&flagEntStale, "stale", false, "if the entity is gone, list where it is still referenced in config")
 	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd)
@@ -1060,12 +1061,26 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		}
 	}
 
+	if !flagEntConfirm {
+		_, _ = fmt.Fprintln(w, dryRunEntSetLabelSummary(entityID, currentLabels, merged))
+		return nil
+	}
+
 	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": merged}); err != nil {
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", entityID, merged)
 	return nil
+}
+
+func dryRunEntSetLabelSummary(entityID string, current, merged []string) string {
+	s := "dry-run: would set entity labels\n"
+	s += fmt.Sprintf("  entity_id:      %s\n", entityID)
+	s += fmt.Sprintf("  current_labels: %v\n", current)
+	s += fmt.Sprintf("  new_labels:     %v\n", merged)
+	s += "use --confirm to apply"
+	return s
 }
 
 func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) error {

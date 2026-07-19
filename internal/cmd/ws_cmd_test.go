@@ -1254,6 +1254,9 @@ func TestRunEntSetLabel(t *testing.T) {
 		"config/entity_registry/update": map[string]any{"entity_id": "sensor.temp"},
 	}, nil)
 	withFlagDir(t, ts.dir)
+	oldConfirm := flagEntConfirm
+	flagEntConfirm = true
+	defer func() { flagEntConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runEntSetLabel(context.Background(), &buf, "sensor.temp", []string{"energy"}); err != nil {
@@ -1262,6 +1265,35 @@ func TestRunEntSetLabel(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "sensor.temp") {
 		t.Errorf("output missing entity: %q", out)
+	}
+}
+
+// TestRunEntSetLabel_DryRun verifies the default (no --confirm) previews the
+// merged label set and sends no registry update.
+func TestRunEntSetLabel_DryRun(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.temp", "labels": []string{}},
+		},
+		"config/label_registry/list": []map[string]any{
+			{"label_id": "energy", "name": "Energy"},
+		},
+		"config/entity_registry/update": map[string]any{"entity_id": "sensor.temp"},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	oldConfirm := flagEntConfirm
+	flagEntConfirm = false
+	defer func() { flagEntConfirm = oldConfirm }()
+
+	var buf bytes.Buffer
+	if err := runEntSetLabel(context.Background(), &buf, "sensor.temp", []string{"energy"}); err != nil {
+		t.Fatalf("runEntSetLabel dry-run failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "dry-run") {
+		t.Errorf("output missing dry-run marker: %q", buf.String())
+	}
+	if got := ts.commandCount("config/entity_registry/update"); got != 0 {
+		t.Fatalf("dry-run sent %d entity registry updates, want 0", got)
 	}
 }
 
@@ -1414,6 +1446,9 @@ func TestRunConfigFlowStart(t *testing.T) {
 		},
 	})
 	withFlagDir(t, ts.dir)
+	oldConfirm := flagConfigConfirm
+	flagConfigConfirm = true
+	defer func() { flagConfigConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runConfigFlowStart(context.Background(), &buf, "mqtt"); err != nil {
@@ -1583,6 +1618,10 @@ func TestRunRollback_WithBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	oldConfirm := flagRollbackConfirm
+	flagRollbackConfirm = true
+	defer func() { flagRollbackConfirm = oldConfirm }()
+
 	var buf bytes.Buffer
 	if err := runRollback(context.Background(), &buf, "test_auto"); err != nil {
 		t.Fatalf("runRollback failed: %v", err)
@@ -1590,6 +1629,42 @@ func TestRunRollback_WithBackup(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "rolled back") {
 		t.Errorf("output missing 'rolled back': %q", out)
+	}
+}
+
+// TestRunRollback_DryRun verifies the default (no --confirm) previews the
+// backup that would be restored and does not write to HA.
+func TestRunRollback_DryRun(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
+			t.Error("dry-run must not write automation config")
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	backupDir := filepath.Join(ts.dir, "backups")
+	if err := os.MkdirAll(backupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
+	if err := os.WriteFile(backupFile, []byte("alias: Backup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirm := flagRollbackConfirm
+	flagRollbackConfirm = false
+	defer func() { flagRollbackConfirm = oldConfirm }()
+
+	var buf bytes.Buffer
+	if err := runRollback(context.Background(), &buf, "test_auto"); err != nil {
+		t.Fatalf("runRollback dry-run failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "dry-run") {
+		t.Errorf("output missing dry-run marker: %q", out)
+	}
+	if !strings.Contains(out, "test_auto") {
+		t.Errorf("output missing backup preview: %q", out)
 	}
 }
 
@@ -1860,6 +1935,9 @@ func TestRunScriptRun_Success(t *testing.T) {
 		},
 	})
 	withFlagDir(t, ts.dir)
+	oldConfirm := flagScriptConfirm
+	flagScriptConfirm = true
+	defer func() { flagScriptConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runScriptRun(context.Background(), &buf, "welcome_home"); err != nil {
@@ -1867,6 +1945,35 @@ func TestRunScriptRun_Success(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "executed") {
 		t.Errorf("output missing 'executed': %q", buf.String())
+	}
+}
+
+// TestRunScriptRun_DryRun verifies the default (no --confirm) previews the run
+// after confirming the script exists, and calls no service.
+func TestRunScriptRun_DryRun(t *testing.T) {
+	stateData := map[string]any{"entity_id": "script.welcome_home", "state": "off"}
+	stateJSON, _ := json.Marshal(stateData)
+
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/states/script.welcome_home": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(stateJSON)
+		},
+		"/api/services/script/turn_on": func(w http.ResponseWriter, r *http.Request) {
+			t.Error("dry-run must not call script.turn_on")
+		},
+	})
+	withFlagDir(t, ts.dir)
+	oldConfirm := flagScriptConfirm
+	flagScriptConfirm = false
+	defer func() { flagScriptConfirm = oldConfirm }()
+
+	var buf bytes.Buffer
+	if err := runScriptRun(context.Background(), &buf, "welcome_home"); err != nil {
+		t.Fatalf("runScriptRun dry-run failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "dry-run") {
+		t.Errorf("output missing dry-run marker: %q", buf.String())
 	}
 }
 
@@ -1964,6 +2071,9 @@ func TestRunConfigOptions(t *testing.T) {
 		},
 	})
 	withFlagDir(t, ts.dir)
+	oldConfirm := flagConfigConfirm
+	flagConfigConfirm = true
+	defer func() { flagConfigConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runConfigOptions(context.Background(), &buf, "entry-123"); err != nil {
@@ -1996,6 +2106,9 @@ func TestRunConfigFlowStep_JSON(t *testing.T) {
 	oldOpts := flagFlowOptions
 	flagFlowOptions = false
 	defer func() { flagFlowOptions = oldOpts }()
+	oldConfirm := flagConfigConfirm
+	flagConfigConfirm = true
+	defer func() { flagConfigConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
 	if err := runConfigFlowStep(context.Background(), &buf, "f1"); err != nil {

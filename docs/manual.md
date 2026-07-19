@@ -206,7 +206,8 @@ hactl script ls --pattern kino     # glob/substring filter
 hactl script ls --label energy     # filter by label name (substring)
 hactl script ls --failing          # only scripts with recent errors
 hactl script show kino_start       # config summary + last 5 traces
-hactl script run kino_start        # execute script via script.turn_on
+hactl script run kino_start        # dry-run: verify the script exists + preview
+hactl script run kino_start --confirm  # execute via script.turn_on
 ```
 
 `state` column: `off` = idle, `on` = currently running.
@@ -278,12 +279,13 @@ hactl floor delete ground_floor --confirm # delete (dry-run without --confirm)
 
 hactl label delete old-label --confirm    # delete a label (dry-run without --confirm)
 
-hactl ent set-label sensor.wp_vl energy   # assign label(s) to entity (by ID or name)
+hactl ent set-label sensor.wp_vl energy                # dry-run: preview merged labels
+hactl ent set-label sensor.wp_vl energy --confirm      # assign label(s) (by ID or name)
 hactl ent set-area  sensor.wp_vl living_room            # dry-run
 hactl ent set-area  sensor.wp_vl living_room --confirm  # set entity area
 ```
 
-Labels and areas are applied via the entity registry. Multiple labels can be passed to `set-label` at once.
+Labels and areas are applied via the entity registry (dry-run by default; `--confirm` to apply). Multiple labels can be passed to `set-label` at once.
 
 ### Write path (automations)
 
@@ -291,12 +293,13 @@ Labels and areas are applied via the entity registry. Multiple labels can be pas
 hactl auto diff climate_schedule -f new.yaml          # diff local vs remote
 hactl auto apply climate_schedule -f new.yaml          # dry-run (default, no write)
 hactl auto apply climate_schedule -f new.yaml --confirm  # write + reload
-hactl auto rollback                                    # undo last backup
-hactl auto rollback climate_schedule                   # undo specific automation
+hactl auto rollback                                    # dry-run: preview the backup that would be restored
+hactl auto rollback --confirm                          # undo last backup
+hactl auto rollback climate_schedule --confirm         # undo specific automation
 
 ```
 
-**Safety:** `apply` without `--confirm` is always a dry-run and writes nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
+**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
 
 ### Write path (scripts)
 
@@ -382,34 +385,36 @@ hactl config entries --domain zha                 # filter by integration domain
 hactl config show <entry_id>                      # what an integration is set up as AND how it's configured (read-only)
 hactl config show <entry_id> --probe-options-flow # when no diagnostics platform: read current values via a transient options flow
 hactl config delete <entry_id>                    # delete a config entry (dry-run; add --confirm to apply)
-hactl config options <entry_id>                   # start options flow for an existing config entry
-hactl config flow-start <domain>                  # start a new config flow for a domain/integration
-hactl config flow-step <flow_id> --data '{...}'   # submit data to advance a flow step
+hactl config options <entry_id>                   # start options flow for an existing config entry (dry-run; --confirm to start)
+hactl config flow-start <domain>                  # start a new config flow for a domain/integration (dry-run; --confirm to start)
+hactl config flow-step <flow_id> --data '{...}'   # submit data to advance a flow step (dry-run; --confirm to submit)
 hactl config flow-step <flow_id> --data '{...}' --options  # same, but for an options flow
 hactl config flow-inspect <flow_id>               # inspect current flow state (step, schema, errors)
 hactl config flow-inspect <flow_id> --options     # same, but for an options flow
 ```
 
+`options`, `flow-start`, and `flow-step` are dry-run by default (they start or advance a stateful flow, and a step can complete the flow and create a config entry) — add `--confirm` to actually start/submit. `entries`, `flow-inspect`, and `--json` reads are always live.
+
 Config flows are multi-step and stateful. An LLM agent driving integration setup uses this pattern:
 
 ```bash
-# 1. Start a flow
-hactl config options abc123-entry-id --json
+# 1. Start a flow (dry-run first to preview, then --confirm to actually start)
+hactl config options abc123-entry-id --confirm --json
 # → {"flow_id":"xyz","type":"form","step_id":"init","data_schema":[...]}
 
 # 2. Submit data to advance
-hactl config flow-step xyz --data '{"action": "add_device"}' --options --json
+hactl config flow-step xyz --data '{"action": "add_device"}' --options --confirm --json
 # → {"flow_id":"xyz","type":"form","step_id":"select_device","data_schema":[...]}
 
 # 3. Complete the flow
-hactl config flow-step xyz --data '{"device_type": "heat_pump"}' --options --json
+hactl config flow-step xyz --data '{"device_type": "heat_pump"}' --options --confirm --json
 # → {"flow_id":"xyz","type":"create_entry","title":"Heat Pump"}
 ```
 
 Some steps contain **expandable sections** (schema fields of type `expandable`, e.g. the Generic Camera `advanced` section). Their fields must be nested under the section name in `--data`, not passed flat — otherwise HA returns a 400. `flow-inspect` shows the nested fields (as `advanced.framerate`) and prints the exact nesting to use:
 
 ```bash
-hactl config flow-step xyz --data '{"stream_source": "rtsp://...", "advanced": {"framerate": 2, "verify_ssl": false}}'
+hactl config flow-step xyz --data '{"stream_source": "rtsp://...", "advanced": {"framerate": 2, "verify_ssl": false}}' --confirm
 ```
 
 When a step fails, the HA error detail (e.g. the offending field) is included in the error message.

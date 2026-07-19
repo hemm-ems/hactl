@@ -59,7 +59,7 @@ func TestConfigEntries_DomainFilter_NoMatch(t *testing.T) {
 // non-existent domain returns an appropriate error or abort response.
 func TestConfigFlowStart_InvalidDomain(t *testing.T) {
 	// Starting a config flow for a fake domain should fail with an error
-	_, err := runHactlErr(t, "config", "flow-start", "nonexistent_domain_xyz")
+	_, err := runHactlErr(t, "config", "flow-start", "nonexistent_domain_xyz", "--confirm")
 	if err == nil {
 		// Some HA versions may return an abort flow rather than HTTP error
 		t.Log("flow-start with invalid domain did not error (HA may return abort flow)")
@@ -69,7 +69,7 @@ func TestConfigFlowStart_InvalidDomain(t *testing.T) {
 // TestConfigFlowStart_JSON verifies JSON output mode for flow-start.
 func TestConfigFlowStart_JSON(t *testing.T) {
 	// Use "sun" domain which is built-in to HA and should be available
-	out, err := runHactlErr(t, "config", "flow-start", "sun", "--json")
+	out, err := runHactlErr(t, "config", "flow-start", "sun", "--confirm", "--json")
 	if err != nil {
 		// sun may already be configured; that's fine
 		t.Skipf("flow-start sun failed (may already be configured): %v", err)
@@ -93,7 +93,7 @@ func TestConfigFlowStart_JSON(t *testing.T) {
 
 // TestConfigOptions_InvalidEntry tests options flow with invalid entry ID.
 func TestConfigOptions_InvalidEntry(t *testing.T) {
-	_, err := runHactlErr(t, "config", "options", "invalid_entry_that_does_not_exist")
+	_, err := runHactlErr(t, "config", "options", "invalid_entry_that_does_not_exist", "--confirm")
 	if err == nil {
 		t.Error("expected error for invalid entry_id, got nil")
 	}
@@ -109,7 +109,7 @@ func TestConfigFlowInspect_InvalidFlow(t *testing.T) {
 
 // TestConfigFlowStep_InvalidFlow tests stepping a non-existent flow.
 func TestConfigFlowStep_InvalidFlow(t *testing.T) {
-	_, err := runHactlErr(t, "config", "flow-step", "nonexistent_flow_id", "--data", "{}")
+	_, err := runHactlErr(t, "config", "flow-step", "nonexistent_flow_id", "--data", "{}", "--confirm")
 	if err == nil {
 		t.Error("expected error for invalid flow_id, got nil")
 	}
@@ -119,7 +119,7 @@ func TestConfigFlowStep_InvalidFlow(t *testing.T) {
 // Uses the "met_eireann" integration which has a simple user step.
 func TestConfigFlow_FullLifecycle(t *testing.T) {
 	// Start a config flow for met_eireann (weather integration)
-	out, err := runHactlErr(t, "config", "flow-start", "met_eireann", "--json")
+	out, err := runHactlErr(t, "config", "flow-start", "met_eireann", "--confirm", "--json")
 	if err != nil {
 		t.Skipf("flow-start met_eireann failed (integration may not be available): %v", err)
 	}

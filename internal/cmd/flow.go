@@ -57,8 +57,8 @@ var configShowCmd = &cobra.Command{
 
 var configOptionsCmd = &cobra.Command{
 	Use:   "options <entry_id>",
-	Short: "Start an options flow for a config entry",
-	Long:  "Start an options flow for an existing config entry. Returns the flow ID and initial step schema.",
+	Short: "Start an options flow for a config entry (dry-run by default)",
+	Long:  "Start an options flow for an existing config entry. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigOptions(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -79,8 +79,8 @@ var configDeleteCmd = &cobra.Command{
 
 var configFlowStartCmd = &cobra.Command{
 	Use:   "flow-start <domain>",
-	Short: "Start a config flow for an integration",
-	Long:  "Start a new config flow for a domain/integration. Returns the flow ID and initial step schema.",
+	Short: "Start a config flow for an integration (dry-run by default)",
+	Long:  "Start a new config flow for a domain/integration. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStart(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -92,13 +92,16 @@ var flagFlowOptions bool
 
 var configFlowStepCmd = &cobra.Command{
 	Use:   "flow-step <flow_id>",
-	Short: "Submit data to advance a flow",
+	Short: "Submit data to advance a flow (dry-run by default)",
 	Long: `Submit data to advance a config/options flow to the next step.
 
 Use --options when stepping through an options flow (started via 'config options <entry_id>').
 Without --options, the step is sent to the config flow endpoint
 (/api/config/config_entries/flow/) instead of the options flow endpoint
-(/api/config/config_entries/options/flow/).`,
+(/api/config/config_entries/options/flow/).
+
+Dry-run by default: previews the data that would be submitted (a step may complete
+the flow and create a config entry); use --confirm to submit.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStep(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -154,8 +157,11 @@ func init() {
 	configShowCmd.Flags().BoolVar(&flagConfigProbeOptions, "probe-options-flow", false,
 		"when no diagnostics platform exists, probe a transient options flow to read current values (starts then immediately aborts a flow; requires the entry to support options)")
 	configDeleteCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually delete (default is dry-run)")
+	configOptionsCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually start the options flow (default is dry-run)")
+	configFlowStartCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually start the config flow (default is dry-run)")
 	configFlowStepCmd.Flags().StringVar(&flagFlowData, "data", "{}", "JSON data to submit to the flow step")
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
+	configFlowStepCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually submit the step (default is dry-run)")
 	configFlowInspectCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFileCmd.Flags().BoolVar(&flagConfigFileRaw, "raw", false, "leave !include directives unresolved")
 	configCmd.AddCommand(configEntriesCmd, configShowCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
@@ -543,6 +549,14 @@ func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {
 	if err != nil {
 		return err
 	}
+
+	if !flagConfigConfirm {
+		_, _ = fmt.Fprintln(w, "dry-run: would start an options flow for config entry")
+		_, _ = fmt.Fprintf(w, "  entry_id: %s\n", entryID)
+		_, _ = fmt.Fprintln(w, "use --confirm to start")
+		return nil
+	}
+
 	client := haapi.New(cfg.URL, cfg.Token)
 	data, err := client.StartOptionsFlow(ctx, entryID)
 	if err != nil {
@@ -556,6 +570,14 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 	if err != nil {
 		return err
 	}
+
+	if !flagConfigConfirm {
+		_, _ = fmt.Fprintln(w, "dry-run: would start a config flow for integration")
+		_, _ = fmt.Fprintf(w, "  domain: %s\n", domain)
+		_, _ = fmt.Fprintln(w, "use --confirm to start")
+		return nil
+	}
+
 	client := haapi.New(cfg.URL, cfg.Token)
 	data, err := client.StartConfigFlowOnce(ctx, domain)
 	if err != nil {
@@ -574,6 +596,19 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 	var rawData json.RawMessage
 	if jsonErr := json.Unmarshal([]byte(flagFlowData), &rawData); jsonErr != nil {
 		return fmt.Errorf("invalid --data JSON: %w", jsonErr)
+	}
+
+	if !flagConfigConfirm {
+		endpoint := "config flow"
+		if flagFlowOptions {
+			endpoint = "options flow"
+		}
+		_, _ = fmt.Fprintln(w, "dry-run: would submit data to advance the flow")
+		_, _ = fmt.Fprintf(w, "  flow_id:  %s\n", flowID)
+		_, _ = fmt.Fprintf(w, "  endpoint: %s\n", endpoint)
+		_, _ = fmt.Fprintf(w, "  data:     %s\n", flagFlowData)
+		_, _ = fmt.Fprintln(w, "use --confirm to submit (a step may complete the flow and create a config entry)")
+		return nil
 	}
 
 	data, err := client.StepFlow(ctx, flowID, flagFlowOptions, rawData)
