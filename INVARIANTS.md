@@ -40,8 +40,8 @@ incompatible companion change fails before release.
 
 - Enforced by: `make check-spec-drift` (byte-level diff against
   `../hactl-companion`), `internal/companiontest/contract_test.go`
-  (CI "Companion Tests" job, companion built from `main`)
-- **Known gap:** despite the Makefile comment, `check-spec-drift` is not
-  wired into any CI workflow — it only runs locally. The `test-companion`
-  job already checks out `companion-src`, so adding
-  `make check-spec-drift COMPANION_DIR=companion-src` there would close it.
+  (CI "Companion Tests" job, companion built from `main`). The
+  "Companion Tests" CI job now runs `make check-spec-drift
+  COMPANION_DIR=companion-src` right after checking out
+  `hactl-companion`, so a drifted vendored spec fails CI before it can
+  reach a release.
