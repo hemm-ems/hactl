@@ -131,11 +131,24 @@ func Condense(raw *RawTrace) *CondensedTrace {
 	return ct
 }
 
+// overallResult determines the run's outcome, mirroring the precedence
+// internal/cmd/auto.go's traceResult uses for the same trace data: an
+// explicit error always wins, then script_execution (e.g. "failed_conditions",
+// "aborted", "cancelled"), falling back to the trace state when
+// script_execution is empty. This keeps `trace show` and `auto ls` from
+// contradicting each other about whether a run passed.
 func overallResult(raw *RawTrace) StepResult {
 	if raw.Trace.Error != "" || raw.Trace.Execution == "error" {
 		return StepFail
 	}
-	return StepPass
+	exec := raw.Trace.Execution
+	if exec == "" {
+		exec = raw.Trace.State
+	}
+	if exec == "" || exec == "finished" {
+		return StepPass
+	}
+	return StepResult(exec)
 }
 
 func classifyStep(path string) StepType {

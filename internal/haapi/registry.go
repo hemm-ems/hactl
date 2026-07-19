@@ -98,6 +98,7 @@ type UserEntry struct {
 type DeviceRegistryEntry struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
+	NameByUser   string   `json:"name_by_user"`
 	Manufacturer string   `json:"manufacturer"`
 	Model        string   `json:"model"`
 	AreaID       string   `json:"area_id"`
