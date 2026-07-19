@@ -200,6 +200,16 @@ func (w *Writer) PlanRollback(automationID string) (*ApplyResult, error) {
 	}, nil
 }
 
+// ValidateCandidate validates a parsed automation config against HA's schema
+// without writing anything. It mirrors the check Apply runs so the create path
+// (which writes via the companion, not the Config API) can refuse the same
+// broken configs Apply refuses. Returns whether validation actually ran (false
+// when no WS connection is available; HA still validates on write) and an error
+// when HA rejects a section.
+func (w *Writer) ValidateCandidate(ctx context.Context, cfg map[string]any) (bool, error) {
+	return w.validateCandidate(ctx, cfg)
+}
+
 // validateCandidate checks the automation's trigger/condition/action blocks
 // against HA's real config schema via WS validate_config — this validates
 // the *candidate* config, not what is already installed. Returns whether
