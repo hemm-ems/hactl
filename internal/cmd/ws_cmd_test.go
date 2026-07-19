@@ -607,6 +607,14 @@ func TestRunConfigShow_Diagnostics(t *testing.T) {
 	}
 }
 
+// withProbeOptions sets flagConfigProbeOptions for the duration of a test.
+func withProbeOptions(t *testing.T, v bool) {
+	t.Helper()
+	old := flagConfigProbeOptions
+	flagConfigProbeOptions = v
+	t.Cleanup(func() { flagConfigProbeOptions = old })
+}
+
 func TestRunConfigShow_OptionsFlowFallback(t *testing.T) {
 	aborted := false
 	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
@@ -630,6 +638,7 @@ func TestRunConfigShow_OptionsFlowFallback(t *testing.T) {
 		},
 	})
 	withFlagDir(t, ts.dir)
+	withProbeOptions(t, true) // the fallback probe is opt-in
 
 	var buf bytes.Buffer
 	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
@@ -702,6 +711,120 @@ func TestRunConfigShow_UnknownEntry(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown config entry") {
 		t.Errorf("error = %q, want 'unknown config entry'", err.Error())
+	}
+}
+
+// Without --probe-options-flow, a 404 diagnostics must NOT trigger any
+// options-flow POST (that POST is the same gated write `config options` makes),
+// and the note must point at the flag.
+func TestRunConfigShow_NoProbeByDefault(t *testing.T) {
+	var mu sync.Mutex
+	optionsPosts := 0
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			optionsPosts++
+			mu.Unlock()
+			_, _ = fmt.Fprint(w, `{"type":"form","flow_id":"flow123","handler":"entry1","step_id":"init","data_schema":[]}`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withProbeOptions(t, false) // default: probe off
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	mu.Lock()
+	posts := optionsPosts
+	mu.Unlock()
+	if posts != 0 {
+		t.Errorf("options-flow POST count = %d, want 0 (no probe without --probe-options-flow)", posts)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "--probe-options-flow") {
+		t.Errorf("note should point at --probe-options-flow: %q", out)
+	}
+	if strings.Contains(out, "source: options_flow") {
+		t.Errorf("config source must not be options_flow without the flag: %q", out)
+	}
+}
+
+// The probe must use the single-shot POST: a 5xx from the options-flow start
+// yields exactly one attempt, not the retrying doPost's three.
+func TestRunConfigShow_ProbeNoRetryOn5xx(t *testing.T) {
+	var mu sync.Mutex
+	optionsPosts := 0
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			optionsPosts++
+			mu.Unlock()
+			http.Error(w, "boom", http.StatusInternalServerError)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withProbeOptions(t, true)
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	mu.Lock()
+	posts := optionsPosts
+	mu.Unlock()
+	if posts != 1 {
+		t.Errorf("options-flow POST count = %d, want 1 (single-shot, no retry)", posts)
+	}
+}
+
+// A create_entry outcome means HA persisted options and reloaded the entry; the
+// probe must surface a prominent warning rather than treat it as benign, and
+// still attempt the abort.
+func TestRunConfigShow_ProbeCreateEntryWarning(t *testing.T) {
+	aborted := false
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"type":"create_entry","flow_id":"flow123","handler":"entry1","result":{"entry_id":"entry1"}}`)
+		},
+		"/api/config/config_entries/options/flow/": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				aborted = true
+			}
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withProbeOptions(t, true)
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "PERSISTED") {
+		t.Errorf("create_entry outcome should surface a prominent warning: %q", out)
+	}
+	if !aborted {
+		t.Error("abort should still be attempted for a create_entry outcome")
 	}
 }
 
@@ -3304,6 +3427,43 @@ func TestRunIssues_IgnoredFiltered(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "old_dongle") {
 		t.Errorf("ignored issue should appear with --all: %q", out)
+	}
+}
+
+// TestRunIssues_HintOnlyWhenFiltered checks that the "--all" hint appears only
+// when filtering actually dropped rows: an all-ignored list collapses to empty
+// and should mention --all, but a genuinely empty list should not.
+func TestRunIssues_HintOnlyWhenFiltered(t *testing.T) {
+	old := flagIssuesAll
+	defer func() { flagIssuesAll = old }()
+	flagIssuesAll = false
+
+	// Every issue is ignored → filtered to empty → hint should show.
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []map[string]any{
+			{"domain": "zwave", "issue_id": "old_dongle", "severity": "warning", "ignored": true},
+		}},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	var buf bytes.Buffer
+	if err := runIssues(context.Background(), &buf); err != nil {
+		t.Fatalf("runIssues failed: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "use --all") {
+		t.Errorf("hint expected when rows were filtered: %q", out)
+	}
+
+	// Nothing to filter → no hint.
+	ts2 := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []any{}},
+	}, nil)
+	withFlagDir(t, ts2.dir)
+	buf.Reset()
+	if err := runIssues(context.Background(), &buf); err != nil {
+		t.Fatalf("runIssues failed: %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "use --all") {
+		t.Errorf("no hint expected when nothing was filtered: %q", out)
 	}
 }
 

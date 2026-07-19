@@ -48,10 +48,11 @@ var readCommands = map[string]bool{
 	"hactl config file":                true,
 	"hactl config files":               true,
 	"hactl config flow-inspect":        true,
-	// config show is read-only: diagnostics is a plain GET, and the
-	// options-flow fallback starts then immediately aborts a flow without
-	// submitting any step, so nothing is mutated (unlike config options,
-	// which opens a flow as the entry point to a write and is gated write).
+	// config show is read-only: diagnostics is a plain GET. Its options-flow
+	// fallback is opt-in (--probe-options-flow) and, when used, starts then
+	// immediately aborts a flow without submitting any step, so nothing is
+	// mutated (unlike config options, which opens a flow as the entry point to
+	// a write and is gated write).
 	"hactl config show":    true,
 	"hactl dash grep":      true,
 	"hactl dash ls":        true,

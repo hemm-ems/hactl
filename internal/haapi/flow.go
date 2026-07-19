@@ -108,6 +108,16 @@ func (c *Client) StartOptionsFlow(ctx context.Context, entryID string) ([]byte, 
 	return c.doPost(ctx, "/api/config/config_entries/options/flow", body)
 }
 
+// StartOptionsFlowOnce is like StartOptionsFlow but does not retry on 5xx.
+// Retrying a POST that starts a flow can leave several flows dangling (one per
+// attempt) while only one gets aborted, so the read-only probe in `config show`
+// uses this single-shot variant.
+// POST /api/config/config_entries/options/flow with {"handler": entryID}
+func (c *Client) StartOptionsFlowOnce(ctx context.Context, entryID string) ([]byte, error) {
+	body := map[string]string{"handler": entryID}
+	return c.doPostOnce(ctx, "/api/config/config_entries/options/flow", body)
+}
+
 // StartConfigFlow starts a new config flow for a domain/integration.
 // POST /api/config/config_entries/flow with {"handler": domain}
 func (c *Client) StartConfigFlow(ctx context.Context, domain string) ([]byte, error) {

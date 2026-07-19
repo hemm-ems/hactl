@@ -356,6 +356,7 @@ Templates evaluated server-side by HA's Jinja engine — semantically correct, i
 hactl config entries                              # list config entries (entry_id, domain, title, state, source, options, disabled_by)
 hactl config entries --domain zha                 # filter by integration domain
 hactl config show <entry_id>                      # what an integration is set up as AND how it's configured (read-only)
+hactl config show <entry_id> --probe-options-flow # when no diagnostics platform: read current values via a transient options flow
 hactl config delete <entry_id>                    # delete a config entry (dry-run; add --confirm to apply)
 hactl config options <entry_id>                   # start options flow for an existing config entry
 hactl config flow-start <domain>                  # start a new config flow for a domain/integration
@@ -391,7 +392,7 @@ When a step fails, the HA error detail (e.g. the offending field) is included in
 
 When starting a *new* integration (not reconfiguring an existing entry), use `flow-start` + `flow-step` without `--options`.
 
-To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, it falls back to reading current values from a transient options flow (started and immediately aborted). The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
+To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, pass `--probe-options-flow` to read current values from a transient options flow (started and immediately aborted); without the flag no options flow is started and the note tells you to add it. The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
 
 All `config` commands use HA's REST API directly — no companion needed. Add `--json` for structured output suitable for LLM consumption.
 

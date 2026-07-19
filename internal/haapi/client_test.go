@@ -388,6 +388,24 @@ func TestStartOptionsFlow(t *testing.T) {
 	}
 }
 
+func TestStartOptionsFlowOnce_NoRetryOn5xx(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	_, err := c.StartOptionsFlowOnce(context.Background(), "entry-123")
+	if err == nil {
+		t.Fatal("expected error on 500")
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 (single-shot, no retry)", attempts)
+	}
+}
+
 func TestAbortOptionsFlow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -439,6 +457,11 @@ func TestGetConfigEntryDiagnostics_404(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "404") {
 		t.Errorf("error = %q, want it to mention 404", err.Error())
+	}
+	// The status must be recoverable from the typed error, not just the text,
+	// so callers can branch on 404 without string-matching the body.
+	if status, ok := HTTPStatus(err); !ok || status != http.StatusNotFound {
+		t.Errorf("HTTPStatus = (%d, %v), want (404, true)", status, ok)
 	}
 }
 

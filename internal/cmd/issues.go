@@ -72,18 +72,23 @@ func runIssues(ctx context.Context, w io.Writer) error {
 	}
 
 	issues := resp.Issues
+	// didFilter records whether the default (ignored-hidden) view actually
+	// dropped any rows, so the --all hint is shown only when it would reveal
+	// something — not on every empty result.
+	didFilter := false
 	if !flagIssuesAll {
-		filtered := issues[:0:0]
+		kept := issues[:0:0]
 		for _, issue := range issues {
 			if !issue.Ignored {
-				filtered = append(filtered, issue)
+				kept = append(kept, issue)
 			}
 		}
-		issues = filtered
+		didFilter = len(kept) < len(issues)
+		issues = kept
 	}
 
 	if len(issues) == 0 {
-		if !flagIssuesAll {
+		if didFilter {
 			_, _ = fmt.Fprintln(w, "no active issues (use --all to include ignored)")
 		} else {
 			_, _ = fmt.Fprintln(w, "no active issues")

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -35,15 +37,18 @@ var configEntriesCmd = &cobra.Command{
 	},
 }
 
+var flagConfigProbeOptions bool
+
 var configShowCmd = &cobra.Command{
 	Use:   "show <entry_id>",
 	Short: "Show a config entry's setup and current configuration",
 	Long: "Show what an integration is set up as (domain, title, state, source, " +
 		"options/reconfigure support, disabled/failure reason) and how it is " +
 		"configured. The configuration is read from the integration's diagnostics " +
-		"dump (secrets redacted by the integration); when the integration ships no " +
-		"diagnostics platform, hactl falls back to reading current values from a " +
-		"transient options flow. Read-only; requires an admin token.",
+		"dump (secrets redacted by the integration). When the integration ships no " +
+		"diagnostics platform, pass --probe-options-flow to read current values " +
+		"from a transient options flow (started and immediately aborted); without " +
+		"the flag no options flow is started. Read-only; requires an admin token.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigShow(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -146,6 +151,8 @@ var configBlockCmd = &cobra.Command{
 
 func init() {
 	configEntriesCmd.Flags().StringVar(&flagConfigDomain, "domain", "", "filter entries by integration domain")
+	configShowCmd.Flags().BoolVar(&flagConfigProbeOptions, "probe-options-flow", false,
+		"when no diagnostics platform exists, probe a transient options flow to read current values (starts then immediately aborts a flow; requires the entry to support options)")
 	configDeleteCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually delete (default is dry-run)")
 	configFlowStepCmd.Flags().StringVar(&flagFlowData, "data", "{}", "JSON data to submit to the flow step")
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
@@ -233,6 +240,7 @@ type configShowResult struct {
 	ConfigSource string          `json:"config_source"`     // "diagnostics" | "options_flow" | "unavailable"
 	Config       json.RawMessage `json:"config,omitempty"`  // diagnostics: integration-redacted dump
 	Options      map[string]any  `json:"options,omitempty"` // options_flow: current field values
+	Warning      string          `json:"warning,omitempty"` // side-effect the probe must not hide
 	Note         string          `json:"note,omitempty"`
 }
 
@@ -259,20 +267,35 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 	result := &configShowResult{Entry: entry, ConfigSource: "unavailable"}
 
 	// Primary source: the integration's diagnostics dump (secrets redacted by
-	// the integration). Falls back to a transient options flow when the
-	// integration ships no diagnostics platform.
+	// the integration).
 	diag, diagErr := client.GetConfigEntryDiagnostics(ctx, entryID)
-	switch {
-	case diagErr == nil:
+	if diagErr == nil {
 		result.ConfigSource = "diagnostics"
 		result.Config = diagnosticsConfigData(diag)
-	default:
-		opts, note := readOptionsFlowValues(ctx, client, entryID)
-		if opts != nil {
-			result.ConfigSource = "options_flow"
-			result.Options = opts
+	} else {
+		reason := configShowDiagReason(diagErr)
+		// The options-flow fallback POSTs to the same endpoint the gated
+		// `config options` write command uses, so from this read-classified
+		// command it runs only behind an explicit --probe-options-flow, and
+		// only when it is both safe and meaningful: the diagnostics platform is
+		// genuinely absent (a TYPED 404 — not a 401/403/5xx, and not an error
+		// whose body merely contains "404") and the entry advertises options.
+		status, _ := haapi.HTTPStatus(diagErr)
+		canProbe := status == http.StatusNotFound && entry.SupportsOptions
+		switch {
+		case canProbe && flagConfigProbeOptions:
+			opts, warning, note := readOptionsFlowValues(ctx, client, entryID)
+			if opts != nil {
+				result.ConfigSource = "options_flow"
+				result.Options = opts
+			}
+			result.Warning = warning
+			result.Note = joinNote(reason, note)
+		case canProbe:
+			result.Note = reason + "; pass --probe-options-flow to read current values from a transient options flow"
+		default:
+			result.Note = reason
 		}
-		result.Note = configShowNote(diagErr, note)
 	}
 
 	if flagJSON {
@@ -307,32 +330,70 @@ func diagnosticsConfigData(raw []byte) json.RawMessage {
 	return json.RawMessage(raw)
 }
 
-// readOptionsFlowValues starts an options flow, reads the current value of each
-// schema field, then aborts the flow so nothing dangles. Returns (values, "")
-// on success or (nil, reason) when there is nothing readable.
-func readOptionsFlowValues(ctx context.Context, client *haapi.Client, entryID string) (map[string]any, string) {
-	raw, err := client.StartOptionsFlow(ctx, entryID)
+// optionsFlowAbortTimeout bounds the best-effort cleanup DELETE so a detached
+// abort cannot hang the command on a slow HA.
+const optionsFlowAbortTimeout = 5 * time.Second
+
+// readOptionsFlowValues probes a transient options flow to read the current
+// value of each schema field, then aborts the flow so nothing dangles. It runs
+// only behind --probe-options-flow (see runConfigShow). Returns:
+//   - values: the current values ({} when the form carries none, nil when there
+//     is no readable form);
+//   - warning: a prominent, non-benign side-effect the caller must surface;
+//   - note: a human explanation of the outcome.
+func readOptionsFlowValues(ctx context.Context, client *haapi.Client, entryID string) (values map[string]any, warning, note string) {
+	// Single-shot POST: retrying would risk starting several flows while only
+	// one gets aborted below.
+	raw, err := client.StartOptionsFlowOnce(ctx, entryID)
 	if err != nil {
-		return nil, "options flow unavailable: " + err.Error()
+		return nil, "", "options flow unavailable: " + err.Error()
 	}
-	flow, parseErr := haapi.ParseFlowResult(raw)
-	if parseErr == nil && flow.FlowID != "" {
-		// Best-effort cleanup; a leaked read-only flow is harmless but untidy.
-		if abortErr := client.AbortOptionsFlow(ctx, flow.FlowID); abortErr != nil {
-			slog.Debug("aborting options flow failed", "flow_id", flow.FlowID, "error", abortErr)
+
+	// Always attempt cleanup whenever a flow id is present — independent of
+	// whether the full parse below succeeds, since a parse failure does not
+	// prove no flow was created. Detach from the caller's context
+	// (WithoutCancel) with a short timeout so the abort still runs even if the
+	// caller's context was cancelled.
+	if flowID := flowIDOf(raw); flowID != "" {
+		abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), optionsFlowAbortTimeout)
+		if abortErr := client.AbortOptionsFlow(abortCtx, flowID); abortErr != nil {
+			slog.Debug("aborting options flow failed", "flow_id", flowID, "error", abortErr)
 		}
+		cancel()
 	}
+
+	flow, parseErr := haapi.ParseFlowResult(raw)
 	if parseErr != nil {
-		return nil, "could not parse options flow: " + parseErr.Error()
+		return nil, "", "could not parse options flow: " + parseErr.Error()
 	}
+
+	// A create_entry means HA accepted a submission and finished the flow: the
+	// entry's options were PERSISTED and the config entry reloaded. That is a
+	// mutation, not a benign read — never hide it behind a note.
+	if flow.Type == "create_entry" {
+		return nil, "options-flow probe PERSISTED options and reloaded the config entry: HA finished the flow " +
+			"with create_entry instead of returning a form, so the entry may have been rewritten with its current values", ""
+	}
+
 	if flow.Type != "form" {
-		return nil, "integration exposes no readable options form (flow type: " + flow.Type + ")"
+		return nil, "", "integration exposes no readable options form (flow type: " + flow.Type + ")"
 	}
-	values := optionsFlowCurrentValues(raw)
-	if len(values) == 0 {
-		return map[string]any{}, "options form has no pre-filled current values"
+	vals := optionsFlowCurrentValues(raw)
+	if len(vals) == 0 {
+		return map[string]any{}, "", "options form has no pre-filled current values"
 	}
-	return values, ""
+	return vals, "", ""
+}
+
+// flowIDOf extracts just the flow_id from a raw flow response, independent of
+// the fuller ParseFlowResult, so cleanup can proceed even when the rest of the
+// response is unparseable.
+func flowIDOf(rawFlow []byte) string {
+	var v struct {
+		FlowID string `json:"flow_id"`
+	}
+	_ = json.Unmarshal(rawFlow, &v)
+	return v.FlowID
 }
 
 // optionsFlowCurrentValues extracts each schema field's current value from a
@@ -367,25 +428,34 @@ func optionsFlowCurrentValues(rawFlow []byte) map[string]any {
 	return values
 }
 
-// configShowNote builds the human note for the non-diagnostics path, folding in
-// why diagnostics was skipped.
-func configShowNote(diagErr error, fallbackNote string) string {
-	var reason string
-	switch {
-	case strings.Contains(diagErr.Error(), "404"):
-		reason = "integration ships no diagnostics platform"
-	case strings.Contains(diagErr.Error(), "401"), strings.Contains(diagErr.Error(), "403"):
-		reason = "diagnostics requires an admin token"
+// configShowDiagReason explains why the diagnostics dump was unavailable,
+// branching on the TYPED HTTP status (never the message text, which can embed up
+// to 500 bytes of response body).
+func configShowDiagReason(diagErr error) string {
+	switch status, _ := haapi.HTTPStatus(diagErr); status {
+	case http.StatusNotFound:
+		return "integration ships no diagnostics platform"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "diagnostics requires an admin token"
 	default:
-		reason = "diagnostics unavailable: " + diagErr.Error()
+		return "diagnostics unavailable: " + diagErr.Error()
 	}
-	if fallbackNote != "" {
-		return reason + "; " + fallbackNote
+}
+
+// joinNote appends a sub-note to a reason with "; ", omitting an empty sub-note.
+func joinNote(reason, note string) string {
+	if note == "" {
+		return reason
 	}
-	return reason
+	return reason + "; " + note
 }
 
 func renderConfigShow(w io.Writer, r *configShowResult) error {
+	// A probe side-effect (e.g. options persisted by a create_entry) must be
+	// impossible to miss, so lead with it.
+	if r.Warning != "" {
+		_, _ = fmt.Fprintf(w, "WARNING: %s\n\n", r.Warning)
+	}
 	e := r.Entry
 	_, _ = fmt.Fprintf(w, "entry_id:     %s\n", e.EntryID)
 	_, _ = fmt.Fprintf(w, "domain:       %s\n", e.Domain)

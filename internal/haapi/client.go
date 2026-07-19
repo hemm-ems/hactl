@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -149,20 +150,47 @@ func (c *Client) GetLogbookFiltered(ctx context.Context, startTime, endTime, ent
 	return c.doGet(ctx, path)
 }
 
-// httpStatusError formats a non-2xx response into an error. When the response
-// body is non-empty it is included (trimmed and length-capped) so HA's error
-// detail — e.g. {"message": "Expected ... for dictionary value @ data['advanced']"}
-// on a 400 — is surfaced instead of swallowed behind a bare status line.
+// HTTPStatusError is returned for a non-2xx HA response. It carries the parsed
+// status code so callers can branch on the status (e.g. 404 → the integration
+// ships no diagnostics platform) via HTTPStatus/errors.As instead of matching on
+// the message text, which embeds up to maxLen bytes of the response body.
+type HTTPStatusError struct {
+	Method string
+	Path   string
+	Body   string // trimmed, length-capped response body ("" when empty)
+	Status int
+}
+
+// Error renders the status line, appending HA's error detail — e.g.
+// {"message": "Expected ... for dictionary value @ data['advanced']"} on a 400 —
+// when the body is non-empty, instead of swallowing it behind a bare status.
+func (e *HTTPStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("%s %s: %d %s", e.Method, e.Path, e.Status, http.StatusText(e.Status))
+	}
+	return fmt.Sprintf("%s %s: %d %s: %s", e.Method, e.Path, e.Status, http.StatusText(e.Status), e.Body)
+}
+
+// HTTPStatus reports the HTTP status code carried by err when err (or anything
+// it wraps) is an *HTTPStatusError. The second return is false otherwise, so a
+// transport error is not mistaken for status 0.
+func HTTPStatus(err error) (int, bool) {
+	var se *HTTPStatusError
+	if errors.As(err, &se) {
+		return se.Status, true
+	}
+	return 0, false
+}
+
+// httpStatusError builds an *HTTPStatusError from a non-2xx response, trimming
+// and length-capping the body.
 func httpStatusError(method, path string, status int, body []byte) error {
 	const maxLen = 500
 	msg := strings.TrimSpace(string(body))
 	if len(msg) > maxLen {
 		msg = msg[:maxLen] + "…"
 	}
-	if msg == "" {
-		return fmt.Errorf("%s %s: %d %s", method, path, status, http.StatusText(status))
-	}
-	return fmt.Errorf("%s %s: %d %s: %s", method, path, status, http.StatusText(status), msg)
+	return &HTTPStatusError{Method: method, Path: path, Status: status, Body: msg}
 }
 
 func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
