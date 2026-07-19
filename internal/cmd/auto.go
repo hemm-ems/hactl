@@ -680,12 +680,19 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 
 // validateAutoCreateCandidate runs HA's validate_config against a single-automation
 // YAML mapping and prints the same `validation:` status line `auto apply` prints.
-// It returns an error (refusing the create) when HA rejects a section. Inputs that
-// are not a top-level mapping (e.g. a YAML list) are left for the companion to
-// handle, matching the pre-validation behavior.
+// It returns an error (refusing the create) when HA rejects a section. A YAML
+// parse failure is a hard error, mirroring `auto apply` (writer.Apply returns
+// "parsing local YAML: %w" on the same failure) — a config the parser chokes on
+// must never be reported as "checked". Inputs that parse cleanly but are not a
+// top-level mapping (e.g. a YAML list) are left for the companion to handle,
+// matching the pre-validation behavior.
 func validateAutoCreateCandidate(ctx context.Context, w io.Writer, data []byte) error {
-	var candidate map[string]any
-	if err := yaml.Unmarshal(data, &candidate); err != nil || candidate == nil {
+	var parsed any
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return fmt.Errorf("parsing local YAML: %w", err)
+	}
+	candidate, ok := parsed.(map[string]any)
+	if !ok {
 		return nil
 	}
 
@@ -709,9 +716,9 @@ func validateAutoCreateCandidate(ctx context.Context, w io.Writer, data []byte) 
 		return err
 	}
 	if validated {
-		_, _ = fmt.Fprintln(w, "validation: ok (HA validate_config)")
+		_, _ = fmt.Fprintf(w, "\nvalidation: ok (HA validate_config)\n")
 	} else {
-		_, _ = fmt.Fprintln(w, "validation: skipped (validate_config unavailable; HA still validates on write)")
+		_, _ = fmt.Fprintf(w, "\nvalidation: skipped (validate_config unavailable; HA still validates on write)\n")
 	}
 	return nil
 }
