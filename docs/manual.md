@@ -8,9 +8,9 @@ Match the user's question here first and run exactly the listed sequence — com
 
 | User asks | Run, in order | Notes |
 |---|---|---|
-| "What went wrong?" / "What broke?" | `health`, `log --errors --unique`, `changes --since 24h` | All three first; `log show <id>` only afterwards |
-| "Daily report" / "Morning check" / "Status" | `health`, `issues`, `log --errors --unique`, `changes --since 24h` | Summarize per section |
-| "Which automation failed?" | `auto ls --failing`; if empty `log --errors --unique` | `trace show` only when a failure appears |
+| "What went wrong?" / "What broke?" | `health`, `log --errors --warnings --unique`, `changes --since 24h` | All three first; `log show <id>` only afterwards. Many operational signals ("skipping X", "no fallback") are WARNINGs, not errors |
+| "Daily report" / "Morning check" / "Status" | `health`, `issues`, `log --errors --warnings --unique`, `changes --since 24h` | Summarize per section |
+| "Which automation failed?" | `auto ls --failing`; if empty `log --errors --warnings --unique` | `trace show` only when a failure appears |
 | "Is <sensor> behaving normally?" | `ent anomalies <id>` | `ent hist <id>` if anomalies found |
 | "Which entities belong to <concept>?" | `device ls --name <shortest-term>`, `device show <closest match>` | Fallbacks: `label ls`, `ent ls --pattern '*<term>*'` |
 | "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
@@ -25,7 +25,7 @@ Full command set (family → subcommands):
 - `helper ls|show|create|delete` · `tpl eval|create|delete` · `svc call`
 - `dash ls|show|save|create|delete|resources|grep|replace`
 - `device ls|show` · `label|area|floor ls|create|delete`
-- `config entries|options|delete|flow-start|flow-step|flow-inspect`
+- `config entries|show|options|delete|flow-start|flow-step|flow-inspect`
 - `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
 
 No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
@@ -44,7 +44,7 @@ hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense t
 ```
 hactl auto ls --failing
 # if --failing is empty: check the error log for automation names
-hactl log --errors --unique
+hactl log --errors --warnings --unique
 hactl auto show <id>
 hactl trace show <trc:XX>
 ```
@@ -117,7 +117,7 @@ hactl auto ls --label victron
 ### "What went wrong recently?" / "What broke?"
 ```
 hactl health
-hactl log --errors --unique
+hactl log --errors --warnings --unique
 hactl changes --since 24h
 ```
 Complete all three before drilling into a single entry with `log show` — breadth first, depth only where the sweep flagged something.
@@ -126,7 +126,7 @@ Complete all three before drilling into a single entry with `log show` — bread
 ```
 hactl health
 hactl issues
-hactl log --errors --unique
+hactl log --errors --warnings --unique
 hactl changes --since 24h
 ```
 Run all four, then summarize per section: system health, open issues, errors, notable changes.
@@ -159,7 +159,8 @@ hactl setup                   # interactive first-time setup: prompts for HA_URL
 hactl setup --url http://ha:8123 --token <token>   # non-interactive (agents/scripts); --token - reads from stdin; --force overwrites
 hactl health                  # HA version, state, recorder, location, timezone, error count
 hactl health --json            # same as structured JSON
-hactl issues                  # active HA repairs/issues (domain, severity, fixable)
+hactl issues                  # active HA repairs/issues, every severity incl. WARNING (domain, severity, fixable, ignored, breaks_in)
+hactl issues --all            # also include ignored (dismissed) issues
 hactl changes --since 24h     # logbook: what changed recently (state changes, auto triggers)
 ```
 
@@ -376,8 +377,10 @@ Templates evaluated server-side by HA's Jinja engine — semantically correct, i
 ### Config entries & flows
 
 ```bash
-hactl config entries                              # list all config entries (entry_id, domain, title, state, version)
+hactl config entries                              # list config entries (entry_id, domain, title, state, source, options, disabled_by)
 hactl config entries --domain zha                 # filter by integration domain
+hactl config show <entry_id>                      # what an integration is set up as AND how it's configured (read-only)
+hactl config show <entry_id> --probe-options-flow # when no diagnostics platform: read current values via a transient options flow
 hactl config delete <entry_id>                    # delete a config entry (dry-run; add --confirm to apply)
 hactl config options <entry_id>                   # start options flow for an existing config entry
 hactl config flow-start <domain>                  # start a new config flow for a domain/integration
@@ -413,6 +416,8 @@ When a step fails, the HA error detail (e.g. the offending field) is included in
 
 When starting a *new* integration (not reconfiguring an existing entry), use `flow-start` + `flow-step` without `--options`.
 
+To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, pass `--probe-options-flow` to read current values from a transient options flow (started and immediately aborted); without the flag no options flow is started and the note tells you to add it. The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
+
 All `config` commands use HA's REST API directly — no companion needed. Add `--json` for structured output suitable for LLM consumption.
 
 ### Dashboards (Lovelace)
@@ -441,8 +446,9 @@ hactl dash resources                               # list custom card/CSS resour
 ### Logs & custom components
 
 ```bash
-hactl log --errors                        # error-level entries only
-hactl log --errors --unique               # deduplicated, sorted by count
+hactl log --errors                        # ERROR-level entries only
+hactl log --warnings                      # WARNING-level entries only (operational signals)
+hactl log --errors --warnings --unique    # both levels, deduplicated, sorted by count
 hactl log --component zha                 # filter by component name (substring)
 hactl log show log:f2                     # full detail: timestamp, component, message
 

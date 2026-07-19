@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
+	"log/slog"
+	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,7 +23,7 @@ var configCmd = &cobra.Command{
 	Use:        "config",
 	SuggestFor: []string{"integrations", "integration", "entries"},
 	Short:      "Manage config entries and flows",
-	Long:  "List config entries and start, step through, and inspect config entry options flows and config flows.",
+	Long:       "List config entries and start, step through, and inspect config entry options flows and config flows.",
 }
 
 var flagConfigDomain string
@@ -30,6 +34,24 @@ var configEntriesCmd = &cobra.Command{
 	Long:  "List all config entries. Use --domain to filter by integration domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigEntries(cmd.Context(), cmd.OutOrStdout())
+	},
+}
+
+var flagConfigProbeOptions bool
+
+var configShowCmd = &cobra.Command{
+	Use:   "show <entry_id>",
+	Short: "Show a config entry's setup and current configuration",
+	Long: "Show what an integration is set up as (domain, title, state, source, " +
+		"options/reconfigure support, disabled/failure reason) and how it is " +
+		"configured. The configuration is read from the integration's diagnostics " +
+		"dump (secrets redacted by the integration). When the integration ships no " +
+		"diagnostics platform, pass --probe-options-flow to read current values " +
+		"from a transient options flow (started and immediately aborted); without " +
+		"the flag no options flow is started. Read-only; requires an admin token.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
 }
 
@@ -129,22 +151,30 @@ var configBlockCmd = &cobra.Command{
 
 func init() {
 	configEntriesCmd.Flags().StringVar(&flagConfigDomain, "domain", "", "filter entries by integration domain")
+	configShowCmd.Flags().BoolVar(&flagConfigProbeOptions, "probe-options-flow", false,
+		"when no diagnostics platform exists, probe a transient options flow to read current values (starts then immediately aborts a flow; requires the entry to support options)")
 	configDeleteCmd.Flags().BoolVar(&flagConfigConfirm, "confirm", false, "actually delete (default is dry-run)")
 	configFlowStepCmd.Flags().StringVar(&flagFlowData, "data", "{}", "JSON data to submit to the flow step")
 	configFlowStepCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFlowInspectCmd.Flags().BoolVar(&flagFlowOptions, "options", false, "use options flow endpoint (for existing config entries)")
 	configFileCmd.Flags().BoolVar(&flagConfigFileRaw, "raw", false, "leave !include directives unresolved")
-	configCmd.AddCommand(configEntriesCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
+	configCmd.AddCommand(configEntriesCmd, configShowCmd, configDeleteCmd, configOptionsCmd, configFlowStartCmd, configFlowStepCmd, configFlowInspectCmd, configFilesCmd, configFileCmd, configBlockCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
 // configEntry is the subset of a config entry we display.
 type configEntry struct {
-	EntryID string `json:"entry_id"`
-	Domain  string `json:"domain"`
-	Title   string `json:"title"`
-	State   string `json:"state"`
-	Version int    `json:"version"`
+	EntryID            string `json:"entry_id"`
+	Domain             string `json:"domain"`
+	Title              string `json:"title"`
+	State              string `json:"state"`
+	Version            int    `json:"version"`
+	Source             string `json:"source"`
+	SupportsOptions    bool   `json:"supports_options"`
+	SupportsReconfig   bool   `json:"supports_reconfigure"`
+	DisabledBy         string `json:"disabled_by"`
+	Reason             string `json:"reason"`
+	ReasonTranslateKey string `json:"error_reason_translation_key"`
 }
 
 func runConfigEntries(ctx context.Context, w io.Writer) error {
@@ -180,7 +210,7 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"entry_id", "domain", "title", "state", "version"},
+		Headers: []string{"entry_id", "domain", "title", "state", "source", "options", "disabled_by"},
 		Rows:    make([][]string, len(entries)),
 	}
 	for i, e := range entries {
@@ -189,7 +219,9 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 			e.Domain,
 			e.Title,
 			e.State,
-			strconv.Itoa(e.Version),
+			e.Source,
+			yesNo(e.SupportsOptions),
+			dashIfEmpty(e.DisabledBy),
 		}
 	}
 
@@ -199,6 +231,280 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+// configShowResult is the structured form of `config show`, used verbatim for
+// --json output.
+type configShowResult struct {
+	Entry        *configEntry    `json:"entry"`
+	ConfigSource string          `json:"config_source"`     // "diagnostics" | "options_flow" | "unavailable"
+	Config       json.RawMessage `json:"config,omitempty"`  // diagnostics: integration-redacted dump
+	Options      map[string]any  `json:"options,omitempty"` // options_flow: current field values
+	Warning      string          `json:"warning,omitempty"` // side-effect the probe must not hide
+	Note         string          `json:"note,omitempty"`
+}
+
+func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+	client := haapi.New(cfg.URL, cfg.Token)
+
+	data, err := client.GetConfigEntries(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching config entries: %w", err)
+	}
+	var entries []configEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return fmt.Errorf("parsing config entries: %w", err)
+	}
+	entry, ok := findConfigEntry(entries, entryID)
+	if !ok {
+		return fmt.Errorf("unknown config entry %q (list them with 'hactl config entries')", entryID)
+	}
+
+	result := &configShowResult{Entry: entry, ConfigSource: "unavailable"}
+
+	// Primary source: the integration's diagnostics dump (secrets redacted by
+	// the integration).
+	diag, diagErr := client.GetConfigEntryDiagnostics(ctx, entryID)
+	if diagErr == nil {
+		result.ConfigSource = "diagnostics"
+		result.Config = diagnosticsConfigData(diag)
+	} else {
+		reason := configShowDiagReason(diagErr)
+		// The options-flow fallback POSTs to the same endpoint the gated
+		// `config options` write command uses, so from this read-classified
+		// command it runs only behind an explicit --probe-options-flow, and
+		// only when it is both safe and meaningful: the diagnostics platform is
+		// genuinely absent (a TYPED 404 — not a 401/403/5xx, and not an error
+		// whose body merely contains "404") and the entry advertises options.
+		status, _ := haapi.HTTPStatus(diagErr)
+		canProbe := status == http.StatusNotFound && entry.SupportsOptions
+		switch {
+		case canProbe && flagConfigProbeOptions:
+			opts, warning, note := readOptionsFlowValues(ctx, client, entryID)
+			if opts != nil {
+				result.ConfigSource = "options_flow"
+				result.Options = opts
+			}
+			result.Warning = warning
+			result.Note = joinNote(reason, note)
+		case canProbe:
+			result.Note = reason + "; pass --probe-options-flow to read current values from a transient options flow"
+		default:
+			result.Note = reason
+		}
+	}
+
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+	return renderConfigShow(w, result)
+}
+
+// findConfigEntry returns the entry whose entry_id matches (case-sensitive).
+func findConfigEntry(entries []configEntry, entryID string) (*configEntry, bool) {
+	for i := range entries {
+		if entries[i].EntryID == entryID {
+			return &entries[i], true
+		}
+	}
+	return nil, false
+}
+
+// diagnosticsConfigData extracts the integration's own diagnostics payload (the
+// top-level "data" key of the download-diagnostics envelope) — the part that
+// describes how the entry is configured. Falls back to the whole dump if the
+// envelope shape is unexpected.
+func diagnosticsConfigData(raw []byte) json.RawMessage {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Data) > 0 {
+		return envelope.Data
+	}
+	return json.RawMessage(raw)
+}
+
+// optionsFlowAbortTimeout bounds the best-effort cleanup DELETE so a detached
+// abort cannot hang the command on a slow HA.
+const optionsFlowAbortTimeout = 5 * time.Second
+
+// readOptionsFlowValues probes a transient options flow to read the current
+// value of each schema field, then aborts the flow so nothing dangles. It runs
+// only behind --probe-options-flow (see runConfigShow). Returns:
+//   - values: the current values ({} when the form carries none, nil when there
+//     is no readable form);
+//   - warning: a prominent, non-benign side-effect the caller must surface;
+//   - note: a human explanation of the outcome.
+func readOptionsFlowValues(ctx context.Context, client *haapi.Client, entryID string) (values map[string]any, warning, note string) {
+	// Single-shot POST: retrying would risk starting several flows while only
+	// one gets aborted below.
+	raw, err := client.StartOptionsFlowOnce(ctx, entryID)
+	if err != nil {
+		return nil, "", "options flow unavailable: " + err.Error()
+	}
+
+	// Always attempt cleanup whenever a flow id is present — independent of
+	// whether the full parse below succeeds, since a parse failure does not
+	// prove no flow was created. Detach from the caller's context
+	// (WithoutCancel) with a short timeout so the abort still runs even if the
+	// caller's context was cancelled.
+	if flowID := flowIDOf(raw); flowID != "" {
+		abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), optionsFlowAbortTimeout)
+		if abortErr := client.AbortOptionsFlow(abortCtx, flowID); abortErr != nil {
+			slog.Debug("aborting options flow failed", "flow_id", flowID, "error", abortErr)
+		}
+		cancel()
+	}
+
+	flow, parseErr := haapi.ParseFlowResult(raw)
+	if parseErr != nil {
+		return nil, "", "could not parse options flow: " + parseErr.Error()
+	}
+
+	// A create_entry means HA accepted a submission and finished the flow: the
+	// entry's options were PERSISTED and the config entry reloaded. That is a
+	// mutation, not a benign read — never hide it behind a note.
+	if flow.Type == "create_entry" {
+		return nil, "options-flow probe PERSISTED options and reloaded the config entry: HA finished the flow " +
+			"with create_entry instead of returning a form, so the entry may have been rewritten with its current values", ""
+	}
+
+	if flow.Type != "form" {
+		return nil, "", "integration exposes no readable options form (flow type: " + flow.Type + ")"
+	}
+	vals := optionsFlowCurrentValues(raw)
+	if len(vals) == 0 {
+		return map[string]any{}, "", "options form has no pre-filled current values"
+	}
+	return vals, "", ""
+}
+
+// flowIDOf extracts just the flow_id from a raw flow response, independent of
+// the fuller ParseFlowResult, so cleanup can proceed even when the rest of the
+// response is unparseable.
+func flowIDOf(rawFlow []byte) string {
+	var v struct {
+		FlowID string `json:"flow_id"`
+	}
+	_ = json.Unmarshal(rawFlow, &v)
+	return v.FlowID
+}
+
+// optionsFlowCurrentValues extracts each schema field's current value from a
+// raw options-flow response. HA seeds an options form with the entry's current
+// values as either a field "default" or a "description.suggested_value".
+func optionsFlowCurrentValues(rawFlow []byte) map[string]any {
+	var raw struct {
+		DataSchema []json.RawMessage `json:"data_schema"`
+	}
+	if err := json.Unmarshal(rawFlow, &raw); err != nil {
+		return nil
+	}
+	values := make(map[string]any)
+	for _, fieldRaw := range raw.DataSchema {
+		var field struct {
+			Name        string `json:"name"`
+			Default     any    `json:"default"`
+			Description struct {
+				SuggestedValue any `json:"suggested_value"`
+			} `json:"description"`
+		}
+		if err := json.Unmarshal(fieldRaw, &field); err != nil || field.Name == "" {
+			continue
+		}
+		switch {
+		case field.Default != nil:
+			values[field.Name] = field.Default
+		case field.Description.SuggestedValue != nil:
+			values[field.Name] = field.Description.SuggestedValue
+		}
+	}
+	return values
+}
+
+// configShowDiagReason explains why the diagnostics dump was unavailable,
+// branching on the TYPED HTTP status (never the message text, which can embed up
+// to 500 bytes of response body).
+func configShowDiagReason(diagErr error) string {
+	switch status, _ := haapi.HTTPStatus(diagErr); status {
+	case http.StatusNotFound:
+		return "integration ships no diagnostics platform"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "diagnostics requires an admin token"
+	default:
+		return "diagnostics unavailable: " + diagErr.Error()
+	}
+}
+
+// joinNote appends a sub-note to a reason with "; ", omitting an empty sub-note.
+func joinNote(reason, note string) string {
+	if note == "" {
+		return reason
+	}
+	return reason + "; " + note
+}
+
+func renderConfigShow(w io.Writer, r *configShowResult) error {
+	// A probe side-effect (e.g. options persisted by a create_entry) must be
+	// impossible to miss, so lead with it.
+	if r.Warning != "" {
+		_, _ = fmt.Fprintf(w, "WARNING: %s\n\n", r.Warning)
+	}
+	e := r.Entry
+	_, _ = fmt.Fprintf(w, "entry_id:     %s\n", e.EntryID)
+	_, _ = fmt.Fprintf(w, "domain:       %s\n", e.Domain)
+	_, _ = fmt.Fprintf(w, "title:        %s\n", e.Title)
+	_, _ = fmt.Fprintf(w, "state:        %s\n", e.State)
+	_, _ = fmt.Fprintf(w, "source:       %s\n", e.Source)
+	_, _ = fmt.Fprintf(w, "options:      %s\n", yesNo(e.SupportsOptions))
+	_, _ = fmt.Fprintf(w, "reconfigure:  %s\n", yesNo(e.SupportsReconfig))
+	if e.DisabledBy != "" {
+		_, _ = fmt.Fprintf(w, "disabled_by:  %s\n", e.DisabledBy)
+	}
+	if reason := e.Reason; reason != "" {
+		_, _ = fmt.Fprintf(w, "reason:       %s\n", reason)
+	} else if e.ReasonTranslateKey != "" {
+		_, _ = fmt.Fprintf(w, "reason:       %s\n", e.ReasonTranslateKey)
+	}
+
+	_, _ = fmt.Fprintf(w, "\nconfiguration (source: %s):\n", r.ConfigSource)
+	switch r.ConfigSource {
+	case "diagnostics":
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, r.Config, "  ", "  "); err == nil {
+			_, _ = fmt.Fprintf(w, "  %s\n", pretty.String())
+		} else {
+			_, _ = fmt.Fprintf(w, "  %s\n", string(r.Config))
+		}
+	case "options_flow":
+		if len(r.Options) == 0 {
+			_, _ = fmt.Fprintln(w, "  (no pre-filled current values in the options form)")
+		}
+		for _, k := range sortedKeys(r.Options) {
+			_, _ = fmt.Fprintf(w, "  %s: %v\n", k, r.Options[k])
+		}
+	default:
+		_, _ = fmt.Fprintln(w, "  (not available)")
+	}
+	if r.Note != "" {
+		_, _ = fmt.Fprintf(w, "\nnote: %s\n", r.Note)
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {

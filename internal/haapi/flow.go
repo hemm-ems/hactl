@@ -108,6 +108,16 @@ func (c *Client) StartOptionsFlow(ctx context.Context, entryID string) ([]byte, 
 	return c.doPost(ctx, "/api/config/config_entries/options/flow", body)
 }
 
+// StartOptionsFlowOnce is like StartOptionsFlow but does not retry on 5xx.
+// Retrying a POST that starts a flow can leave several flows dangling (one per
+// attempt) while only one gets aborted, so the read-only probe in `config show`
+// uses this single-shot variant.
+// POST /api/config/config_entries/options/flow with {"handler": entryID}
+func (c *Client) StartOptionsFlowOnce(ctx context.Context, entryID string) ([]byte, error) {
+	body := map[string]string{"handler": entryID}
+	return c.doPostOnce(ctx, "/api/config/config_entries/options/flow", body)
+}
+
 // StartConfigFlow starts a new config flow for a domain/integration.
 // POST /api/config/config_entries/flow with {"handler": domain}
 func (c *Client) StartConfigFlow(ctx context.Context, domain string) ([]byte, error) {
@@ -151,4 +161,26 @@ func (c *Client) InspectFlow(ctx context.Context, flowID string, options bool) (
 // ParseFlowResult parses raw flow API response bytes into a structured FlowResult.
 func ParseFlowResult(data []byte) (*FlowResult, error) {
 	return parseFlowResult(data)
+}
+
+// AbortOptionsFlow deletes (aborts) an in-progress options flow. A read-only
+// options-flow inspection starts a flow to read its schema; aborting it keeps
+// the inspection from leaving a dangling flow behind in HA.
+// DELETE /api/config/config_entries/options/flow/<flowID>
+func (c *Client) AbortOptionsFlow(ctx context.Context, flowID string) error {
+	_, err := c.doDelete(ctx, "/api/config/config_entries/options/flow/"+url.PathEscape(flowID))
+	return err
+}
+
+// GetConfigEntryDiagnostics downloads the diagnostics dump for a config entry.
+// GET /api/diagnostics/config_entry/<entryID>
+//
+// The dump is produced by the integration's diagnostics platform, which is
+// responsible for redacting secrets, so it is the HA-blessed way to read an
+// entry's data/options (the config_entries API deliberately omits them).
+// Returns a 404 error when the integration ships no diagnostics platform (many
+// custom integrations don't), and requires an admin token.
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/diagnostics/__init__.py
+func (c *Client) GetConfigEntryDiagnostics(ctx context.Context, entryID string) ([]byte, error) {
+	return c.doGet(ctx, "/api/diagnostics/config_entry/"+url.PathEscape(entryID))
 }

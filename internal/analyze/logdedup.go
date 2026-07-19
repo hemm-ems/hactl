@@ -128,6 +128,25 @@ func FilterByLevel(entries []LogEntry, level string) []LogEntry {
 	return result
 }
 
+// FilterByLevels filters entries to those matching any of the given levels
+// (e.g. "ERROR", "WARNING"). With no levels it returns entries unchanged.
+func FilterByLevels(entries []LogEntry, levels ...string) []LogEntry {
+	if len(levels) == 0 {
+		return entries
+	}
+	want := make(map[string]bool, len(levels))
+	for _, l := range levels {
+		want[strings.ToUpper(l)] = true
+	}
+	result := make([]LogEntry, 0, len(entries))
+	for _, e := range entries {
+		if want[e.Level] {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // FilterByComponent filters entries to only include the given component prefix.
 func FilterByComponent(entries []LogEntry, component string) []LogEntry {
 	result := make([]LogEntry, 0, len(entries))

@@ -117,7 +117,7 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 func truncationHint(cmdPath string) string {
 	switch {
 	case strings.HasSuffix(cmdPath, " log"):
-		return "try --component <name>, --errors, or --unique to reduce output"
+		return "try --component <name>, --errors, --warnings, or --unique to reduce output"
 	case strings.HasSuffix(cmdPath, " ent ls"):
 		return "try --domain <d>, --area <a>, --label <l>, or --pattern <glob> to reduce output"
 	case strings.HasSuffix(cmdPath, " auto ls"):
