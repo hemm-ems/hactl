@@ -125,12 +125,30 @@ func init() {
 // runAutoCat prints an automation's remote YAML config verbatim (pipe-friendly,
 // round-trippable with `auto diff -f`). The companion returns the definition as
 // YAML text in resp.Content.
+//
+// The companion's /v1/config/automation route keys on the config id, but
+// `auto ls` displays entity object ids and a caller may just as easily be
+// holding a full entity_id or the alias (#70). Resolve any of those forms to
+// the config id via /api/states before asking the companion; a reference
+// that matches no live automation is passed through as-is so a genuinely
+// unknown id still 404s with the companion's own message.
 func runAutoCat(ctx context.Context, w io.Writer, automationID string) error {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+
+	configID := automationID
+	restClient := haapi.New(cfg.URL, cfg.Token)
+	if a, ok := resolveAutomation(ctx, restClient, automationID); ok && a.Attributes.ID != "" {
+		configID = a.Attributes.ID
+	}
+
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
 	}
-	resp, err := cc.GetAutomationDef(ctx, automationID)
+	resp, err := cc.GetAutomationDef(ctx, configID)
 	if err != nil {
 		return fmt.Errorf("fetching automation: %w", err)
 	}
@@ -292,9 +310,16 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 
-	// Resolve the entity
+	// Resolve the entity. `auto cat`/`diff`/`apply` all key on the config id,
+	// but HA derives entity_id from the alias — so a caller working from
+	// those commands' output may only have the config id, not the entity_id
+	// `show` used to require (#70). Try every interchangeable form first;
+	// fall back to the old bare-prefix guess so a genuinely unknown
+	// reference still 404s usefully instead of silently swallowing the typo.
 	entityID := autoID
-	if !strings.HasPrefix(entityID, "automation.") {
+	if resolved, ok := resolveAutomationEntityID(ctx, client, autoID); ok {
+		entityID = resolved
+	} else if !strings.HasPrefix(entityID, "automation.") {
 		entityID = "automation." + autoID
 	}
 
@@ -831,26 +856,38 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// resolveAutomationEntityID resolves a config id, alias, or entity_id
-// reference to the automation's live entity_id via /api/states. HA derives
+// resolveAutomation resolves a config id, entity object id, full entity_id,
+// or alias reference to its live automationEntity via /api/states. HA derives
 // entity_id from alias (not the config id), so a caller working from
 // `hactl auto` output may only have the display identifier — which could be
-// the alias itself (HA exposes it as attributes.friendly_name verbatim).
-// Returns ("", false) if no live automation matches or the states fetch fails.
-func resolveAutomationEntityID(ctx context.Context, client *haapi.Client, ref string) (string, bool) {
+// the alias itself (HA exposes it as attributes.friendly_name verbatim), the
+// config id (`cat`/`diff`/`apply`), or the entity object id (`ls`). Returns
+// (automationEntity{}, false) if no live automation matches or the states
+// fetch fails.
+func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (automationEntity, bool) {
 	autos, err := fetchAutomations(ctx, client)
 	if err != nil {
-		return "", false
+		return automationEntity{}, false
 	}
 	for _, a := range autos {
 		if a.EntityID == ref ||
 			a.Attributes.ID == ref ||
 			a.Attributes.FriendlyName == ref ||
 			strings.TrimPrefix(a.EntityID, "automation.") == ref {
-			return a.EntityID, true
+			return a, true
 		}
 	}
-	return "", false
+	return automationEntity{}, false
+}
+
+// resolveAutomationEntityID is resolveAutomation narrowed to the live
+// entity_id, for callers (delete, show) that only need the entity address.
+func resolveAutomationEntityID(ctx context.Context, client *haapi.Client, ref string) (string, bool) {
+	a, ok := resolveAutomation(ctx, client, ref)
+	if !ok {
+		return "", false
+	}
+	return a.EntityID, true
 }
 
 func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
