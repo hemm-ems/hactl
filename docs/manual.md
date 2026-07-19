@@ -314,11 +314,35 @@ Requires hactl-companion. Input may be UI-style script YAML (`alias`, `sequence`
 hactl tpl create -f sensor_tpl.yaml                  # dry-run
 hactl tpl create -f sensor_tpl.yaml --confirm        # create via companion + reload
 hactl tpl create -f binary_tpl.yaml --domain binary_sensor --confirm  # non-default domain
+hactl tpl create -f trigger_block.yaml --confirm     # trigger-based (full block, see below)
 hactl tpl delete my_template_uid                     # dry-run
 hactl tpl delete my_template_uid --confirm           # delete via companion + reload
 ```
 
-Requires hactl-companion. Default domain is `sensor`. Supported: sensor, binary_sensor.
+Requires hactl-companion. Default domain is `sensor`. A full block may declare
+any template entity domain (sensor, binary_sensor, number, select, button,
+weather, light, switch, cover, fan, lock, vacuum, alarm_control_panel, event,
+image, device_tracker, update).
+
+The `-f` file is either a **bare entity item** (state-based; placed into a block
+for `--domain`) or a **full block** for trigger-based / multi-domain entries. In
+HA's `template:` schema the trigger lives at the *block* level, never inside the
+entity — a trigger nested in an entity item is rejected with guidance:
+
+```yaml
+# trigger_block.yaml — a full block
+triggers:
+  - trigger: state
+    entity_id: sensor.source
+sensor:
+  - name: Sampled
+    unique_id: sampled
+    state: "{{ trigger.to_state.state }}"
+```
+
+`--domain` applies only to the bare-item form; it is ignored for a full block
+(the block declares its own domains). Deleting the last entity of a trigger
+block removes the whole block, so no orphan trigger is left behind.
 
 ### Helpers
 

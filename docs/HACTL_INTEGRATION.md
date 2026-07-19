@@ -63,7 +63,7 @@
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
 | GET | `/v1/config/templates` | Bearer | `{"templates": [...]}` |
-| GET | `/v1/config/template?id=<unique_id>` | Bearer | `{"unique_id": "...", "content": "<yaml>"}` |
+| GET | `/v1/config/template?id=<unique_id>` | Bearer | `{"unique_id": "...", "content": "<yaml>", "trigger": false}` |
 | PUT | `/v1/config/template?id=<unique_id>&dry_run=true` | Bearer | `{"status": "dry_run\|applied", "diff": "...", "backup": "..."}` |
 | POST | `/v1/config/template` | Bearer | `{"status": "created", "unique_id": "..."}` |
 | DELETE | `/v1/config/template?id=<unique_id>` | Bearer | `{"status": "deleted"}` |
@@ -86,13 +86,14 @@
       "domain": "binary_sensor",
       "state": "{% set motion = ... %}",
       "unit_of_measurement": "",
-      "device_class": ""
+      "device_class": "",
+      "trigger": false
     }
   ]
 }
 ```
 
-**Parsing**: `template.yaml` is a top-level list. Each item has a `sensor:` or `binary_sensor:` key containing a list of definitions. Match by `unique_id`.
+**Parsing**: `template.yaml` is a top-level list of *blocks*. A block declares one or more entity domains (`sensor:`, `binary_sensor:`, …), and may also carry block-level `triggers:`/`actions:`/`conditions:` (a *trigger-based* block) as siblings of the entity domains — never inside an entity item. Match by `unique_id`; `trigger` marks whether the entity's block is trigger-based. Creating a trigger-based or multi-domain entry POSTs a full block (appended as a new list item); a bare entity item is placed into a state-based block for `?domain=`.
 
 ### 1.4 Script Definition Endpoints
 

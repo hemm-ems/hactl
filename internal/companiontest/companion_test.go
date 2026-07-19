@@ -205,6 +205,65 @@ func TestCreateAndGetTemplate(t *testing.T) {
 	}
 }
 
+// TestCreateAndGetNonSensorTemplate drives the full CLI↔companion↔HA path for a
+// non-sensor template domain (Option C): a `number:` full block is created,
+// listed with the right domain, fetched, and deleted. The `set_value` action
+// template is carried verbatim.
+func TestCreateAndGetNonSensorTemplate(t *testing.T) {
+	ctx := context.Background()
+	content := "number:\n" +
+		"  - name: E2E Number\n" +
+		"    unique_id: e2e_test_tpl_number\n" +
+		"    state: \"{{ 5 }}\"\n" +
+		"    set_value:\n" +
+		"      - service: input_number.set_value\n" +
+		"        target: {entity_id: input_number.e2e_backing}\n" +
+		"        data: {value: \"{{ value }}\"}\n"
+
+	// domain arg is ignored for a full block.
+	cr, err := testClient.CreateTemplate(ctx, content, "sensor")
+	if err != nil {
+		t.Fatalf("create number template: %v", err)
+	}
+	if cr.Status != "created" || cr.UniqueID != "e2e_test_tpl_number" {
+		t.Fatalf("create result = %+v, want created e2e_test_tpl_number", cr)
+	}
+
+	// Listed with the number domain (domain-agnostic extraction).
+	list, err := testClient.ListTemplates(ctx)
+	if err != nil {
+		t.Fatalf("list templates: %v", err)
+	}
+	var domain string
+	for _, tpl := range list.Templates {
+		if tpl.UniqueID == "e2e_test_tpl_number" {
+			domain = tpl.Domain
+			break
+		}
+	}
+	if domain != "number" {
+		t.Errorf("listed domain = %q, want number (templates: %+v)", domain, list.Templates)
+	}
+
+	// Fetchable, action template preserved verbatim.
+	got, err := testClient.GetTemplate(ctx, cr.UniqueID)
+	if err != nil {
+		t.Fatalf("get number template: %v", err)
+	}
+	if !strings.Contains(got.Content, "set_value") {
+		t.Errorf("content missing set_value action template: %q", got.Content)
+	}
+
+	// Deletable via the same unique_id addressing.
+	del, err := testClient.DeleteTemplate(ctx, cr.UniqueID)
+	if err != nil {
+		t.Fatalf("delete number template: %v", err)
+	}
+	if del.Status != "deleted" {
+		t.Errorf("delete status = %q, want deleted", del.Status)
+	}
+}
+
 // --- Script CRUD integration tests ---
 
 func TestListScriptDefs(t *testing.T) {
