@@ -57,6 +57,102 @@ func TestRunAutoCat(t *testing.T) {
 	}
 }
 
+// autoCatStatesEnv wires flagDir at a temp .env pointing at both a stub
+// companion server and an HA states server carrying a single automation
+// entity, mirroring the issue #70 repro: config id "aufstehzeit_wochentag",
+// alias "Aufstehzeit - Mo bis Fr", entity_id
+// "automation.aufstehzeit_mo_bis_fr" (HA derives entity_id from the alias,
+// not the config id).
+func autoCatStatesEnv(t *testing.T, companionHandler http.HandlerFunc) {
+	t.Helper()
+	const entityID = "automation.aufstehzeit_mo_bis_fr"
+	const configID = "aufstehzeit_wochentag"
+	const alias = "Aufstehzeit - Mo bis Fr"
+
+	statesJSON, _ := json.Marshal([]map[string]any{
+		{
+			"entity_id":  entityID,
+			"state":      "on",
+			"attributes": map[string]any{"id": configID, "friendly_name": alias},
+		},
+	})
+
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+
+	companionSrv := httptest.NewServer(companionHandler)
+	t.Cleanup(companionSrv.Close)
+
+	envContent, err := os.ReadFile(filepath.Join(ts.dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envContent = fmt.Appendf(envContent, "COMPANION_URL=%s\n", companionSrv.URL)
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), envContent, 0o600); err != nil { //nolint:gosec // test fixture dir from t.TempDir(), not user input
+		t.Fatal(err)
+	}
+	withFlagDir(t, ts.dir)
+}
+
+// autoCatConfigIDHandler answers /v1/config/automation only when id matches
+// the fixture's config id "aufstehzeit_wochentag" — any other id (e.g. the
+// entity object id or alias reaching the companion unresolved) 404s, which is
+// exactly the bug #70 reports.
+func autoCatConfigIDHandler(w http.ResponseWriter, r *http.Request) {
+	const wantYAML = "alias: Aufstehzeit - Mo bis Fr\ntrigger: []\n"
+	if r.URL.Path != "/v1/config/automation" || r.URL.Query().Get("id") != "aufstehzeit_wochentag" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	jsonResp(w, map[string]string{"id": r.URL.Query().Get("id"), "content": wantYAML})
+}
+
+// TestRunAutoCat_ByEntityObjectID covers the issue #70 repro: `auto ls`
+// prints the entity object id, but the companion's config route keys on the
+// config id — cat must resolve one to the other via /api/states.
+func TestRunAutoCat_ByEntityObjectID(t *testing.T) {
+	autoCatStatesEnv(t, autoCatConfigIDHandler)
+
+	var buf bytes.Buffer
+	if err := runAutoCat(context.Background(), &buf, "aufstehzeit_mo_bis_fr"); err != nil {
+		t.Fatalf("runAutoCat by entity object id failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "alias:") {
+		t.Errorf("expected automation YAML, got %q", buf.String())
+	}
+}
+
+// TestRunAutoCat_ByFullEntityID covers the full "automation.<x>" form.
+func TestRunAutoCat_ByFullEntityID(t *testing.T) {
+	autoCatStatesEnv(t, autoCatConfigIDHandler)
+
+	var buf bytes.Buffer
+	if err := runAutoCat(context.Background(), &buf, "automation.aufstehzeit_mo_bis_fr"); err != nil {
+		t.Fatalf("runAutoCat by full entity_id failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "alias:") {
+		t.Errorf("expected automation YAML, got %q", buf.String())
+	}
+}
+
+// TestRunAutoCat_ByAlias covers resolving by the human-readable alias
+// (attributes.friendly_name).
+func TestRunAutoCat_ByAlias(t *testing.T) {
+	autoCatStatesEnv(t, autoCatConfigIDHandler)
+
+	var buf bytes.Buffer
+	if err := runAutoCat(context.Background(), &buf, "Aufstehzeit - Mo bis Fr"); err != nil {
+		t.Fatalf("runAutoCat by alias failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "alias:") {
+		t.Errorf("expected automation YAML, got %q", buf.String())
+	}
+}
+
 func TestRunScriptCat(t *testing.T) {
 	const wantYAML = "welcome_home:\n  sequence: []\n"
 	companionEnv(t, func(w http.ResponseWriter, r *http.Request) {

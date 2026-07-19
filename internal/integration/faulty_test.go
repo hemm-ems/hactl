@@ -71,18 +71,22 @@ func TestFaultyAutoShow(t *testing.T) {
 
 func TestFaultyAutoShowDisabled(t *testing.T) {
 	inst := getFaultyHA(t)
-	// HA may not create entities for disabled automations (enabled: false)
+	// The fixture's alias ("Disabled Automation") derives a different
+	// entity_id ("automation.disabled_automation") than its config id
+	// ("always_off") — the same config-id/entity-id mismatch #70 reports.
+	// `show` must resolve the config id via /api/states rather than
+	// guessing "automation.always_off", which never exists.
 	out, err := runHactlDirErr(t, inst.Dir(), "auto", "show", "always_off")
 	if err != nil {
 		// Check if the automation appears in the list at all
 		lsOut := runHactlDir(t, inst.Dir(), "auto", "ls")
-		if !strings.Contains(lsOut, "always_off") {
+		if !strings.Contains(lsOut, "disabled_automation") {
 			t.Skip("always_off automation not loaded by HA (disabled automations may not create entities)")
 		}
 		t.Skipf("always_off entity not available via states API: %v", err)
 	}
 
-	assertContains(t, out, "always_off")
+	assertContains(t, out, "automation.disabled_automation")
 }
 
 func TestFaultyScriptLs(t *testing.T) {

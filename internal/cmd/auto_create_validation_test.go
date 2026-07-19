@@ -31,6 +31,22 @@ conditions: []
 actions: [{delay: "00:00:01"}]
 `
 
+// malformedAutoYAML has an unterminated flow sequence — the YAML parser itself
+// rejects it (before any validate_config), the same failure writer.Apply turns
+// into "parsing local YAML: %w".
+const malformedAutoYAML = `id: test_malformed
+alias: [unbalanced
+`
+
+// listAutoYAML is a clean top-level YAML list (not a mapping). It parses without
+// error, so create leaves it for the companion rather than validating it — this
+// is the fall-through TestE2ECompanionUnavailableCLI depends on.
+const listAutoYAML = `- id: test_list
+  alias: "test list"
+  trigger: []
+  action: []
+`
+
 // startFakeValidateWS stands up a fake HA WebSocket endpoint that completes the
 // auth handshake and answers a validate_config command with the given result.
 // Connections that send no command (e.g. the companion ingress-auth WS) are
@@ -203,5 +219,67 @@ func TestAutoCreate_ValidCreates_Confirm(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "created automation") {
 		t.Errorf("expected 'created automation' for valid create, got: %s", out.String())
+	}
+}
+
+// TestAutoCreate_MalformedYAMLRefused_DryRun proves a genuine YAML syntax error
+// is a hard refusal (matching `auto apply`), not a silent "skip validation".
+// Even in dry-run, an unparseable candidate must not be reported as checked and
+// must never reach the companion. Regression guard for issue #68 round 2.
+func TestAutoCreate_MalformedYAMLRefused_DryRun(t *testing.T) {
+	ws := startFakeValidateWS(t, map[string]any{})
+	defer ws.Close()
+	cc := startFakeCompanionWrite(t)
+	defer cc.Close()
+
+	dir := t.TempDir()
+	writeValidationEnv(t, dir, ws.URL, cc.URL)
+	yamlFile := writeYAML(t, dir, "malformed.yaml", malformedAutoYAML)
+	setAutoCreateFlags(t, dir, yamlFile, false)
+
+	var out bytes.Buffer
+	err := runAutoCreate(context.Background(), &out)
+	if err == nil {
+		t.Fatalf("expected a parse error for malformed YAML, got nil; output: %s", out.String())
+	}
+	if !strings.Contains(err.Error(), "parsing local YAML") {
+		t.Errorf("error should report a YAML parse failure, got: %v", err)
+	}
+	if cc.writeHit.Load() {
+		t.Error("companion write endpoint was hit on a refused malformed dry-run create")
+	}
+	if strings.Contains(out.String(), "would create automation") {
+		t.Errorf("malformed dry-run must not print 'would create automation', got: %s", out.String())
+	}
+	if strings.Contains(out.String(), "validation:") {
+		t.Errorf("malformed candidate must not print a validation status line, got: %s", out.String())
+	}
+}
+
+// TestAutoCreate_NonMappingSkipsValidation proves a clean top-level list (not a
+// mapping) parses without error and falls through to the companion unvalidated,
+// exactly as before validation was added — no validation line, companion write
+// reached.
+func TestAutoCreate_NonMappingSkipsValidation(t *testing.T) {
+	ws := startFakeValidateWS(t, map[string]any{})
+	defer ws.Close()
+	cc := startFakeCompanionWrite(t)
+	defer cc.Close()
+
+	dir := t.TempDir()
+	writeValidationEnv(t, dir, ws.URL, cc.URL)
+	yamlFile := writeYAML(t, dir, "list.yaml", listAutoYAML)
+	setAutoCreateFlags(t, dir, yamlFile, true)
+
+	var out bytes.Buffer
+	err := runAutoCreate(context.Background(), &out)
+	if err != nil {
+		t.Fatalf("non-mapping candidate should fall through to the companion, got error: %v; output: %s", err, out.String())
+	}
+	if !cc.writeHit.Load() {
+		t.Error("companion write endpoint was not hit for a non-mapping confirmed create")
+	}
+	if strings.Contains(out.String(), "validation:") {
+		t.Errorf("non-mapping candidate must not print a validation status line, got: %s", out.String())
 	}
 }

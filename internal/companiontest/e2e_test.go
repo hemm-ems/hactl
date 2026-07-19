@@ -414,6 +414,44 @@ action:
 	}
 }
 
+// TestE2EAutoCatByEntityObjectIDCLI verifies that `hactl auto cat <id>`
+// resolves an entity object id (as printed by `auto ls`) to the config id
+// via /api/states before asking the companion, whose /v1/config/automation
+// route keys on the config id — issue #70's exact repro, where the two
+// differ because HA derives entity_id from the alias, not the config id.
+func TestE2EAutoCatByEntityObjectIDCLI(t *testing.T) {
+	ctx := context.Background()
+
+	const autoID = "e2e_cat_mismatch_target"
+	const alias = "E2E Cat Mismatch Alias"
+	const entityID = "automation.e2e_cat_mismatch_alias"
+	content := `id: ` + autoID + `
+alias: ` + alias + `
+mode: single
+trigger:
+  - platform: time
+    at: "09:00:00"
+action:
+  - delay: "00:00:01"
+`
+	cr, err := testClient.CreateAutomationDef(ctx, content)
+	if err != nil {
+		t.Fatalf("seeding automation for cat-by-entity-id test: %v", err)
+	}
+	if cr.EntityID != entityID {
+		t.Fatalf("expected entity_id %q from create, got %q (test fixture assumption stale)", entityID, cr.EntityID)
+	}
+
+	entityObjectID := strings.TrimPrefix(entityID, "automation.")
+	out, execErr := runHactlE2E(t, "auto", "cat", entityObjectID)
+	if execErr != nil {
+		t.Fatalf("hactl auto cat <entity object id> failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, "alias: "+alias) {
+		t.Errorf("expected automation YAML with alias %q, got:\n%s", alias, out)
+	}
+}
+
 // TestE2ECompanionUnavailableCLI verifies that when the companion URL is
 // unreachable, hactl exits with a non-zero code AND prints a meaningful error
 // referencing "companion" (no panic, no empty output).

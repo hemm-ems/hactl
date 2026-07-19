@@ -21,7 +21,7 @@ Full command set (family → subcommands):
 
 - `health` · `issues` · `changes` · `log [show <id>]` · `cc ls|show|logs` · `trace show <id>`
 - `ent ls|show|hist|anomalies|related|who|set-label|set-area`
-- `auto ls|show|diff|apply|create|delete|rollback` · `script ls|show|run|diff|apply|create|delete`
+- `auto ls|show|cat|diff|apply|create|delete|rollback` · `script ls|show|run|diff|apply|create|delete`
 - `helper ls|show|create|delete` · `tpl eval|create|delete` · `svc call`
 - `dash ls|show|save|create|delete|resources|grep|replace`
 - `device ls|show` · `label|area|floor ls|create|delete`

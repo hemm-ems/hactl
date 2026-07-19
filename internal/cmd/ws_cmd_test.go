@@ -3814,6 +3814,67 @@ func TestRunAutoShow_WithState(t *testing.T) {
 	}
 }
 
+// autoShowConfigIDStatesEnv wires an HA states server (list + single-entity)
+// with a fixture matching the issue #70 repro: config id
+// "aufstehzeit_wochentag", alias "Aufstehzeit - Mo bis Fr", entity_id
+// "automation.aufstehzeit_mo_bis_fr" (HA derives entity_id from the alias,
+// not the config id, so the caller may only hold the config id or alias).
+func autoShowConfigIDStatesEnv(t *testing.T) {
+	t.Helper()
+	const entityID = "automation.aufstehzeit_mo_bis_fr"
+	const configID = "aufstehzeit_wochentag"
+	const alias = "Aufstehzeit - Mo bis Fr"
+
+	attrs := map[string]any{"id": configID, "friendly_name": alias, "mode": "single"}
+	statesJSON, _ := json.Marshal([]map[string]any{
+		{"entity_id": entityID, "state": "on", "attributes": attrs},
+	})
+	stateJSON, _ := json.Marshal(map[string]any{
+		"entity_id": entityID, "state": "on", "attributes": attrs,
+	})
+
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+		"/api/states/" + entityID: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(stateJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+}
+
+// TestRunAutoShow_ByConfigID covers the issue #70 repro: the caller only has
+// the config id (as printed by `auto cat`/`diff`/`apply`), which show used to
+// reject outright by blindly prefixing "automation." onto it.
+func TestRunAutoShow_ByConfigID(t *testing.T) {
+	autoShowConfigIDStatesEnv(t)
+
+	var buf bytes.Buffer
+	if err := runAutoShow(context.Background(), &buf, "aufstehzeit_wochentag"); err != nil {
+		t.Fatalf("runAutoShow by config id failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "automation.aufstehzeit_mo_bis_fr") {
+		t.Errorf("output missing resolved entity ID: %q", buf.String())
+	}
+}
+
+// TestRunAutoShow_ByAlias covers resolving by the human-readable alias
+// (attributes.friendly_name).
+func TestRunAutoShow_ByAlias(t *testing.T) {
+	autoShowConfigIDStatesEnv(t)
+
+	var buf bytes.Buffer
+	if err := runAutoShow(context.Background(), &buf, "Aufstehzeit - Mo bis Fr"); err != nil {
+		t.Fatalf("runAutoShow by alias failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "automation.aufstehzeit_mo_bis_fr") {
+		t.Errorf("output missing resolved entity ID: %q", buf.String())
+	}
+}
+
 func TestRunCCLs_Empty(t *testing.T) {
 	// No update.* entities → no custom components
 	states := []map[string]any{
