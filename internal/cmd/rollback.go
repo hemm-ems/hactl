@@ -15,6 +15,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/writer"
 )
 
+var flagRollbackConfirm bool
+
 // rollbackDeprecationMsg returns the one-line deprecation notice for hactl rollback.
 func rollbackDeprecationMsg() string {
 	return "deprecated: use 'hactl auto rollback' instead (hactl rollback will be removed in a future release)"
@@ -22,8 +24,8 @@ func rollbackDeprecationMsg() string {
 
 var autoRollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
-	Short: "Restore the most recent automation backup",
-	Long:  "Rollback to the last backed-up automation config. Optionally specify an automation ID.",
+	Short: "Restore the most recent automation backup (dry-run by default)",
+	Long:  "Rollback to the last backed-up automation config. Optionally specify an automation ID. Dry-run by default: previews which backup would be restored; use --confirm to apply.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		autoID := ""
@@ -38,7 +40,7 @@ var autoRollbackCmd = &cobra.Command{
 var rollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Deprecated: use 'hactl auto rollback' instead",
-	Long:  "Rollback to the last backed-up automation config. Use 'hactl auto rollback' instead.",
+	Long:  "Rollback to the last backed-up automation config (dry-run by default; use --confirm to apply). Use 'hactl auto rollback' instead.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(os.Stderr, rollbackDeprecationMsg())
@@ -52,8 +54,10 @@ var rollbackCmd = &cobra.Command{
 
 func init() {
 	// Canonical: hactl auto rollback
+	autoRollbackCmd.Flags().BoolVar(&flagRollbackConfirm, "confirm", false, "actually restore + reload (default is dry-run)")
 	autoCmd.AddCommand(autoRollbackCmd)
 	// Deprecated alias: hactl rollback
+	rollbackCmd.Flags().BoolVar(&flagRollbackConfirm, "confirm", false, "actually restore + reload (default is dry-run)")
 	rootCmd.AddCommand(rollbackCmd)
 }
 
@@ -65,6 +69,18 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 	backupDir := filepath.Join(cfg.Dir, "backups")
+
+	if !flagRollbackConfirm {
+		plan, planErr := writer.New(client, nil, backupDir).PlanRollback(automationID)
+		if planErr != nil {
+			return planErr
+		}
+		_, _ = fmt.Fprintln(w, "dry-run: would roll back automation")
+		_, _ = fmt.Fprintf(w, "  automation:  %s\n", plan.AutomationID)
+		_, _ = fmt.Fprintf(w, "  from backup: %s\n", plan.BackupPath)
+		_, _ = fmt.Fprintln(w, "use --confirm to apply")
+		return nil
+	}
 
 	// Connect WebSocket for reload (optional)
 	var wsClient *haapi.WSClient

@@ -25,16 +25,21 @@ const (
 	BlockedUnknown
 )
 
-// readCommands lists command paths that only observe state. Every leaf
-// command must appear in exactly one of readCommands, writeCommands, or
-// alwaysBlocked; TestGateExhaustive enforces this against the live command
-// tree, so adding a CLI command without classifying it here fails the build.
+// readCommands lists command paths that observe HA state without mutating it.
+// Cache maintenance (clear/refresh) is read-classified too: it touches only the
+// local hactl cache, never HA — the same local cache other reads (ent hist,
+// ent anomalies, script show) already populate. Every leaf command must appear
+// in exactly one of readCommands, writeCommands, or alwaysBlocked;
+// TestGateExhaustive enforces this against the live command tree, so adding a
+// CLI command without classifying it here fails the build.
 var readCommands = map[string]bool{
 	"hactl area ls":                    true,
 	"hactl auto cat":                   true,
 	"hactl auto diff":                  true,
 	"hactl auto ls":                    true,
 	"hactl auto show":                  true,
+	"hactl cache clear":                true,
+	"hactl cache refresh":              true,
 	"hactl cache status":               true,
 	"hactl cc logs":                    true,
 	"hactl cc ls":                      true,
@@ -97,8 +102,6 @@ var writeCommands = map[string]bool{
 	"hactl auto create":                true,
 	"hactl auto delete":                true,
 	"hactl auto rollback":              true,
-	"hactl cache clear":                true,
-	"hactl cache refresh":              true,
 	"hactl companion wireguard config": true,
 	"hactl companion wireguard down":   true,
 	"hactl companion wireguard up":     true,

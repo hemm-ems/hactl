@@ -130,7 +130,7 @@ mode: single
 	}
 
 	// Rollback
-	rollbackOut := runHactl(t, "rollback", autoID)
+	rollbackOut := runHactl(t, "rollback", autoID, "--confirm")
 	assertContains(t, rollbackOut, "rolled back:")
 
 	// Verify rollback: auto show should be closer to original

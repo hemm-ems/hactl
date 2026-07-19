@@ -117,12 +117,12 @@ func TestScriptLsPatternJSON(t *testing.T) {
 
 func TestScriptRun(t *testing.T) {
 	// kino_start is a safe script (turns off a light that may not exist)
-	out := runHactl(t, "script", "run", "kino_start")
+	out := runHactl(t, "script", "run", "kino_start", "--confirm")
 	assertContains(t, out, "executed script.kino_start")
 }
 
 func TestScriptRunWithPrefix(t *testing.T) {
-	out := runHactl(t, "script", "run", "script.kino_ende")
+	out := runHactl(t, "script", "run", "script.kino_ende", "--confirm")
 	assertContains(t, out, "executed script.kino_ende")
 }
 

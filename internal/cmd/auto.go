@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
@@ -230,8 +231,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 	if flagAutoFailing {
 		rows = filterFailing(rows)
 		if len(rows) == 0 {
-			_, _ = fmt.Fprintln(w, failingEmptyHint())
-			return nil
+			return emitEmptyList(w, failingEmptyHint())
 		}
 	}
 
@@ -678,6 +678,44 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	return nil
 }
 
+// validateAutoCreateCandidate runs HA's validate_config against a single-automation
+// YAML mapping and prints the same `validation:` status line `auto apply` prints.
+// It returns an error (refusing the create) when HA rejects a section. Inputs that
+// are not a top-level mapping (e.g. a YAML list) are left for the companion to
+// handle, matching the pre-validation behavior.
+func validateAutoCreateCandidate(ctx context.Context, w io.Writer, data []byte) error {
+	var candidate map[string]any
+	if err := yaml.Unmarshal(data, &candidate); err != nil || candidate == nil {
+		return nil
+	}
+
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+
+	client := haapi.New(cfg.URL, cfg.Token)
+	var wsClient *haapi.WSClient
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if connectErr := ws.Connect(ctx); connectErr != nil {
+		slog.Warn("could not connect WebSocket for validation", "error", connectErr)
+	} else {
+		wsClient = ws
+		defer func() { _ = ws.Close() }()
+	}
+
+	validated, err := writer.New(client, wsClient, "").ValidateCandidate(ctx, candidate)
+	if err != nil {
+		return err
+	}
+	if validated {
+		_, _ = fmt.Fprintln(w, "validation: ok (HA validate_config)")
+	} else {
+		_, _ = fmt.Fprintln(w, "validation: skipped (validate_config unavailable; HA still validates on write)")
+	}
+	return nil
+}
+
 func runAutoCreate(ctx context.Context, w io.Writer) error {
 	if flagAutoFile == "" {
 		return errors.New("--file / -f is required for create")
@@ -688,6 +726,15 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("reading file: %w", err)
 	}
 	content := string(data)
+
+	// Validate the candidate against HA's schema before touching the companion —
+	// the same validate_config check `auto apply` runs. `auto create` used to skip
+	// it, letting a broken config reach the companion and load as `unavailable`. A
+	// rejected config is now refused (nothing written) in both dry-run and
+	// --confirm mode.
+	if valErr := validateAutoCreateCandidate(ctx, w, data); valErr != nil {
+		return valErr
+	}
 
 	if !flagAutoConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {

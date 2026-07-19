@@ -275,6 +275,54 @@ action:
 	}
 }
 
+// TestE2EAutoCreateRefusesInvalidCLI verifies that `hactl auto create` runs the
+// same validate_config check `auto apply` runs, and refuses a candidate HA
+// rejects (broken Jinja in a condition template) in both dry-run and --confirm
+// mode — nothing is created. Regression coverage for issue #68, where create
+// skipped validation and wrote configs that loaded as `unavailable`.
+func TestE2EAutoCreateRefusesInvalidCLI(t *testing.T) {
+	// Unparseable Jinja in a condition template: HA's validate_config rejects
+	// the conditions section.
+	content := `id: e2e_broken_test
+alias: E2E Broken Test
+triggers: [{trigger: state, entity_id: sensor.does_not_exist}]
+conditions: [{condition: template, value_template: "{{ broken"}]
+actions: [{action: logbook.log, data: {name: x, message: y}}]
+`
+	f, err := os.CreateTemp(t.TempDir(), "auto-broken-*.yaml")
+	if err != nil {
+		t.Fatalf("creating temp YAML: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("writing temp YAML: %v", err)
+	}
+	f.Close()
+
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{
+		{"dry-run", []string{"auto", "create", "-f", f.Name()}},
+		{"confirm", []string{"auto", "create", "--confirm", "-f", f.Name()}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			out, execErr := runHactlE2E(t, mode.args...)
+			if execErr == nil {
+				t.Fatalf("expected non-zero exit for invalid candidate, got success:\n%s", out)
+			}
+			if !strings.Contains(out, "HA rejected") {
+				t.Errorf("expected HA rejection in output, got:\n%s", out)
+			}
+			if strings.Contains(out, "created automation") {
+				t.Errorf("invalid candidate must not report 'created automation', got:\n%s", out)
+			}
+			if strings.Contains(out, "would create automation") {
+				t.Errorf("invalid candidate must not report 'would create automation', got:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestE2EAutoDeleteCLI verifies that `hactl auto delete --confirm <id>`
 // calls the companion API and deletes an automation.
 func TestE2EAutoDeleteCLI(t *testing.T) {

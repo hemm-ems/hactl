@@ -112,6 +112,6 @@ func TestFaultyScriptLsHasFixtures(t *testing.T) {
 
 func TestFaultyScriptRun(t *testing.T) {
 	inst := getFaultyHA(t)
-	out := runHactlDir(t, inst.Dir(), "script", "run", "working_toggle")
+	out := runHactlDir(t, inst.Dir(), "script", "run", "working_toggle", "--confirm")
 	assertContains(t, out, "executed script.working_toggle")
 }

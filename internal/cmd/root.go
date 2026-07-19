@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -111,6 +112,26 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	} else {
 		_, _ = dst.Write(data)
 	}
+}
+
+// emitEmptyList prints prose for humans when a listing has no results, or —
+// with --json active — the same empty JSON array format.Table.Render would
+// produce for zero rows ("[]"), never bare prose. Call sites whose non-json
+// message varies (e.g. by the reason the result is empty) should call
+// writeEmptyJSONArray directly for the --json branch instead.
+func emitEmptyList(w io.Writer, prose string) error {
+	if flagJSON {
+		return writeEmptyJSONArray(w)
+	}
+	_, _ = fmt.Fprintln(w, prose)
+	return nil
+}
+
+// writeEmptyJSONArray writes the empty-array JSON document ("[]") that
+// format.Table.Render produces for zero rows, so --json output stays valid
+// JSON even when a listing has nothing to show.
+func writeEmptyJSONArray(w io.Writer) error {
+	return (&format.Table{}).Render(w, format.RenderOpts{JSON: true})
 }
 
 // truncationHint returns a command-specific suggestion for reducing output.

@@ -64,6 +64,58 @@ func TestCondense_FailingTrace(t *testing.T) {
 	}
 }
 
+func TestCondense_FailedConditionsTrace(t *testing.T) {
+	raw := loadTestTrace(t, "climate_schedule_failed_conditions.json")
+	ct := Condense(raw)
+
+	// A failed condition is not an "error" (no exception was raised) and
+	// must not be reported as a pass either — see issue #74.
+	if ct.Result == StepPass {
+		t.Errorf("result = %q, want something other than %q for a failed_conditions run", ct.Result, StepPass)
+	}
+	if ct.Result != StepResult("failed_conditions") {
+		t.Errorf("result = %q, want %q", ct.Result, "failed_conditions")
+	}
+
+	out := FormatCondensed(ct)
+	if contains(out, "PASS") {
+		t.Errorf("compact output should not claim PASS for a failed_conditions run: %q", out)
+	}
+	if !contains(out, "FAILED_CONDITIONS") {
+		t.Errorf("compact output should surface the failed_conditions outcome: %q", out)
+	}
+}
+
+func TestOverallResult_Aborted(t *testing.T) {
+	raw := &RawTrace{Trace: RawTraceMeta{Execution: "aborted"}}
+	if got := overallResult(raw); got != StepResult("aborted") {
+		t.Errorf("overallResult(aborted) = %q, want %q", got, "aborted")
+	}
+}
+
+func TestOverallResult_Cancelled(t *testing.T) {
+	raw := &RawTrace{Trace: RawTraceMeta{Execution: "cancelled"}}
+	if got := overallResult(raw); got != StepResult("cancelled") {
+		t.Errorf("overallResult(cancelled) = %q, want %q", got, "cancelled")
+	}
+}
+
+func TestOverallResult_FallsBackToState(t *testing.T) {
+	// When script_execution is empty, fall back to trace state, matching
+	// internal/cmd/auto.go's traceResult precedence for the same data.
+	raw := &RawTrace{Trace: RawTraceMeta{Execution: "", State: "running"}}
+	if got := overallResult(raw); got != StepResult("running") {
+		t.Errorf("overallResult(empty execution, state=running) = %q, want %q", got, "running")
+	}
+}
+
+func TestOverallResult_EmptyIsPass(t *testing.T) {
+	raw := &RawTrace{Trace: RawTraceMeta{Execution: "", State: ""}}
+	if got := overallResult(raw); got != StepPass {
+		t.Errorf("overallResult(empty) = %q, want %q", got, StepPass)
+	}
+}
+
 func TestCondense_SimpleTrace(t *testing.T) {
 	raw := loadTestTrace(t, "alarm_morning_pass.json")
 	ct := Condense(raw)

@@ -93,8 +93,8 @@ var entRelatedCmd = &cobra.Command{
 
 var entSetLabelCmd = &cobra.Command{
 	Use:   "set-label <entity_id> <label>...",
-	Short: "Assign labels to an entity",
-	Long:  "Set one or more labels on an entity via the HA entity registry.",
+	Short: "Assign labels to an entity (dry-run by default)",
+	Long:  "Set one or more labels on an entity via the HA entity registry. Dry-run by default: previews the merged label set; use --confirm to apply.",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
@@ -119,6 +119,7 @@ func init() {
 	entLsCmd.Flags().BoolVar(&flagEntRestored, "restored", false, "show only restored 'ghost' entities (state resurrected from the registry with no live entity — deleted or re-authored)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
+	entSetLabelCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set labels (default is dry-run)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
 	entRelatedCmd.Flags().BoolVar(&flagEntStale, "stale", false, "if the entity is gone, list where it is still referenced in config")
 	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd)
@@ -156,8 +157,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	if flagEntDomain != "" {
 		filtered := filterEntitiesByDomain(states, flagEntDomain)
 		if len(filtered) == 0 {
-			_, _ = fmt.Fprintln(w, domainNotFoundHint(flagEntDomain))
-			return nil
+			return emitEmptyList(w, domainNotFoundHint(flagEntDomain))
 		}
 		states = filtered
 	}
@@ -182,8 +182,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	}
 	if rc != nil && flagEntLabel != "" {
 		if !labelExistsInRegistry(rc, flagEntLabel) {
-			_, _ = fmt.Fprintln(w, labelNotFoundHint(flagEntLabel))
-			return nil
+			return emitEmptyList(w, labelNotFoundHint(flagEntLabel))
 		}
 		states = filterEntitiesByLabel(states, rc, flagEntLabel)
 	}
@@ -392,8 +391,7 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
-			_, _ = fmt.Fprintln(w, "no history data")
-			return nil
+			return emitEmptyList(w, "no history data")
 		}
 		return renderStateTimeline(w, entityID, changes)
 	}
@@ -430,8 +428,7 @@ func runEntHistAttr(ctx context.Context, w io.Writer, client *haapi.Client, enti
 	}
 
 	if len(points) == 0 {
-		_, _ = fmt.Fprintf(w, "no attribute data for %q\n", flagEntAttr)
-		return nil
+		return emitEmptyList(w, fmt.Sprintf("no attribute data for %q", flagEntAttr))
 	}
 
 	// Resample
@@ -481,8 +478,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
-			_, _ = fmt.Fprintln(w, "no history data")
-			return nil
+			return emitEmptyList(w, "no history data")
 		}
 		return renderStateAnomalies(w, entityID, cfg.Dir, changes)
 	}
@@ -501,8 +497,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 	)
 
 	if len(anomalies) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no anomalies detected\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
@@ -750,8 +745,7 @@ func renderStateAnomalies(w io.Writer, entityID, instanceDir string, changes []a
 	}
 
 	if len(anomalies) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no anomalies detected\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
@@ -1060,12 +1054,26 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		}
 	}
 
+	if !flagEntConfirm {
+		_, _ = fmt.Fprintln(w, dryRunEntSetLabelSummary(entityID, currentLabels, merged))
+		return nil
+	}
+
 	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": merged}); err != nil {
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", entityID, merged)
 	return nil
+}
+
+func dryRunEntSetLabelSummary(entityID string, current, merged []string) string {
+	s := "dry-run: would set entity labels\n"
+	s += fmt.Sprintf("  entity_id:      %s\n", entityID)
+	s += fmt.Sprintf("  current_labels: %v\n", current)
+	s += fmt.Sprintf("  new_labels:     %v\n", merged)
+	s += "use --confirm to apply"
+	return s
 }
 
 func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) error {
@@ -1219,6 +1227,9 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	if len(related) == 0 {
+		if flagJSON {
+			return writeEmptyJSONArray(w)
+		}
 		if known {
 			_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
 		} else {
@@ -1301,8 +1312,7 @@ func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.W
 // renderStaleRefs reports where a gone entity is still referenced in config.
 func renderStaleRefs(w io.Writer, entityID string, refs []companion.StaleRef) error {
 	if len(refs) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: no stale references found (entity fully cleaned up or config unavailable)\n", entityID)
-		return nil
+		return emitEmptyList(w, entityID+": no stale references found (entity fully cleaned up or config unavailable)")
 	}
 	_, _ = fmt.Fprintf(w, "%s: stale (renamed/deleted); %d config reference(s):\n", entityID, len(refs))
 	tbl := &format.Table{

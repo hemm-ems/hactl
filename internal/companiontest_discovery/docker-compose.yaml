@@ -8,6 +8,10 @@ services:
     environment:
       SUPERVISOR_TOKEN: integration-test-token-discovery
       LOG_LEVEL: INFO
+      # The fake Supervisor ingress proxy runs in the test process on the
+      # host, so its requests reach the container from the bridge gateway.
+      # Companion only honors X-Ingress-Path from these source IPs.
+      INGRESS_PROXY_IPS: 172.28.97.1
     ports:
       - "9100"
     volumes:
@@ -21,3 +25,8 @@ volumes:
 networks:
   disco-net:
     driver: bridge
+    ipam:
+      config:
+        # Fixed subnet so the gateway IP trusted above is deterministic.
+        - subnet: 172.28.97.0/24
+          gateway: 172.28.97.1

@@ -79,8 +79,7 @@ func runAreaLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(areas) == 0 {
-		_, _ = fmt.Fprintln(w, "no areas")
-		return nil
+		return emitEmptyList(w, "no areas")
 	}
 
 	// Resolve floor names

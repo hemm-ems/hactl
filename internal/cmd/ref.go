@@ -156,8 +156,7 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	}
 
 	if len(rows) == 0 {
-		_, _ = fmt.Fprintf(w, "%s: not referenced in any config file or dashboard\n", target)
-		return nil
+		return emitEmptyList(w, target+": not referenced in any config file or dashboard")
 	}
 
 	tbl := &format.Table{
@@ -217,8 +216,7 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 		total += len(p.changed)
 	}
 	if total == 0 {
-		_, _ = fmt.Fprintf(w, "%q not found in any config file or dashboard\n", oldVal)
-		return nil
+		return emitEmptyList(w, fmt.Sprintf("%q not found in any config file or dashboard", oldVal))
 	}
 
 	if !flagJSON {

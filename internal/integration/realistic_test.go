@@ -704,7 +704,7 @@ func TestRealisticScriptLsHasFixtures(t *testing.T) {
 
 func TestRealisticScriptRun(t *testing.T) {
 	inst := getRealisticHA(t)
-	out := runHactlDir(t, inst.Dir(), "script", "run", "morning_routine")
+	out := runHactlDir(t, inst.Dir(), "script", "run", "morning_routine", "--confirm")
 	assertContains(t, out, "executed script.morning_routine")
 }
 
@@ -761,7 +761,7 @@ func TestRealisticCacheRefreshIncludesScripts(t *testing.T) {
 	inst := getRealisticHA(t)
 
 	// First run a script to generate a trace
-	runHactlDir(t, inst.Dir(), "script", "run", "guest_welcome")
+	runHactlDir(t, inst.Dir(), "script", "run", "guest_welcome", "--confirm")
 
 	// Wait a moment for HA to record the trace
 	time.Sleep(2 * time.Second)

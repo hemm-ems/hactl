@@ -79,8 +79,7 @@ func runFloorLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(floors) == 0 {
-		_, _ = fmt.Fprintln(w, "no floors")
-		return nil
+		return emitEmptyList(w, "no floors")
 	}
 
 	tbl := &format.Table{

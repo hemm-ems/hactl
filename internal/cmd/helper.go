@@ -2,15 +2,42 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"sort"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
+
+// helperDomains lists every HA domain a helper entity can live in — the
+// superset used to discover storage-backed (UI-created) helpers via
+// /api/states. This is wider than the companion's YAML-managed domain set
+// (see hactl-companion routes/helpers.py ALLOWED_DOMAINS): input_button has
+// no YAML equivalent, so it only ever shows up here, sourced from storage.
+var helperDomains = []string{
+	"input_boolean", "input_number", "input_select", "input_text",
+	"input_datetime", "input_button", "counter", "timer", "schedule",
+}
+
+// helperRow is one row in the merged helper listing: either a YAML helper
+// (companion-managed, editable via `helper create`/`set`/`delete`) or a
+// storage-backed helper entity discovered live in HA's .storage — not
+// editable through hactl's helper CRUD. See issue #71.
+type helperRow struct {
+	ID     string
+	Name   string
+	Domain string
+	Icon   string
+	Source string // "yaml" or "storage"
+}
 
 var flagHelperDomain string
 var flagHelperFile string
@@ -26,7 +53,9 @@ var helperCmd = &cobra.Command{
 var helperLsCmd = &cobra.Command{
 	Use:   "ls",
 	Short: "List helpers",
-	Long:  "List all helpers, optionally filtered by domain.",
+	Long: "List all helpers, optionally filtered by domain. Unions YAML helpers (companion-managed) " +
+		"with storage-backed helpers created in the HA UI (discovered live via the entity states), " +
+		"distinguished by a source column — only the yaml ones are editable via create/set/delete.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperLs(cmd.Context(), cmd.OutOrStdout())
 	},
@@ -100,28 +129,54 @@ func runHelperCat(ctx context.Context, w io.Writer, helperID string) error {
 	return nil
 }
 
+// runHelperLs lists the union of YAML-sourced helpers (companion's per-domain
+// files) and storage-backed helper entities (created in the HA UI, living in
+// .storage — invisible to the companion, which only ever reads/writes YAML).
+// Most real instances create helpers in the UI, so listing YAML alone reports
+// "no helpers" while dozens exist live. See issue #71.
 func runHelperLs(ctx context.Context, w io.Writer) error {
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
 	}
 
-	resp, err := cc.ListHelpers(ctx, flagHelperDomain)
+	// Fetch unfiltered: --domain is applied below, after storage helpers are
+	// merged in, so it also reaches storage-only domains (e.g. input_button)
+	// the companion's YAML CRUD doesn't manage.
+	resp, err := cc.ListHelpers(ctx, "")
 	if err != nil {
 		return fmt.Errorf("listing helpers: %w", err)
 	}
 
-	if len(resp.Helpers) == 0 {
-		_, _ = fmt.Fprintln(w, "no helpers")
-		return nil
+	rows := make([]helperRow, 0, len(resp.Helpers))
+	yamlEntityIDs := make(map[string]bool, len(resp.Helpers))
+	for _, h := range resp.Helpers {
+		rows = append(rows, helperRow{ID: h.ID, Name: h.Name, Domain: h.Domain, Icon: h.Icon, Source: "yaml"})
+		yamlEntityIDs[h.Domain+"."+h.ID] = true
+	}
+	rows = append(rows, fetchStorageHelpers(ctx, yamlEntityIDs)...)
+
+	if flagHelperDomain != "" {
+		rows = filterHelperRowsByDomain(rows, flagHelperDomain)
 	}
 
-	tbl := &format.Table{
-		Headers: []string{"id", "name", "domain", "icon"},
-		Rows:    make([][]string, len(resp.Helpers)),
+	if len(rows) == 0 {
+		return emitEmptyList(w, "no helpers")
 	}
-	for i, h := range resp.Helpers {
-		tbl.Rows[i] = []string{h.ID, h.Name, h.Domain, h.Icon}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Domain != rows[j].Domain {
+			return rows[i].Domain < rows[j].Domain
+		}
+		return rows[i].ID < rows[j].ID
+	})
+
+	tbl := &format.Table{
+		Headers: []string{"id", "name", "domain", "icon", "source"},
+		Rows:    make([][]string, len(rows)),
+	}
+	for i, r := range rows {
+		tbl.Rows[i] = []string{r.ID, r.Name, r.Domain, r.Icon, r.Source}
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -130,6 +185,65 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+// fetchStorageHelpers discovers UI-created helper entities by scanning
+// /api/states for entities in a helper domain (helperDomains) that the
+// companion's YAML listing didn't already report (skip, keyed by entity_id).
+// The id shown is the full entity_id, not a bare slug: unlike YAML helpers,
+// there is no `helper show`/`cat` lookup for these — use `ent show` instead.
+// Failures here are logged and treated as "no storage helpers found" rather
+// than failing the whole command: an unreachable HA shouldn't hide the
+// YAML-sourced list that already answered above.
+func fetchStorageHelpers(ctx context.Context, skip map[string]bool) []helperRow {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		slog.Warn("could not load config for storage helper discovery", "error", err)
+		return nil
+	}
+
+	client := haapi.New(cfg.URL, cfg.Token)
+	data, err := client.GetStates(ctx)
+	if err != nil {
+		slog.Warn("could not fetch states for storage helper discovery", "error", err)
+		return nil
+	}
+
+	var states []entityState
+	if unmarshalErr := json.Unmarshal(data, &states); unmarshalErr != nil {
+		slog.Warn("could not parse states for storage helper discovery", "error", unmarshalErr)
+		return nil
+	}
+
+	domains := make(map[string]bool, len(helperDomains))
+	for _, d := range helperDomains {
+		domains[d] = true
+	}
+
+	var rows []helperRow
+	for _, s := range states {
+		domain := parseEntityDomain(s.EntityID)
+		if !domains[domain] || skip[s.EntityID] {
+			continue
+		}
+		name, _ := s.Attributes["friendly_name"].(string)
+		if name == "" {
+			name = s.EntityID
+		}
+		icon, _ := s.Attributes["icon"].(string)
+		rows = append(rows, helperRow{ID: s.EntityID, Name: name, Domain: domain, Icon: icon, Source: "storage"})
+	}
+	return rows
+}
+
+func filterHelperRowsByDomain(rows []helperRow, domain string) []helperRow {
+	out := make([]helperRow, 0, len(rows))
+	for _, r := range rows {
+		if r.Domain == domain {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func runHelperShow(ctx context.Context, w io.Writer, helperID string) error {

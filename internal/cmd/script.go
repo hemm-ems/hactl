@@ -56,8 +56,8 @@ var scriptShowCmd = &cobra.Command{
 
 var scriptRunCmd = &cobra.Command{
 	Use:   "run <id>",
-	Short: "Execute a script",
-	Long:  "Run a Home Assistant script via service call script.turn_on.",
+	Short: "Execute a script (dry-run by default)",
+	Long:  "Run a Home Assistant script via service call script.turn_on. Dry-run by default: verifies the script exists and previews the call; use --confirm to actually run it.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptRun(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -117,6 +117,7 @@ func init() {
 	scriptLsCmd.Flags().StringVar(&flagScriptPattern, "pattern", "", "filter by name (substring or glob, e.g. kino)")
 	scriptLsCmd.Flags().StringVar(&flagScriptLabel, "label", "", "filter scripts by label (substring, e.g. ess)")
 	scriptLsCmd.Flags().BoolVar(&flagScriptFailing, "failing", false, "show only scripts with recent errors")
+	scriptRunCmd.Flags().BoolVar(&flagScriptConfirm, "confirm", false, "actually run the script (default is dry-run)")
 	scriptDiffCmd.Flags().StringVarP(&flagScriptFile, "file", "f", "", "local YAML file to diff/apply")
 	scriptApplyCmd.Flags().StringVarP(&flagScriptFile, "file", "f", "", "local YAML file to apply")
 	scriptApplyCmd.Flags().BoolVar(&flagScriptConfirm, "confirm", false, "actually write + reload (default is dry-run)")
@@ -684,9 +685,16 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 
-	// Verify the script entity exists before calling the service.
+	// Verify the script entity exists before calling the service (also in
+	// dry-run, so the preview is truthful about what would run).
 	if _, err := client.GetState(ctx, entityID); err != nil {
 		return fmt.Errorf("script not found: %s", entityID)
+	}
+
+	if !flagScriptConfirm {
+		_, _ = fmt.Fprintf(w, "dry-run: would execute %s (via script.turn_on)\n", entityID)
+		_, _ = fmt.Fprintln(w, "use --confirm to run it")
+		return nil
 	}
 
 	if err := client.CallService(ctx, "script", "turn_on", map[string]any{

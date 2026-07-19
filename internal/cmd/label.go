@@ -82,8 +82,7 @@ func runLabelLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(labels) == 0 {
-		_, _ = fmt.Fprintln(w, "no labels")
-		return nil
+		return emitEmptyList(w, "no labels")
 	}
 
 	tbl := &format.Table{

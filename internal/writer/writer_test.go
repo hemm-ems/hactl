@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -255,6 +257,115 @@ func TestFindLatestBackup_EmptyDir(t *testing.T) {
 	_, err := w.findLatestBackup("any_auto")
 	if err == nil {
 		t.Fatal("expected error for empty backup dir, got nil")
+	}
+}
+
+// startValidateWSServer stands up a fake HA WebSocket endpoint that completes
+// the auth handshake, reads one validate_config command, and replies with the
+// given per-section result map. It lets ValidateCandidate be exercised without
+// a live HA.
+func startValidateWSServer(t *testing.T, result map[string]any) *httptest.Server {
+	t.Helper()
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer func() { _ = c.Close() }()
+
+		_ = c.WriteJSON(map[string]string{"type": "auth_required", "ha_version": "2026.4"})
+		var authMsg map[string]string
+		_ = c.ReadJSON(&authMsg)
+		_ = c.WriteJSON(map[string]string{"type": "auth_ok", "ha_version": "2026.4"})
+
+		var cmd map[string]any
+		if readErr := c.ReadJSON(&cmd); readErr != nil {
+			return
+		}
+		if cmd["type"] != "validate_config" {
+			t.Errorf("expected validate_config, got %q", cmd["type"])
+			return
+		}
+		_ = c.WriteJSON(map[string]any{
+			"id":      cmd["id"],
+			"type":    "result",
+			"success": true,
+			"result":  result,
+		})
+	}))
+}
+
+func connectValidateWS(t *testing.T, srv *httptest.Server) *haapi.WSClient {
+	t.Helper()
+	ws := haapi.NewWSClient(srv.URL, "tok")
+	if err := ws.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	return ws
+}
+
+func TestValidateCandidate_NoWSClientSkips(t *testing.T) {
+	w := New(haapi.New("http://localhost", "tok"), nil, "")
+	candidate := map[string]any{"triggers": []any{}, "conditions": []any{}, "actions": []any{}}
+	validated, err := w.ValidateCandidate(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("ValidateCandidate: %v", err)
+	}
+	if validated {
+		t.Error("validated = true with no WS client, want false (skipped)")
+	}
+}
+
+func TestValidateCandidate_Valid(t *testing.T) {
+	srv := startValidateWSServer(t, map[string]any{
+		"triggers":   map[string]any{"valid": true, "error": nil},
+		"conditions": map[string]any{"valid": true, "error": nil},
+		"actions":    map[string]any{"valid": true, "error": nil},
+	})
+	defer srv.Close()
+	ws := connectValidateWS(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	w := New(haapi.New("http://localhost", "tok"), ws, "")
+	candidate := map[string]any{
+		"triggers":   []any{map[string]any{"trigger": "time", "at": "06:00:00"}},
+		"conditions": []any{},
+		"actions":    []any{map[string]any{"delay": "00:00:01"}},
+	}
+	validated, err := w.ValidateCandidate(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("ValidateCandidate rejected a valid config: %v", err)
+	}
+	if !validated {
+		t.Error("validated = false for a valid config, want true")
+	}
+}
+
+func TestValidateCandidate_Rejected(t *testing.T) {
+	srv := startValidateWSServer(t, map[string]any{
+		"conditions": map[string]any{"valid": false, "error": "invalid template"},
+	})
+	defer srv.Close()
+	ws := connectValidateWS(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	w := New(haapi.New("http://localhost", "tok"), ws, "")
+	candidate := map[string]any{
+		"triggers":   []any{map[string]any{"trigger": "state", "entity_id": "sensor.x"}},
+		"conditions": []any{map[string]any{"condition": "template", "value_template": "{{ broken"}},
+		"actions":    []any{map[string]any{"delay": "00:00:01"}},
+	}
+	validated, err := w.ValidateCandidate(context.Background(), candidate)
+	if err == nil {
+		t.Fatal("ValidateCandidate accepted a rejected config, want error")
+	}
+	if validated {
+		t.Error("validated = true for a rejected config, want false")
+	}
+	if !strings.Contains(err.Error(), "HA rejected the condition") {
+		t.Errorf("error = %q, want it to mention the rejected condition section", err)
 	}
 }
 

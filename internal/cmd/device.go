@@ -83,8 +83,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 
 	devices := filterDevices(rc.devices, rc)
 	if len(devices) == 0 {
-		_, _ = fmt.Fprintln(w, "no devices")
-		return nil
+		return emitEmptyList(w, "no devices")
 	}
 
 	sort.Slice(devices, func(i, j int) bool {
@@ -239,7 +238,7 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 		if flagDevicePattern != "" && !deviceMatchesPattern(d, flagDevicePattern) {
 			continue
 		}
-		if flagDeviceName != "" && !containsFold(d.Name, flagDeviceName) {
+		if flagDeviceName != "" && !containsFold(deviceUserFacingName(d), flagDeviceName) {
 			continue
 		}
 		if flagDeviceArea != "" && !containsFold(d.AreaID, flagDeviceArea) && !containsFold(deviceAreaName(d, rc), flagDeviceArea) {
@@ -364,6 +363,12 @@ func registryEntityLabelNames(e haapi.EntityRegistryEntry, rc *deviceRegistryCon
 
 func deviceDisplayName(d haapi.DeviceRegistryEntry) string {
 	return firstNonEmpty(d.Name, d.ID)
+}
+
+// deviceUserFacingName returns the name a user searches for and sees in the
+// HA UI: the custom name_by_user when set, falling back to the registry name.
+func deviceUserFacingName(d haapi.DeviceRegistryEntry) string {
+	return firstNonEmpty(d.NameByUser, d.Name)
 }
 
 func firstNonEmpty(values ...string) string {
