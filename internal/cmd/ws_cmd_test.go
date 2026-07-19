@@ -828,6 +828,139 @@ func TestRunConfigShow_ProbeCreateEntryWarning(t *testing.T) {
 	}
 }
 
+// configShowEntriesNoOptions is like configShowEntries but the entry does NOT
+// advertise options support, so the probe must refuse even a typed 404.
+func configShowEntriesNoOptions() string {
+	entries := []map[string]any{
+		{"entry_id": "entry1", "domain": "myenergy", "title": "My Energy", "state": "loaded",
+			"source": "user", "supports_options": false, "supports_reconfigure": false},
+	}
+	b, _ := json.Marshal(entries)
+	return string(b)
+}
+
+// Even with --probe-options-flow and a typed 404, an entry that does not
+// advertise options must NOT trigger the options-flow POST: starting a flow the
+// integration never exposes is pointless and the probe gates on it.
+func TestRunConfigShow_NoProbeWhenNoOptionsSupport(t *testing.T) {
+	var mu sync.Mutex
+	optionsPosts := 0
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntriesNoOptions())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			optionsPosts++
+			mu.Unlock()
+			_, _ = fmt.Fprint(w, `{"type":"form","flow_id":"flow123","handler":"entry1","step_id":"init","data_schema":[]}`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withProbeOptions(t, true) // flag on, but the entry supports no options
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	mu.Lock()
+	posts := optionsPosts
+	mu.Unlock()
+	if posts != 0 {
+		t.Errorf("options-flow POST count = %d, want 0 (entry advertises no options)", posts)
+	}
+	if strings.Contains(buf.String(), "source: options_flow") {
+		t.Errorf("config source must not be options_flow when the entry supports no options: %q", buf.String())
+	}
+}
+
+// A non-404 diagnostics error (401/403/5xx) must NOT trigger the options-flow
+// POST even with --probe-options-flow and an options-capable entry: the probe
+// fires only on a typed 404 (a genuinely absent diagnostics platform), not on
+// "diagnostics unavailable" for any other reason.
+func TestRunConfigShow_NoProbeOnNon404(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var mu sync.Mutex
+			optionsPosts := 0
+			ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+				"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+					_, _ = fmt.Fprint(w, configShowEntries()) // supports_options: true
+				},
+				"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "nope", status)
+				},
+				"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					optionsPosts++
+					mu.Unlock()
+					_, _ = fmt.Fprint(w, `{"type":"form","flow_id":"flow123","handler":"entry1","step_id":"init","data_schema":[]}`)
+				},
+			})
+			withFlagDir(t, ts.dir)
+			withProbeOptions(t, true)
+
+			var buf bytes.Buffer
+			if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+				t.Fatalf("runConfigShow failed: %v", err)
+			}
+			mu.Lock()
+			posts := optionsPosts
+			mu.Unlock()
+			if posts != 0 {
+				t.Errorf("options-flow POST count = %d, want 0 (diagnostics error was %d, not a typed 404)", posts, status)
+			}
+			if strings.Contains(buf.String(), "source: options_flow") {
+				t.Errorf("config source must not be options_flow on a non-404 diagnostics error: %q", buf.String())
+			}
+		})
+	}
+}
+
+// The abort must fire whenever a flow_id is recoverable, even if the full flow
+// response fails to parse: a parse failure does not prove no flow was created.
+// Here the response carries a valid flow_id but an unparseable secondary field
+// (errors as a string, not a map), so ParseFlowResult fails while flowIDOf
+// still recovers the id — the cleanup DELETE must still be issued.
+func TestRunConfigShow_ProbeAbortsOnParseFailure(t *testing.T) {
+	aborted := false
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		// Valid flow_id, but "errors" is a string where a map is expected, so the
+		// full parse fails while the flow_id is still recoverable.
+		"/api/config/config_entries/options/flow": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"type":"form","flow_id":"flow123","handler":"entry1","step_id":"init","errors":"boom","data_schema":[]}`)
+		},
+		"/api/config/config_entries/options/flow/": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				aborted = true
+			}
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withProbeOptions(t, true)
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow failed: %v", err)
+	}
+	if !aborted {
+		t.Error("abort should still fire when the flow response fails to parse but flow_id is recoverable")
+	}
+	if !strings.Contains(buf.String(), "could not parse options flow") {
+		t.Errorf("note should report the parse failure: %q", buf.String())
+	}
+}
+
 // --- truncateStr ---
 
 func TestTruncateStr_Short(t *testing.T) {
