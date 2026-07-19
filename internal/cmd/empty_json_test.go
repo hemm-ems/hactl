@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -213,6 +214,146 @@ func TestEmptyResultJSON_EntRelated(t *testing.T) {
 	var buf bytes.Buffer
 	if err := runEntRelated(context.Background(), &buf, "sensor.gone"); err != nil {
 		t.Fatalf("runEntRelated failed: %v", err)
+	}
+	assertEmptyJSONArray(t, buf.String())
+}
+
+// --- Filtered-path empty results. These sites short-circuit on a filter that
+// matches nothing (--domain/--label/--failing) or a scan/replace with zero
+// hits, ahead of the same function's flagJSON-aware render. Each must emit "[]"
+// under --json rather than the filter's human hint.
+
+// TestEmptyResultJSON_EntLs_DomainFilter covers ent.go's `--domain` branch: a
+// domain with zero matching entities must not print domainNotFoundHint under
+// --json.
+func TestEmptyResultJSON_EntLs_DomainFilter(t *testing.T) {
+	ts := startCmdServer(t, nil, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[]")
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+	oldDomain, oldPattern, oldArea, oldLabel, oldRestored := flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored
+	flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored = "sensor", "", "", "", false
+	defer func() {
+		flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored = oldDomain, oldPattern, oldArea, oldLabel, oldRestored
+	}()
+
+	var buf bytes.Buffer
+	if err := runEntLs(context.Background(), &buf); err != nil {
+		t.Fatalf("runEntLs failed: %v", err)
+	}
+	assertEmptyJSONArray(t, buf.String())
+}
+
+// TestEmptyResultJSON_EntLs_LabelFilter covers ent.go's `--label` branch: a
+// label absent from the registry must not print labelNotFoundHint under --json.
+func TestEmptyResultJSON_EntLs_LabelFilter(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []any{},
+		"config/area_registry/list":   []any{},
+		"config/label_registry/list":  []any{},
+		"config/floor_registry/list":  []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[]")
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+	oldDomain, oldPattern, oldArea, oldLabel, oldRestored := flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored
+	flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored = "", "", "", "nonexistent", false
+	defer func() {
+		flagEntDomain, flagEntPattern, flagEntArea, flagEntLabel, flagEntRestored = oldDomain, oldPattern, oldArea, oldLabel, oldRestored
+	}()
+
+	var buf bytes.Buffer
+	if err := runEntLs(context.Background(), &buf); err != nil {
+		t.Fatalf("runEntLs failed: %v", err)
+	}
+	assertEmptyJSONArray(t, buf.String())
+}
+
+// TestEmptyResultJSON_AutoLs_Failing covers auto.go's `--failing` branch: a
+// registry with no failing automations must not print failingEmptyHint under
+// --json.
+func TestEmptyResultJSON_AutoLs_Failing(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []any{},
+		"config/area_registry/list":   []any{},
+		"config/label_registry/list":  []any{},
+		"config/floor_registry/list":  []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// One healthy automation: a non-empty listing with zero failing rows.
+			_, _ = fmt.Fprint(w, `[{"entity_id":"automation.healthy","state":"on","attributes":{}}]`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+	oldFailing, oldPattern, oldLabel, oldRestored, oldSince := flagAutoFailing, flagAutoPattern, flagAutoLabel, flagAutoRestored, flagSince
+	flagAutoFailing, flagAutoPattern, flagAutoLabel, flagAutoRestored, flagSince = true, "", "", false, "24h"
+	defer func() {
+		flagAutoFailing, flagAutoPattern, flagAutoLabel, flagAutoRestored, flagSince = oldFailing, oldPattern, oldLabel, oldRestored, oldSince
+	}()
+
+	var buf bytes.Buffer
+	if err := runAutoLs(context.Background(), &buf); err != nil {
+		t.Fatalf("runAutoLs failed: %v", err)
+	}
+	assertEmptyJSONArray(t, buf.String())
+}
+
+// TestEmptyResultJSON_RefScan covers ref.go's `ref scan` empty branch: a target
+// referenced nowhere must emit "[]" under --json, not the "not referenced" note.
+func TestEmptyResultJSON_RefScan(t *testing.T) {
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"target":"sensor.absent","hits":[]}`)
+	}))
+	defer companionSrv.Close()
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          dashboardConfigWith("sensor.other"),
+	}, nil)
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+
+	var buf bytes.Buffer
+	if err := runRefScan(context.Background(), &buf, "sensor.absent"); err != nil {
+		t.Fatalf("runRefScan failed: %v", err)
+	}
+	assertEmptyJSONArray(t, buf.String())
+}
+
+// TestEmptyResultJSON_RefReplace covers ref.go's `ref replace` empty branch: an
+// old value found nowhere must emit "[]" under --json, not the "not found" note.
+func TestEmptyResultJSON_RefReplace(t *testing.T) {
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"status":"dry_run","changes":[]}`)
+	}))
+	defer companionSrv.Close()
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []any{},
+		"lovelace/info":            map[string]any{"mode": "storage"},
+		"lovelace/config":          dashboardConfigWith("sensor.other"),
+	}, nil)
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+	withRefConfirm(t, false)
+
+	var buf bytes.Buffer
+	if err := runRefReplace(context.Background(), &buf, "sensor.old", "sensor.new"); err != nil {
+		t.Fatalf("runRefReplace failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
 }

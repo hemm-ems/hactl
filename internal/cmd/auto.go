@@ -230,8 +230,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 	if flagAutoFailing {
 		rows = filterFailing(rows)
 		if len(rows) == 0 {
-			_, _ = fmt.Fprintln(w, failingEmptyHint())
-			return nil
+			return emitEmptyList(w, failingEmptyHint())
 		}
 	}
 

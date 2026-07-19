@@ -157,8 +157,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	if flagEntDomain != "" {
 		filtered := filterEntitiesByDomain(states, flagEntDomain)
 		if len(filtered) == 0 {
-			_, _ = fmt.Fprintln(w, domainNotFoundHint(flagEntDomain))
-			return nil
+			return emitEmptyList(w, domainNotFoundHint(flagEntDomain))
 		}
 		states = filtered
 	}
@@ -183,8 +182,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	}
 	if rc != nil && flagEntLabel != "" {
 		if !labelExistsInRegistry(rc, flagEntLabel) {
-			_, _ = fmt.Fprintln(w, labelNotFoundHint(flagEntLabel))
-			return nil
+			return emitEmptyList(w, labelNotFoundHint(flagEntLabel))
 		}
 		states = filterEntitiesByLabel(states, rc, flagEntLabel)
 	}
