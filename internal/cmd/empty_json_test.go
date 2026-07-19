@@ -134,32 +134,17 @@ func TestEmptyResultJSON_ConfigEntries(t *testing.T) {
 	assertEmptyJSONArray(t, buf.String())
 }
 
+// TestEmptyResultJSON_Issues_EmptyArray drives the WS repairs/list_issues
+// path: an empty registry must still render as [] under --json.
+//
+// There is deliberately no 404 counterpart. The REST /api/repairs/issues
+// endpoint does not exist in HA, and the old code's "treat 404 as empty"
+// fallback is what silently hid active repairs; runIssues now surfaces a
+// failed lookup as an error rather than an empty result.
 func TestEmptyResultJSON_Issues_EmptyArray(t *testing.T) {
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/repairs/issues": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"issues":[]}`)
-		},
-	})
-	withFlagDir(t, ts.dir)
-	withFlagJSON(t, true)
-
-	var buf bytes.Buffer
-	if err := runIssues(context.Background(), &buf); err != nil {
-		t.Fatalf("runIssues failed: %v", err)
-	}
-	assertEmptyJSONArray(t, buf.String())
-}
-
-// TestEmptyResultJSON_Issues_404 covers the other empty-result branch: HA
-// versions without the repairs API return 404, which runIssues treats as a
-// valid empty result rather than an error.
-func TestEmptyResultJSON_Issues_404(t *testing.T) {
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/repairs/issues": func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "not found", http.StatusNotFound)
-		},
-	})
+	ts := startCmdServer(t, map[string]any{
+		"repairs/list_issues": map[string]any{"issues": []any{}},
+	}, nil)
 	withFlagDir(t, ts.dir)
 	withFlagJSON(t, true)
 
