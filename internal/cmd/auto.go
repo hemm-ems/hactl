@@ -581,6 +581,62 @@ func formatShortTime(isoTime string) string {
 	return t.Format("01-02 15:04")
 }
 
+// compactDiffContext is how many unchanged context lines the compact diff
+// renderer keeps on each side of a changed hunk. Unchanged runs longer than
+// this collapse to a single "… N unchanged lines …" marker so the real +/-
+// changes stay visible under the default output token cap — a full-document
+// echo pushes changes past the truncation point (Go's YAML marshal sorts map
+// keys alphabetically, so a changed trigger lands at the end of the document).
+const compactDiffContext = 3
+
+// compactDiff renders full unified-diff lines (each prefixed with ' ', '+' or
+// '-') as compact hunks: every changed line is kept, flanked by up to
+// compactDiffContext unchanged context lines, and each remaining run of
+// unchanged lines collapses to a single "… N unchanged lines …" marker. Hunks
+// whose context windows touch or overlap merge into one. A diff with no
+// changes is returned unchanged.
+func compactDiff(lines []string) []string {
+	keep := make([]bool, len(lines))
+	changed := false
+	for i, l := range lines {
+		if len(l) > 0 && (l[0] == '+' || l[0] == '-') {
+			changed = true
+			lo := max(i-compactDiffContext, 0)
+			hi := min(i+compactDiffContext, len(lines)-1)
+			for j := lo; j <= hi; j++ {
+				keep[j] = true
+			}
+		}
+	}
+	if !changed {
+		return lines
+	}
+
+	var result []string
+	for i := 0; i < len(lines); {
+		if keep[i] {
+			result = append(result, lines[i])
+			i++
+			continue
+		}
+		start := i
+		for i < len(lines) && !keep[i] {
+			i++
+		}
+		result = append(result, fmt.Sprintf("… %d unchanged lines …", i-start))
+	}
+	return result
+}
+
+// renderAutoDiff writes an automation diff's lines to w in compact hunk form so
+// the +/- changes stay visible under the output token cap. Both `auto diff` and
+// the `auto apply` dry-run preview render through here.
+func renderAutoDiff(w io.Writer, lines []string) {
+	for _, line := range compactDiff(lines) {
+		_, _ = fmt.Fprintln(w, line)
+	}
+}
+
 func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 	if flagAutoFile == "" {
 		return errors.New("--file / -f is required for diff")
@@ -606,9 +662,7 @@ func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 	}
 
 	_, _ = fmt.Fprintf(w, "%s: diff\n", autoID)
-	for _, line := range diff.Lines {
-		_, _ = fmt.Fprintln(w, line)
-	}
+	renderAutoDiff(w, diff.Lines)
 	return nil
 }
 
@@ -644,9 +698,7 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		slog.Warn("could not generate diff", "error", diffErr)
 	case diff.HasChanges:
 		_, _ = fmt.Fprintf(w, "diff:\n")
-		for _, line := range diff.Lines {
-			_, _ = fmt.Fprintln(w, line)
-		}
+		renderAutoDiff(w, diff.Lines)
 	default:
 		_, _ = fmt.Fprintf(w, "no changes detected\n")
 		return nil
