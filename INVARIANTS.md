@@ -45,3 +45,43 @@ incompatible companion change fails before release.
   COMPANION_DIR=companion-src` right after checking out
   `hactl-companion`, so a drifted vendored spec fails CI before it can
   reach a release.
+
+## H-4 — An automation write is verified against HA, not against hactl's output
+
+`auto apply` and `auto rollback` are proven by reading the config back from HA
+and comparing it, never by asserting on the CLI's echo. `applied: <id>` is
+printed unconditionally once the write call returns nil, so an assertion on it
+holds whether or not anything reached HA.
+
+This exists because stubbing `haapi.Client.UpdateAutomationConfig` to
+`return nil` — discarding every automation write — left both the unit tier and
+the whole integration package green. The prior test asserted only that the
+automation still existed after each step, which is true either way.
+
+Comparison folds HA's legacy singular keys (`trigger`/`condition`/`action`,
+and `service` within a step) onto the modern plural ones, because writing
+through the Config API migrates the schema; everything else must match exactly.
+
+- Enforced by: `internal/integration/write_roundtrip_test.go`
+  (`TestAutoApplyRollbackRoundTrip`, `make test-int`)
+
+## H-5 — No automation write without a successful backup
+
+`Writer.Apply` returns an error rather than writing when the backup fails.
+Without the backup the previous config is unrecoverable, so `auto rollback`
+would have nothing to restore; warning and writing anyway traded the user's
+only undo for a log line that `HACTL_LOG_LEVEL` routinely hides.
+
+- Enforced by: `internal/writer/writer_test.go`
+  (`TestWriter_Apply_BackupFailureAborts`)
+
+## H-6 — A backup belongs to exactly one automation
+
+Backup selection matches the whole id after the timestamp, never a trailing
+underscore-delimited segment of it. Segment matching made
+`auto rollback door` select `bathroom_light_on_door`'s backup and write that
+config back under the id the user asked for — one automation's config restored
+over another's. Underscore-suffixed ids are ordinary in real HA configs.
+
+- Enforced by: `internal/writer/writer_test.go` (`TestContainsAutoID`, the
+  collision cases)

@@ -161,6 +161,20 @@ func TestContainsAutoID(t *testing.T) {
 		{"2026-04-17T09-42-05_climate_schedule.yaml", "climate_schedule", true},
 		{"2026-04-17T09-42-05_alarm_morning.yaml", "alarm_morning", true},
 		{"2026-04-17T09-42-05_alarm_morning.yaml", "climate_schedule", false},
+
+		// A backup belongs to exactly one automation. Matching a trailing
+		// underscore-delimited segment makes `auto rollback door` select
+		// bathroom_light_on_door's backup and then write it back under the id
+		// the user asked for — one automation's config restored over another's.
+		// Underscore-suffixed ids are ordinary in real HA configs.
+		{"2026-04-17T09-42-05_bathroom_light_on_door.yaml", "door", false},
+		{"2026-04-17T09-42-05_bathroom_light_on_door.yaml", "on_door", false},
+		{"2026-04-17T09-42-05_bathroom_light_on_door.yaml", "light_on_door", false},
+		{"2026-04-17T09-42-05_bathroom_light_on_door.yaml", "bathroom_light_on_door", true},
+		{"2026-04-17T09-42-05_climate_schedule.yaml", "schedule", false},
+
+		// The id must own the whole name, not a prefix of it either.
+		{"2026-04-17T09-42-05_climate_schedule_night.yaml", "climate_schedule", false},
 	}
 	for _, tt := range tests {
 		got := containsAutoID(tt.filename, tt.autoID)
@@ -657,5 +671,54 @@ func TestWriter_Backup_CreatesFile(t *testing.T) {
 		if !strings.Contains(string(data), "My Auto") {
 			t.Errorf("backup file content missing automation alias: %q", string(data))
 		}
+	}
+}
+
+// TestWriter_Apply_BackupFailureAborts enforces H-5: a failed backup must abort
+// the write, not warn and proceed. Without the backup the previous config is
+// unrecoverable, so `auto rollback` would have nothing to restore — and the
+// warning it used to emit is hidden whenever HACTL_LOG_LEVEL is above warn.
+//
+// The load-bearing assertion is that no POST reached HA: an error return alone
+// would not prove the write was prevented.
+func TestWriter_Apply_BackupFailureAborts(t *testing.T) {
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"alias":"Old","trigger":[],"condition":[],"action":[]}`)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			posted = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	localFile := filepath.Join(t.TempDir(), "test_auto.yaml")
+	if err := os.WriteFile(localFile, []byte("alias: New\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point the backup dir at a path under a regular file so MkdirAll fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(haapi.New(srv.URL, "tok"), nil, filepath.Join(blocker, "backups"))
+
+	_, err := w.Apply(context.Background(), "test_auto", localFile, true)
+	if err == nil {
+		t.Fatal("Apply succeeded despite an unwritable backup dir; want an error")
+	}
+	if !strings.Contains(err.Error(), "backup") {
+		t.Errorf("error should name the backup as the cause, got: %v", err)
+	}
+	if posted {
+		t.Error("Apply wrote the automation to HA even though the backup failed")
 	}
 }

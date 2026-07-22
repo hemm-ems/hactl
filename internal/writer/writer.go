@@ -120,13 +120,15 @@ func (w *Writer) Apply(ctx context.Context, automationID, localPath string, conf
 		return result, nil
 	}
 
-	// Backup current config before the write
+	// Backup current config before the write. A failed backup is fatal: without
+	// it the previous config is unrecoverable, so `auto rollback` would have
+	// nothing to restore. Warning and writing anyway silently traded the user's
+	// only undo for a log line they never see.
 	backupPath, backupErr := w.backup(ctx, automationID)
 	if backupErr != nil {
-		slog.Warn("could not create backup", "error", backupErr)
-	} else {
-		result.BackupPath = backupPath
+		return nil, fmt.Errorf("refusing to write without a backup: %w", backupErr)
 	}
+	result.BackupPath = backupPath
 
 	// Write via Config API
 	if err := w.client.UpdateAutomationConfig(ctx, automationID, localConfig); err != nil {
@@ -422,24 +424,14 @@ func isYAMLFile(name string) bool {
 	return len(name) > 5 && (name[len(name)-5:] == extYAML || name[len(name)-4:] == extYML)
 }
 
+// containsAutoID reports whether a backup file belongs to automationID.
+//
+// A backup belongs to exactly one automation, so the id must be the whole name
+// after the timestamp — not a trailing underscore-delimited segment of it.
+// Matching a segment made `auto rollback door` select bathroom_light_on_door's
+// backup and then write that config back under the id the user asked for.
 func containsAutoID(filename, automationID string) bool {
-	// Backup filenames are like "2026-04-17T09-42-05_climate_schedule.yaml"
-	// The automation ID follows the timestamp underscore.
-	for i := range len(filename) {
-		if i > 0 && filename[i-1] == '_' {
-			rest := filename[i:]
-			// Strip .yaml/.yml extension
-			if idx := len(rest) - 5; idx > 0 && rest[idx:] == extYAML {
-				rest = rest[:idx]
-			} else if idx := len(rest) - 4; idx > 0 && rest[idx:] == extYML {
-				rest = rest[:idx]
-			}
-			if rest == automationID {
-				return true
-			}
-		}
-	}
-	return false
+	return automationID != "" && extractAutoIDFromBackup(filename) == automationID
 }
 
 func extractAutoIDFromBackup(path string) string {
