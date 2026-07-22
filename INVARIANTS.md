@@ -85,3 +85,24 @@ over another's. Underscore-suffixed ids are ordinary in real HA configs.
 
 - Enforced by: `internal/writer/writer_test.go` (`TestContainsAutoID`, the
   collision cases)
+
+## H-7 — A decode that yields nothing never renders as success
+
+When a wire decode produces an all-zero value, the result is reported as
+`UNPARSED`, not as a passing outcome. `overallResult` returns `StepUnknown`
+when both `script_execution` and `state` are empty, and `Condense` forces it
+when the decode carries no identity and no steps at all; an empty domain and
+item_id render as nothing rather than a bare `.`.
+
+Empty was previously spelled "success": a `trace/get` struct whose tags did not
+match HA's wire shape unmarshalled to zero, and every automation run — including
+failures — rendered as `  .    PASS` for months while the whole suite stayed
+green. The marker is also scanned for by the integration harness itself, so
+every command a test runs is checked for it, including tests that assert
+nothing of their own.
+
+- Enforced by: `internal/analyze/trace_unparsed_test.go`
+  (`TestOverallResult_EmptyIsNotPass`, `TestCondense_EmptyDecodeIsUnknown`,
+  `TestFormatCondensed_UnparsedNeverLooksLikePass`),
+  `internal/integration/degeneracy_test.go` (`looksDegenerate`, wired into
+  `runHactl`/`runHactlDir`/`runHactlErr`/`runHactlDirErr`)

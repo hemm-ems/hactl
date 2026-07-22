@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -165,5 +169,39 @@ func TestRenderFlowResult_JSON(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `"flow_id"`) {
 		t.Errorf("JSON output missing flow_id key: %s", out)
+	}
+}
+
+// Live HA's /api/config/config_entries/entry response carries no "version" key.
+// A `version` field on configEntry therefore serialises a fabricated 0 into
+// `config show --json`, which reads as "this entry is at schema version 0".
+func TestRunConfigShow_JSONHasNoFabricatedVersion(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, configShowEntries())
+		},
+		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"data":{"options":{"price_entity":"sensor.price"}}}`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runConfigShow(context.Background(), &buf, "entry1"); err != nil {
+		t.Fatalf("runConfigShow --json failed: %v", err)
+	}
+
+	var out struct {
+		Entry map[string]json.RawMessage `json:"entry"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if v, ok := out.Entry["version"]; ok {
+		t.Errorf("entry.version = %s emitted, but HA sends no version key; --json must not invent one:\n%s", v, buf.String())
 	}
 }

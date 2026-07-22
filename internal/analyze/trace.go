@@ -16,7 +16,18 @@ const (
 	StepPass StepResult = "pass"
 	StepFail StepResult = "fail"
 	StepSkip StepResult = "skip"
+	// StepUnknown means the trace did not tell us what happened — typically a
+	// decode that produced nothing. It is deliberately NOT StepPass: an empty
+	// decode once rendered as "  .    PASS" for every run, and both the unit
+	// and the integration suites stayed green through it.
+	StepUnknown StepResult = "unparsed"
 )
+
+// UnparsedMarker is the literal token FormatCondensed prints for a trace whose
+// decode produced nothing. The integration harness greps every command's stdout
+// for it, so it must stay in lockstep with the rendering of StepUnknown —
+// TestUnparsedMarkerMatchesRendering enforces that.
+const UnparsedMarker = "UNPARSED"
 
 // StepType represents the type of a trace step.
 type StepType string
@@ -120,10 +131,16 @@ type RawTraceRun struct {
 func Condense(raw *RawTrace) *CondensedTrace {
 	ct := &CondensedTrace{
 		RunID:     raw.Trace.RunID,
-		AutoID:    raw.Trace.Domain + "." + raw.Trace.ItemID,
+		AutoID:    autoID(raw.Trace.Domain, raw.Trace.ItemID),
 		Trigger:   parseTrigger(raw.Trace.Trigger),
 		StartTime: raw.Trace.Timestamp.Start,
 		Result:    overallResult(raw),
+	}
+
+	// Nothing decoded at all: no identity, no steps. Whatever stray field
+	// survived, we cannot claim to know how the run went.
+	if degenerateDecode(raw) {
+		ct.Result = StepUnknown
 	}
 
 	// Collect and sort step paths
@@ -169,6 +186,10 @@ func Condense(raw *RawTrace) *CondensedTrace {
 // "aborted", "cancelled"), falling back to the trace state when
 // script_execution is empty. This keeps `trace show` and `auto ls` from
 // contradicting each other about whether a run passed.
+//
+// When BOTH script_execution and state are empty the answer is StepUnknown,
+// not StepPass. Reporting silence as success is precisely how a decode bug
+// turned every run — failed, aborted, cancelled — into a green PASS.
 func overallResult(raw *RawTrace) StepResult {
 	if raw.Trace.Error != "" || raw.Trace.Execution == "error" {
 		return StepFail
@@ -177,10 +198,38 @@ func overallResult(raw *RawTrace) StepResult {
 	if exec == "" {
 		exec = raw.Trace.State
 	}
-	if exec == "" || exec == "finished" {
+	if exec == "" {
+		return StepUnknown
+	}
+	if exec == "finished" {
 		return StepPass
 	}
 	return StepResult(exec)
+}
+
+// degenerateDecode reports whether unmarshalling produced nothing usable: no
+// domain, no item_id, no run_id and an empty step map. That is the signature of
+// a wire-format mismatch rather than of any real trace, so the caller must not
+// dress it up as a result.
+func degenerateDecode(raw *RawTrace) bool {
+	return raw.Trace.Domain == "" &&
+		raw.Trace.ItemID == "" &&
+		raw.Trace.RunID == "" &&
+		len(raw.TraceSteps) == 0
+}
+
+// autoID joins domain and item_id, omitting the separator when either half is
+// missing. An all-empty decode yields "" — never a bare ".", which used to be
+// the only visible sign that nothing had parsed.
+func autoID(domain, itemID string) string {
+	switch {
+	case domain == "":
+		return itemID
+	case itemID == "":
+		return domain
+	default:
+		return domain + "." + itemID
+	}
 }
 
 func classifyStep(path string) StepType {
@@ -199,20 +248,52 @@ func sortedStepPaths(steps map[string][]RawTraceRun) []string {
 		paths = append(paths, p)
 	}
 	sort.Slice(paths, func(i, j int) bool {
-		return stepOrder(paths[i]) < stepOrder(paths[j])
+		return stepPathLess(paths[i], paths[j])
 	})
 	return paths
 }
 
-func stepOrder(path string) string {
-	// Ensure trigger < condition < action ordering, then by index
+// stepPathLess orders HA step paths ("trigger", "trigger/0", "condition/0",
+// "condition/0/entity_id/0", "action/0", "action/10"): first by group so
+// trigger < condition < action, then segment by segment with numeric segments
+// compared as numbers.
+//
+// The previous implementation built a single string key and let sort.Slice
+// compare it lexicographically, which put "action/10" between "action/1" and
+// "action/2" — every automation with ten or more actions listed its steps in
+// the wrong execution order.
+func stepPathLess(a, b string) bool {
+	if ga, gb := stepGroup(a), stepGroup(b); ga != gb {
+		return ga < gb
+	}
+	as := strings.Split(a, "/")
+	bs := strings.Split(b, "/")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		if as[i] == bs[i] {
+			continue
+		}
+		an, aErr := strconv.Atoi(as[i])
+		bn, bErr := strconv.Atoi(bs[i])
+		if aErr == nil && bErr == nil {
+			return an < bn
+		}
+		return as[i] < bs[i]
+	}
+	// One path is a prefix of the other (e.g. "trigger" vs "trigger/0", or
+	// "action/0" vs "action/0/repeat/sequence/0"): the parent comes first.
+	return len(as) < len(bs)
+}
+
+// stepGroup keeps the trigger < condition < action grouping. A bare "trigger"
+// key — which HA emits for a service-triggered run — groups with the triggers.
+func stepGroup(path string) int {
 	switch {
 	case strings.HasPrefix(path, "trigger"):
-		return "0_" + path
+		return 0
 	case strings.HasPrefix(path, "condition"):
-		return "1_" + path
+		return 1
 	default:
-		return "2_" + path
+		return 2
 	}
 }
 
@@ -351,9 +432,21 @@ func shortTimestamp(ts string) string {
 func FormatCondensed(ct *CondensedTrace) string {
 	var b strings.Builder
 
-	resultStr := strings.ToUpper(string(ct.Result))
-	fmt.Fprintf(&b, "%s  %s  %s  %s\n",
-		ct.RunID, ct.AutoID, shortTimestamp(ct.StartTime), resultStr)
+	// Header fields, empties dropped: a trace that decoded to nothing prints a
+	// lone "UNPARSED" instead of "  .    PASS" — no punctuation standing in for
+	// an automation ID we never got.
+	head := make([]string, 0, 4)
+	for _, f := range []string{
+		ct.RunID,
+		ct.AutoID,
+		shortTimestamp(ct.StartTime),
+		strings.ToUpper(string(ct.Result)),
+	} {
+		if f != "" {
+			head = append(head, f)
+		}
+	}
+	fmt.Fprintln(&b, strings.Join(head, "  "))
 
 	for _, s := range ct.Steps {
 		var marker string
@@ -372,7 +465,7 @@ func FormatCondensed(ct *CondensedTrace) string {
 			}
 		case StepSkip:
 			resultPart = "skipped"
-		case StepPass:
+		case StepPass, StepUnknown:
 			resultPart = string(s.Result)
 		}
 

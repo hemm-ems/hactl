@@ -1,4 +1,5 @@
-traces:  0 entries  <SIZE>
-logs:    <SIZE>
-synced:  traces=never  logs=never
-dir:     <TMPDIR>/hatest-<ID>/cache
+traces:      0 entries  <SIZE>
+logs:        <SIZE>
+timeseries:  0 samples  <SIZE>
+synced:      traces=never  logs=never
+dir:         <TMPDIR>/hatest-<ID>/cache

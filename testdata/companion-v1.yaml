@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: hactl-companion API
-  version: 2026.7.5
+  version: 2026.7.6
   description: YAML file access API for Home Assistant. Provides structured CRUD
     for templates, scripts, and automations, plus raw config file read/write 
     with !include resolution.
@@ -239,6 +239,13 @@ paths:
                           type: string
                         relationship:
                           type: string
+                          description: "How the two are related: config-entry-reference,
+                            referenced-entity, device-reference, yaml-reference (entities
+                            co-occurring in one YAML node), or automation-reference.
+                            automation-reference means an automation's config mentions
+                            the queried entity; entity_id is then the automation's
+                            entity_id (registry-resolved via its unique_id, else derived
+                            from its alias) and detail is 'file:path-within-file (alias)'."
                         detail:
                           type: string
                   stale_refs:

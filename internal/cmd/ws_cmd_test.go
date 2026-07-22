@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -3347,53 +3346,6 @@ func TestRunHealth_CheckConfig(t *testing.T) {
 	if !strings.Contains(out, "config_check=INVALID: bad automation yaml") {
 		t.Errorf("output missing invalid config result: %q", out)
 	}
-}
-
-// --- findAutomationRelations (HTTP+states) ---
-
-func TestFindAutomationRelations_NoID(t *testing.T) {
-	// Automations without 'id' attribute are skipped
-	ts := startCmdServer(t, map[string]any{}, nil)
-	withFlagDir(t, ts.dir)
-
-	client := haapi.New(ts.srv.URL, "tok")
-	states := []entityState{
-		{
-			EntityID:   "automation.some_auto",
-			State:      "on",
-			Attributes: map[string]any{}, // no 'id'
-		},
-	}
-
-	result := findAutomationRelations(context.Background(), client, states, "sensor.temperature")
-	if len(result) != 0 {
-		t.Errorf("expected 0 relations (no id in automation), got %d", len(result))
-	}
-}
-
-func TestFindAutomationRelations_WithConfig(t *testing.T) {
-	configJSON := `{"id":"test_auto","alias":"Test","trigger":[{"platform":"state","entity_id":"sensor.temperature"}],"condition":[],"action":[]}`
-
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, configJSON)
-		},
-	})
-	withFlagDir(t, ts.dir)
-
-	client := haapi.New(ts.srv.URL, "tok")
-	states := []entityState{
-		{
-			EntityID:   "automation.test_auto",
-			State:      "on",
-			Attributes: map[string]any{"id": "test_auto"},
-		},
-	}
-
-	result := findAutomationRelations(context.Background(), client, states, "sensor.temperature")
-	t.Logf("findAutomationRelations: %d results", len(result))
-	// Just verify it runs without panicking
 }
 
 // --- printVersion ---

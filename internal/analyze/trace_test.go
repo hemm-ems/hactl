@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -106,13 +107,6 @@ func TestOverallResult_FallsBackToState(t *testing.T) {
 	raw := &RawTrace{Trace: RawTraceMeta{Execution: "", State: "running"}}
 	if got := overallResult(raw); got != StepResult("running") {
 		t.Errorf("overallResult(empty execution, state=running) = %q, want %q", got, "running")
-	}
-}
-
-func TestOverallResult_EmptyIsPass(t *testing.T) {
-	raw := &RawTrace{Trace: RawTraceMeta{Execution: "", State: ""}}
-	if got := overallResult(raw); got != StepPass {
-		t.Errorf("overallResult(empty) = %q, want %q", got, StepPass)
 	}
 }
 
@@ -376,6 +370,71 @@ func TestShortenError_Long(t *testing.T) {
 	got := shortenError(long)
 	if len(got) > 40 {
 		t.Errorf("shortenError: result = %q (len %d), want <= 40 chars", got, len(got))
+	}
+}
+
+// TestSortedStepPaths_NumericSegments pins step-path ordering: the
+// trigger < condition < action grouping first, then path segments compared
+// segment by segment with numeric segments compared as numbers. A plain string
+// sort ordered "action/10" before "action/2".
+func TestSortedStepPaths_NumericSegments(t *testing.T) {
+	steps := map[string][]RawTraceRun{
+		"action/10":               nil,
+		"action/9":                nil,
+		"action/2":                nil,
+		"action/1":                nil,
+		"action/0":                nil,
+		"action/0/repeat/sequence/0": nil,
+		"condition/1":             nil,
+		"condition/0":             nil,
+		"condition/0/entity_id/0": nil,
+		// Real HA emits a bare "trigger" key for a service-triggered run.
+		"trigger":   nil,
+		"trigger/0": nil,
+	}
+	want := []string{
+		"trigger", "trigger/0",
+		"condition/0", "condition/0/entity_id/0", "condition/1",
+		"action/0", "action/0/repeat/sequence/0", "action/1", "action/2", "action/9", "action/10",
+	}
+
+	got := sortedStepPaths(steps)
+	if len(got) != len(want) {
+		t.Fatalf("sortedStepPaths returned %d paths, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sortedStepPaths order mismatch at %d: got %q, want %q\nfull order: %v", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestCondense_StepIndexFollowsNumericOrder is the user-visible half of the
+// same defect: with more than ten actions the condensed step list must number
+// them 1..11 in execution order, not in lexicographic path order.
+func TestCondense_StepIndexFollowsNumericOrder(t *testing.T) {
+	steps := map[string][]RawTraceRun{}
+	for i := range 11 {
+		path := "action/" + strconv.Itoa(i)
+		steps[path] = []RawTraceRun{{
+			Path:   path,
+			Result: json.RawMessage(`{"params":{"entity_id":"light.a` + strconv.Itoa(i) + `"}}`),
+		}}
+	}
+	raw := &RawTrace{
+		Trace:      RawTraceMeta{Domain: "automation", ItemID: "x", RunID: "r1", Execution: "finished"},
+		TraceSteps: steps,
+	}
+
+	ct := Condense(raw)
+	if len(ct.Steps) != 11 {
+		t.Fatalf("steps = %d, want 11", len(ct.Steps))
+	}
+	for i, s := range ct.Steps {
+		want := "light.a" + strconv.Itoa(i)
+		if s.Detail != want {
+			t.Errorf("step[%d] (index %d) detail = %q, want %q", i, s.Index, s.Detail, want)
+		}
 	}
 }
 

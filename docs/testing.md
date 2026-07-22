@@ -6,9 +6,9 @@ Testing a command-line tool that talks to Home Assistant is harder than testing 
 
 ---
 
-## The Three Layers
+## The Four Layers
 
-hactl's tests are organized into three layers, each with a different scope and a different cost.
+hactl's tests are organized into four layers, each with a different scope and a different cost.
 
 **Unit tests** are the fastest and cheapest. They cover individual functions: parsing logic, formatting, anomaly detection algorithms, cache storage, config file loading. No network, no Docker, no HA. They run in a few seconds and serve as a quick sanity check.
 
@@ -16,7 +16,11 @@ hactl's tests are organized into three layers, each with a different scope and a
 
 **Companion tests** cover the optional companion service — a small sidecar that gives hactl filesystem write access to the HA config directory. They use Docker Compose to stand up both HA and the companion together, then exercise the companion's API for CRUD operations, security boundaries, and service discovery.
 
-Each layer has its own `make` target, and each layer is also enforced independently in CI. You can think of the layers as a pyramid: many small unit tests at the base, a broad set of integration tests in the middle, and a focused companion suite at the top.
+**Discovery tests** cover companion discovery and Ingress authentication — the production path the companion tests deliberately bypass by pre-populating `COMPANION_URL`. That bypass is what let two production bugs ship undetected, which is why this layer exists separately.
+
+Each layer has its own `make` target, and each layer is also enforced independently in CI. You can think of the layers as a pyramid: many small unit tests at the base, a broad set of integration tests in the middle, and the two focused companion suites at the top.
+
+A layer only gates what its tests actually assert, which is a separate question from how many there are — see [Writing a Test That Actually Gates Something](#writing-a-test-that-actually-gates-something).
 
 ---
 
@@ -41,7 +45,7 @@ What the unit tests cover:
 - **`internal/cmd/`** — Command-level utility functions: `parseSince()` for relative time expressions, entity pattern matching, domain filtering, token budget policy, and a few others. The command tests also verify that `hactl --help` produces output and that `hactl version` includes the expected string.
 - **`internal/writer/`** — YAML diff generation, automation file detection, and backup file naming. The writer is used by the write-path commands (`auto apply`, `rollback`), and it is important that diffs are correct before anything is written to disk.
 
-Approximately 199 unit tests exist across these packages as of the current state of the codebase. That number will drift as the code evolves; treat it as a rough order of magnitude.
+Roughly 850 unit test functions exist across these packages. That number drifts as the code evolves; treat it as an order of magnitude, and remember that the count says nothing about what any of them assert.
 
 ---
 
@@ -129,11 +133,11 @@ Almost every hactl command has a corresponding integration test file:
 | HA API contract | `contract_test.go` | Schema compliance for 8 HA REST/WebSocket endpoints |
 | Golden snapshots | `golden_capture_test.go` | Output format stability |
 
-Approximately 202 integration tests cover these areas.
+Roughly 235 integration test functions cover these areas.
 
 ### Contract tests
 
-Eight tests in `contract_test.go` verify that the HA API behaves the way hactl expects it to. They check the shape of REST responses and WebSocket messages — field names, types, required presence of certain keys. If a future HA release renames a field or changes a response structure, one of these tests will fail before hactl's own logic breaks. The contract tests are part of the integration suite (same `-tags=integration` build tag) but are worth calling out separately because their purpose is different: they protect against upstream changes, not bugs in hactl itself.
+Ten tests in `contract_test.go` verify that the HA API behaves the way hactl expects it to. They check the shape of REST responses and WebSocket messages — field names, types, required presence of certain keys. If a future HA release renames a field or changes a response structure, one of these tests will fail before hactl's own logic breaks. The contract tests are part of the integration suite (same `-tags=integration` build tag) but are worth calling out separately because their purpose is different: they protect against upstream changes, not bugs in hactl itself.
 
 ---
 
@@ -141,7 +145,7 @@ Eight tests in `contract_test.go` verify that the HA API behaves the way hactl e
 
 The companion is an optional sidecar service that gives hactl direct filesystem access to the HA configuration directory, which is needed for write-path operations when hactl is not running on the same host as HA. The companion tests verify that this service works correctly and securely.
 
-Because the companion needs to run alongside HA on a shared volume, these tests use Docker Compose rather than testcontainers. The compose file starts HA stable and the companion image together, mounts a shared `ha-config` volume, seeds it with YAML files, and then runs 16 tests:
+Because the companion needs to run alongside HA on a shared volume, these tests use Docker Compose rather than testcontainers. The compose file starts HA stable and the companion image together, mounts a shared `ha-config` volume, seeds it with YAML files, and then runs 36 tests:
 
 - **CRUD operations**: writing, reading, and listing config files through the companion API
 - **Security**: attempts to read files outside the config directory (path traversal) and requests for sensitive files (secrets, tokens) are verified to fail
@@ -184,7 +188,146 @@ make test-int-discovery
 # equivalent: go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
 ```
 
-The harness boots in roughly 15 seconds (mostly the one-time Companion image build), then runs all seven tests in under three.
+The harness boots in roughly 15 seconds (mostly the one-time Companion image build), then runs its nine tests in under three.
+
+---
+
+## Writing a Test That Actually Gates Something
+
+This section exists because of a specific failure. `hactl trace show` rendered
+every automation run — including failures — as a bare `  .    PASS` with no
+steps, against real Home Assistant, for months. During that time the suite had
+over a thousand unit tests and more than two hundred integration tests, and all
+of them were green. A separate audit then found that the entire automation write
+path could be replaced with a no-op and both tiers would still pass.
+
+Neither was a gap in *how much* was tested. Both were failures in *what the tests
+asserted*. The rules below are the ones that would have caught them. Each is
+written as a rule rather than a suggestion because each has already been violated
+in this repository, in code review, by people who were paying attention.
+
+### Watch every test fail before you trust it
+
+Write the test first. Run it against the unfixed code. **Observe the failure, and
+put the failure output in the pull request.** Only then write the fix.
+
+A test that has never failed is not evidence. It might assert the wrong thing, it
+might assert nothing, or it might be passing for a reason unrelated to the
+behaviour it claims to cover. There is no way to tell from reading it — the only
+way to know a test constrains something is to see it react when that thing is
+wrong.
+
+The same applies when you change a test's subject: if you touch what a test
+covers, break the code deliberately once and confirm the test notices.
+
+Applied to the write-path fix, this took one minute per test and produced three
+quotable failures, one of which revealed that Home Assistant rewrites an
+automation's schema on write — something none of us knew and the previous test
+could never have surfaced.
+
+### Assert on what the system did, never on what hactl said it did
+
+`applied: <id>` is printed unconditionally once the write call returns `nil`. So
+is `called <domain>.<service>`, and `traces refreshed`, and `cache cleared`.
+Asserting that one of these strings appears in stdout proves that hactl reached
+the end of a function. It says nothing about Home Assistant.
+
+For anything that mutates state, read the state back from HA and compare it. See
+`internal/integration/write_roundtrip_test.go`. This is invariant H-4, and it is
+the reason a stubbed `UpdateAutomationConfig` is now caught.
+
+### "It did not crash" is not an assertion
+
+These shapes have all shipped in this repository and none of them can fail for
+the reason the test exists:
+
+```go
+out := runHactl(t, "ent", "ls", "--pattern", "person.*")
+_ = out                                    // asserts nothing at all
+
+assertNotContains(t, out, "panic")         // the whole body of TestEntRelated
+
+if len(traceOut) == 0 { t.Error(...) }     // "" is the only failing value
+```
+
+Assert something that is true of a correct result and false of a plausible wrong
+one. If you cannot think of such a value, that is a signal the test is not worth
+writing yet — say so in the PR rather than committing a placeholder.
+
+### Beware `||` between two assertions
+
+The condensed-trace test asserted `hasStep || hasResult`. The broken output was
+`  .    PASS`, which contains `PASS`, so the disjunction held and the test stayed
+green through an entire release. The bug lived in the conjunction.
+
+If a correct result must have *both* properties, assert both. A disjunction is
+only right when the alternatives are genuinely interchangeable.
+
+### Fixtures are recordings, not drawings
+
+All four trace fixtures were hand-written in the shape the parser expected. The
+parser's shape was wrong. The fixtures and the code agreed with each other and
+disagreed with Home Assistant, and the tests confirmed the agreement.
+
+Capture fixtures from a live instance. If you must write one by hand, compare it
+against a real payload first and say in the PR that you did. Values invented to
+look plausible — `run_id: "run-condfail-003"` where HA emits 32 hex characters —
+are how a fixture drifts from reality without anyone noticing.
+
+The same trap exists on the companion side, where a matcher was tested against
+YAML authored to the matcher's own model rather than against a real automation.
+
+### Check that the suite can reach the state you are asserting on
+
+Every trace in the integration suite is produced by `automation.trigger`, whose
+`skip_condition` parameter defaults to `true`. The consequence: no integration
+test had ever produced a condition step, or any outcome other than `finished`.
+The failure-handling code was not weakly tested, it was **unreachable by
+construction**, and no amount of stronger assertions would have helped.
+
+When you add a test for an error path, verify the harness can actually produce
+that error. If it cannot, fixing the harness is the task.
+
+### Ask what a stub would do
+
+Before finishing, ask: *if I replaced this function with `return nil`, or
+`return ""`, or `return true`, would any test go red?*
+
+If the answer is no, the behaviour is unprotected no matter what the coverage
+report says. This question found forty-seven unprotected functions in one pass,
+including the entire automation write path.
+
+Two caveats, both learned here. The check is cheap enough to do by hand on the
+function you are changing, and not worth automating across the tree. And passing
+it is necessary rather than sufficient: `containsAutoID` had tests that killed
+every stub of it, and was still wrong in a way that could overwrite one
+automation with another's config. Surviving mutants prove tests are weak; dying
+mutants do not prove code is right.
+
+### Coverage percentages are not evidence here
+
+Measured on this repository at the time of the audit:
+
+| | Coverage | Reality |
+|---|---|---|
+| `overallResult` | **100.0%** | returned `PASS` for every run, for months |
+| `findAutomationRelations` | **86.4%** | unreachable from `main`; only tests called it |
+
+Coverage measures which lines executed. Every defect above executed. The CI
+threshold is deliberately low (35%) and is a smoke check that the suite ran at
+all — treat it as such, and never as a quality target. Raising it buys tests
+written to move a number, which is how the assertion-free tests got here.
+
+### Delete code the binary cannot reach
+
+`findAutomationRelations` worked, had two passing tests, and had no callers
+outside them — the command that used it had migrated to a weaker replacement, and
+because its tests stayed green, nothing recorded that a capability had been lost.
+
+`~/go/bin/deadcode -test=false ./cmd/hactl` reports this class in about two
+seconds. When it flags something, decide deliberately: wire it, or delete it with
+its tests. Leaving it is how a test suite comes to certify behaviour the product
+does not have.
 
 ---
 
@@ -251,6 +394,8 @@ Beyond `ci.yml`, there are two further automated checks:
 
 The table below summarizes the current coverage across hactl's features. "Unit" means there are unit tests; "E2E" means the feature is exercised by integration tests against a real HA instance; "Contract" means there are schema-compliance tests for the underlying API.
 
+This table is maintained by hand, so it drifts — it has been wrong before, and a ✓ records only that *some* test touches the area, never that the test would fail if the feature broke. Both bugs that prompted the [testing rules above](#writing-a-test-that-actually-gates-something) sat in rows marked ✓ across all three columns. Read it as a map of where to look, not as an assurance.
+
 | Feature area | Unit | E2E | Contract |
 |---|---|---|---|
 | `health` command | ✓ | ✓ | ✓ |
@@ -299,6 +444,16 @@ No test suite is complete, and this one is no exception. The following areas are
 **Large-scale data**: The test fixtures are intentionally small. A real HA installation with hundreds of entities, thousands of history entries, or automations that produce complex nested traces may expose performance or formatting issues that the test suite would not catch.
 
 **Systematic `--dry-run` coverage**: The `auto apply --dry-run` path is tested, but not every write-path command has an explicit test that verifies the dry-run flag prevents any mutation.
+
+**Assertion strength, measured**: an audit in July 2026 found 31 of the integration tests contained no positive assertion at all — the strongest example being a test whose entire body was `out := runHactl(...)` followed by `_ = out`. Those have not all been rewritten yet. Test *counts* in this document are therefore an upper bound on what is actually gated, and a poor proxy for it.
+
+**Script and dashboard write paths**: `auto apply`/`rollback` now have a byte-level round-trip gate (invariant H-4), but `script apply` and `dash save` do not. Their backup and validation helpers can each be replaced with a stub without any test failing, which is exactly the state the automation write path was in before H-4.
+
+**The timeseries cache is write-only**: `hactl ent hist` writes samples on every call and nothing ever reads them back — `TSStore.GetSamples`, `LatestSample` and `ClearEntity` have no production callers. `cache clear` and `cache status` now cover the file, but the read path it exists to serve does not exist.
+
+**`ref replace` and the default dashboard**: `ref replace` reports `skipped: not storage-mode` for the default dashboard in every case, because it gates on a `lovelace/info` field HA does not emit. The correct gate is an open design question — HA exposes no read-only call that reports the default dashboard's config mode — so the current behaviour asserts a fact hactl never established. Tracked, not fixed.
+
+**Wire-shape coverage**: hactl decodes roughly 28 WebSocket commands and 15 REST endpoints from Home Assistant. Ten contract tests exist, and all of them are *proxies* — they assert that a command succeeded, not that the payload had the expected shape. Since a mismatched shape decodes to a zero value rather than an error, a proxy assertion cannot detect one. Invariant H-7 mitigates the consequence for traces; the general case is unguarded.
 
 ---
 

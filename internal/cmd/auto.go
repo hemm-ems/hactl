@@ -163,14 +163,17 @@ type automationEntity struct {
 	Attributes automationAttributes `json:"attributes"`
 }
 
+// automationAttributes mirrors the attribute keys HA actually emits for an
+// automation state (current, friendly_name, id, last_triggered, mode — plus
+// restored on ghosts). Registry labels are NOT among them; they live in the
+// entity registry and are resolved via registryContext.labelNames.
 type automationAttributes struct {
-	FriendlyName  string   `json:"friendly_name"`
-	LastTriggered string   `json:"last_triggered"`
-	ID            string   `json:"id"`
-	Mode          string   `json:"mode"`
-	Labels        []string `json:"labels"`
-	Current       int      `json:"current"`
-	Restored      bool     `json:"restored"`
+	FriendlyName  string `json:"friendly_name"`
+	LastTriggered string `json:"last_triggered"`
+	ID            string `json:"id"`
+	Mode          string `json:"mode"`
+	Current       int    `json:"current"`
+	Restored      bool   `json:"restored"`
 }
 
 // autoRow holds combined state+trace data for one automation.
@@ -180,7 +183,7 @@ type autoRow struct {
 	lastErr  string
 	area     string
 	traces   []haapi.TraceSummary
-	labels   []string
+	labels   string
 	runs     int
 	errors   int
 	restored bool
@@ -231,10 +234,13 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 
 	rows := buildAutoRows(autos, traces, fires, cutoff)
 
-	// Enrich with area from registry
+	// Enrich with area/labels from registry. Labels only exist in the entity
+	// registry — /api/states never carries them — so --label depends on this.
 	if rc != nil {
 		for i := range rows {
-			rows[i].area = rc.areaName("automation." + rows[i].id)
+			entityID := "automation." + rows[i].id
+			rows[i].area = rc.areaName(entityID)
+			rows[i].labels = rc.labelNames(entityID)
 		}
 	}
 
@@ -243,6 +249,12 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if flagAutoLabel != "" {
+		// Without the registry there are no labels to match, so the filter
+		// silently removes everything — say why instead of printing an empty
+		// table that looks like "no automation carries this label".
+		if rc == nil {
+			slog.Warn("entity registry unavailable; --label cannot match any automation", "label", flagAutoLabel)
+		}
 		rows = filterAutosByTag(rows, flagAutoLabel)
 	}
 
@@ -282,7 +294,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 			r.id,
 			r.state,
 			r.area,
-			strings.Join(r.labels, ", "),
+			r.labels,
 			strconv.Itoa(r.runs),
 			strconv.Itoa(r.errors),
 			r.lastErr,
@@ -473,7 +485,6 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 		row := autoRow{
 			id:       id,
 			state:    a.State,
-			labels:   a.Attributes.Labels,
 			restored: a.Attributes.Restored,
 		}
 
@@ -523,14 +534,16 @@ func filterAutosByPattern(rows []autoRow, pattern string) []autoRow {
 	return result
 }
 
+// filterAutosByTag keeps rows whose registry label names contain tag
+// (case-insensitive substring), mirroring filterScriptsByLabel.
 func filterAutosByTag(rows []autoRow, tag string) []autoRow {
 	result := make([]autoRow, 0, len(rows))
 	for _, r := range rows {
-		for _, l := range r.labels {
-			if strings.EqualFold(l, tag) || strings.Contains(strings.ToLower(l), strings.ToLower(tag)) {
-				result = append(result, r)
-				break
-			}
+		if r.labels == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(r.labels), strings.ToLower(tag)) {
+			result = append(result, r)
 		}
 	}
 	return result
