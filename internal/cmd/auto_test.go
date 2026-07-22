@@ -140,10 +140,10 @@ func TestFilterFailing(t *testing.T) {
 
 func TestFilterAutosByTag(t *testing.T) {
 	rows := []autoRow{
-		{id: "ess_charge", labels: []string{"ess", "energy"}},
-		{id: "climate_schedule", labels: []string{"climate"}},
-		{id: "ess_discharge", labels: []string{"ess"}},
-		{id: "light_on", labels: nil},
+		{id: "ess_charge", labels: "ess, energy"},
+		{id: "climate_schedule", labels: "climate"},
+		{id: "ess_discharge", labels: "ess"},
+		{id: "light_on", labels: ""},
 	}
 
 	result := filterAutosByTag(rows, "ess")
@@ -160,8 +160,8 @@ func TestFilterAutosByTag(t *testing.T) {
 
 func TestFilterAutosByTag_CaseInsensitive(t *testing.T) {
 	rows := []autoRow{
-		{id: "a", labels: []string{"ESS"}},
-		{id: "b", labels: []string{"climate"}},
+		{id: "a", labels: "ESS"},
+		{id: "b", labels: "climate"},
 	}
 
 	result := filterAutosByTag(rows, "ess")
@@ -172,7 +172,7 @@ func TestFilterAutosByTag_CaseInsensitive(t *testing.T) {
 
 func TestFilterAutosByTag_NoMatch(t *testing.T) {
 	rows := []autoRow{
-		{id: "a", labels: []string{"climate"}},
+		{id: "a", labels: "climate"},
 	}
 
 	result := filterAutosByTag(rows, "ess")
@@ -183,8 +183,8 @@ func TestFilterAutosByTag_NoMatch(t *testing.T) {
 
 func TestFilterAutosByTag_EmptyLabels(t *testing.T) {
 	rows := []autoRow{
-		{id: "a", labels: nil},
-		{id: "b", labels: []string{}},
+		{id: "a", labels: ""},
+		{id: "b", labels: ""},
 	}
 
 	result := filterAutosByTag(rows, "ess")

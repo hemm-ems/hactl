@@ -45,12 +45,18 @@ type TraceRecord struct {
 }
 
 // Status holds cache size and freshness info.
+// Status covers the whole on-disk cache directory, not just traces.db: the
+// timeseries fields are filled from TSStore.GetStatus (timeseries.db is a
+// separate file with its own handle) so `cache status` cannot omit the one
+// cache that grows during normal use.
 type Status struct {
-	TracesSync   string `json:"traces_sync"`
-	LogsSync     string `json:"logs_sync"`
-	TraceCount   int    `json:"trace_count"`
-	TracesDBSize int64  `json:"traces_db_size"`
-	LogSize      int64  `json:"log_size"`
+	TracesSync            string `json:"traces_sync"`
+	LogsSync              string `json:"logs_sync"`
+	TraceCount            int    `json:"trace_count"`
+	TracesDBSize          int64  `json:"traces_db_size"`
+	LogSize               int64  `json:"log_size"`
+	TimeseriesSampleCount int    `json:"timeseries_sample_count"`
+	TimeseriesDBSize      int64  `json:"timeseries_db_size"`
 }
 
 // maxLogLines is the maximum number of log lines to keep in the ring buffer.
@@ -289,7 +295,9 @@ func (s *Store) GetStatus(ctx context.Context) (*Status, error) {
 	}, nil
 }
 
-// Clear removes all cached data (traces + logs).
+// Clear removes everything held in traces.db (traces + logs + meta).
+// The timeseries cache lives in a separate file with its own handle — callers
+// clearing "the cache" must also call TSStore.Clear (see runCacheClear).
 func (s *Store) Clear(ctx context.Context) error {
 	if err := s.ClearTraces(ctx); err != nil {
 		return fmt.Errorf("clearing traces: %w", err)

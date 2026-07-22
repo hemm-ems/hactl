@@ -168,13 +168,15 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 }
 
-// configEntry is the subset of a config entry we display.
+// configEntry is the subset of a config entry we display. Every field must
+// correspond to a key HA actually emits on /api/config/config_entries/entry —
+// a field HA never sends serialises a fabricated zero value into --json output
+// (there is no `version` key on that endpoint, hence none here).
 type configEntry struct {
 	EntryID            string `json:"entry_id"`
 	Domain             string `json:"domain"`
 	Title              string `json:"title"`
 	State              string `json:"state"`
-	Version            int    `json:"version"`
 	Source             string `json:"source"`
 	SupportsOptions    bool   `json:"supports_options"`
 	SupportsReconfig   bool   `json:"supports_reconfigure"`

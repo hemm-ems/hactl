@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1283,16 +1284,26 @@ func entityKnown(rc *registryContext, states []entityState, entityID string) boo
 	return false
 }
 
+// findCompanionRelations asks the companion for the config/YAML half of the
+// relation graph. Failures are warned about rather than swallowed: `ent related`
+// guides delete decisions, so answering "no related entities found" when the
+// config scan never ran is a harmful wrong answer, and slog.Debug is invisible
+// at the default log level.
 func findCompanionRelations(ctx context.Context, cfg *config.Config, ws *haapi.WSClient, entityID string, stale bool) ([]relatedEntry, []companion.StaleRef) {
 	companionURL, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
-		slog.Debug("companion related graph unavailable", "error", err)
+		var de *companion.DiscoveryError
+		if errors.As(err, &de) {
+			slog.Warn("companion unavailable; config files were not scanned for references", "reason", string(de.Reason))
+		} else {
+			slog.Warn("companion unavailable; config files were not scanned for references", "error", err)
+		}
 		return nil, nil
 	}
 	cc := companion.New(companionURL, cfg.CompanionToken).WithIngressAuth(ws)
 	res, err := cc.RelatedEntity(ctx, entityID, stale)
 	if err != nil {
-		slog.Debug("companion related graph failed", "error", err)
+		slog.Warn("companion related-graph call failed; config files were not scanned for references", "error", err)
 		return nil, nil
 	}
 	related := make([]relatedEntry, 0, len(res.Related))
@@ -1352,47 +1363,6 @@ func dedupeAndSortRelated(entries []relatedEntry) []relatedEntry {
 		return out[i].detail < out[j].detail
 	})
 	return out
-}
-
-// findAutomationRelations scans automation configs for references to the target entity.
-func findAutomationRelations(ctx context.Context, client *haapi.Client, states []entityState, targetEntityID string) []relatedEntry {
-	var result []relatedEntry
-	for _, s := range states {
-		if parseEntityDomain(s.EntityID) != "automation" {
-			continue
-		}
-		autoID, ok := s.Attributes["id"]
-		if !ok {
-			continue
-		}
-		autoIDStr, ok := autoID.(string)
-		if !ok {
-			continue
-		}
-
-		cfgData, err := client.GetAutomationConfig(ctx, autoIDStr)
-		if err != nil {
-			continue
-		}
-
-		// Simple string search for entity references in config JSON
-		cfgStr := string(cfgData)
-		if strings.Contains(cfgStr, targetEntityID) {
-			rel := "referenced-by"
-			if strings.Contains(cfgStr, `"trigger"`) && strings.Contains(cfgStr, targetEntityID) {
-				rel = "triggers"
-			}
-			if strings.Contains(cfgStr, `"action"`) && strings.Contains(cfgStr, targetEntityID) {
-				rel = "controls"
-			}
-			result = append(result, relatedEntry{
-				entityID:     s.EntityID,
-				relationship: rel,
-				detail:       "auto=" + autoIDStr,
-			})
-		}
-	}
-	return result
 }
 
 func findDeviceSiblings(rc *registryContext, entityID string) []relatedEntry {

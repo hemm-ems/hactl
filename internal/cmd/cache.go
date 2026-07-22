@@ -18,7 +18,7 @@ import (
 var cacheCmd = &cobra.Command{
 	Use:   "cache",
 	Short: "Manage local cache",
-	Long:  "View status, refresh, or clear the local trace and log cache.",
+	Long:  "View status, refresh, or clear the local trace, log, and entity-history cache.",
 }
 
 var cacheStatusCmd = &cobra.Command{
@@ -47,7 +47,7 @@ var cacheRefreshCmd = &cobra.Command{
 var cacheClearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "Clear all cached data",
-	Long:  "Remove all cached traces and logs.",
+	Long:  "Remove all cached traces, logs, and entity history samples.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCacheClear(cmd.Context(), cmd.OutOrStdout())
 	},
@@ -75,19 +75,46 @@ func runCacheStatus(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("getting cache status: %w", err)
 	}
 
+	// timeseries.db is a separate file (written by `ent hist`) and the only
+	// cache that grows during normal use — report it alongside traces/logs.
+	if tsErr := withTimeseriesStore(ctx, cfg.Dir, func(ts *cache.TSStore) error {
+		tsStatus, statusErr := ts.GetStatus(ctx)
+		if statusErr != nil {
+			return statusErr
+		}
+		status.TimeseriesSampleCount = tsStatus.SampleCount
+		status.TimeseriesDBSize = tsStatus.DBSize
+		return nil
+	}); tsErr != nil {
+		return fmt.Errorf("getting timeseries cache status: %w", tsErr)
+	}
+
 	if flagJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(status)
 	}
 
-	_, _ = fmt.Fprintf(w, "traces:  %d entries  %s\n", status.TraceCount, formatByteSize(status.TracesDBSize))
-	_, _ = fmt.Fprintf(w, "logs:    %s\n", formatByteSize(status.LogSize))
-	_, _ = fmt.Fprintf(w, "synced:  traces=%s  logs=%s\n",
+	_, _ = fmt.Fprintf(w, "traces:      %d entries  %s\n", status.TraceCount, formatByteSize(status.TracesDBSize))
+	_, _ = fmt.Fprintf(w, "logs:        %s\n", formatByteSize(status.LogSize))
+	_, _ = fmt.Fprintf(w, "timeseries:  %d samples  %s\n", status.TimeseriesSampleCount, formatByteSize(status.TimeseriesDBSize))
+	_, _ = fmt.Fprintf(w, "synced:      traces=%s  logs=%s\n",
 		formatSyncAge(status.TracesSync),
 		formatSyncAge(status.LogsSync))
-	_, _ = fmt.Fprintf(w, "dir:     %s\n", store.Dir())
+	_, _ = fmt.Fprintf(w, "dir:         %s\n", store.Dir())
 	return nil
+}
+
+// withTimeseriesStore opens the timeseries cache that sits next to traces.db in
+// the same cache directory, runs fn against it, and closes it again. It has its
+// own database handle, so every whole-cache operation has to reach it this way.
+func withTimeseriesStore(ctx context.Context, instanceDir string, fn func(*cache.TSStore) error) error {
+	ts, err := cache.OpenTS(ctx, instanceDir)
+	if err != nil {
+		return fmt.Errorf("opening timeseries cache: %w", err)
+	}
+	defer func() { _ = ts.Close() }()
+	return fn(ts)
 }
 
 func runCacheRefresh(ctx context.Context, w io.Writer, category string) error {
@@ -210,6 +237,14 @@ func runCacheClear(ctx context.Context, w io.Writer) error {
 
 	if err := store.Clear(ctx); err != nil {
 		return fmt.Errorf("clearing cache: %w", err)
+	}
+
+	// Must run before the success line: leaving timeseries.db populated while
+	// printing "cache cleared" is how half the cache survived unnoticed.
+	if err := withTimeseriesStore(ctx, cfg.Dir, func(ts *cache.TSStore) error {
+		return ts.Clear(ctx)
+	}); err != nil {
+		return fmt.Errorf("clearing timeseries cache: %w", err)
 	}
 
 	_, _ = fmt.Fprintln(w, "cache cleared")
