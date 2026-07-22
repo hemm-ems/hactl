@@ -1726,7 +1726,8 @@ func TestFormatSyncAge_Days(t *testing.T) {
 // --- runTraceShow (WS) ---
 
 func TestRunTraceShow_DirectKey(t *testing.T) {
-	traceJSON := `{"trace":{"run_id":"run-001","domain":"automation","item_id":"climate_schedule","timestamp":{"start":"2026-01-01T10:00:00Z"},"execution":"finished","last_step":"action/0"},"trace_steps":{"action/0":[{"path":"action/0","timestamp":"2026-01-01T10:00:01Z"}]}}`
+	// Real trace/get wire shape: metadata at the top level, step map under "trace".
+	traceJSON := `{"run_id":"run-001","domain":"automation","item_id":"climate_schedule","timestamp":{"start":"2026-01-01T10:00:00Z"},"script_execution":"finished","last_step":"action/0","trace":{"action/0":[{"path":"action/0","timestamp":"2026-01-01T10:00:01Z"}]}}`
 
 	ts := startCmdServer(t, map[string]any{
 		"trace/get": json.RawMessage(traceJSON),
@@ -4465,7 +4466,8 @@ func TestRunAutoLs_WithFailing(t *testing.T) {
 // --- runTraceShow full JSON mode ---
 
 func TestRunTraceShow_FullJSON(t *testing.T) {
-	traceJSON := `{"trace":{"run_id":"run-001","domain":"automation","item_id":"climate_schedule","timestamp":{"start":"2026-01-01T10:00:00Z"},"execution":"finished"},"trace_steps":{}}`
+	// Real trace/get wire shape: metadata at the top level, step map under "trace".
+	traceJSON := `{"run_id":"run-001","domain":"automation","item_id":"climate_schedule","timestamp":{"start":"2026-01-01T10:00:00Z"},"script_execution":"finished","trace":{}}`
 
 	ts := startCmdServer(t, map[string]any{
 		"trace/get": json.RawMessage(traceJSON),

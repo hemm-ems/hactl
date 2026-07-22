@@ -405,3 +405,52 @@ func containsStr(s, substr string) bool {
 	}
 	return false
 }
+
+// TestCondense_RealWireShape guards against the flat-vs-nested regression: HA's
+// trace/get puts metadata at the top level and the step map under "trace". If
+// RawTrace ever goes back to expecting metadata under "trace" / steps under
+// "trace_steps", this fixture parses empty and the asserts below fail — instead
+// of silently rendering every run as PASS with zero steps.
+func TestCondense_RealWireShape(t *testing.T) {
+	// Minimal but real-shaped failed_conditions trace.
+	raw := &RawTrace{}
+	wire := []byte(`{
+		"run_id": "abc123",
+		"domain": "automation",
+		"item_id": "porch_light",
+		"state": "stopped",
+		"script_execution": "failed_conditions",
+		"last_step": "condition/0",
+		"timestamp": {"start": "2026-07-21T05:00:00.000000+00:00"},
+		"trigger": "state of binary_sensor.motion",
+		"trace": {
+			"trigger/0": [{"path": "trigger/0", "timestamp": "2026-07-21T05:00:00.000000+00:00"}],
+			"condition/0": [{"path": "condition/0", "timestamp": "2026-07-21T05:00:00.100000+00:00", "result": {"result": false}}]
+		}
+	}`)
+	if err := json.Unmarshal(wire, raw); err != nil {
+		t.Fatalf("unmarshalling real-shape trace: %v", err)
+	}
+
+	if raw.Trace.Execution != "failed_conditions" {
+		t.Errorf("metadata not read from top level: script_execution=%q, want %q", raw.Trace.Execution, "failed_conditions")
+	}
+	if len(raw.TraceSteps) != 2 {
+		t.Errorf("steps not read from \"trace\": got %d step paths, want 2", len(raw.TraceSteps))
+	}
+
+	ct := Condense(raw)
+	if ct.Result == StepPass {
+		t.Errorf("failed_conditions run rendered as PASS (empty-metadata regression)")
+	}
+	if ct.AutoID != "automation.porch_light" {
+		t.Errorf("AutoID = %q, want automation.porch_light (empty domain/item_id regression yields \".\")", ct.AutoID)
+	}
+	if len(ct.Steps) == 0 {
+		t.Errorf("no steps condensed — step map was not parsed")
+	}
+	out := FormatCondensed(ct)
+	if contains(out, "PASS") {
+		t.Errorf("compact output claims PASS for failed_conditions: %q", out)
+	}
+}

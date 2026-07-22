@@ -50,10 +50,42 @@ type CondensedTrace struct {
 }
 
 // RawTrace is the incoming trace structure from HA trace/get.
+//
+// The wire format is flat: HA puts the run metadata (script_execution, state,
+// last_step, run_id, domain, item_id, timestamp, trigger) at the top level and
+// the per-step map under the "trace" key. UnmarshalJSON maps that onto the
+// Trace/TraceSteps fields the rest of this package reads.
 type RawTrace struct {
-	Trace      RawTraceMeta             `json:"trace"`
-	TraceSteps map[string][]RawTraceRun `json:"trace_steps"`
-	Config     json.RawMessage          `json:"config,omitempty"`
+	Trace      RawTraceMeta
+	TraceSteps map[string][]RawTraceRun
+	Config     json.RawMessage
+}
+
+// UnmarshalJSON parses HA's actual trace/get result shape: metadata at the top
+// level, the step map under "trace".
+//
+// The previous struct tags (`json:"trace"` on the metadata, `json:"trace_steps"`
+// on the steps) described a nested shape HA never emits. Against a real trace
+// both fields unmarshalled empty, so Condense saw no metadata and no steps:
+// every run — including failed_conditions/aborted — rendered as a bare
+// "  .    PASS". The unit tests passed only because their fixtures had been
+// authored in that nested shape.
+func (rt *RawTrace) UnmarshalJSON(data []byte) error {
+	// Metadata lives at the top level; RawTraceMeta's tags match the keys.
+	if err := json.Unmarshal(data, &rt.Trace); err != nil {
+		return err
+	}
+	// The step map lives under "trace"; config sits alongside it.
+	var envelope struct {
+		Steps  map[string][]RawTraceRun `json:"trace"`
+		Config json.RawMessage          `json:"config,omitempty"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	rt.TraceSteps = envelope.Steps
+	rt.Config = envelope.Config
+	return nil
 }
 
 // RawTraceMeta holds the trace-level metadata.
