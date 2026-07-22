@@ -1,18 +1,16 @@
 {
-  "trace": {
-    "last_step": "condition/1",
-    "run_id": "run-condfail-003",
-    "state": "stopped",
-    "script_execution": "failed_conditions",
-    "domain": "automation",
-    "item_id": "climate_schedule",
-    "timestamp": {
-      "start": "2026-04-16T11:42:00.000000+00:00",
-      "finish": "2026-04-16T11:42:00.400000+00:00"
-    },
-    "trigger": "time_pattern"
+  "last_step": "condition/1",
+  "run_id": "run-condfail-003",
+  "state": "stopped",
+  "script_execution": "failed_conditions",
+  "domain": "automation",
+  "item_id": "climate_schedule",
+  "timestamp": {
+    "start": "2026-04-16T11:42:00.000000+00:00",
+    "finish": "2026-04-16T11:42:00.400000+00:00"
   },
-  "trace_steps": {
+  "trigger": "time_pattern",
+  "trace": {
     "trigger/0": [
       {
         "path": "trigger/0",
@@ -29,7 +27,9 @@
       {
         "path": "condition/0",
         "timestamp": "2026-04-16T11:42:00.100000+00:00",
-        "result": {"result": true},
+        "result": {
+          "result": true
+        },
         "changed_variables": {}
       }
     ],
@@ -37,7 +37,9 @@
       {
         "path": "condition/1",
         "timestamp": "2026-04-16T11:42:00.200000+00:00",
-        "result": {"result": false},
+        "result": {
+          "result": false
+        },
         "changed_variables": {}
       }
     ]
@@ -45,11 +47,33 @@
   "config": {
     "id": "climate_schedule",
     "alias": "Climate Schedule",
-    "trigger": [{"platform": "time_pattern", "hours": "/1"}],
-    "condition": [
-      {"condition": "state", "entity_id": "person.home", "state": "home"},
-      {"condition": "template", "value_template": "{{ states('sensor.outdoor_temp') | float < 20 }}"}
+    "trigger": [
+      {
+        "platform": "time_pattern",
+        "hours": "/1"
+      }
     ],
-    "action": [{"service": "climate.set_temperature", "target": {"entity_id": "climate.living_room"}, "data": {"temperature": 21}}]
+    "condition": [
+      {
+        "condition": "state",
+        "entity_id": "person.home",
+        "state": "home"
+      },
+      {
+        "condition": "template",
+        "value_template": "{{ states('sensor.outdoor_temp') | float < 20 }}"
+      }
+    ],
+    "action": [
+      {
+        "service": "climate.set_temperature",
+        "target": {
+          "entity_id": "climate.living_room"
+        },
+        "data": {
+          "temperature": 21
+        }
+      }
+    ]
   }
 }
