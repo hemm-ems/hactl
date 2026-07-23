@@ -259,6 +259,13 @@ entity's **whole** attribute count, not the number withheld — the four it alwa
 shows (`friendly_name`, `unit_of_measurement`, `device_class`, `restored`) are
 included in it.
 
+**An empty answer means the entity was quiet, never that it was mistyped.**
+`ent hist`, `ent who` and `ent anomalies` fail — like `ent show` — when the
+entity has no live state *and* nothing recorded in the window, because those two
+cases are indistinguishable from a typo. An entity that was deleted but still
+has recorder history reports that history as before. `--resample` must be a
+positive duration; `0m` and negative values are refused rather than ignored.
+
 `ent show` includes a `changed_by:` line attributing the most recent change to a user (e.g. `User Jan`) or to `Home Assistant` when no user_id was on the state's `context`. `ent who` does the deeper attribution — it queries the logbook for the entity, classifies each event as `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant`, and aggregates a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window}`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
 
 The `changes` command also gained a `who` column carrying the same per-event label.
@@ -584,7 +591,7 @@ time window and max line count. Requires hactl-companion.
 hactl cache status                        # age + size + item counts per category
 hactl cache refresh traces                # pull fresh trace data
 hactl cache refresh                       # refresh everything
-hactl cache clear                         # wipe all local cache
+hactl cache clear                         # wipe all local cache, stable IDs included
 
 hactl version                             # version, commit, build date
 hactl rtfm                                # print this manual (for LLM self-teaching)
@@ -677,7 +684,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 - **Token estimate:** Add `--tokens` to print a compact `[~N tok]` estimate (`stderr` in JSON mode).
 - **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable. Use filters to reduce output rather than raising the cap.
 - **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
-- **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls.
+- **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls until `cache clear`, which drops them along with the records they point at.
 - **Timestamps:** tables print short form (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so there the short string survives and numbers come back as strings (`"runs_24h": "0"`).
 - **No decoration:** no emojis, no color. `--color` is accepted and does nothing; it is kept so existing callers do not break.
 - **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`), as do dry-run previews: those always print text.

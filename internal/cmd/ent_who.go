@@ -94,9 +94,18 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 		return fmt.Errorf("parsing logbook: %w", err)
 	}
 
-	if len(entries) == 0 && !flagJSON {
-		_, _ = fmt.Fprintf(w, "no changes for %s in the last %s\n", entityID, flagSince)
-		return nil
+	if len(entries) == 0 {
+		// The logbook is empty for a typo and for a quiet entity alike. Only
+		// one of those is an answer: a nonexistent entity_id must fail here,
+		// not report a verified negative. (`ent show` already 404s; this makes
+		// the family agree.)
+		if unknownErr := errUnknownEntity(ctx, client, entityID); unknownErr != nil {
+			return unknownErr
+		}
+		if !flagJSON {
+			_, _ = fmt.Fprintf(w, "no changes for %s in the last %s\n", entityID, flagSince)
+			return nil
+		}
 	}
 
 	// Pull users once for attribution. Graceful-degrades when not admin.

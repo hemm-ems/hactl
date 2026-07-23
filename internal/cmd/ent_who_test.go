@@ -25,6 +25,12 @@ func entWhoFixture(t *testing.T, users []map[string]any, logbookBody string) *cm
 			}
 			_, _ = w.Write([]byte(logbookBody))
 		},
+		// The entity exists — an empty logbook for it is a fact about a quiet
+		// entity, not a typo. `ent who` distinguishes the two by asking for the
+		// state, so the stub must answer as HA would for a real entity.
+		"/api/states/light.kitchen": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"entity_id":"light.kitchen","state":"on","attributes":{}}`))
+		},
 	})
 }
 

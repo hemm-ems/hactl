@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1159,6 +1160,12 @@ func TestRunEntAnomalies_NoHistory(t *testing.T) {
 		"/api/history/period/": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, "[[]]")
+		},
+		// The entity exists and simply has no history — the case this test is
+		// about. Without a state, hactl now (correctly) refuses to report an
+		// empty answer for what may be a typo.
+		"/api/states/sensor.x": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, `{"entity_id":"sensor.x","state":"1","attributes":{}}`)
 		},
 	})
 	withFlagDir(t, ts.dir)
@@ -4165,6 +4172,11 @@ func TestRunEntHist_NoData(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, "[[]]")
 		},
+		// A real entity with no recorded history, which is what this test is
+		// about; a missing state now means "unknown entity" instead.
+		"/api/states/sensor.x": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, `{"entity_id":"sensor.x","state":"1","attributes":{}}`)
+		},
 	})
 	withFlagDir(t, ts.dir)
 
@@ -5071,5 +5083,47 @@ func TestRunAutoLs_WithRegistryContext(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "climate_schedule") {
 		t.Errorf("output missing automation: %q", out)
+	}
+}
+
+// An entity HA holds no state for, and for which the recorder returns nothing,
+// is indistinguishable from a mistyped entity_id — and must be reported as one
+// rather than as an empty answer at exit 0. `ent show` always 404'd here; these
+// three did not, so a typo read as a verified negative.
+func TestEntCommands_UnknownEntityIsAnError(t *testing.T) {
+	emptyHistory := map[string]http.HandlerFunc{
+		"/api/history/period/": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[[]]")
+		},
+		"/api/logbook/": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[]")
+		},
+	}
+
+	old := flagSince
+	flagSince = "24h"
+	defer func() { flagSince = old }()
+	oldAttr := flagEntAttr
+	flagEntAttr = ""
+	defer func() { flagEntAttr = oldAttr }()
+
+	for name, run := range map[string]func(context.Context, io.Writer, string) error{
+		"hist":      runEntHist,
+		"anomalies": runEntAnomalies,
+		"who":       runEntWho,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts := startCmdServer(t, map[string]any{}, emptyHistory)
+			withFlagDir(t, ts.dir)
+
+			var buf bytes.Buffer
+			err := run(context.Background(), &buf, "sensor.not_a_real_entity")
+			if err == nil {
+				t.Errorf("ent %s returned nil for an entity with no state and no history; output: %q",
+					name, buf.String())
+			}
+		})
 	}
 }

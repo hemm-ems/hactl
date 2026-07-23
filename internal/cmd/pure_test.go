@@ -734,3 +734,28 @@ func TestTruncationHint_Default(t *testing.T) {
 		t.Errorf("truncationHint(default) = %q, want default hint with --tokensmax", got)
 	}
 }
+
+// A resample bucket of zero or a negative duration is not a request the command
+// can honour: analyze.ResampleDuration returns the input untouched for both, so
+// `--resample 0m` silently produced default output and `--resample -5m` did the
+// same. Silently ignoring a flag value the caller chose is the same class of
+// defect as a --json that does nothing: the caller cannot tell it was ignored.
+func TestParseResampleDuration_RejectsNonPositive(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		wantErr bool
+	}{
+		{"5m", false},
+		{"1h", false},
+		{"0m", true},
+		{"0s", true},
+		{"-5m", true},
+		{"banana", true},
+		{"", true},
+	} {
+		_, err := parseResampleDuration(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("parseResampleDuration(%q) error = %v, want error: %v", tc.in, err, tc.wantErr)
+		}
+	}
+}
