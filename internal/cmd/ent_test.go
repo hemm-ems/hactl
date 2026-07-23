@@ -558,7 +558,8 @@ func TestFindAreaNeighbors_UsesDeviceFallback(t *testing.T) {
 		entityByID: map[string]haapi.EntityRegistryEntry{
 			"sensor.a": {EntityID: "sensor.a", DeviceID: "dev1"},
 			"sensor.b": {EntityID: "sensor.b", DeviceID: "dev1"},
-			// Different domain, same area: must NOT show up (domain-filtered).
+			// Different domain, same area (via the same device): an area
+			// neighbour like any other — see TestFindAreaNeighbors_Found.
 			"light.c": {EntityID: "light.c", DeviceID: "dev1"},
 			// Different device, different area: must NOT show up.
 			"sensor.d": {EntityID: "sensor.d", AreaID: "bedroom"},
@@ -575,8 +576,13 @@ func TestFindAreaNeighbors_UsesDeviceFallback(t *testing.T) {
 	}
 
 	got := findAreaNeighbors(rc, "sensor.a")
-	if len(got) != 1 || got[0].entityID != "sensor.b" || got[0].relationship != "area-neighbor" {
-		t.Fatalf("findAreaNeighbors(sensor.a) = %+v, want exactly one area-neighbor row for sensor.b", got)
+	seen := make(map[string]string, len(got))
+	for _, r := range got {
+		seen[r.entityID] = r.relationship
+	}
+	if len(got) != 2 || seen["sensor.b"] != "area-neighbor" || seen["light.c"] != "area-neighbor" {
+		t.Fatalf("findAreaNeighbors(sensor.a) = %+v, want area-neighbor rows for sensor.b and light.c "+
+			"(both inherit dev1's area); sensor.d is in another area and must not appear", got)
 	}
 }
 

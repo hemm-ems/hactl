@@ -219,3 +219,71 @@ func FormatShortTimestamp(ts string) string {
 	}
 	return ts
 }
+
+// Log timestamps come in two shapes. HA's system_log entries and the REST
+// error_log carry no zone at all ("2026-07-23 15:04:05.123"); anything already
+// RFC3339 carries its own.
+var (
+	naiveLogLayouts = []string{
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+	}
+	zonedLogLayouts = []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+	}
+)
+
+// naiveLogLayout is the layout used to render a cutoff back into the zone-less
+// wall-clock form the zone-less entries are compared in.
+const naiveLogLayout = "2006-01-02 15:04:05.999999"
+
+// FilterSince keeps entries at or after cutoff, preserving order.
+//
+// HA's system log is a fixed-size in-memory buffer with no server-side time
+// window, which is why `--since` used to be accepted and then ignored. Every
+// entry carries a timestamp, so the window is answerable here instead.
+//
+// A zone-less entry is compared as a wall-clock reading, not as an instant:
+// those strings were written by this process from a local time, so rendering
+// the cutoff through the same layout puts both sides in the same frame without
+// either needing to name a zone.
+//
+// An entry whose timestamp matches no layout is KEPT. Dropping records we
+// cannot place in time would trade one silent loss for another, and the whole
+// point of this command is that nothing goes missing quietly.
+func FilterSince(entries []LogEntry, cutoff time.Time) []LogEntry {
+	wallCutoff, wallErr := time.Parse(naiveLogLayout, cutoff.Format(naiveLogLayout))
+
+	result := make([]LogEntry, 0, len(entries))
+	for _, e := range entries {
+		keep := true
+		if t, ok := parseNaiveLogTimestamp(e.Timestamp); ok {
+			keep = wallErr != nil || !t.Before(wallCutoff)
+		} else if t, ok := parseZonedLogTimestamp(e.Timestamp); ok {
+			keep = !t.Before(cutoff)
+		}
+		if keep {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+func parseNaiveLogTimestamp(ts string) (time.Time, bool) {
+	for _, layout := range naiveLogLayouts {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseZonedLogTimestamp(ts string) (time.Time, bool) {
+	for _, layout := range zonedLogLayouts {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}

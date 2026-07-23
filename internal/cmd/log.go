@@ -32,7 +32,7 @@ var logCmd = &cobra.Command{
 	Short: "View Home Assistant logs",
 	Long:  "Display HA error log with deduplication and filtering.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runLog(cmd.Context(), cmd.OutOrStdout())
+		return runLog(cmd.Context(), cmd.OutOrStdout(), cmd.Flags().Changed("since"))
 	},
 }
 
@@ -55,7 +55,7 @@ func init() {
 	rootCmd.AddCommand(logCmd)
 }
 
-func runLog(ctx context.Context, w io.Writer) error {
+func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -63,6 +63,10 @@ func runLog(ctx context.Context, w io.Writer) error {
 
 	entries, err := fetchLogEntries(ctx, cfg)
 	if err != nil {
+		return err
+	}
+
+	if entries, err = applyLogSince(entries, sinceSet); err != nil {
 		return err
 	}
 
@@ -298,4 +302,29 @@ func formatLogAsText(entries []analyze.LogEntry) string {
 		fmt.Fprintf(&sb, "%s %s (MainThread) [%s] %s\n", e.Timestamp, e.Level, e.Component, e.Message)
 	}
 	return sb.String()
+}
+
+// applyLogSince narrows log entries to the --since window, but only when the
+// caller actually passed the flag.
+//
+// HA's system log is a fixed-size in-memory buffer: there is no server-side
+// time window to ask for, which is why --since was accepted and then ignored
+// entirely — a flag that silently does nothing is indistinguishable, to the
+// caller, from one that found nothing. Every entry does carry a timestamp, so
+// the window is answerable here.
+//
+// Honouring the 24h default would be the wrong fix: the buffer routinely holds
+// entries older than that, and hiding them by default would make `log --errors`
+// go quiet on exactly the long-running instance whose errors matter most. So
+// the default stays "the whole buffer", and an explicit --since means what it
+// says.
+func applyLogSince(entries []analyze.LogEntry, sinceSet bool) ([]analyze.LogEntry, error) {
+	if !sinceSet {
+		return entries, nil
+	}
+	d, err := parseSince(flagSince)
+	if err != nil {
+		return nil, err
+	}
+	return analyze.FilterSince(entries, time.Now().Add(-d)), nil
 }

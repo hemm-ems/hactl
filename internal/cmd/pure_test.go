@@ -539,12 +539,18 @@ func TestFindAreaNeighbors_Found(t *testing.T) {
 		floorByID: map[string]haapi.FloorEntry{},
 	}
 
+	// Inverted 2026-07-23 (R1): this asserted "1 area neighbor (same domain,
+	// same area)" and so pinned the domain filter as correct. An area neighbour
+	// is any entity in the same area — that is what HA's area_entities() means,
+	// what `ent ls --area` returns, and what the manual promises. sensor.temp
+	// belongs in the answer.
 	result := findAreaNeighbors(rc, "light.kitchen1")
-	if len(result) != 1 {
-		t.Fatalf("expected 1 area neighbor (same domain, same area), got %d", len(result))
+	got := make(map[string]bool, len(result))
+	for _, r := range result {
+		got[r.entityID] = true
 	}
-	if result[0].entityID != "light.kitchen2" {
-		t.Errorf("neighbor = %q, want 'light.kitchen2'", result[0].entityID)
+	if len(result) != 2 || !got["light.kitchen2"] || !got["sensor.temp"] {
+		t.Fatalf("findAreaNeighbors(light.kitchen1) = %+v, want both light.kitchen2 and sensor.temp", result)
 	}
 }
 

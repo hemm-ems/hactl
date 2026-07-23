@@ -3,6 +3,7 @@ package analyze
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const sampleLog = `2026-04-16 09:42:00.123 ERROR (MainThread) [homeassistant.components.zha] Failed to connect to device
@@ -260,5 +261,34 @@ func TestFormatShortTimestamp_Formats(t *testing.T) {
 	got = FormatShortTimestamp("not-a-timestamp")
 	if got != "not-a-timestamp" {
 		t.Errorf("FormatShortTimestamp(unparseable) = %q, want original string", got)
+	}
+}
+
+// FilterSince exists because `log --since` and `cc logs --since` accepted a
+// value and did nothing with it. HA's system_log is a fixed in-memory buffer
+// with no server-side time window, but every entry carries a timestamp, so the
+// window is answerable client-side — and an entry whose timestamp cannot be
+// parsed is kept, because dropping data we cannot judge would be the same
+// silent loss in a different direction.
+func TestFilterSince(t *testing.T) {
+	cutoff := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	entries := []LogEntry{
+		{Timestamp: "2026-07-23 13:00:00.000", Message: "after"},
+		{Timestamp: "2026-07-23 12:00:00.000", Message: "exactly at cutoff"},
+		{Timestamp: "2026-07-23 11:59:59.999", Message: "before"},
+		{Timestamp: "2026-07-22 09:00:00", Message: "yesterday"},
+		{Timestamp: "not a timestamp", Message: "unparseable"},
+		{Timestamp: "", Message: "empty"},
+	}
+
+	got := FilterSince(entries, cutoff)
+	want := []string{"after", "exactly at cutoff", "unparseable", "empty"}
+	if len(got) != len(want) {
+		t.Fatalf("FilterSince kept %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].Message != w {
+			t.Errorf("entry %d = %q, want %q", i, got[i].Message, w)
+		}
 	}
 }
