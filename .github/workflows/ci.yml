@@ -161,3 +161,53 @@ jobs:
         run: go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
         env:
           COMPANION_SRC: ${{ github.workspace }}/companion-src
+
+  # ---------------------------------------------------------------------------
+  # gates — the single required check.
+  #
+  # Every job below that starts a real Home Assistant container is mandatory.
+  # This aggregator exists so branch protection can require ONE check that
+  # cannot be satisfied while a Docker tier is skipped, cancelled or silently
+  # absent: a skipped `needs` job leaves result != 'success' and fails here.
+  #
+  # The HA `dev` matrix leg stays advisory (it tracks an unreleased upstream
+  # build), but `stable` and `prev` are required — and the leg being advisory
+  # is expressed inside test-integration, not by making the job optional here.
+  # ---------------------------------------------------------------------------
+  gates:
+    name: All Gates Green
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - lint
+      - test-unit
+      - test-integration
+      - test-companion
+      - test-discovery
+      - govulncheck
+    steps:
+      - name: Verify every gate succeeded
+        run: |
+          declare -A results=(
+            [lint]="${{ needs.lint.result }}"
+            [test-unit]="${{ needs.test-unit.result }}"
+            [test-integration]="${{ needs.test-integration.result }}"
+            [test-companion]="${{ needs.test-companion.result }}"
+            [test-discovery]="${{ needs.test-discovery.result }}"
+            [govulncheck]="${{ needs.govulncheck.result }}"
+          )
+          failed=0
+          for job in "${!results[@]}"; do
+            printf '  %-20s %s\n' "$job" "${results[$job]}"
+            if [ "${results[$job]}" != "success" ]; then failed=1; fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo
+            echo "ERROR: a required gate did not succeed."
+            echo "The three Docker tiers (integration, companion, discovery) are"
+            echo "mandatory — a green run without them proves nothing about how"
+            echo "hactl behaves against a real Home Assistant."
+            exit 1
+          fi
+          echo
+          echo "All gates green, every Docker tier included."

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# hactl pre-push hook — the Docker HA roundtrip is mandatory.
+#
+# Install with: make hooks
+# Bypass once with: git push --no-verify   (work-in-progress branches only)
+#
+# Why this exists: hactl's entire job is to report what a real Home Assistant
+# contains. The unit tier starts no HA, so it cannot see a wrong lookup key or
+# a missing registry fallback — both root causes of the 2026-07-23 audit were
+# green across ~850 unit tests. Only a live instance can tell you the truth,
+# so pushing without one is pushing unverified.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Nothing to verify on a branch delete.
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+		exit 0
+	fi
+done
+
+echo "pre-push: running the full gates (lint + unit + integration + companion + discovery)"
+echo "pre-push: this starts real Home Assistant containers and takes a few minutes."
+echo
+
+if ! make gates; then
+	cat >&2 <<'MSG'
+
+pre-push: BLOCKED — gates are not green.
+
+Fix the failure, or push a work-in-progress branch with:
+    git push --no-verify
+
+Do not weaken a test to get past this. If a test is wrong, say so in the PR and
+change it deliberately — three tests in this repo once asserted defects as
+correct, and that is exactly how the defects survived.
+MSG
+	exit 1
+fi

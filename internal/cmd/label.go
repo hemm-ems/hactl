@@ -186,8 +186,12 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-// fetchRegistryContext fetches entity registry, areas, labels, and floors in sequence.
-// Returns lookup maps for quick resolution.
+// fetchRegistryContext fetches entity registry, areas, labels, floors, and
+// devices in sequence. Returns lookup maps for quick resolution.
+//
+// H-8: the device registry is fetched (and kept, in deviceByID) so an
+// entity's effective area can fall back to its device's area — see
+// registryContext.effectiveAreaID.
 func fetchRegistryContext(ctx context.Context, ws *haapi.WSClient) (*registryContext, error) {
 	entities, err := ws.EntityRegistryList(ctx)
 	if err != nil {
@@ -212,11 +216,18 @@ func fetchRegistryContext(ctx context.Context, ws *haapi.WSClient) (*registryCon
 		floors = nil
 	}
 
+	devices, err := ws.DeviceRegistryList(ctx)
+	if err != nil {
+		slog.Warn("could not fetch devices", "error", err)
+		devices = nil
+	}
+
 	rc := &registryContext{
 		entityByID: make(map[string]haapi.EntityRegistryEntry, len(entities)),
 		areaByID:   make(map[string]haapi.AreaEntry, len(areas)),
 		labelByID:  make(map[string]haapi.LabelEntry, len(labels)),
 		floorByID:  make(map[string]haapi.FloorEntry, len(floors)),
+		deviceByID: make(map[string]haapi.DeviceRegistryEntry, len(devices)),
 	}
 	for _, e := range entities {
 		rc.entityByID[e.EntityID] = e
@@ -230,6 +241,9 @@ func fetchRegistryContext(ctx context.Context, ws *haapi.WSClient) (*registryCon
 	for _, f := range floors {
 		rc.floorByID[f.FloorID] = f
 	}
+	for _, d := range devices {
+		rc.deviceByID[d.ID] = d
+	}
 	return rc, nil
 }
 
@@ -238,20 +252,53 @@ type registryContext struct {
 	areaByID   map[string]haapi.AreaEntry
 	labelByID  map[string]haapi.LabelEntry
 	floorByID  map[string]haapi.FloorEntry
+	deviceByID map[string]haapi.DeviceRegistryEntry
+}
+
+// effectiveAreaID returns the area an entity actually sits in, replicating
+// HA's own fallback for area_name()/area_entities()
+// (homeassistant/helpers/template/extensions/areas.py, AreaExtension): the
+// entity's own area_id wins when set; otherwise it inherits its device's
+// area_id. Placing the DEVICE in a room is the normal HA pattern — assigning
+// an area directly to an entity is the exception — so most real entities only
+// resolve correctly through this fallback (H-8). Returns "" when neither the
+// entity nor its device (if any) has an area.
+func (rc *registryContext) effectiveAreaID(entityID string) string {
+	ent, ok := rc.entityByID[entityID]
+	if !ok {
+		return ""
+	}
+	if ent.AreaID != "" {
+		return ent.AreaID
+	}
+	if ent.DeviceID == "" {
+		return ""
+	}
+	return rc.deviceByID[ent.DeviceID].AreaID
 }
 
 func (rc *registryContext) areaName(entityID string) string {
-	ent, ok := rc.entityByID[entityID]
-	if !ok || ent.AreaID == "" {
+	areaID := rc.effectiveAreaID(entityID)
+	if areaID == "" {
 		return ""
 	}
-	area, ok := rc.areaByID[ent.AreaID]
+	area, ok := rc.areaByID[areaID]
 	if !ok {
-		return ent.AreaID
+		return areaID
 	}
 	return area.Name
 }
 
+// labelNames returns the entity's OWN labels only — deliberately no device
+// fallback. Unlike area, HA's labels do not inherit from the device:
+// label_entities() (homeassistant/helpers/template/extensions/labels.py)
+// resolves via entity_registry.async_entries_for_label with no device or area
+// expansion, confirmed against running HA 2026.7.2 source: label_devices()
+// finds a device carrying a label, but label_entities() for that same label
+// returns none of the device's entities. Do not "fix" this to mirror the area
+// fallback — that would make hactl disagree with HA itself (see H-8 test
+// TestEntLsLabelMatchesOracleInheritance, which asserts equality with HA's
+// own label_entities()).
 func (rc *registryContext) labelNames(entityID string) string {
 	ent, ok := rc.entityByID[entityID]
 	if !ok || len(ent.Labels) == 0 {
@@ -267,4 +314,39 @@ func (rc *registryContext) labelNames(entityID string) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+// matchingLabelIDs resolves a --label filter value to the set of registry
+// label_ids whose id or name contains it, case-insensitively.
+//
+// Substring is the semantics docs/manual.md documents for --label everywhere
+// it appears (ent ls, device ls, auto ls, script ls all say "filter by label
+// name (substring)"), and it's what auto.go/script.go already implement
+// (filterAutosByTag, and script.go's equivalent) — narrowing ent/device to an
+// exact match would make --label behave differently depending on which
+// command you typed. So the semantics stay substring; what this function
+// fixes is two bugs in how that substring was applied:
+//
+//  1. labelExistsInRegistry used to require an EXACT id/name match while
+//     filterEntitiesByLabel matched by substring — a query matching several
+//     labels by substring but none exactly was wrongly reported "not found"
+//     even though the filter below would have matched something.
+//  2. The old filter substring-matched the entity's *joined* "name1, name2"
+//     display string, so a query straddling the ", " separator (or matching
+//     a totally different label already present in the same join) could
+//     match — a false positive no per-label check would produce. Resolving
+//     to a label_id set first and checking membership avoids that.
+//
+// ent.go (filterEntitiesByLabel/labelExistsInRegistry) and device.go
+// (deviceHasLabel) both call this, so `ent ls --label` and `device ls
+// --label` agree with each other now too.
+func matchingLabelIDs(labelByID map[string]haapi.LabelEntry, query string) map[string]bool {
+	lower := strings.ToLower(query)
+	out := make(map[string]bool)
+	for id, l := range labelByID {
+		if strings.Contains(strings.ToLower(id), lower) || strings.Contains(strings.ToLower(l.Name), lower) {
+			out[id] = true
+		}
+	}
+	return out
 }

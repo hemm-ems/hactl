@@ -31,5 +31,8 @@ func TestMain(m *testing.M) {
 	if realisticHA != nil {
 		realisticHA.Stop()
 	}
+	if oracleHA != nil {
+		oracleHA.Stop()
+	}
 	os.Exit(exitCode)
 }

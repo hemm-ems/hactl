@@ -1,0 +1,56 @@
+# Oracle fixture — built for invariant H-8 (distinguishability).
+#
+# Every identifier that CAN differ DOES differ here, and every automation is
+# reachable by a real state trigger so it actually produces traces. The older
+# fixtures already had divergent automation ids, but nothing ever fired them,
+# so the divergence was inert and R1 (traces keyed by object_id instead of the
+# config id) stayed invisible through ~240 integration tests.
+#
+# `demo:` is present for one reason: it is the only supported way to get real
+# DEVICES. HA has no "create device" WS command, and an entity's effective area
+# falls back to its device's area (H-8), so without devices that path cannot be
+# tested at all. demo: also ships `update.*` entities, which is what `cc ls`
+# was mistaking for custom components.
+
+homeassistant:
+  name: Oracle Fixture
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+demo:
+
+logger:
+  default: warning
+
+recorder:
+  commit_interval: 1
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+
+input_boolean:
+  oracle_trigger_a:
+    name: Oracle Trigger A
+  oracle_trigger_b:
+    name: Oracle Trigger B
+  oracle_never:
+    name: Oracle Never
+
+input_number:
+  oracle_level:
+    name: Oracle Level
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+
+input_text:
+  oracle_note:
+    name: Oracle Note

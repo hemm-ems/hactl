@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -166,5 +172,48 @@ func TestClassifyTemplate_NonSensorMultiDomainBlock(t *testing.T) {
 func TestClassifyTemplate_InvalidYAML(t *testing.T) {
 	if _, err := classifyTemplate("- this is\n  a: list\n"); err == nil {
 		t.Fatal("expected error for a top-level list (not a single mapping)")
+	}
+}
+
+// TestRunTplEval_JSONIsAlwaysValidJSON pins a round-2 finding (H-10).
+//
+// HA renders a template to a STRING, and for non-scalars that string is
+// Python's repr — ['a', 'b'], None, True. Echoing it under --json produced
+// output that was not JSON at all. hactl cannot faithfully reparse Python
+// repr, so the rendered text ships verbatim inside a JSON envelope.
+func TestRunTplEval_JSONIsAlwaysValidJSON(t *testing.T) {
+	for _, rendered := range []string{"['a', 'b']", "None", "True", "42", "", "he said \"hi\""} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(rendered))
+		}))
+		t.Cleanup(srv.Close)
+
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".env"),
+			[]byte("HA_URL="+srv.URL+"\nHA_TOKEN=tok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		withFlagDir(t, dir)
+
+		oldJSON := flagJSON
+		flagJSON = true
+		t.Cleanup(func() { flagJSON = oldJSON })
+
+		var buf bytes.Buffer
+		if err := runTplEval(context.Background(), &buf, []string{"{{ x }}"}); err != nil {
+			t.Fatalf("runTplEval(%q): %v", rendered, err)
+		}
+		var out struct {
+			Template string `json:"template"`
+			Result   string `json:"result"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+			t.Errorf("tpl eval --json did not parse for rendered %q: %v\noutput: %s",
+				rendered, err, buf.String())
+			continue
+		}
+		if out.Result != rendered {
+			t.Errorf("result = %q, want %q (the rendered text must survive verbatim)", out.Result, rendered)
+		}
 	}
 }

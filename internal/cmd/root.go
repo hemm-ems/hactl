@@ -30,6 +30,13 @@ var (
 	flagTokens    bool
 	flagTokensMax int
 	flagTimeout   time.Duration
+
+	// helpRendered is set by the HelpFunc wrapper (see init) whenever cobra
+	// actually rendered help this invocation — --help, -h, a bare non-runnable
+	// command, or the built-in "help" subcommand all funnel through it. It is
+	// read (never truncate) and reset (see RunWithOutputContext) by the
+	// applyTokenPolicy pipeline.
+	helpRendered bool
 )
 
 var rootCmd = &cobra.Command{
@@ -48,14 +55,27 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")
 	rootCmd.PersistentFlags().StringVar(&flagSince, "since", "24h", "time range for queries (e.g. 24h, 7d)")
-	rootCmd.PersistentFlags().IntVar(&flagTop, "top", 10, "max items to display")
+	rootCmd.PersistentFlags().IntVar(&flagTop, "top", 10, "max items to display in tables (never truncates --json)")
 	rootCmd.PersistentFlags().BoolVar(&flagFull, "full", false, "show full/raw output")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "output as JSON")
-	rootCmd.PersistentFlags().BoolVar(&flagColor, "color", false, "enable colored output")
+	// --color is not yet implemented: no command emits ANSI escapes. The flag
+	// is kept (removing it would be a breaking CLI change for anyone already
+	// passing it) but it is currently a no-op; see H-10 notes / manual.md.
+	rootCmd.PersistentFlags().BoolVar(&flagColor, "color", false, "enable colored output (currently a no-op; reserved for future use)")
 	rootCmd.PersistentFlags().BoolVar(&flagStats, "stats", false, "show response size and estimated token count")
 	rootCmd.PersistentFlags().BoolVar(&flagTokens, "tokens", false, "show compact token estimate")
 	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500, "cap output at N tokens (0 = no cap)")
 	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout for HA/companion API calls")
+
+	// Cobra's built-in help output must never go through the --tokensmax cap
+	// (defect C): wrap the default HelpFunc purely to record that help was
+	// rendered this invocation, then delegate unchanged. helpRendered is
+	// checked by applyTokenPolicy, the same place the --json exemption lives.
+	defaultHelpFunc := rootCmd.HelpFunc()
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		helpRendered = true
+		defaultHelpFunc(cmd, args)
+	})
 }
 
 // statsWriter wraps an io.Writer and counts bytes written.
@@ -88,6 +108,9 @@ func writeStats(w io.Writer, byteCount int64) {
 // truncated at a UTF-8 safe byte boundary and a hint is appended.
 // JSON mode skips the header and the cap so output remains valid JSON; when
 // flagTokens is set, the compact token estimate goes to stderr instead.
+// Cobra help output (helpRendered) skips only the cap — never truncated,
+// mid-word or otherwise — since it's the same documentation regardless of
+// --tokensmax and a chopped help screen is worse than a long one.
 func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagJSON {
 		if flagTokens {
@@ -100,7 +123,7 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagTokens {
 		_, _ = fmt.Fprintf(dst, "[~%d tok]\n", tokens)
 	}
-	if flagTokensMax > 0 && tokens > int64(flagTokensMax) {
+	if !helpRendered && flagTokensMax > 0 && tokens > int64(flagTokensMax) {
 		limit := min(flagTokensMax*4, len(data))
 		// Walk backward to a valid UTF-8 boundary
 		for limit > 0 && !utf8.Valid(data[:limit]) {
@@ -226,6 +249,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		flagStats = false
 		flagTokens = false
 		flagTokensMax = 500
+		helpRendered = false
 		resetSubcommandFlags()
 	}()
 

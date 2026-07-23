@@ -358,6 +358,21 @@ func (ws *WSClient) EntityRegistryRemove(ctx context.Context, entityID string) e
 	return err
 }
 
+// DeviceRegistryUpdate updates a device registry entry (area, labels, name) via WS.
+// WS command: config/device_registry/update
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/device_registry.py
+//
+// HA has no "create device" command — devices are created by integrations — so this
+// update path is the only way to place an existing device into an area or label it.
+// That matters for tests: an entity's effective area is its own area_id, else its
+// device's (invariant H-8), and the device side of that pair can only be set here.
+func (ws *WSClient) DeviceRegistryUpdate(ctx context.Context, deviceID string, changes map[string]any) error {
+	params := map[string]any{"device_id": deviceID}
+	maps.Copy(params, changes)
+	_, err := ws.sendCommand(ctx, "config/device_registry/update", params)
+	return err
+}
+
 // LabelRegistryCreate creates a new label in the HA label registry.
 // WS command: config/label_registry/create
 // Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/label_registry.py

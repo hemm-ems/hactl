@@ -1,0 +1,22 @@
+# Scripts deliberately have NO id/entity-id split: the top-level key is both the
+# config id and the object_id. They are the control group for R1 — the same
+# trace-lookup code is correct for scripts purely by construction, so a fix that
+# only works for scripts proves nothing.
+
+oracle_script_ok:
+  alias: Oracle Script OK
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.oracle_level
+      data:
+        value: 42
+  mode: single
+
+oracle_script_broken:
+  alias: Oracle Script Broken
+  sequence:
+    - service: notify.oracle_no_such_service
+      data:
+        message: nope
+  mode: single

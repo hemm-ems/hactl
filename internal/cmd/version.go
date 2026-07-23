@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -31,7 +32,33 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// versionInfo is the structured form of `hactl version`, used verbatim for
+// --json output.
+type versionInfo struct {
+	Version  string `json:"version"`
+	Commit   string `json:"commit"`
+	Date     string `json:"date"`
+	TestedHA string `json:"tested_ha,omitempty"`
+	Project  string `json:"project"`
+	Issues   string `json:"issues"`
+}
+
 func printVersion(w io.Writer) {
+	if flagJSON {
+		info := versionInfo{
+			Version:  version,
+			Commit:   commit,
+			Date:     date,
+			TestedHA: testedHA,
+			Project:  projectURL,
+			Issues:   issuesURL,
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(info)
+		return
+	}
+
 	_, _ = fmt.Fprintf(w, "hactl %s (commit %s, built %s)\n", version, commit, date)
 	if testedHA != "" {
 		_, _ = fmt.Fprintf(w, "tested: HA %s\n", testedHA)

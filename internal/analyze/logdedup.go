@@ -10,12 +10,20 @@ import (
 )
 
 // LogEntry is a single parsed log line from HA error_log.
+//
+// Count is the number of occurrences this entry represents. HA's
+// system_log/list WS command pre-aggregates identical messages into one
+// record with a count field (haapi.SystemLogEntry.Count); callers that build
+// LogEntry from that source must carry it through here. The REST
+// /api/error_log fallback (ParseLogLines) has no such aggregation — every
+// parsed line is exactly 1 occurrence.
 type LogEntry struct {
 	Timestamp string `json:"timestamp"`
 	Level     string `json:"level"`
 	Component string `json:"component"`
 	Message   string `json:"message"`
 	Raw       string `json:"raw,omitempty"`
+	Count     int    `json:"count"`
 }
 
 // DedupedLog is a group of identical log messages.
@@ -58,6 +66,7 @@ func ParseLogLines(logText string) []LogEntry {
 				Component: matches[4],
 				Message:   matches[5],
 				Raw:       line,
+				Count:     1,
 			}
 		} else if current != nil {
 			// Continuation line (e.g. stack trace)
@@ -72,15 +81,26 @@ func ParseLogLines(logText string) []LogEntry {
 	return entries
 }
 
-// DeduplicateLogs groups identical log messages by hash, counting occurrences.
+// DeduplicateLogs groups identical log messages by hash, summing occurrences.
+//
+// A LogEntry's own Count (defect #2) is summed into the group, not the number
+// of LogEntry records merged — HA's system_log/list already pre-aggregates,
+// so one LogEntry can itself represent many occurrences. Treating every
+// LogEntry as exactly one occurrence silently discarded HA's own counts and
+// made the manual's "sorted by count" promise wrong: genuinely-repeating
+// failures sorted to the bottom instead of the top.
 func DeduplicateLogs(entries []LogEntry) []DedupedLog {
 	groups := make(map[string]*DedupedLog)
 	order := make([]string, 0)
 
 	for _, e := range entries {
+		c := e.Count
+		if c <= 0 {
+			c = 1
+		}
 		h := hashLogMessage(e)
 		if g, ok := groups[h]; ok {
-			g.Count++
+			g.Count += c
 			g.Entries = append(g.Entries, e)
 			if e.Timestamp > g.LastSeen {
 				g.LastSeen = e.Timestamp
@@ -96,7 +116,7 @@ func DeduplicateLogs(entries []LogEntry) []DedupedLog {
 				Message:   e.Message,
 				FirstSeen: e.Timestamp,
 				LastSeen:  e.Timestamp,
-				Count:     1,
+				Count:     c,
 				Entries:   []LogEntry{e},
 			}
 			order = append(order, h)

@@ -14,6 +14,9 @@ type Table struct {
 
 // RenderOpts controls table output mode.
 type RenderOpts struct {
+	// Top caps the number of rows shown in text output. It has no effect on
+	// JSON output — see JSON below — so --top never silently shortens a
+	// machine-readable result.
 	Top     int
 	Full    bool
 	JSON    bool
@@ -31,8 +34,13 @@ func (t *Table) Render(w io.Writer, opts RenderOpts) error {
 	return t.renderText(w, opts)
 }
 
+// visibleRows returns the rows to render. Top only ever truncates text
+// output: JSON is a machine contract that must never be silently short, so
+// opts.JSON always yields every row regardless of Top (see H-10 in
+// INVARIANTS.md — this was defect A, where `--top` silently truncated
+// `--json` because this function had no JSON exemption).
 func (t *Table) visibleRows(opts RenderOpts) [][]string {
-	if opts.Full || opts.Top <= 0 || opts.Top >= len(t.Rows) {
+	if opts.JSON || opts.Full || opts.Top <= 0 || opts.Top >= len(t.Rows) {
 		return t.Rows
 	}
 	return t.Rows[:opts.Top]

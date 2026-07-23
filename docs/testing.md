@@ -333,6 +333,18 @@ does not have.
 
 ## Running Tests Locally
 
+**The Docker roundtrip is mandatory.** `make gates` is the only definition of
+done: it runs lint, the unit tier, and all three Docker tiers, and refuses to
+start when Docker is not running rather than silently narrowing what was
+verified. `make test` is the unit tier alone and is never acceptance — it starts
+no Home Assistant, so it cannot see a wrong lookup key or a missing registry
+fallback. Install the pre-push hook with `make hooks`.
+
+See [PLAN-next-session.md](PLAN-next-session.md) for the open work and
+[HANDOFF-2026-07-23-oracle-testing.md](HANDOFF-2026-07-23-oracle-testing.md)
+for the audit that produced invariants H-8..H-11.
+
+
 The only hard prerequisite is a running Docker daemon. You can verify this with:
 
 ```bash
@@ -342,7 +354,8 @@ docker info
 | Goal | Command | Docker needed | Approximate time |
 |---|---|---|---|
 | Quick sanity check | `make test` | No | ~5 seconds |
-| Full test suite | `make test-int` | Yes | ~2 min first run, ~60s cached |
+| **Everything (the only "done")** | **`make gates`** | **Yes** | **~4 min** |
+| Full integration suite | `make test-int` | Yes | ~2 min first run, ~60s cached |
 | Companion tests | `make test-companion` | Yes | ~5 minutes |
 | Discovery + Ingress auth tests | `make test-int-discovery` | Yes | ~15 seconds (cached image) |
 | Regenerate golden files | `HACTL_UPDATE_GOLDEN=1 make test-int` | Yes | ~2 min |

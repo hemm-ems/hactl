@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -227,6 +228,91 @@ func TestBuildAutoRows_RunsFromLogbook(t *testing.T) {
 	}
 	if rows[stormIdx].errors != 1 {
 		t.Errorf("storm errors = %d, want 1 (still derived from traces)", rows[stormIdx].errors)
+	}
+}
+
+// TestAutomationTraceKey pins invariant H-9 at the unit level: traces are keyed
+// by the automation's config id, not its entity_id.
+func TestAutomationTraceKey(t *testing.T) {
+	tests := []struct {
+		name string
+		auto automationEntity
+		want string
+	}{
+		{
+			// The case that shipped broken: HA's UI assigns a millisecond
+			// timestamp as the config id and derives entity_id from the alias,
+			// so these two strings differ for essentially every UI automation.
+			name: "config id differs from object id",
+			auto: automationEntity{
+				EntityID:   "automation.morning_alarm",
+				Attributes: automationAttributes{ID: "1699887654321"},
+			},
+			want: "automation.1699887654321",
+		},
+		{
+			name: "config id equals object id",
+			auto: automationEntity{
+				EntityID:   "automation.climate_schedule",
+				Attributes: automationAttributes{ID: "climate_schedule"},
+			},
+			want: "automation.climate_schedule",
+		},
+		{
+			// YAML automations may omit `id:`; HA then reports the object id as
+			// item_id, so the entity address is the correct fallback.
+			name: "no config id falls back to entity_id",
+			auto: automationEntity{EntityID: "automation.legacy"},
+			want: "automation.legacy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := automationTraceKey(tt.auto); got != tt.want {
+				t.Errorf("automationTraceKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildAutoRows_ErrorsWhenConfigIDDiffers is the unit-level regression for
+// R1. Before the fix, errors/last_err were looked up with the entity_id while
+// HA keys the trace map by config id, so both silently read zero — and
+// `auto ls --failing` reported nothing for a genuinely failing automation.
+func TestBuildAutoRows_ErrorsWhenConfigIDDiffers(t *testing.T) {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	autos := []automationEntity{{
+		EntityID:   "automation.oracle_missing_service",
+		State:      "on",
+		Attributes: automationAttributes{ID: "cfgid_missing_service"},
+	}}
+	oldest := time.Now().Add(-2 * time.Hour)
+	newest := time.Now().Add(-10 * time.Minute)
+	// Keyed the way HA actually returns it: "<domain>.<config id>". The oldest
+	// error is listed FIRST, so a first-wins implementation picks the wrong one.
+	traces := haapi.TraceListResult{
+		"automation.cfgid_missing_service": {
+			{Timestamp: haapi.TraceSummaryTimestamp{Start: oldest.Format(time.RFC3339Nano)}, Execution: "error", LastStep: "action/0"},
+			{Timestamp: haapi.TraceSummaryTimestamp{Start: newest.Format(time.RFC3339Nano)}, Execution: "error", LastStep: "action/1"},
+		},
+	}
+
+	rows := buildAutoRows(autos, traces, map[string]int{}, cutoff)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].errors != 2 {
+		t.Errorf("errors = %d, want 2 — traces are keyed by config id %q, not entity_id %q",
+			rows[0].errors, "cfgid_missing_service", autos[0].EntityID)
+	}
+	// last_err must be the most recent error, not whichever arrived first.
+	// shortenStep() drops the step index, so the timestamp is what discriminates.
+	wantTime := formatShortTime(newest.Format(time.RFC3339Nano))
+	oldTime := formatShortTime(oldest.Format(time.RFC3339Nano))
+	if !strings.Contains(rows[0].lastErr, wantTime) {
+		t.Errorf("lastErr = %q, want it to carry the most recent error's time %q "+
+			"(the oldest error is at %q and is listed first)",
+			rows[0].lastErr, wantTime, oldTime)
 	}
 }
 

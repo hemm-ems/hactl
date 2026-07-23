@@ -162,6 +162,72 @@ func TestFormatShortTimestamp(t *testing.T) {
 	}
 }
 
+// --- Count (defect #2: HA's pre-aggregated count must survive, not be
+// replaced by hactl's own record count) ---
+
+func TestParseLogLines_CountDefaultsToOne(t *testing.T) {
+	entries := ParseLogLines(sampleLog)
+	for i, e := range entries {
+		if e.Count != 1 {
+			t.Errorf("entries[%d].Count = %d, want 1 (REST /api/error_log has no HA-side aggregation)", i, e.Count)
+		}
+	}
+}
+
+func TestDeduplicateLogs_SumsPreAggregatedCounts(t *testing.T) {
+	// Simulates HA's system_log/list: each record already carries its own
+	// pre-aggregated count. DeduplicateLogs must SUM those counts, not count
+	// how many LogEntry records got merged into a group.
+	entries := []LogEntry{
+		{Timestamp: "t1", Level: "ERROR", Component: "a", Message: "boom", Count: 3},
+		{Timestamp: "t2", Level: "ERROR", Component: "b", Message: "boom once", Count: 1},
+		{Timestamp: "t3", Level: "ERROR", Component: "b", Message: "boom once", Count: 1},
+	}
+	deduped := DeduplicateLogs(entries)
+
+	var aGroup, bGroup *DedupedLog
+	for i := range deduped {
+		switch deduped[i].Component {
+		case "a":
+			aGroup = &deduped[i]
+		case "b":
+			bGroup = &deduped[i]
+		}
+	}
+	if aGroup == nil {
+		t.Fatal("no group for component 'a'")
+	}
+	if aGroup.Count != 3 {
+		t.Errorf("component a group count = %d, want 3 (single HA record with count=3)", aGroup.Count)
+	}
+	if bGroup == nil {
+		t.Fatal("no group for component 'b'")
+	}
+	if bGroup.Count != 2 {
+		t.Errorf("component b group count = %d, want 2 (two HA records, count=1 each, summed)", bGroup.Count)
+	}
+
+	// Sorted descending by (summed) count: a (3) must sort before b (2). Before
+	// the fix, both groups would have shown Count==1 (one merge each) and the
+	// genuinely-repeating failure would not have sorted to the top.
+	if deduped[0].Component != "a" {
+		t.Errorf("deduped[0].Component = %q, want %q (highest summed count first)", deduped[0].Component, "a")
+	}
+}
+
+func TestDeduplicateLogs_ZeroCountTreatedAsOne(t *testing.T) {
+	// Defensive: a LogEntry with an unset/zero Count (e.g. hand-built in a
+	// test, or a future caller that forgets to set it) must not vanish from
+	// the total.
+	entries := []LogEntry{
+		{Timestamp: "t1", Level: "ERROR", Component: "a", Message: "boom", Count: 0},
+	}
+	deduped := DeduplicateLogs(entries)
+	if len(deduped) != 1 || deduped[0].Count != 1 {
+		t.Fatalf("deduped = %+v, want one group with Count=1", deduped)
+	}
+}
+
 func TestFormatShortTimestamp_Formats(t *testing.T) {
 	// Test legacy format "2006-01-02 15:04:05"
 	got := FormatShortTimestamp("2026-01-01 09:00:00")
