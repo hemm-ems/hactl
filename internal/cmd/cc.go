@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -59,8 +61,16 @@ func init() {
 }
 
 // ccInfo holds info about a custom component.
+//
+// NOTE: HA's manifest/list WS response also carries documentation,
+// dependencies, iot_class, codeowners, and issue_tracker for each
+// integration, but haapi.IntegrationManifest (internal/haapi/websocket.go)
+// does not currently decode them, so `cc show` cannot report those fields
+// honestly yet. That struct is outside this fix's file set — extending it is
+// a follow-up, not something faked here.
 type ccInfo struct {
 	Domain       string
+	Name         string
 	Version      string
 	Requirements []string
 }
@@ -124,23 +134,47 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("custom component %q not found", name)
 	}
 
-	_, _ = fmt.Fprintf(w, "domain:  %s\n", found.Domain)
-	_, _ = fmt.Fprintf(w, "version: %s\n", found.Version)
-
-	// Show related entities
+	// Honest entity count + (with --full) the actual entity_ids — states-based
+	// so it counts everything live, not just what the entity registry knows.
+	var entityIDs []string
 	states, statesErr := client.GetStates(ctx)
 	if statesErr == nil {
 		var allStates []entityState
 		if jsonErr := json.Unmarshal(states, &allStates); jsonErr == nil {
-			count := 0
 			for _, s := range allStates {
 				if strings.HasPrefix(s.EntityID, found.Domain+".") {
-					count++
+					entityIDs = append(entityIDs, s.EntityID)
 				}
 			}
-			if count > 0 {
-				_, _ = fmt.Fprintf(w, "entities: %d\n", count)
-			}
+		}
+	}
+	sort.Strings(entityIDs)
+
+	if flagJSON {
+		out := map[string]any{
+			"domain":       found.Domain,
+			"name":         found.Name,
+			"version":      found.Version,
+			"is_built_in":  false,
+			"entity_count": len(entityIDs),
+			"entity_ids":   entityIDs,
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
+	_, _ = fmt.Fprintf(w, "domain:   %s\n", found.Domain)
+	if found.Name != "" {
+		_, _ = fmt.Fprintf(w, "name:     %s\n", found.Name)
+	}
+	_, _ = fmt.Fprintf(w, "version:  %s\n", found.Version)
+	_, _ = fmt.Fprintf(w, "entities: %d\n", len(entityIDs))
+
+	if flagFull && len(entityIDs) > 0 {
+		_, _ = fmt.Fprintln(w, "entity_ids:")
+		for _, id := range entityIDs {
+			_, _ = fmt.Fprintf(w, "  %s\n", id)
 		}
 	}
 
@@ -197,69 +231,87 @@ func renderLogEntriesSimple(w io.Writer, entries []analyze.LogEntry) error {
 	})
 }
 
-// fetchCustomComponents gets custom_components from HA config.
+// fetchCustomComponents returns the custom (non-built-in) integrations HA
+// itself reports via manifest/list — the only source that carries
+// is_built_in, and therefore the only honest definition of "custom
+// component" (defect #4 / H-11).
+//
+// Previously, "Method 1" treated ANY update.* entity carrying a title and
+// installed_version as a custom component with no is_built_in check at all.
+// HA's own built-in integrations (`demo` among them) ship update.* entities
+// shaped exactly like a HACS component update, so that heuristic fabricated
+// rows for entirely built-in integrations — on a real install, update.*
+// covers HA Core, the OS, and every add-on.
+//
+// The update.* entity data is still useful — HACS keeps its installed_version
+// fresher than the static manifest.json version — but now it can only ENRICH
+// a domain manifest/list has already confirmed non-built-in; it can never
+// nominate one on its own.
 func fetchCustomComponents(ctx context.Context, cfg *config.Config, client *haapi.Client) ([]ccInfo, error) {
-	// Method 1: HACS update.* entities (provides version info)
-	statesData, err := client.GetStates(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetching states: %w", err)
-	}
-
-	var states []struct {
-		Attributes map[string]any `json:"attributes"`
-		EntityID   string         `json:"entity_id"`
-		State      string         `json:"state"`
-	}
-	if err := json.Unmarshal(statesData, &states); err != nil {
-		return nil, fmt.Errorf("parsing states: %w", err)
-	}
-
-	var components []ccInfo
-	seen := make(map[string]bool)
-	for _, s := range states {
-		if !strings.HasPrefix(s.EntityID, "update.") {
-			continue
-		}
-		title, _ := s.Attributes["title"].(string)
-		installedVersion, _ := s.Attributes["installed_version"].(string)
-		if title == "" || installedVersion == "" {
-			continue
-		}
-		domain := strings.TrimPrefix(s.EntityID, "update.")
-		if seen[domain] {
-			continue
-		}
-		seen[domain] = true
-		components = append(components, ccInfo{
-			Domain:  domain,
-			Version: installedVersion,
-		})
-	}
-
-	// Method 2: WS manifest/list to find non-HACS custom components.
-	// Custom integrations loaded from custom_components/ (e.g. via volume mount)
-	// have is_built_in=false in their manifest but may lack HACS update entities.
+	var manifests []haapi.IntegrationManifest
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
-		manifests, mErr := ws.IntegrationManifestList(ctx)
+		m, mErr := ws.IntegrationManifestList(ctx)
 		_ = ws.Close()
 		if mErr == nil {
-			for _, m := range manifests {
-				if m.IsBuiltIn || seen[m.Domain] {
-					continue
-				}
-				seen[m.Domain] = true
-				v := m.Version
-				if v == "" {
-					v = "n/a"
-				}
-				components = append(components, ccInfo{
-					Domain:  m.Domain,
-					Version: v,
-				})
+			manifests = m
+		} else {
+			slog.Debug("manifest/list unavailable", "error", mErr)
+		}
+	} else {
+		slog.Debug("websocket unavailable for manifest/list", "error", wsErr)
+	}
+
+	components := make(map[string]*ccInfo)
+	var order []string
+	for _, m := range manifests {
+		if m.IsBuiltIn {
+			continue
+		}
+		if _, dup := components[m.Domain]; dup {
+			continue
+		}
+		v := m.Version
+		if v == "" {
+			v = "n/a"
+		}
+		components[m.Domain] = &ccInfo{Domain: m.Domain, Name: m.Name, Version: v}
+		order = append(order, m.Domain)
+	}
+
+	// Enrich version from a matching update.* entity's installed_version, when
+	// present. Can only adjust a domain already confirmed above — never add one.
+	if len(components) > 0 {
+		statesData, err := client.GetStates(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("fetching states: %w", err)
+		}
+		var states []struct {
+			Attributes map[string]any `json:"attributes"`
+			EntityID   string         `json:"entity_id"`
+		}
+		if err := json.Unmarshal(statesData, &states); err != nil {
+			return nil, fmt.Errorf("parsing states: %w", err)
+		}
+		for _, s := range states {
+			if !strings.HasPrefix(s.EntityID, "update.") {
+				continue
+			}
+			domain := strings.TrimPrefix(s.EntityID, "update.")
+			info, ok := components[domain]
+			if !ok {
+				continue
+			}
+			if v, _ := s.Attributes["installed_version"].(string); v != "" {
+				info.Version = v
 			}
 		}
 	}
 
-	return components, nil
+	sort.Strings(order)
+	result := make([]ccInfo, 0, len(order))
+	for _, d := range order {
+		result = append(result, *components[d])
+	}
+	return result, nil
 }

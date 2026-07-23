@@ -1684,6 +1684,161 @@ func TestRunLogShow_NotFound(t *testing.T) {
 	}
 }
 
+// logShowFixture writes a .env and pre-populates the ids registry with one
+// "log:" entry, returning the dir and the minted short ID.
+func logShowFixture(t *testing.T, logKey string) (dir, shortID string) {
+	t.Helper()
+	dir = t.TempDir()
+	envContent := "HA_URL=http://localhost:9999\nHA_TOKEN=tok\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idsPath := filepath.Join(dir, "cache", "ids.json")
+	reg := ids.NewRegistry(idsPath)
+	shortID = reg.GetOrCreate("log", logKey)
+	if err := reg.Save(); err != nil {
+		t.Fatalf("saving ids registry: %v", err)
+	}
+	return dir, shortID
+}
+
+func TestRunLogShow_Found(t *testing.T) {
+	dir, shortID := logShowFixture(t, "2026-01-01 10:00:00.000|homeassistant.components.zha|Failed to connect")
+	withFlagDir(t, dir)
+
+	var buf bytes.Buffer
+	if err := runLogShow(context.Background(), &buf, shortID); err != nil {
+		t.Fatalf("runLogShow found failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "homeassistant.components.zha") {
+		t.Errorf("output missing component: %q", out)
+	}
+	if !strings.Contains(out, "Failed to connect") {
+		t.Errorf("output missing message: %q", out)
+	}
+}
+
+func TestRunLogShow_JSON(t *testing.T) {
+	dir, shortID := logShowFixture(t, "2026-01-01 10:00:00.000|homeassistant.components.zha|Failed to connect")
+	withFlagDir(t, dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runLogShow(context.Background(), &buf, shortID); err != nil {
+		t.Fatalf("runLogShow --json failed: %v", err)
+	}
+	var got struct {
+		ID        string `json:"id"`
+		Timestamp string `json:"timestamp"`
+		Component string `json:"component"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.ID != shortID {
+		t.Errorf("id = %q, want %q", got.ID, shortID)
+	}
+	if got.Component != "homeassistant.components.zha" {
+		t.Errorf("component = %q, want 'homeassistant.components.zha'", got.Component)
+	}
+	if got.Message != "Failed to connect" {
+		t.Errorf("message = %q, want 'Failed to connect'", got.Message)
+	}
+}
+
+// TestRunLogShow_RejectsForeignNamespace is the direct defect regression:
+// pkg/ids.Registry.Resolve doesn't check which prefix minted an ID, so
+// without an explicit "log:" prefix check, an "anom:" ID (key shape
+// "entity_id|type|start_time" — the same pipe-delimited 3-part shape as a log
+// key) would resolve cleanly and print entity_id as "timestamp", type as
+// "component", and start_time as "message": fabricated fields lifted from an
+// unrelated record.
+func TestRunLogShow_RejectsForeignNamespace(t *testing.T) {
+	dir := t.TempDir()
+	envContent := "HA_URL=http://localhost:9999\nHA_TOKEN=tok\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlagDir(t, dir)
+
+	idsPath := filepath.Join(dir, "cache", "ids.json")
+	reg := ids.NewRegistry(idsPath)
+	anomID := reg.GetOrCreate("anom", "sensor.temp|stuck|2026-01-01T00:00:00Z")
+	if err := reg.Save(); err != nil {
+		t.Fatalf("saving ids registry: %v", err)
+	}
+
+	var buf bytes.Buffer
+	err := runLogShow(context.Background(), &buf, anomID)
+	if err == nil {
+		t.Fatalf("runLogShow accepted a foreign-namespace (anom:) ID and printed: %q", buf.String())
+	}
+}
+
+// --- runCCShow --json ---
+
+func TestRunCCShow_JSON(t *testing.T) {
+	states := []map[string]any{
+		{
+			"entity_id": "update.hacs_update",
+			"state":     "off",
+			"attributes": map[string]any{
+				"installed_version": "1.32.0",
+				"title":             "HACS",
+			},
+		},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	manifests := []map[string]any{
+		{"domain": "hacs_update", "name": "HACS Update", "is_built_in": false},
+	}
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runCCShow(context.Background(), &buf, "hacs_update"); err != nil {
+		t.Fatalf("runCCShow --json failed: %v", err)
+	}
+	var got struct {
+		Domain      string   `json:"domain"`
+		Name        string   `json:"name"`
+		Version     string   `json:"version"`
+		IsBuiltIn   bool     `json:"is_built_in"`
+		EntityCount int      `json:"entity_count"`
+		EntityIDs   []string `json:"entity_ids"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.Domain != "hacs_update" {
+		t.Errorf("domain = %q, want 'hacs_update'", got.Domain)
+	}
+	if got.Version != "1.32.0" {
+		t.Errorf("version = %q, want '1.32.0'", got.Version)
+	}
+	if got.IsBuiltIn {
+		t.Errorf("is_built_in = true, want false (it was only returned because manifest/list said non-built-in)")
+	}
+}
+
 // --- formatSyncAge additional cases ---
 
 func TestFormatSyncAge_Recent(t *testing.T) {
@@ -4092,6 +4247,14 @@ func TestRunDashLs_WithDashboards(t *testing.T) {
 
 // --- runCCShow found path ---
 
+// TestRunCCShow_WithEntityCount previously stubbed NO manifest/list response
+// and still expected "hacs_update" to be found — defect #4: `cc ls`/`cc show`
+// treated any update.* entity carrying title+installed_version as a genuine
+// custom component, with no is_built_in check. HA's manifest/list (WS
+// "manifest/list", haapi.IntegrationManifest.IsBuiltIn) is the only
+// authoritative source for that; a domain now has to be confirmed
+// non-built-in there before an update.* entity's version can even attach to
+// it. The update.* entity payload alone (as before) doesn't produce a row.
 func TestRunCCShow_WithEntityCount(t *testing.T) {
 	states := []map[string]any{
 		{
@@ -4106,7 +4269,13 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 	}
 	statesJSON, _ := json.Marshal(states)
 
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+	manifests := []map[string]any{
+		{"domain": "hacs_update", "name": "HACS Update", "is_built_in": false},
+	}
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(statesJSON)
@@ -4125,10 +4294,58 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 	if !strings.Contains(out, "1.32.0") {
 		t.Errorf("output missing version: %q", out)
 	}
+	if !strings.Contains(out, "entities: 1") {
+		t.Errorf("output missing honest entity count (only update.hacs_update matches the domain prefix, not hacs_update.some_entity): %q", out)
+	}
+}
+
+// TestRunCCShow_RejectsBuiltInDomain is the direct defect #4 regression at the
+// `cc show` layer: an update.* entity from a BUILT-IN integration (as HA's own
+// manifest/list reports it) must not be shown as a custom component, even
+// though it has the same title+installed_version shape HACS entities have.
+func TestRunCCShow_RejectsBuiltInDomain(t *testing.T) {
+	states := []map[string]any{
+		{
+			"entity_id": "update.demo_update",
+			"state":     "off",
+			"attributes": map[string]any{
+				"installed_version": "1.0.0",
+				"title":             "Demo",
+			},
+		},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	manifests := []map[string]any{
+		{"domain": "demo_update", "name": "Demo Update", "is_built_in": true},
+	}
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	err := runCCShow(context.Background(), &buf, "demo_update")
+	if err == nil {
+		t.Fatalf("runCCShow found a built-in domain as a custom component: %q", buf.String())
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, want 'not found'", err.Error())
+	}
 }
 
 // --- runCCLs with components ---
 
+// TestRunCCLs_WithHACSComponents previously stubbed no manifest/list response
+// at all and still expected "hacs_update" to appear — see the comment on
+// TestRunCCShow_WithEntityCount; this is the `cc ls` half of the same
+// inversion (defect #4).
 func TestRunCCLs_WithHACSComponents(t *testing.T) {
 	states := []map[string]any{
 		{
@@ -4142,7 +4359,13 @@ func TestRunCCLs_WithHACSComponents(t *testing.T) {
 	}
 	statesJSON, _ := json.Marshal(states)
 
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+	manifests := []map[string]any{
+		{"domain": "hacs_update", "name": "HACS Update", "is_built_in": false},
+	}
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(statesJSON)
@@ -4160,6 +4383,53 @@ func TestRunCCLs_WithHACSComponents(t *testing.T) {
 	}
 	if !strings.Contains(out, "1.32.0") {
 		t.Errorf("output missing version: %q", out)
+	}
+}
+
+// TestRunCCLs_ExcludesBuiltInUpdateEntities is the direct defect #4
+// regression: an update.* entity shaped exactly like a HACS component
+// (title+installed_version) but belonging to a BUILT-IN integration (per HA's
+// own manifest/list) must not appear in `cc ls`. This is precisely what the
+// `demo` integration does on live HA — it ships several such update.*
+// entities and none of them are custom components.
+func TestRunCCLs_ExcludesBuiltInUpdateEntities(t *testing.T) {
+	states := []map[string]any{
+		{
+			"entity_id": "update.demo_update",
+			"state":     "off",
+			"attributes": map[string]any{
+				"installed_version": "1.0.0",
+				"title":             "Demo",
+			},
+		},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	manifests := []map[string]any{
+		{"domain": "demo_update", "name": "Demo Update", "is_built_in": true},
+		{"domain": "demo", "name": "Demo", "is_built_in": true},
+	}
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runCCLs(context.Background(), &buf); err != nil {
+		t.Fatalf("runCCLs failed: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "demo_update") {
+		t.Errorf("cc ls invented a custom component from a built-in integration's update.* entity: %q", out)
+	}
+	if !strings.Contains(out, "no custom components") {
+		t.Errorf("expected 'no custom components' (both domains are built-in): %q", out)
 	}
 }
 

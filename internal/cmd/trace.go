@@ -56,6 +56,18 @@ func runTraceShow(ctx context.Context, w io.Writer, traceID string) error {
 		return resolveErr
 	}
 
+	// H-9: HA keys automation traces by the CONFIG id, but the only automation
+	// identifier the CLI ever displays is the entity object id, so a
+	// hand-written `automation.<object_id>/<run_id>` reference — the exact form
+	// this command's usage string documents — would otherwise never resolve.
+	// Translate object id -> config id before asking HA. Scripts have no such
+	// split and are left untouched.
+	if domain == "automation" {
+		if resolved, ok := automationConfigIDFor(ctx, cfg, itemID); ok {
+			itemID = resolved
+		}
+	}
+
 	// Fetch full trace via WebSocket
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if connectErr := ws.Connect(ctx); connectErr != nil {
@@ -89,6 +101,16 @@ func runTraceShow(ctx context.Context, w io.Writer, traceID string) error {
 	}
 
 	condensed := analyze.Condense(&raw)
+
+	// H-10: `--json` on the condensed view emits the same steps the text view
+	// renders, structured. `--full` keeps its documented meaning of dumping
+	// HA's raw trace verbatim, so `--full` wins when both are given.
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(condensed)
+	}
+
 	_, _ = fmt.Fprint(w, analyze.FormatCondensed(condensed))
 	return nil
 }
@@ -111,6 +133,20 @@ func resolveTraceID(reg *ids.Registry, traceID string) (domain, itemID, runID st
 	}
 
 	return "", "", "", fmt.Errorf("invalid trace ID format: %s (expected trc:<hash> or domain.item_id/run_id)", traceID)
+}
+
+// automationConfigIDFor maps an automation reference (object id, entity_id,
+// config id or alias) to the config id HA files its traces under. Returns
+// (ref, false) when no live automation matches — a genuinely unknown reference
+// is passed through unchanged so HA's own error surfaces rather than a
+// silently-rewritten lookup.
+func automationConfigIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool) {
+	client := haapi.New(cfg.URL, cfg.Token)
+	a, ok := resolveAutomation(ctx, client, ref)
+	if !ok || a.Attributes.ID == "" {
+		return ref, false
+	}
+	return a.Attributes.ID, true
 }
 
 func parseTraceKey(key string) (string, string, string, error) {

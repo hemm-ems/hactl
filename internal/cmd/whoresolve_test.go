@@ -98,13 +98,41 @@ func TestTriggerLabel(t *testing.T) {
 			want:  "Home Assistant",
 		},
 		{
-			name: "user_id wins over event_type/name (rule order)",
+			// Was "user_id wins over event_type/name (rule order)", asserting
+			// "User Jan". That encoded defect #3: HA propagates the
+			// originating human's user id down the causal chain, so an
+			// automation fired by a user's toggle carries BOTH
+			// context_user_id (the human who started the chain) AND
+			// context_event_type/context_name (the automation that actually
+			// made this change). The proximate cause is what changed the
+			// entity, so it must win over the propagated, more distal user
+			// id — the old expectation had this backwards, and every
+			// automation/script/device-caused change was misreported as a
+			// plain user edit.
+			name: "automation event_type wins over propagated user_id (rule order)",
 			entry: logbookEntry{
 				ContextUserID:    "ae7c1d92b8f4429fae3e08d8a9b1c2d4",
 				ContextEventType: "automation_triggered",
 				ContextName:      "Sunset Lights",
 			},
-			want: "User Jan",
+			want: "Automation: Sunset Lights",
+		},
+		{
+			name: "script_started wins over propagated user_id (rule order)",
+			entry: logbookEntry{
+				ContextUserID:    "ae7c1d92b8f4429fae3e08d8a9b1c2d4",
+				ContextEventType: "script_started",
+				ContextName:      "morning_routine",
+			},
+			want: "Script: morning_routine",
+		},
+		{
+			name: "device firing wins over propagated user_id (rule order)",
+			entry: logbookEntry{
+				ContextUserID: "ae7c1d92b8f4429fae3e08d8a9b1c2d4",
+				ContextName:   "Living-room remote",
+			},
+			want: "Device: Living-room remote",
 		},
 	}
 

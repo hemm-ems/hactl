@@ -15,22 +15,25 @@ import (
 // "Device: Living-room remote", or "Home Assistant".
 //
 // Rule order matters — see the unit tests for the exact precedence:
-//  1. ContextUserID present → look up name in users (UUID fallback if absent).
-//  2. ContextEventType == "automation_triggered" + ContextName → "Automation: ..."
-//  3. ContextEventType == "script_started" + ContextName → "Script: ..."
-//  4. ContextName present (e.g. device-fired event) → "Device: ..."
+//  1. ContextEventType == "automation_triggered" + ContextName → "Automation: ..."
+//  2. ContextEventType == "script_started" + ContextName → "Script: ..."
+//  3. ContextName present (e.g. device-fired event) → "Device: ..."
+//  4. ContextUserID present → look up name in users (UUID fallback if absent).
 //  5. Otherwise → "Home Assistant".
+//
+// HA propagates the ORIGINATING human's user id down the whole causal chain,
+// so an automation fired by a user's toggle carries BOTH context_user_id (the
+// human who started the chain) and context_event_type/context_name (the
+// automation/script/device that actually made this particular change). The
+// user id is the distal cause; the automation/script/device is the proximate
+// one that changed the entity, so it takes precedence — reversing this order
+// (as an earlier version of this function did) attributed every
+// automation/script/device-caused change to a plain user edit whenever the
+// chain happened to trace back to a human action.
 //
 // users may be nil (graceful-degrade when config/auth/list is admin-denied);
 // the function still returns a sensible label in that case.
 func triggerLabel(e logbookEntry, users map[string]haapi.UserEntry) string {
-	if e.ContextUserID != "" {
-		if u, ok := users[e.ContextUserID]; ok && u.Name != "" {
-			return "User " + u.Name
-		}
-		// Truncated UUID keeps the label scannable while still distinguishing users.
-		return "User " + truncateUUID(e.ContextUserID)
-	}
 	switch e.ContextEventType {
 	case "automation_triggered":
 		if e.ContextName != "" {
@@ -43,6 +46,13 @@ func triggerLabel(e logbookEntry, users map[string]haapi.UserEntry) string {
 	}
 	if e.ContextName != "" {
 		return "Device: " + e.ContextName
+	}
+	if e.ContextUserID != "" {
+		if u, ok := users[e.ContextUserID]; ok && u.Name != "" {
+			return "User " + u.Name
+		}
+		// Truncated UUID keeps the label scannable while still distinguishing users.
+		return "User " + truncateUUID(e.ContextUserID)
 	}
 	return "Home Assistant"
 }

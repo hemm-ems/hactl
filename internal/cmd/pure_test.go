@@ -14,12 +14,22 @@ import (
 // --- systemLogToEntries ---
 
 func TestSystemLogToEntries_Basic(t *testing.T) {
+	// NOTE: this test previously asserted that Component was truncated to the
+	// logger name's last dot-segment ("recorder", "base"). That was defect #1:
+	// --component and `cc logs <name>` filter on this same field
+	// (analyze.FilterByComponent), so truncating it here silently broke every
+	// filter value that isn't the logger's last segment — e.g.
+	// `--component automation` matched nothing because
+	// "homeassistant.components.automation.x" had already been cut down to
+	// "x". Component must carry the FULL logger name; only the rendered
+	// table column shortens it for display (see shortComponent).
 	entries := []haapi.SystemLogEntry{
 		{
 			Name:      "homeassistant.components.recorder",
 			Message:   []string{"Unable to find entity"},
 			Level:     "ERROR",
 			Timestamp: 1745308920.5,
+			Count:     1,
 		},
 		{
 			Name:      "custom_components.hacs.base",
@@ -27,6 +37,7 @@ func TestSystemLogToEntries_Basic(t *testing.T) {
 			Level:     "warning",
 			Exception: "Traceback:\n  ...",
 			Timestamp: 1745308950.0,
+			Count:     3,
 		},
 	}
 
@@ -39,25 +50,63 @@ func TestSystemLogToEntries_Basic(t *testing.T) {
 	if result[0].Level != "ERROR" {
 		t.Errorf("level = %q, want ERROR", result[0].Level)
 	}
-	if result[0].Component != "recorder" {
-		t.Errorf("component = %q, want 'recorder'", result[0].Component)
+	if result[0].Component != "homeassistant.components.recorder" {
+		t.Errorf("component = %q, want full logger name 'homeassistant.components.recorder'", result[0].Component)
 	}
 	if result[0].Message != "Unable to find entity" {
 		t.Errorf("message = %q, want 'Unable to find entity'", result[0].Message)
+	}
+	if result[0].Count != 1 {
+		t.Errorf("count = %d, want 1", result[0].Count)
 	}
 
 	// Second entry: WARNING → uppercased, multi-line message, exception appended
 	if result[1].Level != "WARNING" {
 		t.Errorf("level = %q, want WARNING", result[1].Level)
 	}
-	if result[1].Component != "base" {
-		t.Errorf("component = %q, want 'base'", result[1].Component)
+	if result[1].Component != "custom_components.hacs.base" {
+		t.Errorf("component = %q, want full logger name 'custom_components.hacs.base'", result[1].Component)
 	}
 	if !strings.Contains(result[1].Message, "Rate limited") {
 		t.Errorf("message missing first line: %q", result[1].Message)
 	}
 	if !strings.Contains(result[1].Message, "Traceback") {
 		t.Errorf("message missing exception: %q", result[1].Message)
+	}
+	// Defect #2: HA's own pre-aggregated count must survive, not be dropped.
+	if result[1].Count != 3 {
+		t.Errorf("count = %d, want 3 (HA's own pre-aggregated count)", result[1].Count)
+	}
+}
+
+func TestSystemLogToEntries_CountDefaultsToOneWhenHAOmitsIt(t *testing.T) {
+	entry := haapi.SystemLogEntry{
+		Name:      "core",
+		Message:   []string{"startup"},
+		Level:     "INFO",
+		Timestamp: 1745308920.0,
+		// Count deliberately left zero.
+	}
+	result := systemLogToEntries([]haapi.SystemLogEntry{entry})
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Count != 1 {
+		t.Errorf("count = %d, want 1 (default when HA's count field is absent/zero)", result[0].Count)
+	}
+}
+
+func TestShortComponent(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"homeassistant.components.zha", "zha"},
+		{"homeassistant.components.automation.oracle_missing_service", "oracle_missing_service"},
+		{"core", "core"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := shortComponent(tt.in); got != tt.want {
+			t.Errorf("shortComponent(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

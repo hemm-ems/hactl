@@ -62,6 +62,7 @@ type deviceRegistryContext struct {
 	areaByID   map[string]haapi.AreaEntry
 	labelByID  map[string]haapi.LabelEntry
 	entityByID map[string][]haapi.EntityRegistryEntry
+	deviceByID map[string]haapi.DeviceRegistryEntry
 }
 
 func runDeviceLs(ctx context.Context, w io.Writer) error {
@@ -216,6 +217,7 @@ func fetchDeviceRegistryContext(ctx context.Context, ws *haapi.WSClient) (*devic
 		areaByID:   make(map[string]haapi.AreaEntry, len(areas)),
 		labelByID:  make(map[string]haapi.LabelEntry, len(labels)),
 		entityByID: make(map[string][]haapi.EntityRegistryEntry),
+		deviceByID: make(map[string]haapi.DeviceRegistryEntry, len(devices)),
 	}
 	for _, area := range areas {
 		rc.areaByID[area.AreaID] = area
@@ -228,6 +230,9 @@ func fetchDeviceRegistryContext(ctx context.Context, ws *haapi.WSClient) (*devic
 			continue
 		}
 		rc.entityByID[entity.DeviceID] = append(rc.entityByID[entity.DeviceID], entity)
+	}
+	for _, d := range devices {
+		rc.deviceByID[d.ID] = d
 	}
 	return rc, nil
 }
@@ -252,17 +257,23 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 	return result
 }
 
+// deviceMatchesPattern matches case-sensitively, like ent ls --pattern and
+// docs/manual.md ("substring or glob"); device ls used to be the sole
+// case-insensitive outlier among the --pattern-supporting commands.
 func deviceMatchesPattern(d haapi.DeviceRegistryEntry, pattern string) bool {
-	pattern = strings.ToLower(pattern)
-	return matchPattern(strings.ToLower(d.ID), pattern) || matchPattern(strings.ToLower(d.Name), pattern)
+	return matchPattern(d.ID, pattern) || matchPattern(d.Name, pattern)
 }
 
+// deviceHasLabel matches via the same matchingLabelIDs substring rule ent.go's
+// filterEntitiesByLabel uses (see its doc comment in label.go), so `device ls
+// --label` and `ent ls --label` agree with each other.
 func deviceHasLabel(d haapi.DeviceRegistryEntry, rc *deviceRegistryContext, label string) bool {
-	for _, labelID := range d.Labels {
-		if containsFold(labelID, label) {
-			return true
-		}
-		if l, ok := rc.labelByID[labelID]; ok && containsFold(l.Name, label) {
+	matchIDs := matchingLabelIDs(rc.labelByID, label)
+	if len(matchIDs) == 0 {
+		return false
+	}
+	for _, id := range d.Labels {
+		if matchIDs[id] {
 			return true
 		}
 	}
@@ -338,14 +349,24 @@ func deviceEntityRows(entities []haapi.EntityRegistryEntry, rc *deviceRegistryCo
 	return rows
 }
 
+// registryEntityAreaName is the `device show` entity-row equivalent of
+// registryContext.areaName in label.go: the entity's own area wins, else it
+// falls back to its (containing) device's area (H-8). Every entity passed in
+// here came from rc.entityByID[device.ID], so e.DeviceID is always that
+// device — but look it up via rc.deviceByID rather than assume, in case a
+// future caller reuses this on an entity from elsewhere.
 func registryEntityAreaName(e haapi.EntityRegistryEntry, rc *deviceRegistryContext) string {
-	if e.AreaID == "" {
+	areaID := e.AreaID
+	if areaID == "" && e.DeviceID != "" {
+		areaID = rc.deviceByID[e.DeviceID].AreaID
+	}
+	if areaID == "" {
 		return ""
 	}
-	if area, ok := rc.areaByID[e.AreaID]; ok {
+	if area, ok := rc.areaByID[areaID]; ok {
 		return area.Name
 	}
-	return e.AreaID
+	return areaID
 }
 
 func registryEntityLabelNames(e haapi.EntityRegistryEntry, rc *deviceRegistryContext) string {

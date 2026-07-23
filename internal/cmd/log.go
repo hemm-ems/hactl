@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -102,7 +103,7 @@ func renderDedupedLogs(w io.Writer, entries []analyze.LogEntry) error {
 		tbl.Rows[i] = []string{
 			strconv.Itoa(d.Count),
 			d.Level,
-			d.Component,
+			shortComponent(d.Component),
 			analyze.FormatShortTimestamp(d.FirstSeen),
 			analyze.FormatShortTimestamp(d.LastSeen),
 			msg,
@@ -140,7 +141,7 @@ func renderLogEntries(w io.Writer, cfg *config.Config, entries []analyze.LogEntr
 			shortID,
 			analyze.FormatShortTimestamp(e.Timestamp),
 			e.Level,
-			e.Component,
+			shortComponent(e.Component),
 			msg,
 		}
 	}
@@ -163,6 +164,18 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 		return err
 	}
 
+	// pkg/ids.Registry stores every prefix's short IDs in one flat reverse
+	// map (Resolve doesn't check which prefix minted an entry), so without
+	// this check a "trc:" or "anom:" ID resolves cleanly here too. Those
+	// namespaces' keys happen to also be pipe-delimited 3-part strings (e.g.
+	// anom: is "entity_id|type|start_time"), so the branch below would print
+	// them as if they were a log entry's timestamp/component/message —
+	// fabricated fields lifted from an unrelated record. Mirrors the same
+	// prefix check trace.go's resolveTraceID does for "trc:".
+	if !strings.HasPrefix(logID, "log:") {
+		return fmt.Errorf("invalid log ID: %s (expected log:<hash>)", logID)
+	}
+
 	idsPath := filepath.Join(cfg.Dir, "cache", "ids.json")
 	reg := ids.NewRegistry(idsPath)
 	if loadErr := reg.Load(); loadErr != nil {
@@ -176,6 +189,21 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 
 	// key format: "timestamp|component|message"
 	parts := strings.SplitN(key, "|", 3)
+
+	if flagJSON {
+		out := map[string]any{"id": logID}
+		if len(parts) == 3 {
+			out["timestamp"] = parts[0]
+			out["component"] = parts[1]
+			out["message"] = parts[2]
+		} else {
+			out["entry"] = key
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
 	_, _ = fmt.Fprintf(w, "id:        %s\n", logID)
 	if len(parts) == 3 {
 		_, _ = fmt.Fprintf(w, "timestamp: %s\n", parts[0])
@@ -211,6 +239,16 @@ func fetchLogEntries(ctx context.Context, cfg *config.Config) ([]analyze.LogEntr
 }
 
 // systemLogToEntries converts WS system_log entries to analyze.LogEntry format.
+//
+// Component keeps the FULL logger name (e.g.
+// "homeassistant.components.automation.oracle_missing_service"), not just its
+// last dot-segment. analyze.FilterByComponent (--component, `cc logs <name>`)
+// substring-matches this same field, so truncating it here made every filter
+// value other than the logger's own last segment match nothing — e.g.
+// `--component automation` returned zero rows even when automation errors
+// existed, because "homeassistant.components.automation.x" had already been
+// cut down to "x" before the filter ever ran. shortComponent() shortens it
+// again, but only at render time, for the printed table column.
 func systemLogToEntries(entries []haapi.SystemLogEntry) []analyze.LogEntry {
 	result := make([]analyze.LogEntry, 0, len(entries))
 	for _, e := range entries {
@@ -222,20 +260,35 @@ func systemLogToEntries(entries []haapi.SystemLogEntry) []analyze.LogEntry {
 			msg += "\n" + e.Exception
 		}
 
-		// Extract short component name (e.g., "homeassistant.components.recorder" → "recorder")
-		component := e.Name
-		if idx := strings.LastIndex(component, "."); idx >= 0 {
-			component = component[idx+1:]
+		// HA's system_log/list pre-aggregates identical messages into one
+		// record with a count; carry it through rather than treating every
+		// record as a single occurrence (defect #2). Default to 1 if HA ever
+		// omits/zeroes it.
+		count := e.Count
+		if count <= 0 {
+			count = 1
 		}
 
 		result = append(result, analyze.LogEntry{
 			Timestamp: ts.Format("2006-01-02 15:04:05.000"),
 			Level:     strings.ToUpper(e.Level),
-			Component: component,
+			Component: e.Name,
 			Message:   msg,
+			Count:     count,
 		})
 	}
 	return result
+}
+
+// shortComponent extracts the trailing dot-segment of a full logger name for
+// display (e.g. "homeassistant.components.zha" -> "zha"). This is display-only
+// — matching (--component, `cc logs <name>`) always operates on the full
+// logger name held in analyze.LogEntry.Component/DedupedLog.Component.
+func shortComponent(full string) string {
+	if idx := strings.LastIndex(full, "."); idx >= 0 {
+		return full[idx+1:]
+	}
+	return full
 }
 
 // formatLogAsText formats log entries as HA error_log compatible text for caching.

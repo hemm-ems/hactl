@@ -272,6 +272,10 @@ func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("parsing script state: %w", err)
 	}
 
+	if flagJSON {
+		return renderScriptShowJSON(ctx, w, cfg, ent)
+	}
+
 	_, _ = fmt.Fprintf(w, "%s  state=%s  mode=%s  last_triggered=%s\n",
 		ent.EntityID, ent.State,
 		ent.Attributes.Mode,
@@ -322,6 +326,75 @@ func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	return tbl.Render(w, format.RenderOpts{Full: true})
+}
+
+// scriptShowResult is the structured form of `script show`, used verbatim
+// for --json output: a flat config summary plus the trace list.
+type scriptShowResult struct {
+	ID            string            `json:"id"`
+	EntityID      string            `json:"entity_id"`
+	State         string            `json:"state"`
+	Mode          string            `json:"mode"`
+	LastTriggered string            `json:"last_triggered,omitempty"`
+	Traces        []scriptShowTrace `json:"traces"`
+	TracesError   string            `json:"traces_error,omitempty"`
+}
+
+// scriptShowTrace is one row of the trace list in scriptShowResult, keyed by
+// the same `trc:` short id the text table shows.
+type scriptShowTrace struct {
+	ID       string `json:"id"`
+	Time     string `json:"time"`
+	Result   string `json:"result"`
+	LastStep string `json:"last_step"`
+}
+
+// renderScriptShowJSON writes the --json form of `script show`. Nothing
+// precedes it on stdout — no human header line, so the whole of stdout
+// parses strictly as JSON.
+func renderScriptShowJSON(ctx context.Context, w io.Writer, cfg *config.Config, ent scriptEntity) error {
+	result := scriptShowResult{
+		ID:            strings.TrimPrefix(ent.EntityID, "script."),
+		EntityID:      ent.EntityID,
+		State:         ent.State,
+		Mode:          ent.Attributes.Mode,
+		LastTriggered: ent.Attributes.LastTriggered,
+		Traces:        []scriptShowTrace{},
+	}
+
+	traces, wsErr := fetchScriptTraceList(ctx, cfg)
+	switch {
+	case wsErr != nil:
+		result.TracesError = wsErr.Error()
+	case len(traces[ent.EntityID]) > 0:
+		scriptTraces := traces[ent.EntityID]
+		idsPath := filepath.Join(cfg.Dir, "cache", "ids.json")
+		reg := ids.NewRegistry(idsPath)
+		if loadErr := reg.Load(); loadErr != nil {
+			slog.Warn("could not load ids registry", "error", loadErr)
+		}
+
+		limit := min(5, len(scriptTraces))
+		recent := scriptTraces[:limit]
+		result.Traces = make([]scriptShowTrace, limit)
+		for i, tr := range recent {
+			traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
+			result.Traces[i] = scriptShowTrace{
+				ID:       reg.GetOrCreate("trc", traceKey),
+				Time:     formatShortTime(tr.Timestamp.Start),
+				Result:   traceResult(tr),
+				LastStep: tr.LastStep,
+			}
+		}
+
+		if saveErr := reg.Save(); saveErr != nil {
+			slog.Warn("could not save ids registry", "error", saveErr)
+		}
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
 }
 
 func fetchScripts(ctx context.Context, client *haapi.Client) ([]scriptEntity, error) {

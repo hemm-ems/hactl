@@ -1,0 +1,75 @@
+# INVARIANT H-8: for every automation below, the config `id:` differs from
+# slugify(alias) — which is what HA derives the entity_id from. HA keys traces
+# by the config id; the entity_id is a different string. Any code that uses one
+# where the other belongs is wrong, and here that is observable.
+#
+#   config id                 alias                    -> entity_id
+#   cfgid_boost_charge        Oracle Boost Charge      -> automation.oracle_boost_charge
+#   cfgid_missing_service     Oracle Missing Service   -> automation.oracle_missing_service
+#   cfgid_blocked_cond        Oracle Blocked Cond      -> automation.oracle_blocked_cond
+#   cfgid_bad_template        Oracle Bad Template      -> automation.oracle_bad_template
+#
+# Each is fired by a real state trigger (not automation.trigger), so conditions
+# genuinely evaluate and a blocked action is genuinely skipped.
+
+- id: cfgid_boost_charge
+  alias: Oracle Boost Charge
+  description: Succeeds. Produces a finished trace under item_id cfgid_boost_charge.
+  trigger:
+    - platform: state
+      entity_id: input_boolean.oracle_trigger_a
+      to: "on"
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.oracle_level
+      data:
+        value: 77
+  mode: single
+
+- id: cfgid_missing_service
+  alias: Oracle Missing Service
+  description: Calls a service that does not exist. Produces an errored trace.
+  trigger:
+    - platform: state
+      entity_id: input_boolean.oracle_trigger_b
+      to: "on"
+  action:
+    - service: notify.oracle_no_such_service
+      data:
+        message: boom
+  mode: single
+
+- id: cfgid_bad_template
+  alias: Oracle Bad Template
+  description: Renders a template against a missing entity. Produces an errored trace.
+  trigger:
+    - platform: state
+      entity_id: input_boolean.oracle_trigger_b
+      to: "on"
+  action:
+    - service: input_text.set_value
+      target:
+        entity_id: input_text.oracle_note
+      data:
+        value: "{{ states('sensor.oracle_absent') | float * 2 }}"
+  mode: single
+
+- id: cfgid_blocked_cond
+  alias: Oracle Blocked Cond
+  description: Condition is always false, so the action is skipped (not an error).
+  trigger:
+    - platform: state
+      entity_id: input_boolean.oracle_trigger_b
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_boolean.oracle_never
+      state: "on"
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.oracle_level
+      data:
+        value: 1
+  mode: single

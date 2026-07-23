@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -453,6 +454,189 @@ func TestRegistryContext_LabelNames(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// H-8: an entity's effective area falls back to its device's area.
+// ---------------------------------------------------------------------------
+
+func registryContextForH8() *registryContext {
+	return &registryContext{
+		entityByID: map[string]haapi.EntityRegistryEntry{
+			// No AreaID of its own — must inherit from dev1.
+			"sensor.inherited": {EntityID: "sensor.inherited", DeviceID: "dev1"},
+			// Own AreaID set — must win over dev1's area.
+			"sensor.override": {EntityID: "sensor.override", DeviceID: "dev1", AreaID: "bedroom"},
+			// No device at all — stays arealess.
+			"sensor.orphan": {EntityID: "sensor.orphan"},
+			// Device exists but the device itself has no area.
+			"sensor.unplaced_device": {EntityID: "sensor.unplaced_device", DeviceID: "dev2"},
+		},
+		areaByID: map[string]haapi.AreaEntry{
+			"kitchen": {AreaID: "kitchen", Name: "Kitchen"},
+			"bedroom": {AreaID: "bedroom", Name: "Bedroom"},
+		},
+		labelByID: map[string]haapi.LabelEntry{},
+		floorByID: map[string]haapi.FloorEntry{},
+		deviceByID: map[string]haapi.DeviceRegistryEntry{
+			"dev1": {ID: "dev1", Name: "Dev One", AreaID: "kitchen"},
+			"dev2": {ID: "dev2", Name: "Dev Two"},
+		},
+	}
+}
+
+func TestRegistryContext_AreaName_DeviceFallback(t *testing.T) {
+	rc := registryContextForH8()
+
+	if got := rc.areaName("sensor.inherited"); got != "Kitchen" {
+		t.Errorf("areaName(sensor.inherited) = %q, want Kitchen (inherited from dev1)", got)
+	}
+}
+
+// TestRegistryContext_AreaName_OwnAreaWinsOverDevice guards the precedence
+// direction: adding the fallback must not make the device always win.
+func TestRegistryContext_AreaName_OwnAreaWinsOverDevice(t *testing.T) {
+	rc := registryContextForH8()
+
+	if got := rc.areaName("sensor.override"); got != "Bedroom" {
+		t.Errorf("areaName(sensor.override) = %q, want Bedroom (entity's own area beats its device's)", got)
+	}
+}
+
+func TestRegistryContext_AreaName_NoDeviceStaysEmpty(t *testing.T) {
+	rc := registryContextForH8()
+
+	if got := rc.areaName("sensor.orphan"); got != "" {
+		t.Errorf("areaName(sensor.orphan) = %q, want empty (no area, no device)", got)
+	}
+	if got := rc.areaName("sensor.unplaced_device"); got != "" {
+		t.Errorf("areaName(sensor.unplaced_device) = %q, want empty (device itself has no area)", got)
+	}
+}
+
+// TestRegistryContext_LabelNames_NoDeviceFallback pins H-8's other half:
+// unlike area, labels must NOT inherit from the device — confirmed against
+// real HA (see label.go's labelNames doc comment). A device-only label must
+// not appear on its entities.
+func TestRegistryContext_LabelNames_NoDeviceFallback(t *testing.T) {
+	rc := &registryContext{
+		entityByID: map[string]haapi.EntityRegistryEntry{
+			"sensor.inherited": {EntityID: "sensor.inherited", DeviceID: "dev1"},
+		},
+		areaByID: map[string]haapi.AreaEntry{},
+		labelByID: map[string]haapi.LabelEntry{
+			"device_only": {LabelID: "device_only", Name: "Device Only"},
+		},
+		floorByID: map[string]haapi.FloorEntry{},
+		deviceByID: map[string]haapi.DeviceRegistryEntry{
+			"dev1": {ID: "dev1", Labels: []string{"device_only"}},
+		},
+	}
+
+	if got := rc.labelNames("sensor.inherited"); got != "" {
+		t.Errorf("labelNames(sensor.inherited) = %q, want empty (labels do not inherit from device)", got)
+	}
+}
+
+func TestFilterEntitiesByArea_DeviceFallback(t *testing.T) {
+	states := []entityState{
+		{EntityID: "sensor.inherited"},
+		{EntityID: "sensor.orphan"},
+	}
+	rc := registryContextForH8()
+
+	result := filterEntitiesByArea(states, rc, "kitchen")
+	if len(result) != 1 || result[0].EntityID != "sensor.inherited" {
+		t.Fatalf("filterEntitiesByArea(kitchen) = %+v, want just sensor.inherited", result)
+	}
+}
+
+// TestFindAreaNeighbors_UsesDeviceFallback is the site-3 unit regression:
+// findAreaNeighbors used to read ent.AreaID directly, so an entity whose area
+// only exists via its device could never be found as anyone's source, and
+// never listed as anyone's neighbor either.
+func TestFindAreaNeighbors_UsesDeviceFallback(t *testing.T) {
+	rc := &registryContext{
+		entityByID: map[string]haapi.EntityRegistryEntry{
+			"sensor.a": {EntityID: "sensor.a", DeviceID: "dev1"},
+			"sensor.b": {EntityID: "sensor.b", DeviceID: "dev1"},
+			// Different domain, same area: must NOT show up (domain-filtered).
+			"light.c": {EntityID: "light.c", DeviceID: "dev1"},
+			// Different device, different area: must NOT show up.
+			"sensor.d": {EntityID: "sensor.d", AreaID: "bedroom"},
+		},
+		areaByID: map[string]haapi.AreaEntry{
+			"kitchen": {AreaID: "kitchen", Name: "Kitchen"},
+			"bedroom": {AreaID: "bedroom", Name: "Bedroom"},
+		},
+		labelByID: map[string]haapi.LabelEntry{},
+		floorByID: map[string]haapi.FloorEntry{},
+		deviceByID: map[string]haapi.DeviceRegistryEntry{
+			"dev1": {ID: "dev1", AreaID: "kitchen"},
+		},
+	}
+
+	got := findAreaNeighbors(rc, "sensor.a")
+	if len(got) != 1 || got[0].entityID != "sensor.b" || got[0].relationship != "area-neighbor" {
+		t.Fatalf("findAreaNeighbors(sensor.a) = %+v, want exactly one area-neighbor row for sensor.b", got)
+	}
+}
+
+// TestFilterEntitiesByLabel_MatchesPerLabelNotJoinedString guards the
+// cross-label false-positive matchingLabelIDs replaced: the old filter
+// substring-matched an entity's *joined* "name1, name2" display string, so a
+// query straddling the ", " separator between two unrelated labels could
+// match. Here "y, z" is not a substring of any single label's id or name, so
+// it must match nothing even though it IS a substring of the joined display
+// "Energy, Zzz".
+func TestFilterEntitiesByLabel_MatchesPerLabelNotJoinedString(t *testing.T) {
+	states := []entityState{{EntityID: "sensor.multi"}}
+	rc := &registryContext{
+		entityByID: map[string]haapi.EntityRegistryEntry{
+			"sensor.multi": {EntityID: "sensor.multi", Labels: []string{"energy", "zzz"}},
+		},
+		areaByID: map[string]haapi.AreaEntry{},
+		labelByID: map[string]haapi.LabelEntry{
+			"energy": {LabelID: "energy", Name: "Energy"},
+			"zzz":    {LabelID: "zzz", Name: "Zzz"},
+		},
+		floorByID: map[string]haapi.FloorEntry{},
+	}
+
+	if got := filterEntitiesByLabel(states, rc, "y, z"); len(got) != 0 {
+		t.Errorf("filterEntitiesByLabel(%q) = %+v, want none (matches only the joined display string, not any real label)", "y, z", got)
+	}
+	// Sanity: a real substring of one label's name still matches.
+	if got := filterEntitiesByLabel(states, rc, "energ"); len(got) != 1 {
+		t.Errorf("filterEntitiesByLabel(energ) = %+v, want sensor.multi", got)
+	}
+}
+
+// TestLabelExistsInRegistry_AgreesWithFilter guards the other bug
+// matchingLabelIDs fixed: labelExistsInRegistry (the ent ls --label
+// existence pre-check) and filterEntitiesByLabel (the actual filter) used to
+// apply different match rules, so a query could pass the pre-check and then
+// match nothing (or fail the pre-check despite the filter being willing to
+// match). Both must now agree for the same query.
+func TestLabelExistsInRegistry_AgreesWithFilter(t *testing.T) {
+	states := []entityState{{EntityID: "sensor.power"}}
+	rc := &registryContext{
+		entityByID: map[string]haapi.EntityRegistryEntry{
+			"sensor.power": {EntityID: "sensor.power", Labels: []string{"energy_monitoring"}},
+		},
+		areaByID: map[string]haapi.AreaEntry{},
+		labelByID: map[string]haapi.LabelEntry{
+			"energy_monitoring": {LabelID: "energy_monitoring", Name: "Energy Monitoring"},
+		},
+		floorByID: map[string]haapi.FloorEntry{},
+	}
+
+	exists := labelExistsInRegistry(rc, "energy")
+	matched := filterEntitiesByLabel(states, rc, "energy")
+	if exists != (len(matched) > 0) {
+		t.Errorf("labelExistsInRegistry(energy) = %v but filterEntitiesByLabel(energy) matched %d entities; they must agree",
+			exists, len(matched))
+	}
+}
+
 func TestParseStateTimeline_Empty(t *testing.T) {
 	data := []byte(`[]`)
 	now := time.Now()
@@ -818,5 +1002,178 @@ func TestRunEntShow_NotRestored_NoGhostLine(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "restored:") {
 		t.Errorf("live entity must not print a 'restored:' line:\n%s", buf.String())
+	}
+}
+
+// TestRunEntShow_JSON_IncludesTableFields covers the --json completeness gap:
+// the human path (above) computes name/unit/area/labels/changed_by, but --json
+// used to encode only the raw state struct and omit all of them.
+func TestRunEntShow_JSON_IncludesTableFields(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "light.kitchen", "area_id": "kitchen", "labels": []string{"lighting"}},
+		},
+		"config/area_registry/list": []map[string]any{
+			{"area_id": "kitchen", "name": "Kitchen"},
+		},
+		"config/label_registry/list": []map[string]any{
+			{"label_id": "lighting", "name": "Lighting"},
+		},
+		"config/floor_registry/list": []any{},
+		"config/auth/list":           []map[string]any{{"id": janUUID, "name": "Jan"}},
+	}, map[string]http.HandlerFunc{
+		"/api/states/light.kitchen": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(stateJSON(janUUID)))
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow --json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	for _, field := range []string{"entity_id", "state", "name", "area", "labels", "changed_by"} {
+		if _, ok := got[field]; !ok {
+			t.Errorf("ent show --json missing field %q; got %v", field, got)
+		}
+	}
+	if got["area"] != "Kitchen" {
+		t.Errorf("area = %v, want Kitchen", got["area"])
+	}
+	if got["labels"] != "Lighting" {
+		t.Errorf("labels = %v, want Lighting", got["labels"])
+	}
+	if got["name"] != "Kitchen Light" {
+		t.Errorf("name = %v, want 'Kitchen Light'", got["name"])
+	}
+	if got["changed_by"] != "User Jan" {
+		t.Errorf("changed_by = %v, want 'User Jan'", got["changed_by"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// --json must never carry a human header line before the JSON body.
+// ---------------------------------------------------------------------------
+
+func TestRunEntHist_JSON_NoHeaderLine(t *testing.T) {
+	histData := `[[
+		{"entity_id":"sensor.temp","state":"21.5","last_changed":"2026-01-01T10:00:00+00:00"},
+		{"entity_id":"sensor.temp","state":"22.5","last_changed":"2026-01-01T11:00:00+00:00"}
+	]]`
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/history/period/": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, histData)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldSince, oldJSON := flagSince, flagJSON
+	flagSince = "24h"
+	flagJSON = true
+	defer func() { flagSince, flagJSON = oldSince, oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runEntHist(context.Background(), &buf, "sensor.temp"); err != nil {
+		t.Fatalf("runEntHist --json: %v", err)
+	}
+	out := buf.String()
+	if strings.HasPrefix(strings.TrimSpace(out), "sensor.temp:") {
+		t.Errorf("ent hist --json printed a human header before the JSON body:\n%s", out)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("ent hist --json output not valid JSON: %v\n%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one history row")
+	}
+}
+
+// TestRunEntAnomalies_JSON_NoHeaderLine forces the state-duration ("stuck")
+// path (a non-numeric entity, changed years ago) so len(anomalies) > 0 and the
+// header-printing branch actually runs.
+func TestRunEntAnomalies_JSON_NoHeaderLine(t *testing.T) {
+	histData := `[[
+		{"entity_id":"binary_sensor.stuck","state":"on","last_changed":"2020-01-01T00:00:00+00:00"}
+	]]`
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/history/period/": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, histData)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldSince, oldJSON := flagSince, flagJSON
+	flagSince = "3000d" // comfortably covers since 2020
+	flagJSON = true
+	defer func() { flagSince, flagJSON = oldSince, oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runEntAnomalies(context.Background(), &buf, "binary_sensor.stuck"); err != nil {
+		t.Fatalf("runEntAnomalies --json: %v", err)
+	}
+	out := buf.String()
+	if strings.HasPrefix(strings.TrimSpace(out), "binary_sensor.stuck:") {
+		t.Errorf("ent anomalies --json printed a human header before the JSON body:\n%s", out)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("ent anomalies --json output not valid JSON: %v\n%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one anomaly row (entity stuck since 2020)")
+	}
+}
+
+// TestRunEntRelated_JSON_NoHeaderLine forces a non-empty result via device
+// siblings so the header-printing branch (known && len(related) > 0) runs.
+func TestRunEntRelated_JSON_NoHeaderLine(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.a", "state": "1", "last_changed": "2026-01-01T10:00:00Z"},
+		{"entity_id": "sensor.b", "state": "2", "last_changed": "2026-01-01T10:00:00Z"},
+	}
+	statesJSON, _ := json.Marshal(states)
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.a", "device_id": "dev1"},
+			{"entity_id": "sensor.b", "device_id": "dev1"},
+		},
+		"config/area_registry/list":  []any{},
+		"config/label_registry/list": []any{},
+		"config/floor_registry/list": []any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runEntRelated(context.Background(), &buf, "sensor.a"); err != nil {
+		t.Fatalf("runEntRelated --json: %v", err)
+	}
+	out := buf.String()
+	if strings.HasPrefix(strings.TrimSpace(out), "sensor.a:") {
+		t.Errorf("ent related --json printed a human header before the JSON body:\n%s", out)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("ent related --json output not valid JSON: %v\n%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one related row (sensor.b is a device sibling)")
 	}
 }

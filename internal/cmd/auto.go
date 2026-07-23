@@ -329,8 +329,10 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 	// fall back to the old bare-prefix guess so a genuinely unknown
 	// reference still 404s usefully instead of silently swallowing the typo.
 	entityID := autoID
-	if resolved, ok := resolveAutomationEntityID(ctx, client, autoID); ok {
-		entityID = resolved
+	var resolvedAuto automationEntity
+	if a, ok := resolveAutomation(ctx, client, autoID); ok {
+		resolvedAuto = a
+		entityID = a.EntityID
 	} else if !strings.HasPrefix(entityID, "automation.") {
 		entityID = "automation." + autoID
 	}
@@ -344,27 +346,53 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 		return fmt.Errorf("parsing automation state: %w", err)
 	}
 
-	// Summary line
-	_, _ = fmt.Fprintf(w, "%s  state=%s  mode=%s  last_triggered=%s\n",
-		ent.EntityID, ent.State,
-		ent.Attributes.Mode,
-		formatShortTime(ent.Attributes.LastTriggered))
-	if ent.Attributes.Restored {
-		// #54: ghost entry — registry state with no live config; nothing to repair.
-		_, _ = fmt.Fprintln(w, "restored=true (ghost: no live config — deleted or re-authored under a new id; nothing to repair)")
+	// H-10: --json is a machine contract. Build the result up front and emit it
+	// as one document at the end, so a partially-rendered failure can never
+	// leave half-written text on stdout ahead of the JSON.
+	res := autoShowResult{
+		EntityID:      ent.EntityID,
+		ConfigID:      ent.Attributes.ID,
+		State:         ent.State,
+		Mode:          ent.Attributes.Mode,
+		LastTriggered: ent.Attributes.LastTriggered,
+		Restored:      ent.Attributes.Restored,
+	}
+
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s  state=%s  mode=%s  last_triggered=%s\n",
+			ent.EntityID, ent.State,
+			ent.Attributes.Mode,
+			formatShortTime(ent.Attributes.LastTriggered))
+		if ent.Attributes.Restored {
+			// #54: ghost entry — registry state with no live config; nothing to repair.
+			_, _ = fmt.Fprintln(w, "restored=true (ghost: no live config — deleted or re-authored under a new id; nothing to repair)")
+		}
 	}
 
 	// Fetch traces
 	traces, wsErr := fetchTraceList(ctx, cfg)
 	if wsErr != nil {
+		if flagJSON {
+			res.TracesError = wsErr.Error()
+			return writeAutoJSON(w, res)
+		}
 		_, _ = fmt.Fprintf(w, "traces: unavailable (%v)\n", wsErr)
 		return nil
 	}
 
-	key := entityID
-	autoTraces := traces[key]
+	// H-9: traces are keyed by config id, not entity_id. When the reference did
+	// not resolve to a live automation we have no config id to use, so fall
+	// back to the entity address rather than guessing.
+	if resolvedAuto.EntityID == "" {
+		resolvedAuto = automationEntity{EntityID: entityID}
+	}
+	autoTraces := traces[automationTraceKey(resolvedAuto)]
 
 	if len(autoTraces) == 0 {
+		if flagJSON {
+			res.Traces = []autoShowTrace{}
+			return writeAutoJSON(w, res)
+		}
 		_, _ = fmt.Fprintln(w, "traces: none")
 		return nil
 	}
@@ -380,12 +408,11 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 	limit := min(5, len(autoTraces))
 	recent := autoTraces[:limit]
 
-	_, _ = fmt.Fprintf(w, "traces (last %d):\n", limit)
-
 	tbl := &format.Table{
 		Headers: []string{"id", "time", "result", "last_step"},
 		Rows:    make([][]string, len(recent)),
 	}
+	res.Traces = make([]autoShowTrace, len(recent))
 	for i, tr := range recent {
 		traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
 		shortID := reg.GetOrCreate("trc", traceKey)
@@ -396,13 +423,59 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 			traceResult(tr),
 			tr.LastStep,
 		}
+		res.Traces[i] = autoShowTrace{
+			ID:       shortID,
+			RunID:    tr.RunID,
+			ItemID:   tr.ItemID,
+			Started:  tr.Timestamp.Start,
+			Result:   traceResult(tr),
+			LastStep: tr.LastStep,
+			Error:    tr.Error,
+		}
 	}
 
 	if saveErr := reg.Save(); saveErr != nil {
 		slog.Warn("could not save ids registry", "error", saveErr)
 	}
 
+	if flagJSON {
+		return writeAutoJSON(w, res)
+	}
+	_, _ = fmt.Fprintf(w, "traces (last %d):\n", limit)
 	return tbl.Render(w, format.RenderOpts{Full: true})
+}
+
+// autoShowResult is the --json shape of `auto show` (invariant H-10).
+// ConfigID is carried explicitly because it is the identifier HA keys traces
+// by (H-9) and it is otherwise invisible to a caller reading `auto ls`.
+type autoShowResult struct {
+	EntityID      string          `json:"entity_id"`
+	ConfigID      string          `json:"config_id"`
+	State         string          `json:"state"`
+	Mode          string          `json:"mode"`
+	LastTriggered string          `json:"last_triggered"`
+	Restored      bool            `json:"restored"`
+	Traces        []autoShowTrace `json:"traces"`
+	TracesError   string          `json:"traces_error,omitempty"`
+}
+
+type autoShowTrace struct {
+	ID       string `json:"id"`
+	RunID    string `json:"run_id"`
+	ItemID   string `json:"item_id"`
+	Started  string `json:"started"`
+	Result   string `json:"result"`
+	LastStep string `json:"last_step"`
+	Error    string `json:"error,omitempty"`
+}
+
+func writeAutoJSON(w io.Writer, res autoShowResult) error {
+	if res.Traces == nil {
+		res.Traces = []autoShowTrace{}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(res)
 }
 
 func fetchAutomations(ctx context.Context, client *haapi.Client) ([]automationEntity, error) {
@@ -488,9 +561,15 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 			restored: a.Attributes.Restored,
 		}
 
-		key := a.EntityID
+		// Two different keys, deliberately. HA keys TRACES by the automation's
+		// config id (invariant H-9) but keys the LOGBOOK by entity_id. Using
+		// entity_id for both silently zeroed errors/last_err for every
+		// automation whose config id differs from its object_id — which is the
+		// default for anything authored in HA's UI, where the config id is a
+		// millisecond timestamp and the entity_id comes from the alias.
 		traceRunsInWindow := 0
-		if ts, ok := traces[key]; ok {
+		var latestErr time.Time
+		if ts, ok := traces[automationTraceKey(a)]; ok {
 			row.traces = ts
 			for _, tr := range ts {
 				t, err := time.Parse(time.RFC3339Nano, tr.Timestamp.Start)
@@ -501,7 +580,11 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 					traceRunsInWindow++
 					if isTraceError(tr) {
 						row.errors++
-						if row.lastErr == "" {
+						// "last" means most recent. HA does not guarantee
+						// trace order, so compare timestamps rather than
+						// keeping whichever arrived first.
+						if row.lastErr == "" || t.After(latestErr) {
+							latestErr = t
 							row.lastErr = formatShortTime(tr.Timestamp.Start) + " " + shortenStep(tr.LastStep)
 						}
 					}
@@ -509,7 +592,7 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 			}
 		}
 
-		if n, ok := fires[key]; ok {
+		if n, ok := fires[a.EntityID]; ok {
 			row.runs = n
 		} else {
 			row.runs = traceRunsInWindow
@@ -901,6 +984,24 @@ func resolveAutomationEntityID(ctx context.Context, client *haapi.Client, ref st
 		return "", false
 	}
 	return a.EntityID, true
+}
+
+// automationTraceKey returns the key HA files this automation's traces under.
+//
+// INVARIANT H-9: traces are keyed by the automation's CONFIG id (`id:` in
+// automations.yaml, surfaced as attributes.id on the entity), never by the
+// entity_id — HA derives entity_id from the alias, so the two are independent
+// strings. `haapi.TraceListResult` is keyed "<domain>.<item_id>" straight from
+// HA's own trace/list response, so the key must be built from the config id.
+//
+// Falls back to the entity_id when the config id is unavailable: YAML
+// automations without an `id:` are addressed by object id, and that is exactly
+// what HA reports as item_id for them.
+func automationTraceKey(a automationEntity) string {
+	if a.Attributes.ID != "" {
+		return "automation." + a.Attributes.ID
+	}
+	return a.EntityID
 }
 
 func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {

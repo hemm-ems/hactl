@@ -241,6 +241,47 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	})
 }
 
+// writeEntShowJSON emits `ent show --json`.
+//
+// INVARIANT H-10: the JSON carries the same information the human table
+// computes — name, unit, area, labels, changed_by — not merely the raw state
+// struct. A --json consumer that had to re-derive area or attribution from
+// `attributes` would be reimplementing device-area inheritance (H-8) itself.
+func writeEntShowJSON(
+	w io.Writer,
+	entityID string,
+	ent entityState,
+	rc *registryContext,
+	users map[string]haapi.UserEntry,
+) error {
+	result := map[string]any{
+		"entity_id":    ent.EntityID,
+		"state":        ent.State,
+		"attributes":   ent.Attributes,
+		"last_changed": ent.LastChanged,
+		"last_updated": ent.LastUpdated,
+		"context":      ent.Context,
+		"changed_by":   triggerLabel(logbookEntry{ContextUserID: ent.Context.UserID}, users),
+	}
+	if friendly, ok := ent.Attributes["friendly_name"]; ok {
+		result["name"] = friendly
+	}
+	if unit, ok := ent.Attributes["unit_of_measurement"]; ok {
+		result["unit"] = unit
+	}
+	if rc != nil {
+		if areaName := rc.areaName(entityID); areaName != "" {
+			result["area"] = areaName
+		}
+		if labelNames := rc.labelNames(entityID); labelNames != "" {
+			result["labels"] = labelNames
+		}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
+}
+
 func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
@@ -269,9 +310,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	if flagJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(ent)
+		return writeEntShowJSON(w, entityID, ent, rc, users)
 	}
 
 	_, _ = fmt.Fprintf(w, "entity:       %s\n", ent.EntityID)
@@ -501,7 +540,9 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
+	}
 
 	tbl := &format.Table{
 		Headers: []string{"id", "type", "time", "detail"},
@@ -703,7 +744,9 @@ func parseStateTimeline(data []byte, now time.Time) ([]analyze.StateChange, erro
 }
 
 func renderStateTimeline(w io.Writer, entityID string, changes []analyze.StateChange) error {
-	_, _ = fmt.Fprintf(w, "%s: %d state changes\n", entityID, len(changes))
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s: %d state changes\n", entityID, len(changes))
+	}
 
 	tbl := &format.Table{
 		Headers: []string{"time", "state", "duration"},
@@ -749,7 +792,9 @@ func renderStateAnomalies(w io.Writer, entityID, instanceDir string, changes []a
 		return emitEmptyList(w, entityID+": no anomalies detected")
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s: %d anomalies\n", entityID, len(anomalies))
+	}
 
 	tbl := &format.Table{
 		Headers: []string{"id", "type", "time", "detail"},
@@ -811,7 +856,9 @@ func cachePoints(ctx context.Context, instanceDir, entityID string, points []ana
 }
 
 func renderHistoryPoints(w io.Writer, entityID string, points []analyze.DataPoint) error {
-	_, _ = fmt.Fprintf(w, "%s: %d points\n", entityID, len(points))
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s: %d points\n", entityID, len(points))
+	}
 
 	tbl := &format.Table{
 		Headers: []string{"time", "value"},
@@ -971,24 +1018,32 @@ func domainNotFoundHint(domain string) string {
 	return fmt.Sprintf("no entities in domain %q — verify the domain exists (e.g. sensor, light, input_boolean) before reporting a negative result", domain)
 }
 
-// labelExistsInRegistry returns true if the given label name or ID exists in the registry.
+// labelExistsInRegistry returns true if the given label value matches (by
+// substring on id or name) at least one registered label.
 func labelExistsInRegistry(rc *registryContext, label string) bool {
-	lower := strings.ToLower(label)
-	for _, l := range rc.labelByID {
-		if strings.ToLower(l.LabelID) == lower || strings.ToLower(l.Name) == lower {
-			return true
-		}
-	}
-	return false
+	return len(matchingLabelIDs(rc.labelByID, label)) > 0
 }
 
+// filterEntitiesByLabel keeps entities carrying any label matched by
+// matchingLabelIDs — see its doc comment for the substring rule and the two
+// bugs (pre-check/filter disagreement, cross-label joined-string false
+// positives) this replaced.
 func filterEntitiesByLabel(states []entityState, rc *registryContext, label string) []entityState {
-	labelLower := strings.ToLower(label)
+	matchIDs := matchingLabelIDs(rc.labelByID, label)
+	if len(matchIDs) == 0 {
+		return nil
+	}
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
-		names := strings.ToLower(rc.labelNames(s.EntityID))
-		if names != "" && strings.Contains(names, labelLower) {
-			result = append(result, s)
+		ent, ok := rc.entityByID[s.EntityID]
+		if !ok {
+			continue
+		}
+		for _, lid := range ent.Labels {
+			if matchIDs[lid] {
+				result = append(result, s)
+				break
+			}
 		}
 	}
 	return result
@@ -1239,10 +1294,12 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 		return nil
 	}
 
-	if known {
-		_, _ = fmt.Fprintf(w, "%s: %d related entities\n", entityID, len(related))
-	} else {
-		_, _ = fmt.Fprintf(w, "%s: not in the registry (stale/renamed or deleted); %d dangling reference(s) still point here\n", entityID, len(related))
+	if !flagJSON {
+		if known {
+			_, _ = fmt.Fprintf(w, "%s: %d related entities\n", entityID, len(related))
+		} else {
+			_, _ = fmt.Fprintf(w, "%s: not in the registry (stale/renamed or deleted); %d dangling reference(s) still point here\n", entityID, len(related))
+		}
 	}
 
 	tbl := &format.Table{
@@ -1325,7 +1382,9 @@ func renderStaleRefs(w io.Writer, entityID string, refs []companion.StaleRef) er
 	if len(refs) == 0 {
 		return emitEmptyList(w, entityID+": no stale references found (entity fully cleaned up or config unavailable)")
 	}
-	_, _ = fmt.Fprintf(w, "%s: stale (renamed/deleted); %d config reference(s):\n", entityID, len(refs))
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "%s: stale (renamed/deleted); %d config reference(s):\n", entityID, len(refs))
+	}
 	tbl := &format.Table{
 		Headers: []string{"location", "path", "matched_value"},
 		Rows:    make([][]string, len(refs)),
@@ -1383,16 +1442,26 @@ func findDeviceSiblings(rc *registryContext, entityID string) []relatedEntry {
 	return result
 }
 
+// findAreaNeighbors lists other same-domain entities in entityID's EFFECTIVE
+// area (rc.effectiveAreaID — entity's own area, else its device's, per H-8).
+// Reading ent.AreaID/e.AreaID directly here would miss every entity whose
+// area only exists via its device, which is the common case.
 func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
-	ent, ok := rc.entityByID[entityID]
-	if !ok || ent.AreaID == "" {
+	if _, ok := rc.entityByID[entityID]; !ok {
+		return nil
+	}
+	areaID := rc.effectiveAreaID(entityID)
+	if areaID == "" {
 		return nil
 	}
 	targetDomain := parseEntityDomain(entityID)
-	areaName := rc.areaByID[ent.AreaID].Name
+	areaName := rc.areaByID[areaID].Name
 	var result []relatedEntry
 	for _, e := range rc.entityByID {
-		if e.EntityID != entityID && e.AreaID == ent.AreaID && parseEntityDomain(e.EntityID) == targetDomain {
+		if e.EntityID == entityID {
+			continue
+		}
+		if rc.effectiveAreaID(e.EntityID) == areaID && parseEntityDomain(e.EntityID) == targetDomain {
 			result = append(result, relatedEntry{
 				entityID:     e.EntityID,
 				relationship: "area-neighbor",

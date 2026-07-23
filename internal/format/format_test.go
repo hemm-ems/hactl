@@ -152,6 +152,11 @@ func TestRenderJSON(t *testing.T) {
 	}
 }
 
+// TestRenderJSON_TopN was inverted for defect A (see INVARIANTS.md H-10):
+// it used to assert that --top=2 truncated a 3-row JSON array down to 2
+// elements, i.e. it asserted the silent-truncation bug as correct behavior.
+// --json must never be truncated by --top, so the expectation is now the
+// opposite: all 3 rows come back regardless of Top.
 func TestRenderJSON_TopN(t *testing.T) {
 	tbl := &Table{
 		Headers: []string{"name"},
@@ -168,8 +173,11 @@ func TestRenderJSON_TopN(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	if len(result) != 2 {
-		t.Fatalf("expected 2 items (top=2), got %d", len(result))
+	// --top must never truncate --json output (defect A): a machine caller
+	// reading --json has no signal that anything was cut, unlike text mode's
+	// "…+N more" line.
+	if len(result) != 3 {
+		t.Fatalf("expected all 3 items (--top must not truncate --json), got %d", len(result))
 	}
 }
 
