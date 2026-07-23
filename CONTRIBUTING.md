@@ -51,7 +51,10 @@ agent wrote the diff; I care that it's correct, tested, and reviewable.
 Before you open a PR:
 
 - [ ] It's linked to an issue, or the description explains the change and why.
-- [ ] `make test-int` passes (Docker must be running first — see [AGENTS.md](AGENTS.md)).
+- [ ] `make gates` passes — lint + unit + **all three Docker tiers**
+      (integration, companion, discovery). Docker must be running first; see
+      [AGENTS.md](AGENTS.md). `make test` alone is never acceptance.
+- [ ] `make hooks` installed, so the gates run on every push.
 - [ ] `golangci-lint run` is clean.
 - [ ] Docs (`docs/manual.md`, README) updated if behavior changed.
 

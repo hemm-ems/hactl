@@ -9,7 +9,15 @@ Norms for everyone working on hactl — human or model.
 
 **To run all tests, load the `run-tests` skill.** It contains the exact commands and prerequisites. Do not guess.
 
-The only correct command for a full test run is `make test-int`. Docker must be running first.
+The only correct command for a full test run is **`make gates`**. It runs lint,
+the unit tier, and all three Docker tiers (integration, companion, discovery).
+Docker must be running first; `make gates` refuses to start without it rather
+than silently narrowing what was verified.
+
+`make test` is the unit tier alone. It starts no Home Assistant and is never
+acceptance — hactl's job is to report what a real HA contains, and the unit
+tier cannot see a wrong lookup key or a missing registry fallback. Install the
+pre-push hook with `make hooks` so this is enforced rather than remembered.
 
 After unit tests are updated, run linter, fix, and test again.
 
