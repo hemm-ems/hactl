@@ -102,6 +102,18 @@ func runTraceShow(ctx context.Context, w io.Writer, traceID string) error {
 
 	condensed := analyze.Condense(&raw)
 
+	// analyze.Condense records the identity HA reported, which for an
+	// automation is "<domain>.<config id>". That string is correct as a record
+	// of the trace but is NOT an address: feeding it to `ent show` or
+	// `auto show` fails, because every other command speaks entity_id. A
+	// command must not display an identifier it cannot itself consume, so
+	// translate to the entity_id for display when one exists.
+	if domain == "automation" {
+		if entityID, ok := automationEntityIDFor(ctx, cfg, itemID); ok {
+			condensed.AutoID = entityID
+		}
+	}
+
 	// H-10: `--json` on the condensed view emits the same steps the text view
 	// renders, structured. `--full` keeps its documented meaning of dumping
 	// HA's raw trace verbatim, so `--full` wins when both are given.
@@ -147,6 +159,17 @@ func automationConfigIDFor(ctx context.Context, cfg *config.Config, ref string) 
 		return ref, false
 	}
 	return a.Attributes.ID, true
+}
+
+// automationEntityIDFor is automationConfigIDFor's inverse: it maps the config
+// id HA files traces under back to the entity_id every other command speaks.
+func automationEntityIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool) {
+	client := haapi.New(cfg.URL, cfg.Token)
+	a, ok := resolveAutomation(ctx, client, ref)
+	if !ok || a.EntityID == "" {
+		return ref, false
+	}
+	return a.EntityID, true
 }
 
 func parseTraceKey(key string) (string, string, string, error) {

@@ -157,6 +157,57 @@ func TestRunChanges_JSON_PreservesContextFields(t *testing.T) {
 	}
 }
 
+// TestRunChanges_JSON_CarriesWhoLabel pins invariant H-10 for `changes`.
+//
+// The raw context_* fields alone are NOT enough: HA propagates the originating
+// user id down the causal chain, so an automation-caused event carries both a
+// context_user_id and context_event_type. A --json consumer handed only the raw
+// fields has to reimplement that precedence rule (H-11) to get the same answer
+// the table prints, and would most likely reimplement it the way hactl itself
+// had it wrong. So the computed label ships in the JSON.
+func TestRunChanges_JSON_CarriesWhoLabel(t *testing.T) {
+	body := `[
+		{"when":"2026-05-21T10:00:00+00:00","name":"Kitchen Light","state":"on","entity_id":"light.kitchen","domain":"light","context_user_id":"` + janUUID + `"},
+		{"when":"2026-05-21T10:01:00+00:00","name":"Kitchen Light","state":"off","entity_id":"light.kitchen","domain":"light","context_user_id":"` + janUUID + `","context_event_type":"automation_triggered","context_name":"Sunset Lights"},
+		{"when":"2026-05-21T10:02:00+00:00","name":"Temperature","state":"21.5","entity_id":"sensor.temp","domain":"sensor"}
+	]`
+	ts := changesFixture(t, []map[string]any{{"id": janUUID, "name": "Jan"}}, body)
+	withFlagDir(t, ts.dir)
+
+	oldSince, oldJSON := flagSince, flagJSON
+	flagSince, flagJSON = "24h", true
+	defer func() { flagSince, flagJSON = oldSince, oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runChanges(context.Background(), &buf); err != nil {
+		t.Fatalf("runChanges JSON: %v", err)
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rows); err != nil {
+		t.Fatalf("changes --json did not parse: %v\noutput:\n%s", err, buf.String())
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+
+	want := []string{"User Jan", "Automation: Sunset Lights", "Home Assistant"}
+	for i, w := range want {
+		got, ok := rows[i]["who"].(string)
+		if !ok {
+			t.Fatalf("row %d has no `who` field; JSON must carry the label the table computes.\nrow: %v", i, rows[i])
+		}
+		if got != w {
+			t.Errorf("row %d who = %q, want %q", i, got, w)
+		}
+	}
+	// Row 2 is the discriminating case: both a propagated user id AND an
+	// automation event type are present, and the automation must win.
+	if rows[1]["context_user_id"] != janUUID {
+		t.Errorf("row 1 lost its raw context_user_id; the raw fields must survive alongside `who`")
+	}
+}
+
 func TestLogbookEntry_DecodesSystemChange(t *testing.T) {
 	// A state change without any context augmentation — typical for
 	// integrations pushing state updates with no user attribution.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -75,7 +76,7 @@ var tplCmd = &cobra.Command{
 	Use:        "tpl",
 	SuggestFor: []string{"template", "templates"},
 	Short:      "Manage templates (eval, create, delete)",
-	Long:  "Evaluate Jinja2 templates and manage template sensor definitions.",
+	Long:       "Evaluate Jinja2 templates and manage template sensor definitions.",
 }
 
 var tplEvalCmd = &cobra.Command{
@@ -180,6 +181,21 @@ func runTplEval(ctx context.Context, w io.Writer, args []string) error {
 	result, err := client.RenderTemplate(ctx, tpl)
 	if err != nil {
 		return fmt.Errorf("rendering template: %w", err)
+	}
+
+	// H-10: HA renders a template to a STRING, and for non-scalars that string
+	// is Python's repr — `['a', 'b']`, `None`, `True`. Echoing it under --json
+	// produced output that was not JSON at all. hactl cannot faithfully reparse
+	// Python repr (`'` vs `"`, None/True, tuples), and guessing would silently
+	// corrupt values, so the rendered text is returned verbatim inside a JSON
+	// envelope: always parseable, never lossy.
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(struct {
+			Template string `json:"template"`
+			Result   string `json:"result"`
+		}{Template: tpl, Result: strings.TrimRight(result, "\n")})
 	}
 
 	_, _ = fmt.Fprintln(w, result)

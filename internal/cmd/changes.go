@@ -81,23 +81,40 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return nil
 	}
 
-	// JSON mode emits the raw entries (including all context_* fields) so
-	// LLM consumers get the full structured data, not just the table cells.
-	// entries is a non-nil (possibly empty) slice here, so this always
-	// produces valid JSON — "[]" when there are no changes.
-	if flagJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(entries)
-	}
-
-	// Pull users once for changed_by attribution. Graceful-degrades to UUIDs
-	// when the LL token isn't admin.
+	// Pull users once for `who` attribution. Graceful-degrades to UUIDs when
+	// the LL token isn't admin. Needed by BOTH output modes: JSON must carry
+	// the same computed label the table shows (H-10), not just the raw inputs.
 	var users map[string]haapi.UserEntry
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		users = loadUsers(ctx, ws)
 		_ = ws.Close()
+	}
+
+	// JSON mode emits the raw entries (including all context_* fields) so
+	// consumers get the full structured data, plus the resolved `who` label.
+	//
+	// H-10: a --json consumer must not have to re-derive what the table already
+	// computed. Attribution is not a plain field read — HA propagates the
+	// originating user id down the causal chain, so choosing the right label
+	// means preferring context_event_type over context_user_id (H-11). Leaving
+	// that to the caller means every caller reimplements it, and most would
+	// reimplement it the way hactl itself had it wrong.
+	// entries is a non-nil (possibly empty) slice here, so this always
+	// produces valid JSON — "[]" when there are no changes.
+	if flagJSON {
+		type changeEntryJSON struct {
+			logbookEntry
+
+			Who string `json:"who"`
+		}
+		out := make([]changeEntryJSON, len(entries))
+		for i, e := range entries {
+			out[i] = changeEntryJSON{logbookEntry: e, Who: triggerLabel(e, users)}
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
 	}
 
 	tbl := &format.Table{
