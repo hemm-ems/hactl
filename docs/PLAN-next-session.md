@@ -33,10 +33,14 @@ an assertion that looked right was wrong about `shortenStep`, and only the red
 run revealed the code was correct and the expectation was not.
 
 **4. Mutation-check every fix.** After green, deliberately break the fix and
-confirm the test fails *for the stated reason*. Do this by copying the file
-aside (`cp x.go /tmp/x.go.bak`), editing, testing, restoring.
-**Never use `git checkout <file>` to restore** — it reverts to HEAD and silently
-destroys uncommitted work. That happened twice last session.
+confirm the test fails *for the stated reason*. Copy the file aside first
+(`cp x.go /tmp/x.go.bak`), break it, test, then restore from that copy.
+
+**Never use `git checkout -- <file>` as a restore.** It reverts to whatever the
+index holds, which silently destroys uncommitted work — and after a
+`git reset --soft` the index still contains the break, so checkout reinstates
+it. This cost time twice in the previous session and once while writing this
+plan. Restore from your own copy, then verify with a test.
 
 **5. Expect tests that assert the bug.** Three did last time, one literally named
 *"user_id wins over event_type/name (rule order)"*. When you invert an
@@ -59,7 +63,10 @@ HA rather than accept them.
 - [ ] Merge `fix/read-surface-oracle-2026-07-23`.
 - [ ] Point branch protection at the **`All Gates Green`** check. Until then the
       aggregator runs but does not block, and a skipped Docker tier still merges.
-- [ ] `make hooks` on every dev machine.
+- [ ] `make hooks` on every dev machine, then **`make hooks-check`** to prove it.
+      Installing is not the same as running: a global `core.hooksPath` silently
+      overrides `.git/hooks`, so a copied hook can look installed and never
+      execute. `make hooks` now sets a repo-local `core.hooksPath`; verify it.
 
 ---
 

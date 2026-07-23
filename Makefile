@@ -13,7 +13,7 @@ COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
 .PHONY: build lint test test-int test-companion test-int-discovery test-matrix \
-        gates require-docker hooks clean sync-spec check-spec-drift
+        gates require-docker hooks hooks-check clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -66,11 +66,37 @@ require-docker:
 	@echo "docker: ok"
 
 # Install the repo's git hooks (pre-push runs the full gates).
+#
+# This points core.hooksPath at the tracked dev/hooks directory FOR THIS REPO
+# ONLY, rather than copying into .git/hooks. Copying is not reliable: a global
+# `core.hooksPath` (increasingly common, and set on at least one machine here)
+# overrides .git/hooks completely, so the copied hook is never executed and
+# enforcement silently does nothing — which is worse than no hook at all,
+# because it looks installed.
 hooks:
 	@git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git repo"; exit 1; }
-	@install -m 0755 dev/hooks/pre-push "$$(git rev-parse --git-dir)/hooks/pre-push"
-	@echo "installed pre-push hook -> $$(git rev-parse --git-dir)/hooks/pre-push"
-	@echo "bypass for a work-in-progress branch with: git push --no-verify"
+	@prev="$$(git config --global --get core.hooksPath || true)"; \
+	if [ -n "$$prev" ]; then \
+	  echo "note: a global core.hooksPath is set ($$prev)."; \
+	  echo "      Overriding it for THIS repo only; your other repos are untouched."; \
+	fi
+	@git config --local core.hooksPath dev/hooks
+	@chmod +x dev/hooks/*
+	@echo "hooks active: $$(git rev-parse --show-toplevel)/dev/hooks (repo-local core.hooksPath)"
+	@echo "verify with:  make hooks-check"
+	@echo "bypass once:  git push --no-verify"
+
+# Prove the hook is actually wired up. `make hooks` used to copy into .git/hooks,
+# which a global core.hooksPath silently overrode — so "installed" was not the
+# same as "runs". Never trust the install; check it.
+hooks-check:
+	@path="$$(git config --get core.hooksPath || echo "$$(git rev-parse --git-dir)/hooks")"; \
+	echo "git will run hooks from: $$path"; \
+	if [ -x "$$path/pre-push" ]; then \
+	  echo "pre-push: present and executable — gates will run on push"; \
+	else \
+	  echo "pre-push: MISSING at $$path/pre-push — run 'make hooks'"; exit 1; \
+	fi
 
 test-int:
 	go test ./... -tags=integration -count=1 -timeout 300s
