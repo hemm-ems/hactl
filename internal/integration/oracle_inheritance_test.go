@@ -339,3 +339,71 @@ func TestEntRelatedJSONParsesStrictly(t *testing.T) {
 		t.Fatal("precondition: expected at least one related row (device siblings alone should produce several)")
 	}
 }
+
+// oracleAreaPeers is oracleDomainAreaPeers without the domain filter: every
+// OTHER registry entity whose HA-computed effective area equals sourceID's.
+// This is what "area neighbors" means in HA's own vocabulary — area_entities()
+// has no notion of a domain — and therefore what `ent related` must reproduce.
+func oracleAreaPeers(t *testing.T, inst *hatest.Instance, sourceID string) []string {
+	t.Helper()
+	ws := oracleWS(t, inst)
+	entries, err := ws.EntityRegistryList(context.Background())
+	if err != nil {
+		t.Fatalf("entity registry list: %v", err)
+	}
+	sourceArea := oracleEntityArea(t, inst, sourceID)
+	if sourceArea == "" {
+		return nil
+	}
+	var peers []string
+	for _, e := range entries {
+		if e.EntityID == sourceID {
+			continue
+		}
+		if oracleEntityArea(t, inst, e.EntityID) == sourceArea {
+			peers = append(peers, e.EntityID)
+		}
+	}
+	sort.Strings(peers)
+	return peers
+}
+
+// TestEntRelatedAreaNeighborsAreNotDomainScoped (R1).
+//
+// `ent related` promised "area neighbors" and delivered same-area-AND-same-
+// domain ones: a light in the same room as a sensor was silently absent, so
+// the answer was narrower than both `ent ls --area` and HA's own
+// area_entities() — for a command whose whole purpose is finding what else is
+// involved before a change or a delete. The filter was invisible in the
+// output: there is no "same domain" column, and the manual qualifies nothing.
+func TestEntRelatedAreaNeighborsAreNotDomainScoped(t *testing.T) {
+	inst, rig := getOracleHA(t)
+	source := rig.InheritedEntityIDs[0]
+
+	want := oracleAreaPeers(t, inst, source)
+	if len(want) == 0 {
+		t.Fatalf("precondition: HA reports no area peers for %s; rig %+v cannot exercise this", source, rig)
+	}
+	// The rig must contain at least one peer of a DIFFERENT domain, or this
+	// test would pass with the domain filter still in place.
+	sourceDomain, _, _ := strings.Cut(source, ".")
+	crossDomain := false
+	for _, p := range want {
+		if d, _, _ := strings.Cut(p, "."); d != sourceDomain {
+			crossDomain = true
+			break
+		}
+	}
+	if !crossDomain {
+		t.Fatalf("precondition: every area peer of %s shares its domain; a domain filter would be invisible here", source)
+	}
+
+	rows := entRelatedJSON(t, inst.Dir(), source)
+	var got []string
+	for _, r := range rows {
+		if r.Relationship == "area-neighbor" {
+			got = append(got, r.EntityID)
+		}
+	}
+	assertSameSet(t, "ent related "+source+" area-neighbors", want, got)
+}

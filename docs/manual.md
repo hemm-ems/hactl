@@ -248,7 +248,7 @@ hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value
 hactl ent hist sensor.wp_vl --resample 5m # override bucket size
 hactl ent hist sensor.wp_vl --attr brightness  # track attribute instead of state
 hactl ent anomalies sensor.wp_vl          # gaps (>1h), stuck (>2h/24h), spikes (z>3)
-hactl ent related sensor.wp_vl            # related automations, device siblings, area neighbors
+hactl ent related sensor.wp_vl            # related automations, device siblings, every entity in the same area
 hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + counts summary
 ```
 
@@ -561,6 +561,7 @@ hactl log --errors                        # ERROR-level entries only
 hactl log --warnings                      # WARNING-level entries only (operational signals)
 hactl log --errors --warnings --unique    # both levels, deduplicated, sorted by count
 hactl log --component zha                 # filter by component name (substring)
+hactl log --errors --since 2h             # only entries from the last 2 hours
 hactl log show log:f2                     # full detail: timestamp, component, message
 
 hactl cc ls                               # installed custom components + versions
@@ -569,6 +570,13 @@ hactl cc logs hacs --unique               # CC-specific errors, deduplicated
 ```
 
 Log source: WS `system_log/list` (structured, preferred) with automatic fallback to REST `/api/error_log`.
+
+HA's system log is a fixed-size in-memory buffer, not a time-indexed store, so
+`log` and `cc logs` show **the whole buffer by default** — the global `--since`
+default of 24h is deliberately not applied, because the buffer routinely holds
+older entries and hiding them is the opposite of what these commands are for.
+Passing `--since` explicitly narrows the buffer to that window (entries whose
+timestamp cannot be parsed are kept rather than silently dropped).
 
 `hactl log` shows **Home Assistant core** logs only. Add-on logs (including the
 companion's own WireGuard/dyndns monitor output) run in a separate Supervisor

@@ -1526,14 +1526,20 @@ func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
 	if areaID == "" {
 		return nil
 	}
-	targetDomain := parseEntityDomain(entityID)
+	// Every entity in the area, whatever its domain. This used to also require
+	// parseEntityDomain(e) == parseEntityDomain(entityID), which made "area
+	// neighbors" mean "same area AND same domain" — narrower than `ent ls
+	// --area` and than HA's own area_entities(), which has no notion of a
+	// domain. The restriction was invisible in the output (there is no domain
+	// column, and the manual qualifies nothing), so the light in the same room
+	// as the sensor you are about to delete simply never appeared.
 	areaName := rc.areaByID[areaID].Name
 	var result []relatedEntry
 	for _, e := range rc.entityByID {
 		if e.EntityID == entityID {
 			continue
 		}
-		if rc.effectiveAreaID(e.EntityID) == areaID && parseEntityDomain(e.EntityID) == targetDomain {
+		if rc.effectiveAreaID(e.EntityID) == areaID {
 			result = append(result, relatedEntry{
 				entityID:     e.EntityID,
 				relationship: "area-neighbor",

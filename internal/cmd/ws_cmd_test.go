@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -424,7 +425,7 @@ func TestRunLog_HTTPFallback(t *testing.T) {
 	defer func() { flagLogUnique = oldUniq }()
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog HTTP fallback failed: %v", err)
 	}
 	// Should contain error log content or at least not fail
@@ -1592,7 +1593,7 @@ func TestRunCCLogs_HTTPFallback(t *testing.T) {
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
-	if err := runCCLogs(context.Background(), &buf, "hacs"); err != nil {
+	if err := runCCLogs(context.Background(), &buf, "hacs", false); err != nil {
 		t.Fatalf("runCCLogs HTTP fallback failed: %v", err)
 	}
 	// Should have rendered log entries
@@ -4468,7 +4469,7 @@ func TestRunLog_ErrorsFilter(t *testing.T) {
 	defer func() { flagLogUnique = oldUniq }()
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --errors failed: %v", err)
 	}
 }
@@ -4494,7 +4495,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --warnings alone: only the WARNING line.
 	restore(false, true, false, "")
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --warnings failed: %v", err)
 	}
 	out := buf.String()
@@ -4508,7 +4509,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --errors --warnings: both, but not INFO.
 	restore(true, true, false, "")
 	buf.Reset()
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --errors --warnings failed: %v", err)
 	}
 	out = buf.String()
@@ -4541,7 +4542,7 @@ func TestRunLog_ComponentFilter(t *testing.T) {
 	defer func() { flagLogUnique = oldUniq }()
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --component failed: %v", err)
 	}
 }
@@ -4567,7 +4568,7 @@ func TestRunLog_Unique(t *testing.T) {
 	defer func() { flagLogUnique = oldUniq }()
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf); err != nil {
+	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --unique failed: %v", err)
 	}
 }
@@ -4739,7 +4740,7 @@ func TestRunCCLogs_Unique(t *testing.T) {
 	defer func() { flagCCLogsUnique = old }()
 
 	var buf bytes.Buffer
-	if err := runCCLogs(context.Background(), &buf, "hacs"); err != nil {
+	if err := runCCLogs(context.Background(), &buf, "hacs", false); err != nil {
 		t.Fatalf("runCCLogs --unique failed: %v", err)
 	}
 }
@@ -5125,5 +5126,43 @@ func TestEntCommands_UnknownEntityIsAnError(t *testing.T) {
 					name, buf.String())
 			}
 		})
+	}
+}
+
+// `log --since` and `cc logs --since` used to accept a value and ignore it
+// completely. They now narrow the buffer client-side when the flag is actually
+// passed, and leave the whole buffer alone when it is not — honouring the 24h
+// default would hide older entries that HA's buffer still holds, which is the
+// opposite of what this command is for.
+func TestApplyLogSince(t *testing.T) {
+	old := flagSince
+	defer func() { flagSince = old }()
+
+	now := time.Now()
+	entries := []analyze.LogEntry{
+		{Timestamp: now.Add(-30 * time.Minute).Format("2006-01-02 15:04:05.000"), Message: "recent"},
+		{Timestamp: now.Add(-72 * time.Hour).Format("2006-01-02 15:04:05.000"), Message: "old"},
+	}
+
+	flagSince = "1h"
+	got, err := applyLogSince(entries, false)
+	if err != nil {
+		t.Fatalf("applyLogSince(unset): %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("an unset --since must not narrow anything, got %d of 2 entries", len(got))
+	}
+
+	got, err = applyLogSince(entries, true)
+	if err != nil {
+		t.Fatalf("applyLogSince(set): %v", err)
+	}
+	if len(got) != 1 || got[0].Message != "recent" {
+		t.Errorf("--since 1h kept %+v, want only the recent entry", got)
+	}
+
+	flagSince = "not-a-duration"
+	if _, err := applyLogSince(entries, true); err == nil {
+		t.Error("an unparseable --since must be an error, not a silently skipped filter")
 	}
 }

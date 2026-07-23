@@ -48,7 +48,7 @@ var ccLogsCmd = &cobra.Command{
 	Long:  "Display error log entries related to a specific custom component.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runCCLogs(cmd.Context(), cmd.OutOrStdout(), args[0])
+		return runCCLogs(cmd.Context(), cmd.OutOrStdout(), args[0], cmd.Flags().Changed("since"))
 	},
 }
 
@@ -181,7 +181,7 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 	return nil
 }
 
-func runCCLogs(ctx context.Context, w io.Writer, name string) error {
+func runCCLogs(ctx context.Context, w io.Writer, name string, sinceSet bool) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -193,6 +193,10 @@ func runCCLogs(ctx context.Context, w io.Writer, name string) error {
 	}
 
 	entries = analyze.FilterByComponent(entries, name)
+
+	if entries, err = applyLogSince(entries, sinceSet); err != nil {
+		return err
+	}
 
 	if len(entries) == 0 {
 		return emitEmptyList(w, "no log entries for "+name)

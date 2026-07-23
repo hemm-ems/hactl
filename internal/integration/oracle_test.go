@@ -56,6 +56,9 @@ type rigIDs struct {
 	// Entity whose own area overrides its device's area.
 	OverrideEntityID string
 	OverrideAreaID   string
+	// Entity of a different domain than the device's, placed in AreaDev, so
+	// "same area" and "same area + same domain" are distinguishable answers.
+	CrossDomainEntityID string
 }
 
 func getOracleHA(t *testing.T) (*hatest.Instance, rigIDs) {
@@ -204,7 +207,47 @@ func buildOracleRig(t *testing.T, inst *hatest.Instance) rigIDs {
 	}); err != nil {
 		t.Fatalf("assign input_number.oracle_level: %v", err)
 	}
+
+	// H-8's first clause, applied to domains: put an entity of a DIFFERENT
+	// domain than the device's own entities into AreaDev, so "same area" and
+	// "same area and same domain" are distinguishable answers. Without this the
+	// rig cannot see a domain filter at all — `ent related` silently scoped area
+	// neighbours to one domain and every test agreed with it.
+	crossDomain := pickCrossDomainEntity(t, entities, rig.InheritedEntityIDs)
+	if err := ws.EntityRegistryUpdate(ctx, crossDomain, map[string]any{
+		"area_id": rig.AreaDev,
+	}); err != nil {
+		t.Fatalf("assign cross-domain entity %s to AreaDev: %v", crossDomain, err)
+	}
+	rig.CrossDomainEntityID = crossDomain
 	return rig
+}
+
+// pickCrossDomainEntity returns a registry entity whose domain differs from
+// every entity in inherited, chosen deterministically.
+func pickCrossDomainEntity(t *testing.T, entries []haapi.EntityRegistryEntry, inherited []string) string {
+	t.Helper()
+	skip := map[string]bool{}
+	domains := map[string]bool{}
+	for _, id := range inherited {
+		skip[id] = true
+		d, _, _ := strings.Cut(id, ".")
+		domains[d] = true
+	}
+	candidates := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if skip[e.EntityID] || e.DeviceID != "" || e.DisabledBy != "" {
+			continue // device-owned entities would inherit an area of their own
+		}
+		if d, _, _ := strings.Cut(e.EntityID, "."); !domains[d] {
+			candidates = append(candidates, e.EntityID)
+		}
+	}
+	if len(candidates) == 0 {
+		t.Fatalf("oracle rig: no cross-domain entity available; domains present: %v", domains)
+	}
+	sort.Strings(candidates)
+	return candidates[0]
 }
 
 // exerciseOracleRig fires the fixture's automations for real, so traces exist.
