@@ -58,12 +58,45 @@ HA rather than accept them.
 
 ---
 
+## Status — updated 2026-07-23 (evening)
+
+Phases 0, 1, Wave 2a and the standalone half of Phase 3 have landed. Merged:
+**#85** (the branch this plan was written on), **#87** (Phase 1 + H-12 + R5/R7/R8),
+**#88** (R1, R6), plus the R4 follow-up.
+
+| item | state |
+|---|---|
+| Phase 0 — merge, hooks | done (`make hooks-check` verified; a global `core.hooksPath` *was* shadowing the repo hook) |
+| Phase 0 — branch protection → `All Gates Green` | **still open — needs the maintainer** |
+| Phase 1 — R9–R15 | done, plus 6 commands the manual never mentioned at all |
+| Wave 2a — W-A, W-B, H-12 | done, each gate mutation-checked |
+| Wave 2b — `script apply`, `tpl`, `helper` writes | open (companion tier) |
+| Wave 2c — dry-run honesty | open, except `ent set-label` |
+| Phase 3 — R1, R4, R5, R6, R7, R8 | done |
+| Phase 3 — R2, R3 | open (R2 needs the identifier decision, pair with R16) |
+| Phase 4 — R16–R21 | open (design calls) |
+| Phase 5 — round-3 audit | open |
+
+Two findings worth carrying, both from executing rather than reading:
+
+- **The "Full command set" list was itself incomplete.** `config files|file|block`
+  and `helper|script|tpl cat` exist, work, and were absent from the list that
+  ends *"No other commands exist — never invent one"*. A new gate
+  (`TestEveryCommandHasManualProse`) now walks the cobra tree for prose.
+- **Table-backed `--json` is a serialization of the rendered table**, so it
+  returns short timestamps (`"13:29"`) and stringified numbers
+  (`"runs_24h": "0"`), while object-backed `--json` carries source values. H-10
+  gates parseability and completeness, not fidelity of types. Documented, not
+  fixed — changing the types would break existing callers, so it needs a call.
+
+---
+
 ## Phase 0 — prerequisites (orchestrator, no agents)
 
-- [ ] Merge `fix/read-surface-oracle-2026-07-23`.
+- [x] Merge `fix/read-surface-oracle-2026-07-23` (#85).
 - [ ] Point branch protection at the **`All Gates Green`** check. Until then the
       aggregator runs but does not block, and a skipped Docker tier still merges.
-- [ ] `make hooks` on every dev machine, then **`make hooks-check`** to prove it.
+- [x] `make hooks` on every dev machine, then **`make hooks-check`** to prove it.
       Installing is not the same as running: a global `core.hooksPath` silently
       overrides `.git/hooks`, so a copied hook can look installed and never
       execute. `make hooks` now sets a repo-local `core.hooksPath`; verify it.

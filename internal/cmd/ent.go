@@ -769,43 +769,66 @@ func parseStateTimeline(data []byte, now time.Time) ([]analyze.StateChange, erro
 		return nil, nil
 	}
 
-	// Filter out unavailable/unknown states
-	var entries []historyEntry
+	// Records for states worth showing; unavailable/unknown are dropped, but
+	// remembered as a discontinuity (see below).
+	type record struct {
+		entry historyEntry
+		// afterGap marks a record that follows a dropped unavailable/unknown
+		// one, so two identical states either side of an outage stay two runs.
+		afterGap bool
+	}
+	var entries []record
+	gap := false
 	for _, e := range outer[0] {
-		if e.State != "unavailable" && e.State != "unknown" {
-			entries = append(entries, e)
+		if e.State == "unavailable" || e.State == "unknown" {
+			gap = true
+			continue
 		}
+		entries = append(entries, record{entry: e, afterGap: gap})
+		gap = false
 	}
 	if len(entries) == 0 {
 		return nil, nil
 	}
 
-	changes := make([]analyze.StateChange, len(entries))
-	for i, entry := range entries {
-		t, timeErr := time.Parse(time.RFC3339Nano, entry.LastChanged)
+	// Collapse consecutive records that report the SAME state into one run.
+	//
+	// HA's history returns a record per state *update*, and an attribute-only
+	// update repeats the state unchanged — so a sensor that held one value for
+	// 40 minutes arrives as eight records five minutes apart. Rendering one row
+	// each turned 37 real state runs into 287 rows of `5m0s`, and left the
+	// reader to re-derive the runs this command exists to produce. A run keeps
+	// the time the state was ENTERED, and lasts until the next different state
+	// (or until now).
+	type run struct {
+		at    time.Time
+		state string
+	}
+	runs := make([]run, 0, len(entries))
+	for _, rec := range entries {
+		t, timeErr := time.Parse(time.RFC3339Nano, rec.entry.LastChanged)
 		if timeErr != nil {
-			t, timeErr = time.Parse(time.RFC3339, entry.LastChanged)
+			t, timeErr = time.Parse(time.RFC3339, rec.entry.LastChanged)
 			if timeErr != nil {
 				continue
 			}
 		}
-
-		// Duration = time until next state change (or until now for the last entry)
-		var dur time.Duration
-		if i+1 < len(entries) {
-			next, nextErr := time.Parse(time.RFC3339Nano, entries[i+1].LastChanged)
-			if nextErr != nil {
-				next, _ = time.Parse(time.RFC3339, entries[i+1].LastChanged)
-			}
-			dur = next.Sub(t)
-		} else {
-			dur = now.Sub(t)
+		if n := len(runs); n > 0 && runs[n-1].state == rec.entry.State && !rec.afterGap {
+			continue // same state, still the same run
 		}
+		runs = append(runs, run{at: t, state: rec.entry.State})
+	}
 
+	changes := make([]analyze.StateChange, len(runs))
+	for i, r := range runs {
+		end := now
+		if i+1 < len(runs) {
+			end = runs[i+1].at
+		}
 		changes[i] = analyze.StateChange{
-			Time:     t,
-			State:    entry.State,
-			Duration: dur,
+			Time:     r.at,
+			State:    r.state,
+			Duration: end.Sub(r.at),
 		}
 	}
 

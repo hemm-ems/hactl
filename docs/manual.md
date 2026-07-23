@@ -252,7 +252,7 @@ hactl ent related sensor.wp_vl            # related automations, device siblings
 hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + counts summary
 ```
 
-`ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration. Anomaly detection runs client-side on cached history.
+`ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration, one row per **state run** — consecutive records reporting the same state are one row lasting until the state actually changes, and an `unavailable` gap splits the run rather than being spanned. Anomaly detection runs client-side on cached history.
 
 `ent show` closes with `attributes: N total; use --full to see all`. `N` is the
 entity's **whole** attribute count, not the number withheld — the four it always

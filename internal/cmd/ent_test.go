@@ -1183,3 +1183,72 @@ func TestRunEntRelated_JSON_NoHeaderLine(t *testing.T) {
 		t.Fatal("expected at least one related row (sensor.b is a device sibling)")
 	}
 }
+
+// R4: HA's history returns one record per state *update*, and an attribute-only
+// update repeats the same state. The timeline used to emit a row per record, so
+// a sensor that held one value for 40 minutes rendered as eight identical rows
+// of 5m — 287 rows where the entity had 37 actual state runs. A "timeline" that
+// lists the same state eight times in a row is not a timeline; the reader has to
+// re-derive the runs the command was asked to produce.
+func TestParseStateTimeline_CollapsesRepeatedStates(t *testing.T) {
+	data := []byte(`[[
+		{"entity_id":"sensor.mode","state":"heating","last_changed":"2026-01-01T10:00:00+00:00"},
+		{"entity_id":"sensor.mode","state":"heating","last_changed":"2026-01-01T10:05:00+00:00"},
+		{"entity_id":"sensor.mode","state":"heating","last_changed":"2026-01-01T10:10:00+00:00"},
+		{"entity_id":"sensor.mode","state":"idle","last_changed":"2026-01-01T10:40:00+00:00"},
+		{"entity_id":"sensor.mode","state":"idle","last_changed":"2026-01-01T10:45:00+00:00"},
+		{"entity_id":"sensor.mode","state":"heating","last_changed":"2026-01-01T10:50:00+00:00"}
+	]]`)
+
+	now := time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)
+	changes, err := parseStateTimeline(data, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(changes) != 3 {
+		t.Fatalf("got %d rows, want 3 runs (heating, idle, heating): %+v", len(changes), changes)
+	}
+	want := []struct {
+		state string
+		dur   time.Duration
+	}{
+		{"heating", 40 * time.Minute}, // 10:00 → 10:40, not 3 × 5m
+		{"idle", 10 * time.Minute},    // 10:40 → 10:50
+		{"heating", 10 * time.Minute}, // 10:50 → now
+	}
+	for i, w := range want {
+		if changes[i].State != w.state || changes[i].Duration != w.dur {
+			t.Errorf("run %d = %s for %v, want %s for %v",
+				i, changes[i].State, changes[i].Duration, w.state, w.dur)
+		}
+	}
+	// A run starts when the state was first entered, not when it was last re-reported.
+	if got := changes[0].Time; !got.Equal(time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Errorf("first run starts at %v, want 10:00 — the moment the state was entered", got)
+	}
+}
+
+// An outage between two identical states is a discontinuity, not one long run.
+// unavailable/unknown records are dropped from the timeline, but the break they
+// mark is kept — otherwise collapsing repeats would silently claim the entity
+// held that state right through the outage.
+func TestParseStateTimeline_UnavailableBreaksARun(t *testing.T) {
+	data := []byte(`[[
+		{"entity_id":"binary_sensor.door","state":"on","last_changed":"2026-01-01T10:00:00+00:00"},
+		{"entity_id":"binary_sensor.door","state":"unavailable","last_changed":"2026-01-01T10:10:00+00:00"},
+		{"entity_id":"binary_sensor.door","state":"on","last_changed":"2026-01-01T10:20:00+00:00"}
+	]]`)
+
+	now := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
+	changes, err := parseStateTimeline(data, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("got %d rows, want 2 runs of 'on' either side of the outage: %+v", len(changes), changes)
+	}
+	if changes[0].Duration != 20*time.Minute || changes[1].Duration != 10*time.Minute {
+		t.Errorf("durations = %v, %v; want 20m (10:00→10:20) and 10m (10:20→now)",
+			changes[0].Duration, changes[1].Duration)
+	}
+}
