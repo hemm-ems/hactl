@@ -58,11 +58,11 @@ HA rather than accept them.
 
 ---
 
-## Status — updated 2026-07-23 (evening)
+## Status — updated 2026-07-23 (night)
 
-Phases 0, 1, Wave 2a and the standalone half of Phase 3 have landed. Merged:
-**#85** (the branch this plan was written on), **#87** (Phase 1 + H-12 + R5/R7/R8),
-**#88** (R1, R6), plus the R4 follow-up.
+Phases 0, 1, all of Phase 2 and the standalone half of Phase 3 have landed.
+Merged: **#85** (the branch this plan was written on), **#87** (Phase 1 + H-12 +
+R5/R7/R8), **#88** (R1, R6), the R4 follow-up, and Wave 2b + 2c.
 
 | item | state |
 |---|---|
@@ -70,12 +70,43 @@ Phases 0, 1, Wave 2a and the standalone half of Phase 3 have landed. Merged:
 | Phase 0 — branch protection → `All Gates Green` | **still open — needs the maintainer** |
 | Phase 1 — R9–R15 | done, plus 6 commands the manual never mentioned at all |
 | Wave 2a — W-A, W-B, H-12 | done, each gate mutation-checked |
-| Wave 2b — `script apply`, `tpl`, `helper` writes | open (companion tier) |
-| Wave 2c — dry-run honesty | open, except `ent set-label` |
+| Wave 2b — `script apply`, `tpl`, `helper` writes | done (companion tier); found 3 defects + a rig gap, below |
+| Wave 2c — dry-run honesty | done: 13 commands resolve first, previews answer `--json` |
 | Phase 3 — R1, R4, R5, R6, R7, R8 | done |
 | Phase 3 — R2, R3 | open (R2 needs the identifier decision, pair with R16) |
-| Phase 4 — R16–R21 | open (design calls) |
+| Phase 4 — R16–R21 | open (design calls) — **R21 is done**: `ref scan\|replace\|validate` were already covered by the companion tier |
 | Phase 5 — round-3 audit | open |
+
+### What Wave 2b turned up (found by executing, not reading)
+
+- **`script delete` and `tpl delete` left a ghost.** HA keeps the registry entry
+  of anything that had a unique_id, so the entity stayed listed as
+  `unavailable` / `restored: true`. `auto delete` had always cleaned this up —
+  the same operation left different debris depending on the family. Fixed;
+  all three now share `removeOrphanedEntity`.
+- **`tpl create` and `script create` discarded HA's reload confirmation.** The
+  companion returns `reloaded` and the vendored spec documents it; hactl's Go
+  structs simply did not decode it, so both printed "created …" for a
+  definition HA might never have read. This is the issue-#40 class that
+  `auto create` and `helper create` were already fixed for.
+- **The companion rig never loaded `template.yaml` at all.** HA's onboarding
+  config !include's automations, scripts and scenes and nothing else, so no
+  template entity ever appeared and no `tpl` write was provable against HA.
+  `seedConfigFiles` wires `template:` and restarts HA via its own
+  `homeassistant.restart` service — *not* `docker compose restart`, which
+  re-allocates the ephemeral host port and leaves every captured URL dead.
+- **`auto delete`'s dry run must not be stricter than its confirmed run.** The
+  companion's DELETE accepts a config id, an alias or a live entity_id; its
+  GET matches the config id only. Resolving with GET alone would have refused
+  deletes that work (delete-by-alias) — the same dishonesty pointing the other
+  way. Verify the resolution path, not just the happy path.
+- **Still open, companion-side:** the template route does not check that
+  `template: !include template.yaml` is wired, the way the helper route checks
+  its domain. Until it does, `tpl create` on an unwired instance writes a file
+  HA will never read; the CLI warning is what makes that visible. Needs a
+  companion PR + release, hence not done here.
+
+Eight tests asserted the old dry-run behaviour as correct and were inverted.
 
 Two findings worth carrying, both from executing rather than reading:
 

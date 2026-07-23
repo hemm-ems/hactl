@@ -109,13 +109,11 @@ func runFloorLs(ctx context.Context, w io.Writer) error {
 
 func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
 	if !flagFloorConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would create floor")
-		_, _ = fmt.Fprintf(w, "  name: %s\n", name)
-		if flagFloorLevel != 0 {
-			_, _ = fmt.Fprintf(w, "  level: %d\n", flagFloorLevel)
-		}
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create floor").
+			with("name", name).
+			withIf(flagFloorLevel != 0, "level", flagFloorLevel).
+			withIf(flagFloorIcon != "", "icon", flagFloorIcon).
+			render(w)
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -144,13 +142,6 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
 }
 
 func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
-	if !flagFloorConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete floor")
-		_, _ = fmt.Fprintf(w, "  floor_id: %s\n", floorID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -162,10 +153,28 @@ func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
-	if err := ws.FloorRegistryDelete(ctx, floorID); err != nil {
+	floors, err := ws.FloorRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching floors: %w", err)
+	}
+	entry, ok := resolveRegistryTarget(floorID, floors, func(f haapi.FloorEntry) (string, string) {
+		return f.FloorID, f.Name
+	})
+	if !ok {
+		return fmt.Errorf("floor %q not found (use 'floor ls' to see available floors)", floorID)
+	}
+
+	if !flagFloorConfirm {
+		return dryRun("delete floor").
+			with("floor_id", entry.FloorID).
+			with("name", entry.Name).
+			render(w)
+	}
+
+	if err := ws.FloorRegistryDelete(ctx, entry.FloorID); err != nil {
 		return fmt.Errorf("deleting floor: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted floor %q\n", floorID)
+	_, _ = fmt.Fprintf(w, "deleted floor %q\n", entry.FloorID)
 	return nil
 }

@@ -351,19 +351,37 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 		return errors.New("invalid JSON in config input")
 	}
 
-	if !flagDashConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would save dashboard config")
-		_, _ = fmt.Fprintf(w, "  url_path: %s\n", dashDisplayPath(urlPath))
-		_, _ = fmt.Fprintf(w, "  config size: %d bytes\n", len(data))
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	ws, err := connectWS(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ws.Close() }()
+
+	// Resolve before planning: `dash save` overwrites the WHOLE config, so a
+	// preview against a url_path HA does not have is not a harmless typo — it
+	// is a full-replacement plan that names the wrong target.
+	//
+	// The empty url_path is the exception, and a real one: it means HA's
+	// default Lovelace storage, which `lovelace/dashboards/list` never
+	// reports (it lists the added dashboards only) and which is always a
+	// valid save target — saving to it is how an auto-generated default
+	// becomes storage-mode in the first place.
+	title := "(default)"
+	if urlPath != "" {
+		target, findErr := findDashboard(ctx, ws, urlPath)
+		if findErr != nil {
+			return findErr
+		}
+		title = target.Title
+	}
+
+	if !flagDashConfirm {
+		return dryRun("save dashboard config").
+			with("url_path", dashDisplayPath(urlPath)).
+			with("title", title).
+			with("config_bytes", len(data)).
+			render(w)
+	}
 
 	snapshotDashboardBeforeSave(ctx, ws, urlPath)
 	if err := ws.DashboardConfigSave(ctx, urlPath, data); err != nil {
@@ -506,14 +524,13 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 
 func runDashCreate(ctx context.Context, w io.Writer) error {
 	if !flagDashConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would create dashboard")
-		_, _ = fmt.Fprintf(w, "  url_path: %s\n", flagDashURLPath)
-		_, _ = fmt.Fprintf(w, "  title:    %s\n", flagDashTitle)
-		_, _ = fmt.Fprintf(w, "  icon:     %s\n", flagDashIcon)
-		_, _ = fmt.Fprintf(w, "  sidebar:  %v\n", flagDashSidebar)
-		_, _ = fmt.Fprintf(w, "  admin:    %v\n", flagDashAdmin)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create dashboard").
+			with("url_path", flagDashURLPath).
+			with("title", flagDashTitle).
+			with("icon", flagDashIcon).
+			with("sidebar", flagDashSidebar).
+			with("admin", flagDashAdmin).
+			render(w)
 	}
 
 	ws, err := connectWS(ctx)
@@ -538,42 +555,47 @@ func runDashCreate(ctx context.Context, w io.Writer) error {
 }
 
 func runDashDelete(ctx context.Context, w io.Writer, urlPath string) error {
-	if !flagDashConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete dashboard")
-		_, _ = fmt.Fprintf(w, "  url_path: %s\n", urlPath)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	ws, err := connectWS(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Need dashboard ID for deletion — list and find by url_path
-	dashboards, err := ws.DashboardList(ctx)
+	target, err := findDashboard(ctx, ws, urlPath)
 	if err != nil {
-		return fmt.Errorf("listing dashboards: %w", err)
+		return err
 	}
 
-	var dashID string
-	for _, d := range dashboards {
-		if d.URLPath == urlPath {
-			dashID = d.ID
-			break
-		}
-	}
-	if dashID == "" {
-		return fmt.Errorf("dashboard %q not found", urlPath)
+	if !flagDashConfirm {
+		return dryRun("delete dashboard").
+			with("url_path", urlPath).
+			with("title", target.Title).
+			render(w)
 	}
 
-	if err := ws.DashboardDelete(ctx, dashID); err != nil {
+	if err := ws.DashboardDelete(ctx, target.ID); err != nil {
 		return fmt.Errorf("deleting dashboard: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "deleted dashboard %q\n", urlPath)
 	return nil
+}
+
+// findDashboard resolves a url_path against HA's own dashboard list. The
+// storage-mode dashboards are the only ones hactl can write to, and they are
+// exactly the ones this list reports.
+func findDashboard(ctx context.Context, ws *haapi.WSClient, urlPath string) (haapi.LovelaceDashboard, error) {
+	dashboards, err := ws.DashboardList(ctx)
+	if err != nil {
+		return haapi.LovelaceDashboard{}, fmt.Errorf("listing dashboards: %w", err)
+	}
+	for _, d := range dashboards {
+		if d.URLPath == urlPath {
+			return d, nil
+		}
+	}
+	return haapi.LovelaceDashboard{}, fmt.Errorf(
+		"dashboard %q not found (use 'dash ls' to see available dashboards)", dashDisplayPath(urlPath))
 }
 
 func runDashResources(ctx context.Context, w io.Writer) error {

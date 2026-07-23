@@ -244,22 +244,22 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would create template")
-		_, _ = fmt.Fprintf(w, "  file:   %s\n", flagTplFile)
+		shape := "entity item"
 		if kind.isBlock {
-			shape := "state-based block"
+			shape = "state-based block"
 			if kind.triggerBased {
 				shape = "trigger-based block"
 			}
-			_, _ = fmt.Fprintf(w, "  shape:  %s\n", shape)
-			_, _ = fmt.Fprintf(w, "  domains: %s\n", strings.Join(kind.domains, ", "))
-		} else {
-			_, _ = fmt.Fprintln(w, "  shape:  entity item")
-			_, _ = fmt.Fprintf(w, "  domain: %s\n", flagTplDomain)
 		}
-		_, _ = fmt.Fprintf(w, "  size:   %d bytes\n", len(data))
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		plan := dryRun("create template").
+			with("file", flagTplFile).
+			with("shape", shape)
+		if kind.isBlock {
+			plan = plan.with("domains", strings.Join(kind.domains, ", "))
+		} else {
+			plan = plan.with("domain", flagTplDomain)
+		}
+		return plan.with("bytes", len(data)).render(w)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -280,15 +280,20 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 	default:
 		_, _ = fmt.Fprintf(w, "created template %q (domain=%s)\n", resp.UniqueID, flagTplDomain)
 	}
+	// A template.yaml that no `template:` key !include's is written happily and
+	// never read: HA reports no reload, and without this the command claimed
+	// success for a definition that will never produce an entity.
+	if !resp.Reloaded {
+		_, _ = fmt.Fprintln(w, "warning: template written but HA did not confirm reload "+
+			"(is `template: !include template.yaml` in configuration.yaml?)")
+	}
 	return nil
 }
 
 func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
-	if !flagTplConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete template sensor")
-		_, _ = fmt.Fprintf(w, "  unique_id: %s\n", uniqueID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -296,10 +301,31 @@ func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
 		return err
 	}
 
+	// Resolve before planning, so the dry run fails exactly where the
+	// confirmed run would rather than describing a delete that cannot happen.
+	remote, err := cc.GetTemplate(ctx, uniqueID)
+	if err != nil {
+		return fmt.Errorf("template %q not found (use 'tpl ls' to see available templates): %w", uniqueID, err)
+	}
+
+	// Resolve while the entities are still real; afterwards a registry entry is
+	// indistinguishable from an older ghost.
+	orphans := templateEntityIDs(ctx, cfg, uniqueID)
+
+	if !flagTplConfirm {
+		return dryRun("delete template").
+			with("unique_id", remote.UniqueID).
+			with("entities", strings.Join(orphans, ", ")).
+			render(w)
+	}
+
 	if _, err := cc.DeleteTemplate(ctx, uniqueID); err != nil {
 		return fmt.Errorf("deleting template: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "deleted template %q\n", uniqueID)
+	for _, entityID := range orphans {
+		removeOrphanedEntity(ctx, cfg, entityID)
+	}
 	return nil
 }

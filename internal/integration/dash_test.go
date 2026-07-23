@@ -129,15 +129,40 @@ func TestDashSaveRoundTrip(t *testing.T) {
 	runHactl(t, "dash", "delete", "hactl-rt-test", "--confirm")
 }
 
-func TestDashDeleteDryRun(t *testing.T) {
-	out := runHactl(t, "dash", "delete", "nonexistent-dash")
-	assertContains(t, out, "dry-run")
+// TestDashDeleteAgreesOnUnknownDashboard pins the dry run and the confirmed
+// run to the same answer.
+//
+// These were two tests, and together they documented the defect: the confirmed
+// run failed on a dashboard HA does not have, while the dry run printed
+// "dry-run: would delete dashboard" and exited 0 for the same argument. Under
+// the manual's stop-at-the-first-miss rule a typo read as a verified plan, so
+// the dry-run half is inverted here deliberately.
+func TestDashDeleteAgreesOnUnknownDashboard(t *testing.T) {
+	for _, args := range [][]string{
+		{"dash", "delete", "nonexistent-dash"},
+		{"dash", "delete", "nonexistent-dash", "--confirm"},
+	} {
+		out, err := runHactlErr(t, args...)
+		if err == nil {
+			t.Errorf("%v: expected failure for a dashboard HA does not have, got:\n%s", args, out)
+		}
+	}
 }
 
-func TestDashDeleteNotFound(t *testing.T) {
-	_, err := runHactlErr(t, "dash", "delete", "nonexistent-dash", "--confirm")
-	if err == nil {
-		t.Error("deleting nonexistent dashboard should fail")
+// TestDashDeleteDryRunPreviewsRealDashboard is the other half: a dashboard
+// that does exist previews, names itself, and is still there afterwards.
+func TestDashDeleteDryRunPreviewsRealDashboard(t *testing.T) {
+	const urlPath = "hactl-preview-target"
+	runHactl(t, "dash", "create", "--url-path", urlPath, "--title", "Preview Target", "--confirm")
+	t.Cleanup(func() { _, _ = runHactlErr(t, "dash", "delete", urlPath, "--confirm") })
+
+	out := runHactl(t, "dash", "delete", urlPath)
+	assertContains(t, out, "dry-run")
+	// The title is the witness that the preview resolved against HA.
+	assertContains(t, out, "Preview Target")
+
+	if out := runHactl(t, "dash", "ls"); !strings.Contains(out, urlPath) {
+		t.Errorf("dry-run delete removed the dashboard:\n%s", out)
 	}
 }
 

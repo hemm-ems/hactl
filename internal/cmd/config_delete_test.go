@@ -18,15 +18,40 @@ func writeEnv(t *testing.T, dir, haURL string) {
 	}
 }
 
-// TestConfigDeleteDryRun verifies that without --confirm, no request is made
-// and the dry-run notice is printed.
-func TestConfigDeleteDryRun(t *testing.T) {
-	called := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
+// configEntriesServer serves HA's config-entry list plus whatever the caller
+// adds, and records every non-list request — so a test can prove a dry run
+// resolved its target (a GET) without performing the write (a DELETE).
+func configEntriesServer(t *testing.T, entries string, extra http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var writes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/config/config_entries/entry" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(entries))
+			return
+		}
+		writes = append(writes, r.Method+" "+r.URL.Path)
+		if extra != nil {
+			extra(w, r)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv, &writes
+}
+
+const oneConfigEntry = `[{"entry_id":"abc123","domain":"mqtt","title":"MQTT","state":"loaded","supports_options":true}]`
+
+// TestConfigDeleteDryRun verifies that without --confirm the entry is resolved
+// but nothing is written.
+//
+// This test used to assert that a dry run makes NO request at all, which is
+// what let it plan the removal of an entry_id HA has never heard of. Deleting
+// a config entry takes every entity it owns with it; the preview has to name
+// something real.
+func TestConfigDeleteDryRun(t *testing.T) {
+	srv, writes := configEntriesServer(t, oneConfigEntry, nil)
 
 	dir := t.TempDir()
 	writeEnv(t, dir, srv.URL)
@@ -47,8 +72,35 @@ func TestConfigDeleteDryRun(t *testing.T) {
 	if !strings.Contains(out, "abc123") {
 		t.Errorf("expected entry_id in output, got: %q", out)
 	}
-	if called {
-		t.Error("dry-run made an HTTP request; it must not")
+	// The domain is the witness that the preview read HA's answer rather than
+	// echoing the argument.
+	if !strings.Contains(out, "mqtt") {
+		t.Errorf("expected the resolved entry's domain in output, got: %q", out)
+	}
+	if len(*writes) != 0 {
+		t.Errorf("dry-run performed a write: %v", *writes)
+	}
+}
+
+// TestConfigDeleteDryRunRefusesUnknownEntry is the inverted assertion: an
+// entry_id HA does not have must fail the preview, not plan a removal.
+func TestConfigDeleteDryRunRefusesUnknownEntry(t *testing.T) {
+	srv, writes := configEntriesServer(t, oneConfigEntry, nil)
+
+	dir := t.TempDir()
+	writeEnv(t, dir, srv.URL)
+
+	flagConfigConfirm = false
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+	rootCmd.SetArgs([]string{"config", "delete", "no_such_entry", "--dir", dir})
+
+	if err := rootCmd.Execute(); err == nil {
+		t.Fatalf("dry-run planned a delete for an entry HA does not have:\n%s", buf.String())
+	}
+	if len(*writes) != 0 {
+		t.Errorf("refused dry-run still performed a write: %v", *writes)
 	}
 }
 
@@ -56,13 +108,12 @@ func TestConfigDeleteDryRun(t *testing.T) {
 // correct config-entry endpoint.
 func TestConfigDeleteConfirm(t *testing.T) {
 	var gotMethod, gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv, _ := configEntriesServer(t, oneConfigEntry, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"require_restart": false}`))
-	}))
-	defer srv.Close()
+	})
 
 	dir := t.TempDir()
 	writeEnv(t, dir, srv.URL)

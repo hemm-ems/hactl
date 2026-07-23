@@ -314,6 +314,51 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 }
 
 // findConfigEntry returns the entry whose entry_id matches (case-sensitive).
+// resolveIntegrationManifest returns HA's own manifest for a domain.
+//
+// `manifest/list` reports the integrations HA has loaded, which is a superset
+// of the ones with a config flow but the closest authority available over the
+// WS surface hactl already speaks; a domain absent from it is certainly a
+// typo. The confirmed run still surfaces "integration failed to load" for a
+// real integration that cannot start.
+func resolveIntegrationManifest(ctx context.Context, cfg *config.Config, domain string) (haapi.IntegrationManifest, error) {
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if err := ws.Connect(ctx); err != nil {
+		return haapi.IntegrationManifest{}, fmt.Errorf("connecting to HA: %w", err)
+	}
+	defer func() { _ = ws.Close() }()
+	manifests, err := ws.IntegrationManifestList(ctx)
+	if err != nil {
+		return haapi.IntegrationManifest{}, fmt.Errorf("fetching integration manifests: %w", err)
+	}
+	for _, m := range manifests {
+		if m.Domain == domain {
+			return m, nil
+		}
+	}
+	return haapi.IntegrationManifest{}, fmt.Errorf(
+		"no loaded integration with domain %q (list them with 'hactl cc ls')", domain)
+}
+
+// resolveConfigEntry fetches HA's config entries and returns the one with
+// entryID, or an error naming the miss. Used by the write commands so their
+// dry runs fail exactly where the confirmed run would.
+func resolveConfigEntry(ctx context.Context, client *haapi.Client, entryID string) (*configEntry, error) {
+	data, err := client.GetConfigEntries(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetching config entries: %w", err)
+	}
+	var entries []configEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parsing config entries: %w", err)
+	}
+	entry, ok := findConfigEntry(entries, entryID)
+	if !ok {
+		return nil, fmt.Errorf("unknown config entry %q (list them with 'hactl config entries')", entryID)
+	}
+	return entry, nil
+}
+
 func findConfigEntry(entries []configEntry, entryID string) (*configEntry, bool) {
 	for i := range entries {
 		if entries[i].EntryID == entryID {
@@ -515,18 +560,28 @@ func sortedKeys(m map[string]any) []string {
 }
 
 func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {
-	if !flagConfigConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete config entry")
-		_, _ = fmt.Fprintf(w, "  entry_id: %s\n", entryID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
 	}
 	client := haapi.New(cfg.URL, cfg.Token)
+
+	// Resolve before planning: deleting a config entry removes every entity
+	// it owns, so a preview naming an entry HA does not have is a plan for a
+	// removal that cannot be reviewed.
+	entry, err := resolveConfigEntry(ctx, client, entryID)
+	if err != nil {
+		return err
+	}
+
+	if !flagConfigConfirm {
+		return dryRun("delete config entry").
+			with("entry_id", entry.EntryID).
+			with("domain", entry.Domain).
+			with("title", entry.Title).
+			render(w)
+	}
+
 	data, err := client.DeleteConfigEntry(ctx, entryID)
 	if err != nil {
 		return fmt.Errorf("deleting config entry: %w", err)
@@ -551,14 +606,28 @@ func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {
 		return err
 	}
 
-	if !flagConfigConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would start an options flow for config entry")
-		_, _ = fmt.Fprintf(w, "  entry_id: %s\n", entryID)
-		_, _ = fmt.Fprintln(w, "use --confirm to start")
-		return nil
+	client := haapi.New(cfg.URL, cfg.Token)
+
+	// Resolve before planning. `supports_options` is part of it: HA rejects an
+	// options flow for an entry that has none, and the preview should say so
+	// rather than promise a flow that cannot start.
+	entry, err := resolveConfigEntry(ctx, client, entryID)
+	if err != nil {
+		return err
+	}
+	if !entry.SupportsOptions {
+		return fmt.Errorf("config entry %q (%s) has no options flow", entryID, entry.Domain)
 	}
 
-	client := haapi.New(cfg.URL, cfg.Token)
+	if !flagConfigConfirm {
+		return dryRun("start an options flow for config entry").
+			with("entry_id", entry.EntryID).
+			with("domain", entry.Domain).
+			with("title", entry.Title).
+			withHint("use --confirm to start").
+			render(w)
+	}
+
 	data, err := client.StartOptionsFlow(ctx, entryID)
 	if err != nil {
 		return fmt.Errorf("starting options flow: %w", err)
@@ -572,14 +641,21 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 		return err
 	}
 
-	if !flagConfigConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would start a config flow for integration")
-		_, _ = fmt.Fprintf(w, "  domain: %s\n", domain)
-		_, _ = fmt.Fprintln(w, "use --confirm to start")
-		return nil
-	}
-
 	client := haapi.New(cfg.URL, cfg.Token)
+
+	// Resolve before planning: a misspelled domain is the whole failure mode
+	// here, and HA's own manifest list is the authority on what exists.
+	if !flagConfigConfirm {
+		manifest, manifestErr := resolveIntegrationManifest(ctx, cfg, domain)
+		if manifestErr != nil {
+			return manifestErr
+		}
+		return dryRun("start a config flow for integration").
+			with("domain", domain).
+			with("name", manifest.Name).
+			withHint("use --confirm to start").
+			render(w)
+	}
 	data, err := client.StartConfigFlowOnce(ctx, domain)
 	if err != nil {
 		return fmt.Errorf("integration %q failed to load — check HA logs for import errors: %w", domain, err)
@@ -604,12 +680,20 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 		if flagFlowOptions {
 			endpoint = "options flow"
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would submit data to advance the flow")
-		_, _ = fmt.Fprintf(w, "  flow_id:  %s\n", flowID)
-		_, _ = fmt.Fprintf(w, "  endpoint: %s\n", endpoint)
-		_, _ = fmt.Fprintf(w, "  data:     %s\n", flagFlowData)
-		_, _ = fmt.Fprintln(w, "use --confirm to submit (a step may complete the flow and create a config entry)")
-		return nil
+		// Resolve before planning: a flow id is transient, and one that has
+		// expired or was never started reads exactly like a live one in a
+		// preview that never asks HA about it.
+		if _, inspectErr := client.InspectFlow(ctx, flowID, flagFlowOptions); inspectErr != nil {
+			return fmt.Errorf("no in-progress %s with id %q "+
+				"(flows expire; start one with 'config flow-start' or 'config options'): %w",
+				endpoint, flowID, inspectErr)
+		}
+		return dryRun("submit data to advance the flow").
+			with("flow_id", flowID).
+			with("endpoint", endpoint).
+			with("data", flagFlowData).
+			withHint("use --confirm to submit (a step may complete the flow and create a config entry)").
+			render(w)
 	}
 
 	data, err := client.StepFlow(ctx, flowID, flagFlowOptions, rawData)

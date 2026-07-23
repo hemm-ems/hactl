@@ -75,11 +75,10 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		if planErr != nil {
 			return planErr
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would roll back automation")
-		_, _ = fmt.Fprintf(w, "  automation:  %s\n", plan.AutomationID)
-		_, _ = fmt.Fprintf(w, "  from backup: %s\n", plan.BackupPath)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("roll back automation").
+			with("automation", plan.AutomationID).
+			with("from_backup", plan.BackupPath).
+			render(w)
 	}
 
 	// Connect WebSocket for reload (optional)
