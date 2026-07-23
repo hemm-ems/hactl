@@ -91,11 +91,25 @@ func TestFamilyText(t *testing.T) {
 		t.Error("skipped heading still present in text")
 	}
 
-	if text, hs := FamilyText("ref", nil); text != "" || len(hs) != 0 {
-		t.Errorf("ref should have no sections, got %q %v", text, hs)
+	// Inverted 2026-07-23: this used to assert `ref` delivers nothing, pinning
+	// the gap as if it were the design. It was a defect — `ref scan|replace|
+	// validate` are real commands whose family how-to never reached a caller.
+	if text, hs := FamilyText("ref", nil); text == "" || len(hs) == 0 {
+		t.Error("ref delivers no manual section; its commands would arrive unexplained")
 	}
 	if text, hs := FamilyText("nosuch", nil); text != "" || len(hs) != 0 {
 		t.Errorf("unknown family should be empty, got %q %v", text, hs)
+	}
+}
+
+// Every family must carry at least one manual section, or its commands arrive
+// with no how-to at all — the state `ref` was in until 2026-07-23. Delivery is
+// silent when a family maps to nothing, so only a test makes it visible.
+func TestEveryFamilyHasSections(t *testing.T) {
+	for _, f := range Families() {
+		if len(FamilySections[f]) == 0 {
+			t.Errorf("family %q maps to no manual section: add one in docs/manual.md and map it here", f)
+		}
 	}
 }
 

@@ -32,6 +32,7 @@ var FamilySections = map[string][]string{
 		"### Automations",
 		"### Automations — create & delete",
 		"### Write path (automations)",
+		"### Ghost entities (`--restored`)",
 	},
 	"script": {
 		`### "Deploy a script change"`,
@@ -44,6 +45,7 @@ var FamilySections = map[string][]string{
 		`### "What else is related to this entity?"`,
 		`### "Organize entities with labels"`,
 		"### Entities & history",
+		"### Ghost entities (`--restored`)",
 	},
 	"device": {
 		`### "Which entities belong to <concept>?" (find things by concept)`,
@@ -74,7 +76,7 @@ var FamilySections = map[string][]string{
 	"health":    {"### Setup & health"},
 	"cache":     {"### Cache & version"},
 	"companion": {"### WireGuard (companion lifeline)"},
-	"ref":       {}, // no manual section yet; the command help carries it
+	"ref":       {"### References (find and rename entity_ids)"},
 }
 
 // Aliases maps top-level commands onto the family whose sections cover them.

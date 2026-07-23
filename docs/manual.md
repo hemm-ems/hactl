@@ -21,11 +21,11 @@ Full command set (family → subcommands):
 
 - `health` · `issues` · `changes` · `log [show <id>]` · `cc ls|show|logs` · `trace show <id>`
 - `ent ls|show|hist|anomalies|related|who|set-label|set-area`
-- `auto ls|show|cat|diff|apply|create|delete|rollback` · `script ls|show|run|diff|apply|create|delete`
-- `helper ls|show|create|delete` · `tpl eval|create|delete` · `svc call`
+- `auto ls|show|cat|diff|apply|create|delete|rollback` · `script ls|show|cat|run|diff|apply|create|delete`
+- `helper ls|show|cat|create|delete` · `tpl eval|cat|create|delete` · `svc call`
 - `dash ls|show|save|create|delete|resources|grep|replace`
 - `device ls|show` · `label|area|floor ls|create|delete`
-- `config entries|show|options|delete|flow-start|flow-step|flow-inspect`
+- `config entries|show|options|delete|files|file|block|flow-start|flow-step|flow-inspect`
 - `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
 
 No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
@@ -173,9 +173,16 @@ hactl auto ls --pattern 'ess_*'           # glob/substring filter on automation 
 hactl auto ls --label victron             # filter by label name (substring)
 hactl auto ls --restored                  # only "ghost" automations (restored from registry, no live config)
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
+hactl auto cat climate_schedule           # the automation's remote YAML, verbatim (no header)
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
 hactl trace show trc:a7 --full            # raw trace JSON
 ```
+
+`auto show` summarizes; `auto cat` prints the stored config itself, so it is what
+you feed back into `auto diff -f` / `auto apply -f`. It accepts the config `id:`,
+the entity_id, or the alias, and needs the companion. Output is YAML by design —
+`--json` does not change it (same for `script|helper|tpl cat`, `auto|script diff`,
+`tpl eval`, `config file|block`).
 
 Condensed trace format:
 ```
@@ -206,11 +213,14 @@ hactl script ls --pattern kino     # glob/substring filter
 hactl script ls --label energy     # filter by label name (substring)
 hactl script ls --failing          # only scripts with recent errors
 hactl script show kino_start       # config summary + last 5 traces
+hactl script cat kino_start        # the script's remote YAML, verbatim (needs companion)
 hactl script run kino_start        # dry-run: verify the script exists + preview
 hactl script run kino_start --confirm  # execute via script.turn_on
 ```
 
-`state` column: `off` = idle, `on` = currently running.
+`state` column: `off` = idle, `on` = currently running. `script cat` prints the
+`scripts.yaml` top-level-key form (`kino_start:` → definition), which is exactly
+what `script apply -f` accepts back.
 
 ### Scripts — create & delete
 
@@ -232,7 +242,7 @@ hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)
 hactl ent ls --restored                   # only "ghost" entities (restored from registry, no live entity)
-hactl ent show sensor.wp_vl               # state + key attributes + area + labels (+ hidden count)
+hactl ent show sensor.wp_vl               # state + key attributes + area + labels + attribute count
 hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
 hactl ent hist sensor.wp_vl --resample 5m # override bucket size
@@ -243,6 +253,11 @@ hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + cou
 ```
 
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration. Anomaly detection runs client-side on cached history.
+
+`ent show` closes with `attributes: N total; use --full to see all`. `N` is the
+entity's **whole** attribute count, not the number withheld — the four it always
+shows (`friendly_name`, `unit_of_measurement`, `device_class`, `restored`) are
+included in it.
 
 `ent show` includes a `changed_by:` line attributing the most recent change to a user (e.g. `User Jan`) or to `Home Assistant` when no user_id was on the state's `context`. `ent who` does the deeper attribution — it queries the logbook for the entity, classifies each event as `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant`, and aggregates a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window}`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
 
@@ -318,6 +333,7 @@ hactl tpl create -f sensor_tpl.yaml                  # dry-run
 hactl tpl create -f sensor_tpl.yaml --confirm        # create via companion + reload
 hactl tpl create -f binary_tpl.yaml --domain binary_sensor --confirm  # non-default domain
 hactl tpl create -f trigger_block.yaml --confirm     # trigger-based (full block, see below)
+hactl tpl cat my_template_uid                        # the entry's remote YAML, verbatim
 hactl tpl delete my_template_uid                     # dry-run
 hactl tpl delete my_template_uid --confirm           # delete via companion + reload
 ```
@@ -352,7 +368,8 @@ block removes the whole block, so no orphan trigger is left behind.
 ```bash
 hactl helper ls                                      # list all helpers
 hactl helper ls --domain input_boolean               # filter by domain
-hactl helper show guest_mode                         # show helper YAML definition
+hactl helper show guest_mode                         # id + domain header, then the YAML definition
+hactl helper cat guest_mode                          # the same YAML with no header (pipe-friendly)
 hactl helper create input_boolean -f toggle.yaml             # dry-run
 hactl helper create input_boolean -f toggle.yaml --confirm   # create via companion + reload
 hactl helper delete guest_mode                       # dry-run
@@ -360,6 +377,21 @@ hactl helper delete guest_mode --confirm             # delete via companion + re
 ```
 
 Supported domains: input_boolean, input_number, input_select, input_text, input_datetime, counter, timer, schedule. Requires hactl-companion.
+
+The `-f` file must be a **keyed mapping with exactly one top-level key** — the
+helper id — not a bare definition:
+
+```yaml
+# toggle.yaml
+guest_mode:
+  name: Guest Mode
+  icon: mdi:toggle-switch
+```
+
+A bare `name:`/`icon:` mapping is rejected on `--confirm` (400 from the
+companion). The dry-run does not read the file's contents, so it previews an
+invalid file as happily as a valid one — validate the shape yourself before
+confirming.
 
 ### Templates & services
 
@@ -391,7 +423,21 @@ hactl config flow-step <flow_id> --data '{...}'   # submit data to advance a flo
 hactl config flow-step <flow_id> --data '{...}' --options  # same, but for an options flow
 hactl config flow-inspect <flow_id>               # inspect current flow state (step, schema, errors)
 hactl config flow-inspect <flow_id> --options     # same, but for an options flow
+
+hactl config files                                # list configuration.yaml and every !include'd file
+hactl config file automations.yaml                # print a config file as YAML, !include's resolved
+hactl config file configuration.yaml --raw        # leave !include directives unresolved
+hactl config block automations.yaml climate_schedule  # one keyed block from a file
 ```
+
+`files`/`file`/`block` read the config directory **through the companion** and
+are the only `config` subcommands that need it. `file` without `--raw` returns
+the merged document (an `automation: !include automations.yaml` line comes back
+as the inlined list); `--raw` returns the file's own bytes. `block` matches on
+`id`, `unique_id`, or the top-level key and prints that block verbatim, so its
+output may carry a trailing comment line that sits before the next key. All
+three are YAML-only — `--json` is accepted but does not change the output. A
+missing file or block is an error with a non-zero exit, not an empty result.
 
 `options`, `flow-start`, and `flow-step` are dry-run by default (they start or advance a stateful flow, and a step can complete the flow and create a config entry) — add `--confirm` to actually start/submit. `entries`, `flow-inspect`, and `--json` reads are always live.
 
@@ -423,7 +469,7 @@ When starting a *new* integration (not reconfiguring an existing entry), use `fl
 
 To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, pass `--probe-options-flow` to read current values from a transient options flow (started and immediately aborted); without the flag no options flow is started and the note tells you to add it. The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
 
-All `config` commands use HA's REST API directly — no companion needed. Add `--json` for structured output suitable for LLM consumption.
+Every `config` command except `files`/`file`/`block` uses HA's REST API directly — no companion needed. Add `--json` for structured output suitable for LLM consumption.
 
 ### Dashboards (Lovelace)
 
@@ -442,11 +488,64 @@ hactl dash save my-dash --file config.json --confirm  # write full config (dry-r
 hactl dash delete my-dash --confirm
 
 hactl dash resources                               # list custom card/CSS resources
+
+hactl dash grep sensor.wp_vl                       # where is this string used, across all dashboards
+hactl dash replace sensor.old sensor.new my-dash   # dry-run: rename within one dashboard
+hactl dash replace sensor.old sensor.new my-dash --confirm  # apply
 ```
 
 **LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API. `--view` scopes inspection output only; do not feed a single-view object to `dash save`.
 
+**`grep` and `replace` work on string values, not on entity fields.** Both walk
+each dashboard's JSON and match any string **equal to** the argument, wherever it
+sits — a card's `entity`, but equally a markdown card whose `content` is exactly
+that string, or a view `title`. `dash grep P` finds a view titled `P`. Matching
+is whole-value, so a mention *inside* a longer sentence is not a hit, and map
+keys are never matched or rewritten. Output is `dashboard` + `path`
+(`views[0].cards[1].content`); a miss prints "not referenced in any dashboard"
+and exits 0.
+
+`dash replace` takes one dashboard (omit `url_path` for the default dashboard,
+which fails with `config_not_found` when the default is HA's auto-generated one),
+is dry-run until `--confirm`, and rewrites every matching value at once. To
+rename across config files *and* dashboards in a single pass, use `ref replace`.
+
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
+
+### References (find and rename entity_ids)
+
+```bash
+hactl ref scan sensor.wp_vl                    # every reference, config files + dashboards
+hactl ref validate                             # dangling references: pointers to entities that are gone
+hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
+hactl ref replace sensor.old sensor.new        # dry-run: rename everywhere
+hactl ref replace sensor.old sensor.new --confirm   # apply
+```
+
+Requires hactl-companion — it is what reads the config directory. `ref` is the
+whole-instance version of `dash grep`/`dash replace`: it covers YAML config
+files (following `!include`) **and** every dashboard in one pass.
+
+`scan` reports `source` (`config` | `dashboard`), `location` (file name or
+dashboard) and `path` (`[1].trigger[0].entity_id`). Same whole-value matching as
+`dash grep`.
+
+`validate` is the one to reach for after deleting or renaming an entity: it
+sweeps for entity references that no longer resolve. The live set is the union of
+the entity registry and current states, so state-only entities (`sun.sun`,
+`zone.home`, `weather.*`, template sensors) are not falsely flagged. It is
+deliberately conservative — only values in known entity-holding positions are
+checked (`entity_id`/`entity` in config; `entity`/`entities`/`badges`/
+`camera_image` in dashboards), so `light.turn_on` is never mistaken for an
+entity. Two blind spots are the accepted price of zero false positives:
+**entities inside templates** (`{{ states('sensor.x') }}`) and entities under
+non-standard custom-card keys. `validate` reports; it never fixes.
+
+`replace` is dry-run until `--confirm`. It aborts before writing anything if the
+companion cannot be reached, because a rename that silently skips config files is
+the exact failure this command exists to prevent. References in YAML-mode
+dashboards are reported but not rewritten (hactl cannot write those). A confirmed
+run is idempotent, so re-running after a partial failure is safe.
 
 ### Logs & custom components
 
@@ -544,7 +643,18 @@ hactl script ls --label energy            # scripts with label "energy"
 hactl script ls --failing                 # scripts with recent trace errors
 ```
 
-**Ghost entities (`--restored`).** HA marks a state `restored: true` when it was
+For broader entity discovery when you have an entity but want context:
+
+```bash
+hactl ent related sensor.wp_vl            # spiders automations, device siblings, area neighbors
+```
+
+`--restored` filters both `ent ls` and `auto ls` down to ghost entities — see
+below.
+
+### Ghost entities (`--restored`)
+
+HA marks a state `restored: true` when it was
 resurrected from the entity registry/recorder with no live platform entity behind
 its `unique_id` — the automation/helper/script was deleted or re-authored under a
 new `id`, so there is **no config left to repair** (nothing for `ref scan`/`ref
@@ -560,12 +670,6 @@ hactl ent ls --restored --domain automation   # ghost automations to clean up
 hactl auto ls --restored                       # same, automation-scoped table
 ```
 
-For broader entity discovery when you have an entity but want context:
-
-```bash
-hactl ent related sensor.wp_vl            # spiders automations, device siblings, area neighbors
-```
-
 ---
 
 ## Output conventions
@@ -574,9 +678,9 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 - **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable. Use filters to reduce output rather than raising the cap.
 - **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
 - **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls.
-- **Timestamps:** short form (`09:42`, `04-16 09:42`). ISO only with `--full`.
-- **No decoration:** no emojis, no color (unless `--color`). Clean for parsing.
-- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. JSON output is never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets apply filters first.
+- **Timestamps:** tables print short form (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so there the short string survives and numbers come back as strings (`"runs_24h": "0"`).
+- **No decoration:** no emojis, no color. `--color` is accepted and does nothing; it is kept so existing callers do not break.
+- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`), as do dry-run previews: those always print text.
 - **`--stats`:** prints raw response size + estimated token count to stderr after any command.
 
 ---
@@ -587,10 +691,10 @@ hactl ent related sensor.wp_vl            # spiders automations, device siblings
 |------|---------|--------|
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
 | `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
-| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead) |
-| `--full` | off | Raw/verbose output |
+| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
+| `--full` | off | Raw/verbose output, per command: all attributes for `ent show`, raw JSON for `trace show`. Changes nothing on tables |
 | `--json` | off | JSON output |
-| `--color` | off | ANSI colors |
+| `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |
 | `--tokens` | off | Print compact token estimate |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
