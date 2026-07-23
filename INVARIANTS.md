@@ -322,3 +322,51 @@ prefix before resolving, mirroring the same check `trace.go`'s
   `internal/integration/oracle_diagnostics_test.go` (all tests, checked
   against HA's own `system_log/list`, `manifest/list`, and logbook —
   invariant H-9)
+
+## H-12 — A write is proven by reading it back from Home Assistant
+
+Every write family is gated the way H-4 gates automations, generalised: read
+the current state **from HA directly**, write via hactl with `--confirm`, read
+back **from HA directly**, and compare the whole document — not just the field
+the renderer happens to show. At least one assertion is on a field the command
+never mentioned, as an independent witness that the whole document was written
+and nothing else moved. The dry run is asserted to change nothing, and the
+restore is asserted too.
+
+Reading back through hactl does not count: then hactl both writes and verifies,
+and a shared modelling mistake agrees with itself. `dash show --raw` reads
+faithfully today, but a test built on it proves the pair consistent, not the
+write correct.
+
+`docs/testing.md` recorded the gap this closes: `dash save` "can each be
+replaced with a stub without any test failing". Deleting the
+`DashboardConfigSave` call from `runDashSave` — the exact stub named — now
+fails `TestDashCreateSaveDeleteRoundTrip` at the read-back. Discarding the
+registry write in `runEntSetLabel` fails `TestEntSetLabelRoundTrip`
+("labels are [], want write_rt_a among them"), and a write that additionally
+sets a field it was never asked to set (`name`) fails the witness comparison
+even though the field it *was* asked to set is correct.
+
+Two commands writing the same registry must also agree on the same input.
+`ent set-label` planned a write for an entity that is not in the entity
+registry — printing a confident "would set entity labels" plan at exit 0 —
+while `ent set-area` resolved the entity first and failed. Under the manual's
+stop-at-the-first-miss rule that turns a typo into a successful plan. The dry
+run must fail exactly where the confirmed run would, so `set-label` now
+resolves the entity first, like `set-area` always did.
+
+Write tests mutate registry state that read tests assert on, so they run
+against their own HA instance (`getWriteHA`), which — like every lazily
+started instance — must have a matching teardown line in
+`internal/integration/main_test.go`.
+
+- Enforced by: `internal/integration/write_roundtrip_test.go`
+  (`TestAutoApplyRollbackRoundTrip`, the original H-4 case),
+  `internal/integration/write_entity_test.go` (`TestEntSetLabelRoundTrip`
+  incl. merge-not-replace and label-deletion detachment,
+  `TestEntSetAreaRoundTrip` incl. resolution by name and HA's own
+  `area_entities()` as the oracle,
+  `TestEntSetLabelAndSetAreaAgreeOnUnknownEntity`),
+  `internal/integration/write_dash_test.go`
+  (`TestDashCreateSaveDeleteRoundTrip`, `TestDashReplaceRoundTrip`) —
+  `make test-int`

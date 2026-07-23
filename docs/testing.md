@@ -460,7 +460,9 @@ No test suite is complete, and this one is no exception. The following areas are
 
 **Assertion strength, measured**: an audit in July 2026 found 31 of the integration tests contained no positive assertion at all — the strongest example being a test whose entire body was `out := runHactl(...)` followed by `_ = out`. Those have not all been rewritten yet. Test *counts* in this document are therefore an upper bound on what is actually gated, and a poor proxy for it.
 
-**Script and dashboard write paths**: `auto apply`/`rollback` now have a byte-level round-trip gate (invariant H-4), but `script apply` and `dash save` do not. Their backup and validation helpers can each be replaced with a stub without any test failing, which is exactly the state the automation write path was in before H-4.
+**Script write path**: `auto apply`/`rollback` (H-4), the dashboard family and the entity-registry family (H-12) now have round-trip gates that read back from HA. `script apply` still does not: its backup and validation helpers can be replaced with a stub without any test failing, which is exactly the state the automation write path was in before H-4. `tpl create|delete` and `helper create|delete` are in the same position; all three need the companion, so the work belongs in `internal/companiontest/`.
+
+**Dry-run previews do not resolve their target**: most write commands accept a fabricated id and print a confident "would do X" plan at exit 0 — `helper create` does not even read the file it is about to send. `ent set-label`, `ent set-area` and `dash replace` resolve first and fail like the confirmed run would; the rest are unfixed.
 
 **The timeseries cache is write-only**: `hactl ent hist` writes samples on every call and nothing ever reads them back — `TSStore.GetSamples`, `LatestSample` and `ClearEntity` have no production callers. `cache clear` and `cache status` now cover the file, but the read path it exists to serve does not exist.
 

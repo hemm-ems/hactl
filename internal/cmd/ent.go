@@ -1081,18 +1081,21 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		resolved = append(resolved, id)
 	}
 
-	// Get current entity labels and merge
+	// Resolve the entity before planning anything. Labels live in the entity
+	// registry, so an entity that is not in it cannot carry one — HA rejects
+	// the update. Resolving here makes the dry run fail exactly where the
+	// confirmed run would, and matches what `ent set-area` has always done:
+	// the two commands used to disagree on the same unregistered entity, one
+	// erroring and one printing a confident plan at exit 0.
 	entries, err := ws.EntityRegistryList(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching entity registry: %w", err)
 	}
-	var currentLabels []string
-	for _, e := range entries {
-		if e.EntityID == entityID {
-			currentLabels = e.Labels
-			break
-		}
+	entry, ok := findEntityRegistryEntry(entries, entityID)
+	if !ok {
+		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
+	currentLabels := entry.Labels
 
 	// Merge: add new labels to existing ones (deduplicate)
 	seen := make(map[string]bool, len(currentLabels)+len(resolved))
