@@ -7,6 +7,16 @@
 This document exists so the next person can continue without re-deriving anything.
 Read it with `hactl/INVARIANTS.md` (H-8..H-11) and `hactl/docs/testing.md` open.
 
+> **Update, same day (evening):** §7's steps 1–3 are done and merged (#85, #87,
+> #88): the branch landed, R9–R15 are fixed, and the write families needing no
+> companion are gated by **H-12** — a write is proven by reading it back from HA.
+> R1, R4, R5, R6, R7 and R8 are fixed too. What remains from §4 is the
+> companion-tier write path (W1/W3/W4) and the dry-run-honesty defects; from §5,
+> R2/R3 and every design question. See `docs/PLAN-next-session.md` for the
+> per-item status table. Branch protection still needs pointing at
+> `All Gates Green`.
+
+
 ---
 
 ## 1. What happened, in one paragraph
