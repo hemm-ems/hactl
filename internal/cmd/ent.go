@@ -392,6 +392,55 @@ func formatAttrList(items []any) string {
 	return "[" + strings.Join(strs, ", ") + "]"
 }
 
+// errUnknownEntity distinguishes a typo from a genuinely quiet entity.
+//
+// `ent hist`, `ent who` and `ent anomalies` all reach an empty result the same
+// way whether the entity does not exist or simply did nothing, and all three
+// used to report that as an empty answer at exit 0 — while `ent show`, in the
+// same family, correctly 404s. Under the manual's "stop at the first miss"
+// rule an agent reads the empty answer as a verified negative, so a mistyped
+// entity_id becomes a confident "nothing happened".
+//
+// Call this only once the result is already empty. An entity that has been
+// deleted can still have recorder history, and reporting that history is the
+// whole point of asking — so history rows, when there are any, settle the
+// question before we ever get here. What remains is: no live state and nothing
+// recorded in the window, which is indistinguishable from a typo and is
+// reported as one.
+func errUnknownEntity(ctx context.Context, client *haapi.Client, entityID string) error {
+	if _, err := client.GetState(ctx, entityID); err == nil {
+		return nil // the entity is real; an empty answer about it is a fact
+	}
+	return fmt.Errorf("entity %q: no live state, and no recorded history in the last %s "+
+		"(check the entity_id with `ent ls --pattern '*%s*'`, or widen --since)",
+		entityID, flagSince, lastIDSegment(entityID))
+}
+
+// parseResampleDuration parses --resample and rejects values the resampler
+// cannot honour. analyze.ResampleDuration returns its input untouched for a
+// zero or negative bucket, so `--resample 0m` and `--resample -5m` used to
+// produce ordinary default-resampled output with no indication the flag had
+// been ignored — the caller cannot tell an honoured value from a discarded one.
+func parseResampleDuration(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid resample duration %q: %w", s, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("invalid resample duration %q: a bucket must be positive (e.g. 5m, 1h)", s)
+	}
+	return d, nil
+}
+
+// lastIDSegment returns the object_id half of an entity_id, for use in a
+// suggested search pattern.
+func lastIDSegment(entityID string) string {
+	if i := strings.Index(entityID, "."); i >= 0 && i+1 < len(entityID) {
+		return entityID[i+1:]
+	}
+	return entityID
+}
+
 func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
@@ -401,6 +450,16 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 	sinceDur, err := parseSince(flagSince)
 	if err != nil {
 		return err
+	}
+
+	// Validate --resample before fetching anything. Doing it at the point of
+	// use meant only the numeric branch ever checked: a non-numeric entity took
+	// the state-timeline path and never saw the flag at all, so `--resample 0m`
+	// was rejected for one entity and silently ignored for the next.
+	if flagEntResample != "" {
+		if _, resErr := parseResampleDuration(flagEntResample); resErr != nil {
+			return resErr
+		}
 	}
 
 	now := time.Now()
@@ -431,6 +490,9 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
+			if err := errUnknownEntity(ctx, client, entityID); err != nil {
+				return err
+			}
 			return emitEmptyList(w, "no history data")
 		}
 		return renderStateTimeline(w, entityID, changes)
@@ -441,9 +503,9 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 
 	// Resample
 	if flagEntResample != "" {
-		d, parseErr := time.ParseDuration(flagEntResample)
+		d, parseErr := parseResampleDuration(flagEntResample)
 		if parseErr != nil {
-			return fmt.Errorf("invalid resample duration: %w", parseErr)
+			return parseErr
 		}
 		points = analyze.ResampleDuration(points, d)
 	} else {
@@ -468,14 +530,18 @@ func runEntHistAttr(ctx context.Context, w io.Writer, client *haapi.Client, enti
 	}
 
 	if len(points) == 0 {
+		// An unknown entity has no attributes either; say which of the two it is.
+		if err := errUnknownEntity(ctx, client, entityID); err != nil {
+			return err
+		}
 		return emitEmptyList(w, fmt.Sprintf("no attribute data for %q", flagEntAttr))
 	}
 
 	// Resample
 	if flagEntResample != "" {
-		d, parseErr := time.ParseDuration(flagEntResample)
+		d, parseErr := parseResampleDuration(flagEntResample)
 		if parseErr != nil {
-			return fmt.Errorf("invalid resample duration: %w", parseErr)
+			return parseErr
 		}
 		points = analyze.ResampleDuration(points, d)
 	} else {
@@ -518,6 +584,9 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 			return parseErr
 		}
 		if len(changes) == 0 {
+			if err := errUnknownEntity(ctx, client, entityID); err != nil {
+				return err
+			}
 			return emitEmptyList(w, "no history data")
 		}
 		return renderStateAnomalies(w, entityID, cfg.Dir, changes)
@@ -1081,18 +1150,21 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		resolved = append(resolved, id)
 	}
 
-	// Get current entity labels and merge
+	// Resolve the entity before planning anything. Labels live in the entity
+	// registry, so an entity that is not in it cannot carry one — HA rejects
+	// the update. Resolving here makes the dry run fail exactly where the
+	// confirmed run would, and matches what `ent set-area` has always done:
+	// the two commands used to disagree on the same unregistered entity, one
+	// erroring and one printing a confident plan at exit 0.
 	entries, err := ws.EntityRegistryList(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching entity registry: %w", err)
 	}
-	var currentLabels []string
-	for _, e := range entries {
-		if e.EntityID == entityID {
-			currentLabels = e.Labels
-			break
-		}
+	entry, ok := findEntityRegistryEntry(entries, entityID)
+	if !ok {
+		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
+	currentLabels := entry.Labels
 
 	// Merge: add new labels to existing ones (deduplicate)
 	seen := make(map[string]bool, len(currentLabels)+len(resolved))

@@ -102,15 +102,26 @@ func TestEntHistResample(t *testing.T) {
 	_ = out
 }
 
+// Inverted 2026-07-23: this test used to accept exit 0 with "no history data"
+// for an entity that does not exist, on the grounds that "HA may return empty
+// history (no error) for nonexistent entities". HA's behaviour is not the
+// question — hactl's is. An empty answer and a nonexistent entity_id must not
+// look the same, or a typo reads as a verified negative. See
+// unknown_entity_test.go for the family-wide gate.
 func TestEntHistUnknown(t *testing.T) {
 	out, err := runHactlErr(t, "ent", "hist", "sensor.nonexistent_abc_xyz", "--since", "1h")
-	if err != nil {
-		// Error is acceptable
-		return
+	if err == nil {
+		t.Errorf("ent hist on a nonexistent entity exited 0; output:\n%s", out)
 	}
-	// HA may return empty history (no error) for nonexistent entities
-	if !strings.Contains(out, "no numeric") && !strings.Contains(out, "no history") {
-		t.Errorf("ent hist nonexistent entity: expected error or 'no numeric', got: %s", out)
+}
+
+// A resample bucket the resampler cannot honour must be refused, not ignored.
+func TestEntHistResampleRejectsNonPositive(t *testing.T) {
+	for _, bad := range []string{"0m", "-5m"} {
+		out, err := runHactlErr(t, "ent", "hist", "sun.sun", "--since", "1h", "--resample", bad)
+		if err == nil {
+			t.Errorf("ent hist --resample %s exited 0; the value was silently ignored.\noutput:\n%s", bad, out)
+		}
 	}
 }
 

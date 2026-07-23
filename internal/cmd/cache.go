@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -245,6 +247,15 @@ func runCacheClear(ctx context.Context, w io.Writer) error {
 		return ts.Clear(ctx)
 	}); err != nil {
 		return fmt.Errorf("clearing timeseries cache: %w", err)
+	}
+
+	// The stable-ID registry is local cache too, and it indexes exactly the
+	// records just deleted: keeping it means `trace show trc:a7` resolves to a
+	// trace this command removed. Same reasoning as timeseries.db above — a
+	// partial wipe reported as "cache cleared" is the failure mode.
+	idsPath := filepath.Join(cfg.Dir, "cache", "ids.json")
+	if err := os.Remove(idsPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clearing stable-ID registry: %w", err)
 	}
 
 	_, _ = fmt.Fprintln(w, "cache cleared")

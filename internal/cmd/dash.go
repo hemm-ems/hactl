@@ -104,9 +104,12 @@ var dashResourcesCmd = &cobra.Command{
 }
 
 var dashGrepCmd = &cobra.Command{
-	Use:   "grep <entity_id>",
-	Short: "Find where an entity is referenced across dashboards",
-	Long:  "Scan every dashboard (default + storage) for an exact entity_id and report the dashboard and path of each reference.",
+	Use:   "grep <value>",
+	Short: "Find where a value (typically an entity_id) is used across dashboards",
+	Long: "Scan every dashboard (default + storage) for string values equal to <value> and report the " +
+		"dashboard and path of each hit. The match is whole-value and position-independent: a card's " +
+		"entity matches, and so does a markdown card whose content or a view whose title is exactly " +
+		"that string. A mention inside a longer string is not a hit; map keys are never matched.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDashGrep(cmd.Context(), cmd.OutOrStdout(), args[0])
@@ -115,8 +118,11 @@ var dashGrepCmd = &cobra.Command{
 
 var dashReplaceCmd = &cobra.Command{
 	Use:   "replace <old> <new> [url_path]",
-	Short: "Rename an entity reference within a dashboard (dry-run by default)",
-	Long:  "Replace every exact occurrence of <old> with <new> in one dashboard's config. Omit url_path for the default dashboard. Use --confirm to save.",
+	Short: "Rename a value within a dashboard (dry-run by default)",
+	Long: "Replace every string value equal to <old> with <new> in one dashboard's config — the same " +
+		"whole-value match `dash grep` reports, so it rewrites card entities, titles and markdown " +
+		"content alike, and never rewrites map keys. Omit url_path for the default dashboard. Use " +
+		"--confirm to save; `hactl ref replace` covers config files and dashboards in one pass.",
 	Args:  cobra.RangeArgs(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""

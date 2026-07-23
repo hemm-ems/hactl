@@ -34,5 +34,8 @@ func TestMain(m *testing.M) {
 	if oracleHA != nil {
 		oracleHA.Stop()
 	}
+	if writeHA != nil {
+		writeHA.Stop()
+	}
 	os.Exit(exitCode)
 }
