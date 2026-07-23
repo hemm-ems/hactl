@@ -686,6 +686,24 @@ func normalizeScriptYAML(data []byte, scriptID string) (*scriptConfigCandidate, 
 	}, nil
 }
 
+// normalizeScriptCreateYAML validates a `script create` input, where the id is
+// not supplied separately but is the file's single top-level key — the shape
+// the companion's POST route requires.
+func normalizeScriptCreateYAML(content string) (*scriptConfigCandidate, error) {
+	var top map[string]any
+	if err := yaml.Unmarshal([]byte(content), &top); err != nil {
+		return nil, fmt.Errorf("parsing script YAML: %w", err)
+	}
+	if len(top) != 1 {
+		return nil, fmt.Errorf(
+			"script YAML must be a mapping with exactly one top-level key (the script id), got %d", len(top))
+	}
+	for id := range top {
+		return normalizeScriptYAML([]byte(content), id)
+	}
+	return nil, errors.New("script YAML must not be empty")
+}
+
 func normalizeScriptID(id string) string {
 	return strings.TrimPrefix(strings.TrimSpace(id), "script.")
 }
@@ -791,15 +809,24 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	}
 	content := string(data)
 
+	// Parse the input before planning. The preview used to report only the
+	// file's size, so a file the companion rejects — unparseable YAML, or a
+	// script with no `sequence` — previewed as a confident plan and failed
+	// only on --confirm.
+	candidate, err := normalizeScriptCreateYAML(content)
+	if err != nil {
+		return err
+	}
+
 	if !flagScriptConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would create script")
-		_, _ = fmt.Fprintf(w, "  file: %s\n", flagScriptFile)
-		_, _ = fmt.Fprintf(w, "  size: %d bytes\n", len(data))
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create script").
+			with("id", candidate.ID).
+			with("file", flagScriptFile).
+			with("bytes", len(data)).
+			render(w)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -813,15 +840,18 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintf(w, "created script %q\n", resp.ID)
+	// The companion reports whether HA reloaded; saying "created" without it
+	// is the issue-#40 failure mode — a definition on disk that HA never read.
+	if !resp.Reloaded {
+		_, _ = fmt.Fprintln(w, "warning: script written but HA did not confirm reload")
+	}
 	return nil
 }
 
 func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
-	if !flagScriptConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete script")
-		_, _ = fmt.Fprintf(w, "  id: %s\n", scriptID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -829,10 +859,29 @@ func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
 		return err
 	}
 
+	// Resolve before planning, so the dry run fails exactly where the
+	// confirmed run would rather than describing a delete that cannot happen.
+	remote, err := cc.GetScriptDef(ctx, scriptID)
+	if err != nil {
+		return fmt.Errorf("script %q not found (use 'script ls' to see available scripts): %w", scriptID, err)
+	}
+
+	if !flagScriptConfirm {
+		return dryRun("delete script").
+			with("id", remote.ID).
+			with("bytes", len(remote.Content)).
+			render(w)
+	}
+
+	// Resolve while the entity is still real; afterwards a registry entry is
+	// indistinguishable from an older ghost.
+	orphan := registeredEntityID(ctx, cfg, "script."+normalizeScriptID(scriptID))
+
 	if _, err := cc.DeleteScriptDef(ctx, scriptID); err != nil {
 		return fmt.Errorf("deleting script: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "deleted script %q\n", scriptID)
+	removeOrphanedEntity(ctx, cfg, orphan)
 	return nil
 }

@@ -107,27 +107,18 @@ func runLabelLs(ctx context.Context, w io.Writer) error {
 	})
 }
 
-// dryRunLabelSummary returns the dry-run summary string for label create.
-func dryRunLabelSummary(name, icon, color, description string) string {
-	s := "dry-run: would create label\n"
-	s += fmt.Sprintf("  name:        %s\n", name)
-	if icon != "" {
-		s += fmt.Sprintf("  icon:        %s\n", icon)
-	}
-	if color != "" {
-		s += fmt.Sprintf("  color:       %s\n", color)
-	}
-	if description != "" {
-		s += fmt.Sprintf("  description: %s\n", description)
-	}
-	s += "use --confirm to apply"
-	return s
+// dryRunLabelSummary builds the preview for label create.
+func dryRunLabelSummary(name, icon, color, description string) *dryRunPlan {
+	return dryRun("create label").
+		with("name", name).
+		withIf(icon != "", "icon", icon).
+		withIf(color != "", "color", color).
+		withIf(description != "", "description", description)
 }
 
 func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
 	if !flagLabelConfirm {
-		_, _ = fmt.Fprintln(w, dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc))
-		return nil
+		return dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc).render(w)
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -151,13 +142,6 @@ func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
 }
 
 func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
-	if !flagLabelConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete label")
-		_, _ = fmt.Fprintf(w, "  label_id: %s\n", labelID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -168,6 +152,25 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 		return fmt.Errorf("connecting to HA: %w", connErr)
 	}
 	defer func() { _ = ws.Close() }()
+
+	labels, err := ws.LabelRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching labels: %w", err)
+	}
+	entry, ok := resolveRegistryTarget(labelID, labels, func(l haapi.LabelEntry) (string, string) {
+		return l.LabelID, l.Name
+	})
+	if !ok {
+		return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", labelID)
+	}
+	labelID = entry.LabelID
+
+	if !flagLabelConfirm {
+		return dryRun("delete label").
+			with("label_id", entry.LabelID).
+			with("name", entry.Name).
+			render(w)
+	}
 
 	if err := ws.LabelRegistryDelete(ctx, labelID); err != nil {
 		return fmt.Errorf("deleting label: %w", err)

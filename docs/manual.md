@@ -84,18 +84,20 @@ hactl script show <id>
 
 ### "Create a new automation / script / helper"
 ```
-hactl auto create -f auto.yaml              # dry-run preview
+hactl auto create -f auto.yaml              # dry-run preview — parses and validates the file
 hactl auto create -f auto.yaml --confirm    # create + reload
 hactl script create -f script.yaml --confirm
 hactl helper create input_boolean -f toggle.yaml --confirm
 ```
+`script create` and `helper create` take a mapping with **exactly one top-level key — the id** (`my_toggle:` with `name:`/`icon:` nested under it); a bare `name:`/`icon:` mapping is rejected. `tpl create` takes an entity item or a full block instead (see Templates). If HA does not confirm the reload, the command says so — a written file HA never read produces no entity.
 
 ### "Delete an automation / helper"
 ```
-hactl auto delete <id>                      # dry-run preview
+hactl auto delete <id>                      # dry-run preview — errors if <id> is not real
 hactl auto delete <id> --confirm            # delete + reload
 hactl helper delete <id> --confirm
 ```
+The preview names what would go (the alias, the domain, the entity_id). Deleting also removes the entity's registry entry, so the id does not linger as an `unavailable` ghost — see "Ghost entities".
 
 ### "Organize entities with labels"
 ```
@@ -695,7 +697,8 @@ hactl auto ls --restored                       # same, automation-scoped table
 - **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls until `cache clear`, which drops them along with the records they point at.
 - **Timestamps:** tables print short form (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so there the short string survives and numbers come back as strings (`"runs_24h": "0"`).
 - **No decoration:** no emojis, no color. `--color` is accepted and does nothing; it is kept so existing callers do not break.
-- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`), as do dry-run previews: those always print text.
+- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`). Dry-run previews return `{"dry_run":true,"action","details","hint"}`.
+- **Dry runs resolve their target** before printing a plan, and parse the `-f` file before reporting on it: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan.
 - **`--stats`:** prints raw response size + estimated token count to stderr after any command.
 
 ---

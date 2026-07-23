@@ -136,6 +136,7 @@ type TemplateResponse struct {
 type TemplateCreateResponse struct {
 	Status   string `json:"status"`
 	UniqueID string `json:"unique_id"`
+	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
 }
 
 // ScriptDefinition represents a script definition.
@@ -159,8 +160,9 @@ type ScriptResponse struct {
 
 // ScriptCreateResponse is the response from POST /v1/config/script.
 type ScriptCreateResponse struct {
-	Status string `json:"status"`
-	ID     string `json:"id"`
+	Status   string `json:"status"`
+	ID       string `json:"id"`
+	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
 }
 
 // AutomationDefinition represents an automation definition.

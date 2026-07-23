@@ -35,7 +35,9 @@ func writeYAML(t *testing.T, dir, name, content string) string {
 func TestHelperCreate_DryRun_CompanionUnreachable(t *testing.T) {
 	dir := t.TempDir()
 	writeGatingEnv(t, dir)
-	yamlFile := writeYAML(t, dir, "toggle.yaml", "name: test_toggle\n")
+	// A valid keyed mapping: the point of this test is the companion gate, and
+	// an unusable file would now be refused before we ever get there.
+	yamlFile := writeYAML(t, dir, "toggle.yaml", "test_toggle:\n  name: Test Toggle\n")
 
 	oldDir := flagDir
 	flagDir = dir

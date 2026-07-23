@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
@@ -47,7 +48,7 @@ var helperCmd = &cobra.Command{
 	Use:        "helper",
 	SuggestFor: []string{"helpers", "input_boolean", "input_number"},
 	Short:      "Manage HA helpers (input_boolean, counter, timer, etc.)",
-	Long:  "List, create, and delete Home Assistant helper entities via the companion.",
+	Long:       "List, create, and delete Home Assistant helper entities via the companion.",
 }
 
 var helperLsCmd = &cobra.Command{
@@ -274,16 +275,25 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	}
 	content := string(data)
 
+	// Parse the input before planning. The companion requires a mapping keyed
+	// by the helper id; a bare `name:`/`icon:` mapping is a 400 — and nothing
+	// documented that, while the preview reported the file's size and happily
+	// planned the write.
+	helperID, err := helperCreateID(content)
+	if err != nil {
+		return err
+	}
+
 	if !flagHelperConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would create helper")
-		_, _ = fmt.Fprintf(w, "  domain: %s\n", domain)
-		_, _ = fmt.Fprintf(w, "  file:   %s\n", flagHelperFile)
-		_, _ = fmt.Fprintf(w, "  size:   %d bytes\n", len(data))
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create helper").
+			with("id", helperID).
+			with("domain", domain).
+			with("file", flagHelperFile).
+			with("bytes", len(data)).
+			render(w)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -308,17 +318,53 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	return nil
 }
 
-func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
-	if !flagHelperConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete helper")
-		_, _ = fmt.Fprintf(w, "  id: %s\n", helperID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+// helperCreateID validates a `helper create` input and returns the helper id
+// it declares: the file must be a mapping with exactly one top-level key,
+// which is the id (`my_toggle: {name: …}`).
+func helperCreateID(content string) (string, error) {
+	var top map[string]any
+	if err := yaml.Unmarshal([]byte(content), &top); err != nil {
+		return "", fmt.Errorf("parsing helper YAML: %w", err)
 	}
+	if len(top) != 1 {
+		return "", fmt.Errorf("helper YAML must be a mapping with exactly one top-level key (the helper id), "+
+			"got %d — e.g. `my_toggle:` with `name:`/`icon:` nested under it", len(top))
+	}
+	for id, body := range top {
+		if _, ok := body.(map[string]any); !ok {
+			return "", fmt.Errorf("helper %q must be a YAML mapping", id)
+		}
+		return id, nil
+	}
+	return "", errors.New("helper YAML must not be empty")
+}
 
+func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
+	}
+
+	// Resolve before planning, so the dry run fails exactly where the
+	// confirmed run would rather than describing a delete that cannot happen.
+	// Only YAML helpers are addressable here — a storage-backed helper (the
+	// `source: storage` rows in `helper ls`) has no companion definition and
+	// this is where the caller finds that out.
+	//
+	// One confirm-time failure this cannot predict: the same slug may exist in
+	// two domains, where the companion's GET returns the first match but its
+	// DELETE refuses with a 409 listing the candidates.
+	remote, err := cc.GetHelper(ctx, helperID)
+	if err != nil {
+		return fmt.Errorf("helper %q not found among the YAML helpers "+
+			"(use 'helper ls' — rows with source=storage are not editable through hactl): %w", helperID, err)
+	}
+
+	if !flagHelperConfirm {
+		return dryRun("delete helper").
+			with("id", remote.ID).
+			with("domain", remote.Domain).
+			render(w)
 	}
 
 	if _, err := cc.DeleteHelper(ctx, helperID); err != nil {

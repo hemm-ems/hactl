@@ -1024,12 +1024,15 @@ func TestRunDashSave_DryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	envDir := t.TempDir()
-	envContent := "HA_URL=http://localhost:9999\nHA_TOKEN=tok\n"
-	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	withFlagDir(t, envDir)
+	// The preview resolves its target now, so it needs an HA to ask. The
+	// empty url_path is the default dashboard, which HA never lists — the
+	// one target that is always valid without a lookup.
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []map[string]any{
+			{"id": "d1", "url_path": "my-dashboard", "title": "Mine", "mode": "storage"},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
 
 	old := flagDashConfirm
 	flagDashConfirm = false
@@ -1044,6 +1047,13 @@ func TestRunDashSave_DryRun(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "dry-run") {
 		t.Errorf("output = %q, want 'dry-run'", buf.String())
+	}
+
+	// A url_path HA does not have must be refused, not previewed: `dash save`
+	// replaces the WHOLE config, so naming the wrong target is not harmless.
+	buf.Reset()
+	if err := runDashSave(context.Background(), &buf, "no-such-dash"); err == nil {
+		t.Errorf("dry-run planned a full-replacement save against an unknown dashboard:\n%s", buf.String())
 	}
 }
 
@@ -1082,12 +1092,12 @@ func TestRunDashCreate_DryRun(t *testing.T) {
 // --- runDashDelete (dry-run, no WS needed) ---
 
 func TestRunDashDelete_DryRun(t *testing.T) {
-	envDir := t.TempDir()
-	envContent := "HA_URL=http://localhost:9999\nHA_TOKEN=tok\n"
-	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	withFlagDir(t, envDir)
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []map[string]any{
+			{"id": "d1", "url_path": "my-dashboard", "title": "Mine", "mode": "storage"},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
 
 	old := flagDashConfirm
 	flagDashConfirm = false
@@ -1099,6 +1109,16 @@ func TestRunDashDelete_DryRun(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "dry-run") {
 		t.Errorf("output = %q, want 'dry-run'", buf.String())
+	}
+	// The title is the witness that the preview asked HA rather than echoing
+	// the argument back.
+	if !strings.Contains(buf.String(), "Mine") {
+		t.Errorf("preview does not name the resolved dashboard: %q", buf.String())
+	}
+
+	buf.Reset()
+	if err := runDashDelete(context.Background(), &buf, "no-such-dash"); err == nil {
+		t.Errorf("dry-run planned a delete for a dashboard HA does not have:\n%s", buf.String())
 	}
 }
 
@@ -2232,6 +2252,12 @@ func TestRunConfigOptions(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, flowResponse)
 		},
+		// The entry is resolved before the flow is started, so a preview can
+		// say whether it exists and supports options at all.
+		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"entry_id":"entry-123","domain":"mqtt","title":"MQTT","supports_options":true}]`)
+		},
 	})
 	withFlagDir(t, ts.dir)
 	oldConfirm := flagConfigConfirm
@@ -2526,6 +2552,8 @@ func TestRunEntHist_NumericWithResample(t *testing.T) {
 
 func TestRunAreaDelete_Confirm(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{
+		// The confirmed run resolves the id first, like the preview does.
+		"config/area_registry/list":   []map[string]any{{"area_id": "kitchen", "name": "Kitchen"}},
 		"config/area_registry/delete": nil,
 	}, nil)
 	withFlagDir(t, ts.dir)
@@ -2547,6 +2575,7 @@ func TestRunAreaDelete_Confirm(t *testing.T) {
 
 func TestRunFloorDelete_Confirm(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{
+		"config/floor_registry/list":   []map[string]any{{"floor_id": "ground", "name": "Ground Floor"}},
 		"config/floor_registry/delete": nil,
 	}, nil)
 	withFlagDir(t, ts.dir)
@@ -2568,6 +2597,7 @@ func TestRunFloorDelete_Confirm(t *testing.T) {
 
 func TestRunLabelDelete_Confirm(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{
+		"config/label_registry/list":   []map[string]any{{"label_id": "energy", "name": "Energy"}},
 		"config/label_registry/delete": nil,
 	}, nil)
 	withFlagDir(t, ts.dir)

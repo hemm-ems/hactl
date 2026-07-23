@@ -110,7 +110,11 @@ func TestLabelCreate_NoConfirm_DryRun(t *testing.T) {
 	flagLabelConfirm = false
 	defer func() { flagLabelConfirm = oldConfirm }()
 
-	out := dryRunLabelSummary("Energy", "mdi:flash", "red", "Power consumers")
+	var buf bytes.Buffer
+	if err := dryRunLabelSummary("Energy", "mdi:flash", "red", "Power consumers").render(&buf); err != nil {
+		t.Fatalf("rendering preview: %v", err)
+	}
+	out := buf.String()
 	if !strings.Contains(out, "would create label") {
 		t.Errorf("dry-run should say 'would create label', got: %q", out)
 	}

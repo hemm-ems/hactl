@@ -137,13 +137,11 @@ func joinStrings(s []string) string {
 
 func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
 	if !flagAreaConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would create area")
-		_, _ = fmt.Fprintf(w, "  name: %s\n", name)
-		if flagAreaIcon != "" {
-			_, _ = fmt.Fprintf(w, "  icon: %s\n", flagAreaIcon)
-		}
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create area").
+			with("name", name).
+			withIf(flagAreaIcon != "", "icon", flagAreaIcon).
+			withIf(flagAreaFloor != "", "floor", flagAreaFloor).
+			render(w)
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -167,13 +165,6 @@ func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
 }
 
 func runAreaDelete(ctx context.Context, w io.Writer, areaID string) error {
-	if !flagAreaConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete area")
-		_, _ = fmt.Fprintf(w, "  area_id: %s\n", areaID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -185,10 +176,31 @@ func runAreaDelete(ctx context.Context, w io.Writer, areaID string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
-	if err := ws.AreaRegistryDelete(ctx, areaID); err != nil {
+	// Resolve before planning. A preview that accepts an id HA has never heard
+	// of describes a delete that cannot happen, and under the manual's
+	// stop-at-the-first-miss rule a typo then reads as a verified plan.
+	areas, err := ws.AreaRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching areas: %w", err)
+	}
+	entry, ok := resolveRegistryTarget(areaID, areas, func(a haapi.AreaEntry) (string, string) {
+		return a.AreaID, a.Name
+	})
+	if !ok {
+		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", areaID)
+	}
+
+	if !flagAreaConfirm {
+		return dryRun("delete area").
+			with("area_id", entry.AreaID).
+			with("name", entry.Name).
+			render(w)
+	}
+
+	if err := ws.AreaRegistryDelete(ctx, entry.AreaID); err != nil {
 		return fmt.Errorf("deleting area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted area %q\n", areaID)
+	_, _ = fmt.Fprintf(w, "deleted area %q\n", entry.AreaID)
 	return nil
 }

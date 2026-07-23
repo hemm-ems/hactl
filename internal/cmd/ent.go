@@ -1206,8 +1206,7 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	}
 
 	if !flagEntConfirm {
-		_, _ = fmt.Fprintln(w, dryRunEntSetLabelSummary(entityID, currentLabels, merged))
-		return nil
+		return dryRunEntSetLabelSummary(entityID, currentLabels, merged).render(w)
 	}
 
 	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": merged}); err != nil {
@@ -1218,12 +1217,20 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	return nil
 }
 
-func dryRunEntSetLabelSummary(entityID string, current, merged []string) string {
-	s := "dry-run: would set entity labels\n"
-	s += fmt.Sprintf("  entity_id:      %s\n", entityID)
-	s += fmt.Sprintf("  current_labels: %v\n", current)
-	s += fmt.Sprintf("  new_labels:     %v\n", merged)
-	s += "use --confirm to apply"
+func dryRunEntSetLabelSummary(entityID string, current, merged []string) *dryRunPlan {
+	// Slices, not their %v rendering: under --json a caller gets real arrays.
+	return dryRun("set entity labels").
+		with("entity_id", entityID).
+		with("current_labels", nonNil(current)).
+		with("new_labels", nonNil(merged))
+}
+
+// nonNil turns a nil slice into an empty one, so --json emits [] rather than
+// null for "this entity has no labels".
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
 	return s
 }
 
@@ -1259,8 +1266,7 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	}
 
 	if !flagEntConfirm {
-		_, _ = fmt.Fprintln(w, dryRunEntSetAreaSummary(entityEntry, areaEntry, areas))
-		return nil
+		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).render(w)
 	}
 
 	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
@@ -1290,7 +1296,7 @@ func findEntityRegistryEntry(entries []haapi.EntityRegistryEntry, entityID strin
 	return haapi.EntityRegistryEntry{}, false
 }
 
-func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) string {
+func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) *dryRunPlan {
 	currentArea := entity.AreaID
 	for _, a := range areas {
 		if a.AreaID == entity.AreaID {
@@ -1299,14 +1305,10 @@ func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEn
 		}
 	}
 
-	s := "dry-run: would set entity area\n"
-	s += fmt.Sprintf("  entity_id:    %s\n", entity.EntityID)
-	if currentArea != "" {
-		s += fmt.Sprintf("  current_area: %s\n", currentArea)
-	}
-	s += fmt.Sprintf("  new_area:     %s (%s)\n", area.Name, area.AreaID)
-	s += "use --confirm to apply"
-	return s
+	return dryRun("set entity area").
+		with("entity_id", entity.EntityID).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", fmt.Sprintf("%s (%s)", area.Name, area.AreaID))
 }
 
 // relatedEntry holds one edge in the entity relationship graph.

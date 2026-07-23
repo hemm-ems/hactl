@@ -299,9 +299,12 @@ func seedConfigFiles() error {
 		return fmt.Errorf("seeding automations.yaml: %w", err)
 	}
 
-	// HA's default onboarding config doesn't wire up helper domains via
-	// YAML — create the backing file, then add the !include ourselves, so
-	// helper create tests can exercise real entity materialization.
+	// HA's default onboarding config wires up automations, scripts and scenes
+	// but nothing else, so the files seeded above are dead until we add the
+	// !include ourselves. Without `input_boolean:` the companion's helper route
+	// refuses the write outright; without `template:` it writes happily and HA
+	// never reads the file — no template entity ever appears, and `tpl create`
+	// cannot be proven against HA at all.
 	if _, err := testClient.WriteConfigFile(ctx, "input_boolean.yaml", "# seeded by companiontest\n", false); err != nil {
 		return fmt.Errorf("seeding input_boolean.yaml: %w", err)
 	}
@@ -309,14 +312,126 @@ func seedConfigFiles() error {
 	if err != nil {
 		return fmt.Errorf("reading configuration.yaml: %w", err)
 	}
-	if !strings.Contains(rawConfig.Content, "input_boolean:") {
-		newConfig := strings.TrimRight(rawConfig.Content, "\n") + "\ninput_boolean: !include input_boolean.yaml\n"
-		if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
-			return fmt.Errorf("wiring input_boolean into configuration.yaml: %w", err)
+	newConfig := strings.TrimRight(rawConfig.Content, "\n")
+	for _, wiring := range []struct{ key, line string }{
+		{"input_boolean:", "input_boolean: !include input_boolean.yaml"},
+		{"template:", "template: !include template.yaml"},
+	} {
+		if !strings.Contains(newConfig, wiring.key) {
+			newConfig += "\n" + wiring.line
 		}
 	}
+	newConfig += "\n"
+	if newConfig == rawConfig.Content {
+		return nil
+	}
+	if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
+		return fmt.Errorf("wiring includes into configuration.yaml: %w", err)
+	}
 
+	// A new top-level key is a new integration, and no reload service sets one
+	// up — `template.reload` does not even exist until the template integration
+	// has been set up once. Only a restart makes HA read the file.
+	return restartHA()
+}
+
+// restartHA restarts Home Assistant through its own `homeassistant.restart`
+// service and blocks until the core reports RUNNING again — the point at which
+// !include'd config is loaded and its entities are in /api/states.
+//
+// Deliberately not `docker compose restart`: the compose file publishes 8123 on
+// an ephemeral host port, and restarting the container re-allocates it, so
+// every URL captured at start-up (haURL, and the .env under instanceDir) would
+// silently point at a dead port. Restarting inside the container keeps the
+// mapping, and is what an operator would do anyway.
+func restartHA() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	// HA validates the config before restarting and refuses an invalid one, so
+	// a 4xx here means the config we just wrote is bad — worth reporting as
+	// such rather than as a timeout three minutes later.
+	if _, err := doJSONPost(ctx, haURL+"/api/services/homeassistant/restart", haToken, map[string]string{}); err != nil {
+		// A restart tears the connection down mid-response; only refuse on a
+		// answered rejection, not on the disconnect that means it worked.
+		if strings.Contains(err.Error(), "HTTP 4") || strings.Contains(err.Error(), "HTTP 5") {
+			return fmt.Errorf("HA refused to restart: %w", err)
+		}
+		slog.Info("companion-test: restart call did not answer cleanly (expected while HA goes down)", "error", err)
+	}
+
+	// Wait for HA to actually go down before waiting for it to come back:
+	// polling straight away would see the pre-restart RUNNING and return at once.
+	if err := waitForCoreNotRunning(ctx, haURL, haToken); err != nil {
+		return err
+	}
+	if err := waitForCoreRunning(ctx, haURL, haToken); err != nil {
+		return fmt.Errorf("HA did not come back after restart: %w", err)
+	}
+	slog.Info("companion-test: HA restarted and RUNNING")
 	return nil
+}
+
+// waitForCoreNotRunning blocks until HA stops reporting RUNNING — either it is
+// unreachable or it reports an earlier bootstrap state.
+func waitForCoreNotRunning(ctx context.Context, baseURL, token string) error {
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		if state, err := coreState(ctx, baseURL, token); err != nil || state != "RUNNING" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return errors.New("HA never went down after homeassistant.restart")
+}
+
+// waitForCoreRunning polls /api/config until HA reports "RUNNING". HA answers
+// that endpoint while still bootstrapping, reporting "STARTING", so a plain
+// reachability probe returns long before the config is actually loaded.
+// (Duplicated from hatest.waitForRunning to keep this package standalone.)
+func waitForCoreRunning(ctx context.Context, baseURL, token string) error {
+	last := "<unreachable>"
+	for {
+		if state, err := coreState(ctx, baseURL, token); err == nil {
+			if state == "RUNNING" {
+				return nil
+			}
+			last = state
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("HA not RUNNING before deadline (last state %q): %w", last, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// coreState returns HA's overall core state ("STARTING", "RUNNING", …).
+func coreState(ctx context.Context, baseURL, token string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/config", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close in a poll loop
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d from /api/config", resp.StatusCode)
+	}
+	var cfg struct {
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return "", err
+	}
+	return cfg.State, nil
 }
 
 func getMappedURL(service, port string) (string, error) {

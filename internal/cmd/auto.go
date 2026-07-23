@@ -920,11 +920,10 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		_, _ = fmt.Fprintln(w, "dry-run: would create automation")
-		_, _ = fmt.Fprintf(w, "  file: %s\n", flagAutoFile)
-		_, _ = fmt.Fprintf(w, "  size: %d bytes\n", len(data))
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("create automation").
+			with("file", flagAutoFile).
+			with("bytes", len(data)).
+			render(w)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -1005,13 +1004,6 @@ func automationTraceKey(a automationEntity) string {
 }
 
 func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
-	if !flagAutoConfirm {
-		_, _ = fmt.Fprintln(w, "dry-run: would delete automation")
-		_, _ = fmt.Fprintf(w, "  id: %s\n", autoID)
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -1025,6 +1017,26 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 	restClient := haapi.New(cfg.URL, cfg.Token)
 	liveEntityID, hadLiveEntity := resolveAutomationEntityID(ctx, restClient, autoID)
 
+	// Resolve before planning, so the dry run fails exactly where the
+	// confirmed run would rather than describing a delete that cannot happen.
+	//
+	// Both halves matter, and neither alone is the right test. The companion's
+	// DELETE accepts a config id, an alias, or a live entity_id, while its GET
+	// matches the config id only — so requiring GET to succeed would make the
+	// dry run refuse deletes that work (delete-by-alias, issue-#70's mismatch
+	// case), which is the same dishonesty pointing the other way.
+	_, defErr := cc.GetAutomationDef(ctx, autoID)
+	if defErr != nil && !hadLiveEntity {
+		return fmt.Errorf("automation %q not found (use 'auto ls' to see available automations): %w", autoID, defErr)
+	}
+
+	if !flagAutoConfirm {
+		return dryRun("delete automation").
+			with("id", autoID).
+			withIf(hadLiveEntity, "entity_id", liveEntityID).
+			render(w)
+	}
+
 	if _, err := cc.DeleteAutomationDef(ctx, autoID); err != nil {
 		return fmt.Errorf("deleting automation: %w", err)
 	}
@@ -1032,15 +1044,7 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 	_, _ = fmt.Fprintf(w, "deleted automation %q\n", autoID)
 
 	if hadLiveEntity {
-		ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-		if connErr := ws.Connect(ctx); connErr != nil {
-			slog.Warn("could not connect to HA to clean up entity registry", "entity_id", liveEntityID, "error", connErr)
-		} else {
-			defer func() { _ = ws.Close() }()
-			if rmErr := ws.EntityRegistryRemove(ctx, liveEntityID); rmErr != nil {
-				slog.Warn("could not remove orphaned entity registry entry", "entity_id", liveEntityID, "error", rmErr)
-			}
-		}
+		removeOrphanedEntity(ctx, cfg, liveEntityID)
 	}
 
 	return nil

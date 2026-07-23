@@ -27,9 +27,37 @@ Every command family that writes (config, dash, ref, …) reports what it
 session is refused with the family how-to, so an uninformed apply cannot be
 the first thing that executes.
 
+**A preview fails exactly where the confirmed run would.** The target is
+resolved, and the input file parsed, *before* the plan is printed. Thirteen
+write commands used to accept a fabricated id and print a confident
+"would delete X" at exit 0 while `--confirm` failed on the same argument;
+`script create`/`helper create` reported a file's size without ever reading
+it, so an unusable file previewed happily. The manual tells agents to stop at
+the first miss, which turned a typo into a verified plan. Where the confirmed
+run accepts more identifiers than a naive lookup does, the preview must accept
+them too: `auto delete` takes a config id, an alias or a live entity_id, so
+its check is "the companion has the definition **or** HA has the entity" — a
+stricter dry run is the same dishonesty pointing the other way.
+
+**A preview is machine-readable.** `--json` used to be a byte-for-byte no-op
+on nearly every preview, so an agent that asked for JSON got prose. Previews
+share one shape (`internal/cmd/dryrun.go`) that renders as text or as an
+object stating `"dry_run": true` — a caller must be able to tell a plan from a
+result by looking at the answer, not by remembering which flags it passed.
+
 - Enforced by: `internal/cmd/ref_test.go` (dry-run default asserted against a
   stubbed companion), `internal/cmd/confirm_guard_test.go` (first-write
   refusal + informed retry), `internal/cmd/config_delete_test.go`
+  (`TestConfigDeleteDryRunRefusesUnknownEntry`),
+  `internal/cmd/create_delete_test.go` (`TestRegistryDeleteDryRunResolvesTarget`,
+  `TestCreateDryRunRejectsUnusableInput`, `TestPreviewJSONIsMachineReadable`,
+  the four `…DryRunRefusesUnresolvable` cases),
+  `internal/integration/dash_test.go`
+  (`TestDashDeleteAgreesOnUnknownDashboard`),
+  `internal/companiontest/write_config_test.go`
+  (`TestE2EDryRunRejectsFabricatedTargetCLI`,
+  `TestE2ECreateDryRunValidatesInputCLI`,
+  `TestE2EConfirmedRunRejectsWhatDryRunRejectsCLI`)
 
 ## H-3 — The vendored companion contract must not drift
 
@@ -355,10 +383,31 @@ stop-at-the-first-miss rule that turns a typo into a successful plan. The dry
 run must fail exactly where the confirmed run would, so `set-label` now
 resolves the entity first, like `set-area` always did.
 
+**A delete leaves nothing behind.** HA keeps the entity registry entry of
+anything that ever had a unique_id, so removing a definition from YAML leaves
+the entity listed with `state: unavailable` and `restored: true` — a ghost
+`ent ls` still shows, which silently re-adopts the id if the same unique_id
+comes back. `auto delete` always cleaned this up; `script delete` and
+`tpl delete` did not, so the same operation left a different amount of debris
+depending on the family. All three now share `removeOrphanedEntity`.
+
+**A write claims nothing HA did not confirm.** The companion reports whether
+HA reloaded, and `tpl create`/`script create` decoded no such field, so both
+printed "created …" for a definition HA may never have read. The live case:
+`tpl create` writes `template.yaml` even when no `template:` key !include's
+it, and the entity never appears. Both now warn when HA confirms no reload —
+the same gate `auto create` and `helper create` already had (issue #40).
+
 Write tests mutate registry state that read tests assert on, so they run
 against their own HA instance (`getWriteHA`), which — like every lazily
 started instance — must have a matching teardown line in
-`internal/integration/main_test.go`.
+`internal/integration/main_test.go`. The companion tier's own rig had a
+matching gap: HA's onboarding config !include's automations, scripts and
+scenes and nothing else, so the seeded `template.yaml` was never loaded and no
+`tpl` write could be proven against HA at all. `seedConfigFiles` now wires
+`template:` in and restarts HA through its own `homeassistant.restart`
+service — not `docker compose restart`, which re-allocates the ephemeral host
+port and leaves every captured URL pointing at a dead socket.
 
 - Enforced by: `internal/integration/write_roundtrip_test.go`
   (`TestAutoApplyRollbackRoundTrip`, the original H-4 case),
@@ -369,4 +418,7 @@ started instance — must have a matching teardown line in
   `TestEntSetLabelAndSetAreaAgreeOnUnknownEntity`),
   `internal/integration/write_dash_test.go`
   (`TestDashCreateSaveDeleteRoundTrip`, `TestDashReplaceRoundTrip`) —
-  `make test-int`
+  `make test-int`; and the companion-backed families in
+  `internal/companiontest/write_config_test.go`
+  (`TestE2EScriptWriteRoundTripCLI`, `TestE2ETplWriteRoundTripCLI`,
+  `TestE2EHelperWriteRoundTripCLI`) — `make test-companion`
