@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+
+	"github.com/hemm-ems/hactl/internal/companion"
 )
 
 func loadSpec(t *testing.T) *openapi3.T {
@@ -48,49 +50,18 @@ func TestOpenAPISpecValid(t *testing.T) {
 	}
 }
 
-// clientEndpoints is every (method, path) the hactl companion client calls
-// (internal/companion/client.go). The vendored spec must document each — this is
-// the real cross-repo contract, and it is maintained here rather than as a
-// hardcoded path count, so adding a client call without a spec entry fails.
-var clientEndpoints = []struct{ method, path string }{
-	{"GET", "/v1/health"},
-	{"GET", "/v1/status"},
-	{"GET", "/v1/config/files"},
-	{"GET", "/v1/config/file"},
-	{"PUT", "/v1/config/file"},
-	{"GET", "/v1/config/block"},
-	{"GET", "/v1/related/entity"},
-	{"GET", "/v1/ref/scan"},
-	{"GET", "/v1/ref/entities"},
-	{"POST", "/v1/ref/replace"},
-	{"GET", "/v1/config/templates"},
-	{"GET", "/v1/config/template"},
-	{"PUT", "/v1/config/template"},
-	{"POST", "/v1/config/template"},
-	{"DELETE", "/v1/config/template"},
-	{"GET", "/v1/config/scripts"},
-	{"GET", "/v1/config/script"},
-	{"PUT", "/v1/config/script"},
-	{"POST", "/v1/config/script"},
-	{"DELETE", "/v1/config/script"},
-	{"GET", "/v1/config/automations"},
-	{"GET", "/v1/config/automation"},
-	{"PUT", "/v1/config/automation"},
-	{"POST", "/v1/config/automation"},
-	{"DELETE", "/v1/config/automation"},
-	{"GET", "/v1/config/helpers"},
-	{"GET", "/v1/config/helper"},
-	{"POST", "/v1/config/helper"},
-	{"PUT", "/v1/config/helper"},
-	{"DELETE", "/v1/config/helper"},
-	{"POST", "/v1/ha/reload/{domain}"},
-	{"POST", "/v1/ha/check-config"},
-	{"POST", "/v1/wireguard/config"},
-	{"POST", "/v1/wireguard/start"},
-	{"POST", "/v1/wireguard/stop"},
-	{"GET", "/v1/wireguard/status"},
-	{"GET", "/v1/logs"},
-}
+// clientEndpoints is every (method, path) the hactl companion client calls. It
+// is derived from the single companion.Endpoints table (which also drives the
+// unit-tier field-conformance sweep, contract_conformance_test.go) rather than
+// hand-maintained here — one list, so a new client call is covered by both
+// sweeps and cannot be added to one and forgotten in the other (TC-7).
+var clientEndpoints = func() []struct{ method, path string } {
+	out := make([]struct{ method, path string }, 0, len(companion.Endpoints))
+	for _, ep := range companion.Endpoints {
+		out = append(out, struct{ method, path string }{ep.Method, ep.Path})
+	}
+	return out
+}()
 
 func operationFor(pathItem *openapi3.PathItem, method string) *openapi3.Operation {
 	switch method {

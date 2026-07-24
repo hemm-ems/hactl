@@ -468,11 +468,7 @@ func (c *Client) CheckConfig(ctx context.Context) (valid bool, errors string, er
 	if err != nil {
 		return false, "", err
 	}
-	var r struct {
-		Status string `json:"status"`
-		Valid  *bool  `json:"valid"`
-		Errors string `json:"errors"`
-	}
+	var r CheckConfigResponse
 	if err := json.Unmarshal(data, &r); err != nil {
 		return false, "", fmt.Errorf("parsing check-config response: %w", err)
 	}

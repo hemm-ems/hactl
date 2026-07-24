@@ -38,7 +38,11 @@ type ConfigBlockResponse struct {
 type ConfigWriteResponse struct {
 	Status string `json:"status"`
 	Diff   string `json:"diff,omitempty"`
-	Backup string `json:"backup,omitempty"`
+	// Validated reports whether the companion re-validated HA's config after the
+	// write (false when validation was skipped or unavailable). Decoded so the
+	// field-conformance contract (T3) stays whole rather than ignore-listed.
+	Validated bool   `json:"validated,omitempty"`
+	Backup    string `json:"backup,omitempty"`
 }
 
 // RelatedEntityResponse is the response from GET /v1/related/entity.
@@ -119,6 +123,8 @@ type TemplateDefinition struct {
 	State             string `json:"state"`
 	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
 	DeviceClass       string `json:"device_class,omitempty"`
+	// Trigger is true when the entity lives in a trigger-based `template:` block.
+	Trigger bool `json:"trigger,omitempty"`
 }
 
 // TemplatesResponse is the response from GET /v1/config/templates.
@@ -130,6 +136,9 @@ type TemplatesResponse struct {
 type TemplateResponse struct {
 	UniqueID string `json:"unique_id"`
 	Content  string `json:"content"`
+	// Trigger is true when the entry is trigger-based (Content is then the whole
+	// block rather than the bare entity item).
+	Trigger bool `json:"trigger,omitempty"`
 }
 
 // TemplateCreateResponse is the response from POST /v1/config/template.
@@ -192,9 +201,27 @@ type AutomationCreateResponse struct {
 	Reloaded bool   `json:"reloaded"`
 }
 
-// ConfigDeleteResponse is the response from DELETE endpoints.
-type ConfigDeleteResponse struct {
+// CheckConfigResponse is the response from POST /v1/ha/check-config. Valid is a
+// pointer so a companion that omits it (<= 2026.6.7, which returns only
+// {"status":"ok"}) is distinguishable from one that reports valid=false.
+type CheckConfigResponse struct {
 	Status string `json:"status"`
+	Valid  *bool  `json:"valid"`
+	Errors string `json:"errors"`
+}
+
+// ConfigDeleteResponse is the acknowledgement shape shared by the PUT (update)
+// and DELETE endpoints for templates, scripts, automations and helpers. Callers
+// today consult only the transport error (success/failure); Diff and Reloaded
+// are decoded so the field-level contract (T3) stays whole and — critically —
+// so the `reloaded` flag is never again silently dropped, which is exactly the
+// defect (D45) that let a "written but HA never reloaded" write read as success.
+// Diff is populated only by the PUT dry-run responses; Reloaded only by the
+// endpoints HA reloads after mutating.
+type ConfigDeleteResponse struct {
+	Status   string `json:"status"`
+	Diff     string `json:"diff,omitempty"`
+	Reloaded bool   `json:"reloaded,omitempty"`
 }
 
 // HelperDefinition represents a helper entity definition.
