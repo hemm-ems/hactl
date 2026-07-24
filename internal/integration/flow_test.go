@@ -25,8 +25,11 @@ func TestConfigEntries_JSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &entries); err != nil {
 		t.Fatalf("config entries --json returned invalid JSON: %v\noutput: %s", err, out)
 	}
+	// The basic fixture's default_config always registers config entries (sun,
+	// met, radio_browser, …); an empty list here is a real failure, not an
+	// environment to skip.
 	if len(entries) == 0 {
-		t.Skip("no config entries (minimal HA)")
+		t.Fatalf("config entries --json returned no entries; the basic fixture always has some")
 	}
 	first := entries[0]
 	for _, key := range []string{"entry_id", "domain", "title", "state"} {
@@ -55,39 +58,43 @@ func TestConfigEntries_DomainFilter_NoMatch(t *testing.T) {
 	assertContains(t, out, "no config entries")
 }
 
-// TestConfigFlowStart_InvalidDomain tests that starting a flow for a
-// non-existent domain returns an appropriate error or abort response.
-func TestConfigFlowStart_InvalidDomain(t *testing.T) {
-	// Starting a config flow for a fake domain should fail with an error
-	_, err := runHactlErr(t, "config", "flow-start", "nonexistent_domain_xyz", "--confirm")
-	if err == nil {
-		// Some HA versions may return an abort flow rather than HTTP error
-		t.Log("flow-start with invalid domain did not error (HA may return abort flow)")
+// TestConfigFlowStartDryRunPreviewsUnloadedDomain proves the dry run previews a
+// flow-capable-but-not-yet-configured integration instead of rejecting it.
+//
+// The old resolver validated the domain against manifest/list (integrations HA
+// has *loaded*), so met_eireann — installable, with a working config flow, but
+// not configured on this instance — was refused as "no loaded integration",
+// failing exactly where a confirmed flow-start succeeds. That is the inverse of
+// the H-2 contract and it broke the command's whole purpose (you start a flow
+// for something not yet configured). The resolver now uses HA's flow_handlers
+// list, the authority the confirmed run agrees with.
+func TestConfigFlowStartDryRunPreviewsUnloadedDomain(t *testing.T) {
+	// met_eireann is not configured on the shared instance (so it is absent from
+	// manifest/list) yet does expose a config flow.
+	out, err := runHactlErr(t, "config", "flow-start", "met_eireann")
+	if err != nil {
+		t.Fatalf("dry-run flow-start for an installable flow domain must preview, got: %v\noutput: %s", err, out)
 	}
+	assertContains(t, out, "met_eireann")
+	assertContains(t, out, "dry-run")
 }
 
-// TestConfigFlowStart_JSON verifies JSON output mode for flow-start.
-func TestConfigFlowStart_JSON(t *testing.T) {
-	// Use "sun" domain which is built-in to HA and should be available
-	out, err := runHactlErr(t, "config", "flow-start", "sun", "--confirm", "--json")
-	if err != nil {
-		// sun may already be configured; that's fine
-		t.Skipf("flow-start sun failed (may already be configured): %v", err)
+// TestConfigFlowStartRejectsUnknownDomain proves the dry run refuses exactly
+// what the confirmed run refuses: a domain with no config flow. The dry run
+// resolves the domain against HA's flow-handler list, and --confirm 404s on the
+// same input ("Invalid handler specified"); the two must agree.
+//
+// The old test only t.Log'd when --confirm happened not to error — a silent
+// pass that let a broken flow path stay green.
+func TestConfigFlowStartRejectsUnknownDomain(t *testing.T) {
+	const domain = "nonexistent_domain_xyz"
+	_, dryErr := runHactlErr(t, "config", "flow-start", domain)
+	_, confirmErr := runHactlErr(t, "config", "flow-start", domain, "--confirm")
+	if dryErr == nil {
+		t.Errorf("dry-run flow-start for %q must error (no such config flow)", domain)
 	}
-	if out == "" {
-		t.Skip("empty response from flow-start sun")
-	}
-
-	// Verify it's valid JSON with expected fields
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("flow-start --json returned invalid JSON: %v\noutput: %s", err, out)
-	}
-	if _, ok := result["flow_id"]; !ok {
-		t.Errorf("JSON response missing flow_id field")
-	}
-	if _, ok := result["type"]; !ok {
-		t.Errorf("JSON response missing type field")
+	if confirmErr == nil {
+		t.Errorf("--confirm flow-start for %q must error (HA rejects the handler)", domain)
 	}
 }
 
@@ -112,36 +119,5 @@ func TestConfigFlowStep_InvalidFlow(t *testing.T) {
 	_, err := runHactlErr(t, "config", "flow-step", "nonexistent_flow_id", "--data", "{}", "--confirm")
 	if err == nil {
 		t.Error("expected error for invalid flow_id, got nil")
-	}
-}
-
-// TestConfigFlow_FullLifecycle tests starting a flow and stepping through it.
-// Uses the "met_eireann" integration which has a simple user step.
-func TestConfigFlow_FullLifecycle(t *testing.T) {
-	// Start a config flow for met_eireann (weather integration)
-	out, err := runHactlErr(t, "config", "flow-start", "met_eireann", "--confirm", "--json")
-	if err != nil {
-		t.Skipf("flow-start met_eireann failed (integration may not be available): %v", err)
-	}
-
-	var startResult map[string]any
-	if err := json.Unmarshal([]byte(out), &startResult); err != nil {
-		t.Fatalf("invalid JSON from flow-start: %v", err)
-	}
-
-	flowID, ok := startResult["flow_id"].(string)
-	if !ok || flowID == "" {
-		t.Skipf("no flow_id returned, skipping lifecycle test")
-	}
-
-	flowType, _ := startResult["type"].(string)
-	if flowType == "abort" {
-		t.Skipf("flow aborted (already configured?), skipping lifecycle test")
-	}
-
-	// Inspect the flow (config flow, not options flow — no --options flag)
-	inspectOut := runHactl(t, "config", "flow-inspect", flowID)
-	if !strings.Contains(inspectOut, "flow_id") {
-		t.Errorf("inspect output missing flow_id: %s", inspectOut)
 	}
 }

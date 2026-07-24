@@ -409,6 +409,32 @@ scenes and nothing else, so the seeded `template.yaml` was never loaded and no
 service — not `docker compose restart`, which re-allocates the ephemeral host
 port and leaves every captured URL pointing at a dead socket.
 
+**The config-flow family is proven end to end, not echoed.** `config
+flow-start`/`flow-step`/`options`/`delete --confirm` create and remove real
+config entries, but the confirmed path only echoes HA's flow response and
+`delete` prints "deleted config entry" the moment the call returns nil — so an
+assertion on hactl's output holds whether or not anything reached HA. This was
+the last pre-H-4 stubbable mutation surface (W7): the round-trip drives
+flow-start → flow-step → create_entry for a flow-capable domain (`met_eireann`,
+whose single `user` step is Required-with-default so `--data {}` completes with
+no network access and no credentials), reads the created entry back from HA's
+own `config_entries` list, asserts its witnessed title/state, then `config
+delete --confirm` and asserts the entry is gone from that list. The options flow
+is proven the same way against the default `met` entry: a new `elevation` is
+submitted through `config options --confirm` + `flow-step --options --confirm`,
+then read straight back from a fresh options flow's HA-seeded form default.
+Stubbing `StartConfigFlowOnce`/`StepFlow`/`DeleteConfigEntry`/`StartOptionsFlow`
+to canned success fails these at the read-back.
+
+**A flow preview resolves the domain the way the confirmed run does.** `config
+flow-start`'s dry run validated the domain against `manifest/list` — the
+integrations HA has *loaded* — so every not-yet-configured integration (the very
+thing you start a flow for) was refused as "no loaded integration" while a
+confirmed flow-start lazily loaded it and succeeded. The dry run failed exactly
+where the confirmed run worked, the inverse of the H-2 contract, and it broke
+the command's whole purpose. It now resolves against HA's `flow_handlers` list
+(the authority on what `StartConfigFlow` accepts), so preview and confirm agree.
+
 - Enforced by: `internal/integration/write_roundtrip_test.go`
   (`TestAutoApplyRollbackRoundTrip`, the original H-4 case),
   `internal/integration/write_entity_test.go` (`TestEntSetLabelRoundTrip`
@@ -417,7 +443,15 @@ port and leaves every captured URL pointing at a dead socket.
   `area_entities()` as the oracle,
   `TestEntSetLabelAndSetAreaAgreeOnUnknownEntity`),
   `internal/integration/write_dash_test.go`
-  (`TestDashCreateSaveDeleteRoundTrip`, `TestDashReplaceRoundTrip`) —
+  (`TestDashCreateSaveDeleteRoundTrip`, `TestDashReplaceRoundTrip`),
+  `internal/integration/write_flow_test.go`
+  (`TestConfigFlowCreateDeleteRoundTrip`, `TestConfigOptionsRoundTrip`),
+  `internal/integration/flow_test.go`
+  (`TestConfigFlowStartDryRunPreviewsUnloadedDomain`,
+  `TestConfigFlowStartRejectsUnknownDomain`),
+  `internal/cmd/ws_cmd_test.go`
+  (`TestRunConfigFlowStart_DryRunResolvesViaFlowHandlers`),
+  `internal/haapi/client_test.go` (`TestConfigFlowHandlers`) —
   `make test-int`; and the companion-backed families in
   `internal/companiontest/write_config_test.go`
   (`TestE2EScriptWriteRoundTripCLI`, `TestE2ETplWriteRoundTripCLI`,

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -313,33 +314,6 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 	return renderConfigShow(w, result)
 }
 
-// findConfigEntry returns the entry whose entry_id matches (case-sensitive).
-// resolveIntegrationManifest returns HA's own manifest for a domain.
-//
-// `manifest/list` reports the integrations HA has loaded, which is a superset
-// of the ones with a config flow but the closest authority available over the
-// WS surface hactl already speaks; a domain absent from it is certainly a
-// typo. The confirmed run still surfaces "integration failed to load" for a
-// real integration that cannot start.
-func resolveIntegrationManifest(ctx context.Context, cfg *config.Config, domain string) (haapi.IntegrationManifest, error) {
-	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-	if err := ws.Connect(ctx); err != nil {
-		return haapi.IntegrationManifest{}, fmt.Errorf("connecting to HA: %w", err)
-	}
-	defer func() { _ = ws.Close() }()
-	manifests, err := ws.IntegrationManifestList(ctx)
-	if err != nil {
-		return haapi.IntegrationManifest{}, fmt.Errorf("fetching integration manifests: %w", err)
-	}
-	for _, m := range manifests {
-		if m.Domain == domain {
-			return m, nil
-		}
-	}
-	return haapi.IntegrationManifest{}, fmt.Errorf(
-		"no loaded integration with domain %q (list them with 'hactl cc ls')", domain)
-}
-
 // resolveConfigEntry fetches HA's config entries and returns the one with
 // entryID, or an error naming the miss. Used by the write commands so their
 // dry runs fail exactly where the confirmed run would.
@@ -643,16 +617,24 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 
-	// Resolve before planning: a misspelled domain is the whole failure mode
-	// here, and HA's own manifest list is the authority on what exists.
+	// Resolve before planning: a domain that has no config flow is the whole
+	// failure mode here, and the preview must refuse exactly what --confirm
+	// would. HA's flow-handler list is the authority — it reports every
+	// installable integration that exposes a config flow, whether or not it is
+	// currently loaded, so a not-yet-configured integration (the very thing you
+	// start a flow for) previews instead of being wrongly rejected.
+	//
+	// manifest/list, used before, reports only *loaded* integrations, so it
+	// rejected every unconfigured domain as "no loaded integration" while a
+	// confirmed StartConfigFlow lazily loaded it and succeeded — the dry run
+	// failed exactly where the confirmed run worked, the inverse of the H-2
+	// contract, and it broke the command's whole reason for existing.
 	if !flagConfigConfirm {
-		manifest, manifestErr := resolveIntegrationManifest(ctx, cfg, domain)
-		if manifestErr != nil {
-			return manifestErr
+		if handlerErr := ensureConfigFlowHandler(ctx, client, domain); handlerErr != nil {
+			return handlerErr
 		}
 		return dryRun("start a config flow for integration").
 			with("domain", domain).
-			with("name", manifest.Name).
 			withHint("use --confirm to start").
 			render(w)
 	}
@@ -661,6 +643,22 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 		return fmt.Errorf("integration %q failed to load — check HA logs for import errors: %w", domain, err)
 	}
 	return renderFlowResult(w, data)
+}
+
+// ensureConfigFlowHandler fails when the domain exposes no config flow, so the
+// dry run refuses exactly what a confirmed StartConfigFlow would 404 on
+// ("Invalid handler specified"). HA's flow_handlers list is the authority: it
+// includes installable-but-unloaded integrations, which manifest/list omits.
+func ensureConfigFlowHandler(ctx context.Context, client *haapi.Client, domain string) error {
+	handlers, err := client.ConfigFlowHandlers(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching config flow handlers: %w", err)
+	}
+	if slices.Contains(handlers, domain) {
+		return nil
+	}
+	return fmt.Errorf("no config flow for domain %q "+
+		"(the domain must be an installed integration that provides a config flow)", domain)
 }
 
 func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {

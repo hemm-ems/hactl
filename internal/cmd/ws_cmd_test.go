@@ -1487,6 +1487,47 @@ func TestRunConfigFlowStart(t *testing.T) {
 	}
 }
 
+// A flow-start dry run must resolve the domain against HA's config-flow handler
+// list (GET /api/config/config_entries/flow_handlers) — the authority on what a
+// confirmed StartConfigFlow accepts — not manifest/list, which reports only
+// *loaded* integrations and so rejected every not-yet-configured integration,
+// the whole reason to start a flow. Reverting the resolver to manifest/list
+// leaves the empty WS stub answering "unknown command manifest/list", which
+// turns the met_eireann preview red — the mutation check for this fix.
+func TestRunConfigFlowStart_DryRunResolvesViaFlowHandlers(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/config/config_entries/flow_handlers": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `["met_eireann","mqtt"]`)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	old := flagConfigConfirm
+	flagConfigConfirm = false
+	defer func() { flagConfigConfirm = old }()
+
+	// met_eireann is not loaded (no manifest, no config entry) but has a config
+	// flow — the dry run must preview it, not error.
+	var buf bytes.Buffer
+	if err := runConfigFlowStart(context.Background(), &buf, "met_eireann"); err != nil {
+		t.Fatalf("dry-run flow-start for a flow-capable but unloaded domain must preview, got: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "met_eireann") || !strings.Contains(out, "dry-run") {
+		t.Errorf("preview missing domain or dry-run marker: %q", out)
+	}
+
+	// A domain with no config flow must be refused, exactly where --confirm 404s.
+	buf.Reset()
+	err := runConfigFlowStart(context.Background(), &buf, "no_such_domain")
+	if err == nil {
+		t.Fatal("dry-run flow-start for a domain with no config flow must error")
+	}
+	if !strings.Contains(err.Error(), "no config flow for domain") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // --- runConfigFlowInspect (HTTP) ---
 
 func TestRunConfigFlowInspect(t *testing.T) {
