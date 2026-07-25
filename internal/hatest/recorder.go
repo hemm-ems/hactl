@@ -78,6 +78,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -170,12 +171,12 @@ func (i *Instance) Backfill(ctx context.Context, series ...Series) error {
 		return err
 	}
 
-	rows, err := backfillDB(dbPath, series)
+	rows, err := backfillDB(ctx, dbPath, series)
 	if err != nil {
 		// Leave the instance running even when the write failed: a caller that
 		// t.Fatals still has a container that can be inspected and torn down.
 		if startErr := i.restartAfterBackfill(ctx); startErr != nil {
-			return fmt.Errorf("%w (and restarting the container afterwards failed: %v)", err, startErr)
+			return fmt.Errorf("%w (and restarting the container afterwards failed: %w)", err, startErr)
 		}
 		return err
 	}
@@ -250,24 +251,24 @@ func (i *Instance) restartAfterBackfill(ctx context.Context) error {
 
 // backfillDB opens the recorder database and writes every series in one
 // transaction. Returns the number of state rows written.
-func backfillDB(dbPath string, series []Series) (int, error) {
+func backfillDB(ctx context.Context, dbPath string, series []Series) (int, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return 0, fmt.Errorf("hatest: opening recorder db: %w", err)
 	}
 	defer db.Close() //nolint:errcheck // test helper
 
-	if err := verifyRecorderSchema(db); err != nil {
+	if err = verifyRecorderSchema(ctx, db); err != nil {
 		return 0, err
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("hatest: begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after a successful commit
 
-	w, err := newRowWriter(tx)
+	w, err := newRowWriter(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -287,7 +288,7 @@ func backfillDB(dbPath string, series []Series) (int, error) {
 	// strictly required — HA would recover the WAL — but it keeps the file the
 	// container sees identical to the one we wrote, with no cross-boundary WAL
 	// hand-off to reason about.
-	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		return 0, fmt.Errorf("hatest: wal checkpoint: %w", err)
 	}
 	return total, nil
@@ -296,9 +297,10 @@ func backfillDB(dbPath string, series []Series) (int, error) {
 // verifyRecorderSchema refuses to write into a schema this rig was not built
 // for. The version is the tripwire; the column check catches drift that keeps
 // the version number.
-func verifyRecorderSchema(db *sql.DB) error {
+func verifyRecorderSchema(ctx context.Context, db *sql.DB) error {
 	var version int
-	err := db.QueryRow("SELECT schema_version FROM schema_changes ORDER BY change_id DESC LIMIT 1").Scan(&version)
+	err := db.QueryRowContext(ctx,
+		"SELECT schema_version FROM schema_changes ORDER BY change_id DESC LIMIT 1").Scan(&version)
 	if err != nil {
 		return fmt.Errorf("hatest: reading recorder schema version: %w "+
 			"(no schema_changes table — is this a recorder database?)", err)
@@ -312,7 +314,7 @@ func verifyRecorderSchema(db *sql.DB) error {
 			"mode these tests exist to catch", version, knownSchemaVersions())
 	}
 	for table, cols := range requiredColumns {
-		present, err := tableColumns(db, table)
+		present, err := tableColumns(ctx, db, table)
 		if err != nil {
 			return err
 		}
@@ -334,13 +336,13 @@ func knownSchemaVersions() string {
 	sort.Ints(vs)
 	parts := make([]string, len(vs))
 	for i, v := range vs {
-		parts[i] = fmt.Sprintf("%d", v)
+		parts[i] = strconv.Itoa(v)
 	}
 	return strings.Join(parts, ", ")
 }
 
-func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.Query("SELECT name FROM pragma_table_info(?)", table)
+func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, "SELECT name FROM pragma_table_info(?)", table)
 	if err != nil {
 		return nil, fmt.Errorf("hatest: reading columns of %s: %w", table, err)
 	}
@@ -366,6 +368,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 // highest existing one — so HA's own AUTOINCREMENT counters continue past the
 // backfill instead of colliding with it.
 type rowWriter struct {
+	ctx       context.Context //nolint:containedctx // the writer is one call's worth of statements
 	tx        *sql.Tx
 	nextState int64
 	nextAttr  int64
@@ -373,12 +376,14 @@ type rowWriter struct {
 	metaIDs   map[string]int64
 }
 
-func newRowWriter(tx *sql.Tx) (*rowWriter, error) {
-	w := &rowWriter{tx: tx, attrIDs: map[string]int64{}, metaIDs: map[string]int64{}}
-	if err := tx.QueryRow("SELECT COALESCE(MAX(state_id),0)+1 FROM states").Scan(&w.nextState); err != nil {
+func newRowWriter(ctx context.Context, tx *sql.Tx) (*rowWriter, error) {
+	w := &rowWriter{ctx: ctx, tx: tx, attrIDs: map[string]int64{}, metaIDs: map[string]int64{}}
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(state_id),0)+1 FROM states").Scan(&w.nextState); err != nil {
 		return nil, fmt.Errorf("hatest: reading max state_id: %w", err)
 	}
-	if err := tx.QueryRow("SELECT COALESCE(MAX(attributes_id),0)+1 FROM state_attributes").Scan(&w.nextAttr); err != nil {
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(attributes_id),0)+1 FROM state_attributes").Scan(&w.nextAttr); err != nil {
 		return nil, fmt.Errorf("hatest: reading max attributes_id: %w", err)
 	}
 	return w, nil
@@ -422,7 +427,7 @@ func (w *rowWriter) writeSeries(s Series) (int, error) {
 
 		stateID := w.nextState
 		w.nextState++
-		_, err = w.tx.Exec(
+		_, err = w.tx.ExecContext(w.ctx,
 			`INSERT INTO states
 			  (state_id, metadata_id, state, attributes_id,
 			   last_updated_ts, last_changed_ts, last_reported_ts, old_state_id, origin_idx)
@@ -444,11 +449,11 @@ func (w *rowWriter) metaID(entityID string) (int64, error) {
 		return id, nil
 	}
 	var id int64
-	err := w.tx.QueryRow("SELECT metadata_id FROM states_meta WHERE entity_id=?", entityID).Scan(&id)
+	err := w.tx.QueryRowContext(w.ctx, "SELECT metadata_id FROM states_meta WHERE entity_id=?", entityID).Scan(&id)
 	switch {
 	case err == nil:
 	case errors.Is(err, sql.ErrNoRows):
-		res, insErr := w.tx.Exec("INSERT INTO states_meta (entity_id) VALUES (?)", entityID)
+		res, insErr := w.tx.ExecContext(w.ctx, "INSERT INTO states_meta (entity_id) VALUES (?)", entityID)
 		if insErr != nil {
 			return 0, insErr
 		}
@@ -479,7 +484,8 @@ func (w *rowWriter) attrID(attrs map[string]any) (int64, error) {
 		return id, nil
 	}
 	var id int64
-	err = w.tx.QueryRow("SELECT attributes_id FROM state_attributes WHERE shared_attrs=?", key).Scan(&id)
+	err = w.tx.QueryRowContext(w.ctx,
+		"SELECT attributes_id FROM state_attributes WHERE shared_attrs=?", key).Scan(&id)
 	if err == nil {
 		w.attrIDs[key] = id
 		return id, nil
@@ -491,7 +497,7 @@ func (w *rowWriter) attrID(attrs map[string]any) (int64, error) {
 	_, _ = h.Write(blob)
 	id = w.nextAttr
 	w.nextAttr++
-	if _, err := w.tx.Exec(
+	if _, err := w.tx.ExecContext(w.ctx,
 		"INSERT INTO state_attributes (attributes_id, hash, shared_attrs) VALUES (?,?,?)",
 		id, int64(h.Sum32()), key); err != nil {
 		return 0, err

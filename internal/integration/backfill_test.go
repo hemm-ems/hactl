@@ -41,6 +41,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -270,40 +271,58 @@ func assertPlanIsDistinguishing(t *testing.T, plan backfillPlan) {
 	for _, s := range plan.Series {
 		byID[s.EntityID] = s
 	}
-
 	for _, id := range []string{entClean, entGap, entStuck, entSpike} {
-		s := byID[id]
-		for i := 1; i < len(s.Samples); i++ {
-			if s.Samples[i].State == s.Samples[i-1].State {
-				t.Fatalf("plan %s: samples %d and %d both read %q — HA does not record an unchanged value "+
-					"as a change, so this row would not survive the round trip", id, i-1, i, s.Samples[i].State)
-			}
-			if !s.Samples[i].At.After(s.Samples[i-1].At) {
-				t.Fatalf("plan %s: sample %d is not after %d", id, i, i-1)
-			}
+		assertSamplesAlwaysChange(t, id, byID[id])
+	}
+	assertPlanHasOneHole(t, plan, byID[entGap])
+	assertPlanHasOneStuckRun(t, plan, byID[entStuck])
+	assertPlanHasOneOutlier(t, plan, byID[entSpike])
+}
+
+// assertSamplesAlwaysChange enforces the property every series in this file
+// depends on: HA does not record an unchanged value as a change, so a repeat
+// would not survive the round trip through its history API.
+func assertSamplesAlwaysChange(t *testing.T, id string, s hatest.Series) {
+	t.Helper()
+	for i := 1; i < len(s.Samples); i++ {
+		if s.Samples[i].State == s.Samples[i-1].State {
+			t.Fatalf("plan %s: samples %d and %d both read %q — HA does not record an unchanged value "+
+				"as a change, so this row would not survive the round trip", id, i-1, i, s.Samples[i].State)
+		}
+		if !s.Samples[i].At.After(s.Samples[i-1].At) {
+			t.Fatalf("plan %s: sample %d is not after %d", id, i, i-1)
 		}
 	}
+}
 
-	// The gap series must contain exactly one hole, of exactly the size the gap
-	// assertion names.
+// assertPlanHasOneHole — the gap series must contain exactly one hole, of
+// exactly the size the gap assertion names.
+func assertPlanHasOneHole(t *testing.T, plan backfillPlan, s hatest.Series) {
+	t.Helper()
 	holes := 0
-	for i, s := 1, byID[entGap]; i < len(s.Samples); i++ {
-		if d := s.Samples[i].At.Sub(s.Samples[i-1].At); d > backfillStep {
-			holes++
-			if d != 3*time.Hour || !s.Samples[i-1].At.Equal(plan.GapFrom) || !s.Samples[i].At.Equal(plan.GapTo) {
-				t.Fatalf("plan %s: hole %s → %s lasts %s, want the planned %s → %s of 3h",
-					entGap, s.Samples[i-1].At, s.Samples[i].At, d, plan.GapFrom, plan.GapTo)
-			}
+	for i := 1; i < len(s.Samples); i++ {
+		d := s.Samples[i].At.Sub(s.Samples[i-1].At)
+		if d <= backfillStep {
+			continue
+		}
+		holes++
+		if d != 3*time.Hour || !s.Samples[i-1].At.Equal(plan.GapFrom) || !s.Samples[i].At.Equal(plan.GapTo) {
+			t.Fatalf("plan %s: hole %s → %s lasts %s, want the planned %s → %s of 3h",
+				entGap, s.Samples[i-1].At, s.Samples[i].At, d, plan.GapFrom, plan.GapTo)
 		}
 	}
 	if holes != 1 {
 		t.Fatalf("plan %s: %d holes, want exactly 1", entGap, holes)
 	}
+}
 
-	// The stuck value must appear only inside the planned run, and must span it.
+// assertPlanHasOneStuckRun — the stuck value must appear only inside the planned
+// run, and must span it.
+func assertPlanHasOneStuckRun(t *testing.T, plan backfillPlan, s hatest.Series) {
+	t.Helper()
 	want := fmtVal(plan.StuckValue)
 	var first, last time.Time
-	for _, sample := range byID[entStuck].Samples {
+	for _, sample := range s.Samples {
 		if sample.State != want {
 			continue
 		}
@@ -316,15 +335,21 @@ func assertPlanIsDistinguishing(t *testing.T, plan backfillPlan) {
 		t.Fatalf("plan %s: value %s runs %s → %s (%s), want the planned %s → %s of 6h",
 			entStuck, want, first, last, last.Sub(first), plan.StuckFrom, plan.StuckTo)
 	}
+}
 
-	// Exactly one outlier, and it is the one the spike assertion names.
+// assertPlanHasOneOutlier — exactly one outlier, and it is the one the spike
+// assertion names.
+func assertPlanHasOneOutlier(t *testing.T, plan backfillPlan, s hatest.Series) {
+	t.Helper()
 	outliers := 0
-	for _, sample := range byID[entSpike].Samples {
-		if v, err := strconv.ParseFloat(sample.State, 64); err == nil && v > 1000 {
-			outliers++
-			if !sample.At.Equal(plan.SpikeAt) {
-				t.Fatalf("plan %s: outlier at %s, want %s", entSpike, sample.At, plan.SpikeAt)
-			}
+	for _, sample := range s.Samples {
+		v, err := strconv.ParseFloat(sample.State, 64)
+		if err != nil || v <= 1000 {
+			continue
+		}
+		outliers++
+		if !sample.At.Equal(plan.SpikeAt) {
+			t.Fatalf("plan %s: outlier at %s, want %s", entSpike, sample.At, plan.SpikeAt)
 		}
 	}
 	if outliers != 1 {
@@ -430,6 +455,7 @@ func (r haStateRow) changedAt(t *testing.T) time.Time {
 // ever stops being true, the stuck series is shaped for a filter that no longer
 // exists and someone should find out from a failing test, not from a wrong answer.
 func assertBackfillLanded(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	winStart := plan.Now.Add(-30 * time.Hour)
 	winEnd := plan.Now.Add(time.Hour)
 
@@ -500,10 +526,8 @@ func shortTimeForms(ts time.Time) []string {
 
 func assertRenderedTime(t *testing.T, what string, got string, want time.Time) {
 	t.Helper()
-	for _, form := range shortTimeForms(want) {
-		if got == form {
-			return
-		}
+	if slices.Contains(shortTimeForms(want), got) {
+		return
 	}
 	t.Errorf("%s: reported at %q, want %s (rendered %q or %q)",
 		what, got, want.Format(time.RFC3339), shortTimeForms(want)[0], shortTimeForms(want)[1])
@@ -523,6 +547,7 @@ func rowsOfType(rows []anomalyRow, typ string) []anomalyRow {
 // 3h with no rows, between two samples we named. Expected boundaries come from the plan, not from re-running a
 // gap-finder over the series.
 func assertInjectedGapFound(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	rows := entAnomalies(t, inst, entGap)
 
 	gaps := rowsOfType(rows, "gap")
@@ -548,6 +573,7 @@ func assertInjectedGapFound(t *testing.T, inst *hatest.Instance, plan backfillPl
 // sensor's value never moves. See buildBackfillPlan for why the run is written as a value
 // alternating with `unavailable` rather than as repeated identical rows.
 func assertInjectedStuckRunFound(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	rows := entAnomalies(t, inst, entStuck)
 
 	stuck := rowsOfType(rows, "stuck")
@@ -573,6 +599,7 @@ func assertInjectedStuckRunFound(t *testing.T, inst *hatest.Instance, plan backf
 // TestRecorderBackfill/anomalies_finds_injected_spike: one sample at 2000 in a
 // series that otherwise sits at 200±2.
 func assertInjectedSpikeFound(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	rows := entAnomalies(t, inst, entSpike)
 
 	spikes := rowsOfType(rows, "spike")
@@ -599,7 +626,7 @@ func assertInjectedSpikeFound(t *testing.T, inst *hatest.Instance, plan backfill
 // something to look at, so the emptiness is asserted together with the size of
 // the series it is about — both taken from HA, not from hactl.
 func assertNegativeControlIsQuiet(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
-
+	t.Helper()
 	haRows := haHistory(t, inst, entClean, plan.Now.Add(-30*time.Hour), plan.Now.Add(time.Hour))
 	if len(haRows) < backfillN {
 		t.Fatalf("precondition: HA holds only %d rows for the control entity %s, want %d — "+
@@ -642,10 +669,20 @@ func (r histRow) value(t *testing.T) float64 {
 	return v
 }
 
-// haNumericStats reduces HA's raw answer to the facts a resampler cannot change.
-func haNumericStats(t *testing.T, rows []haStateRow) (n int, minV, maxV, mean float64, first, last time.Time) {
+// numericStats are the facts about HA's own series that a resampler cannot
+// change, and from which every `ent hist` expectation in this file is derived.
+type numericStats struct {
+	N           int
+	Min         float64
+	Max         float64
+	Mean        float64
+	First, Last time.Time
+}
+
+// haNumericStats reduces HA's raw answer to those facts.
+func haNumericStats(t *testing.T, rows []haStateRow) numericStats {
 	t.Helper()
-	minV, maxV = math.Inf(1), math.Inf(-1)
+	st := numericStats{Min: math.Inf(1), Max: math.Inf(-1)}
 	sum := 0.0
 	for _, r := range rows {
 		v, err := strconv.ParseFloat(r.State, 64)
@@ -653,19 +690,19 @@ func haNumericStats(t *testing.T, rows []haStateRow) (n int, minV, maxV, mean fl
 			continue // `unavailable` and friends are not samples
 		}
 		ts := r.changedAt(t)
-		if n == 0 {
-			first = ts
+		if st.N == 0 {
+			st.First = ts
 		}
-		last = ts
-		n++
+		st.Last = ts
+		st.N++
 		sum += v
-		minV = math.Min(minV, v)
-		maxV = math.Max(maxV, v)
+		st.Min = math.Min(st.Min, v)
+		st.Max = math.Max(st.Max, v)
 	}
-	if n > 0 {
-		mean = sum / float64(n)
+	if st.N > 0 {
+		st.Mean = sum / float64(st.N)
 	}
-	return n, minV, maxV, mean, first, last
+	return st
 }
 
 // assertLongWindowBucketing backs TestRecorderBackfill/hist_long_window_buckets.
@@ -673,12 +710,13 @@ func haNumericStats(t *testing.T, rows []haStateRow) (n int, minV, maxV, mean fl
 // enough to force it. Every expectation
 // is computed from HA's raw series at test time.
 func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	haRows := haHistory(t, inst, entClean, plan.Now.Add(-30*time.Hour), plan.Now.Add(time.Hour))
-	rawN, rawMin, rawMax, rawMean, rawFirst, rawLast := haNumericStats(t, haRows)
+	raw := haNumericStats(t, haRows)
 
-	if rawN <= histResampleTarget {
+	if raw.N <= histResampleTarget {
 		t.Fatalf("precondition: HA holds only %d samples, which is not more than the %d-point resample "+
-			"target — this test would prove nothing about bucketing", rawN, histResampleTarget)
+			"target — this test would prove nothing about bucketing", raw.N, histResampleTarget)
 	}
 
 	rows := entHist(t, inst, entClean)
@@ -686,7 +724,7 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 	// 1. It resampled, and to the number the manual promises.
 	if len(rows) != histResampleTarget {
 		t.Errorf("ent hist %s over %d raw samples rendered %d points, want %d "+
-			"(docs/manual.md: \"~50 resampled datapoints\")", entClean, rawN, len(rows), histResampleTarget)
+			"(docs/manual.md: \"~50 resampled datapoints\")", entClean, raw.N, len(rows), histResampleTarget)
 	}
 
 	// 2. Averaging within a bucket cannot leave the data's range, and — for a
@@ -695,9 +733,9 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 	//    buckets, fails here; a count check alone would not notice either.
 	for i, r := range rows {
 		v := r.value(t)
-		if v < rawMin || v > rawMax {
+		if v < raw.Min || v > raw.Max {
 			t.Errorf("ent hist %s point %d = %.2f is outside HA's own range [%.2f, %.2f]",
-				entClean, i, v, rawMin, rawMax)
+				entClean, i, v, raw.Min, raw.Max)
 		}
 	}
 	gotMin, gotMax, gotSum := math.Inf(1), math.Inf(-1), 0.0
@@ -706,10 +744,10 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 		gotMin, gotMax = math.Min(gotMin, v), math.Max(gotMax, v)
 		gotSum += v
 	}
-	if gotMax >= rawMax || gotMin <= rawMin {
+	if gotMax >= raw.Max || gotMin <= raw.Min {
 		t.Errorf("ent hist %s rendered range [%.2f, %.2f] does not sit strictly inside HA's [%.2f, %.2f] — "+
 			"bucket averages of a moving series must be less extreme than its extremes",
-			entClean, gotMin, gotMax, rawMin, rawMax)
+			entClean, gotMin, gotMax, raw.Min, raw.Max)
 	}
 
 	// 3. Averaging preserves the level. Buckets here are near-equally populated
@@ -717,14 +755,14 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 	//    means must track HA's own mean closely. Dropped or duplicated buckets
 	//    move it.
 	gotMean := gotSum / float64(len(rows))
-	if math.Abs(gotMean-rawMean) > 0.5 {
+	if math.Abs(gotMean-raw.Mean) > 0.5 {
 		t.Errorf("ent hist %s mean of rendered points = %.3f, HA's own mean = %.3f (difference %.3f > 0.5)",
-			entClean, gotMean, rawMean, math.Abs(gotMean-rawMean))
+			entClean, gotMean, raw.Mean, math.Abs(gotMean-raw.Mean))
 	}
 
 	// 4. --resample honours the bucket width against HA's actual span, rather
 	//    than the nominal --since window.
-	span := rawLast.Sub(rawFirst)
+	span := raw.Last.Sub(raw.First)
 	wantBuckets := int(span / time.Hour)
 	hourly := entHist(t, inst, entClean, "--resample", "1h")
 	if len(hourly) != wantBuckets {
@@ -740,10 +778,11 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 // 0.00 for an empty bucket would invent a reading the recorder never held — and
 // would also feed the spike detector an outlier nobody measured.
 func assertLongWindowDropsEmptyBuckets(t *testing.T, inst *hatest.Instance, plan backfillPlan) {
+	t.Helper()
 	haRows := haHistory(t, inst, entGap, plan.Now.Add(-30*time.Hour), plan.Now.Add(time.Hour))
-	rawN, _, _, _, rawFirst, rawLast := haNumericStats(t, haRows)
-	if rawN <= histResampleTarget {
-		t.Fatalf("precondition: HA holds only %d samples for %s", rawN, entGap)
+	raw := haNumericStats(t, haRows)
+	if raw.N <= histResampleTarget {
+		t.Fatalf("precondition: HA holds only %d samples for %s", raw.N, entGap)
 	}
 
 	rows := entHist(t, inst, entGap)
@@ -756,7 +795,7 @@ func assertLongWindowDropsEmptyBuckets(t *testing.T, inst *hatest.Instance, plan
 	// No rendered point may sit in the interior of the hole. The margin is one
 	// bucket width on each side, because the buckets that straddle the hole's
 	// edges legitimately carry samples from outside it.
-	bucket := rawLast.Sub(rawFirst) / time.Duration(histResampleTarget)
+	bucket := raw.Last.Sub(raw.First) / time.Duration(histResampleTarget)
 	from, to := plan.GapFrom.Add(bucket), plan.GapTo.Add(-bucket)
 	forbidden := map[string]bool{}
 	for ts := from; !ts.After(to); ts = ts.Add(time.Minute) {
