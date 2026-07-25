@@ -19,6 +19,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/cache"
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/pkg/ids"
@@ -154,6 +155,9 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	if err := json.Unmarshal(data, &states); err != nil {
 		return fmt.Errorf("parsing states: %w", err)
 	}
+	if err := degeneracy.Check("/api/states", &states); err != nil {
+		return err
+	}
 
 	if flagEntDomain != "" {
 		filtered := filterEntitiesByDomain(states, flagEntDomain)
@@ -282,6 +286,26 @@ func writeEntShowJSON(
 	return enc.Encode(result)
 }
 
+// fetchEntityState reads one entity from /api/states and refuses a payload that
+// decoded without an entity_id or a state (H-14) — HA answers "unknown" or
+// "unavailable" for an entity that has no value, never an empty string, so a
+// blank one means the payload did not decode rather than that the entity is
+// empty.
+func fetchEntityState(ctx context.Context, client *haapi.Client, entityID string) (entityState, error) {
+	var ent entityState
+	data, err := client.GetState(ctx, entityID)
+	if err != nil {
+		return ent, fmt.Errorf("fetching entity state: %w", err)
+	}
+	if err := json.Unmarshal(data, &ent); err != nil {
+		return ent, fmt.Errorf("parsing entity state: %w", err)
+	}
+	if err := degeneracy.Check("/api/states/"+entityID, &ent); err != nil {
+		return ent, err
+	}
+	return ent, nil
+}
+
 func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
@@ -289,14 +313,9 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
-	data, err := client.GetState(ctx, entityID)
+	ent, err := fetchEntityState(ctx, client, entityID)
 	if err != nil {
-		return fmt.Errorf("fetching entity state: %w", err)
-	}
-
-	var ent entityState
-	if err := json.Unmarshal(data, &ent); err != nil {
-		return fmt.Errorf("parsing entity state: %w", err)
+		return err
 	}
 
 	// Fetch registry for area/labels, and users for changed_by attribution.
@@ -673,6 +692,9 @@ func parseHistoryResponse(data []byte) ([]analyze.DataPoint, error) {
 	if err := json.Unmarshal(data, &outer); err != nil {
 		return nil, fmt.Errorf("parsing history response: %w", err)
 	}
+	if err := degeneracy.Check("/api/history/period", &outer); err != nil {
+		return nil, err
+	}
 
 	if len(outer) == 0 || len(outer[0]) == 0 {
 		return nil, nil
@@ -713,6 +735,9 @@ func parseAttrHistoryResponse(data []byte, attr string) ([]analyze.DataPoint, er
 	var outer [][]historyEntryFull
 	if err := json.Unmarshal(data, &outer); err != nil {
 		return nil, fmt.Errorf("parsing history response: %w", err)
+	}
+	if err := degeneracy.Check("/api/history/period", &outer); err != nil {
+		return nil, err
 	}
 
 	if len(outer) == 0 || len(outer[0]) == 0 {
@@ -763,6 +788,9 @@ func parseStateTimeline(data []byte, now time.Time) ([]analyze.StateChange, erro
 	var outer [][]historyEntry
 	if err := json.Unmarshal(data, &outer); err != nil {
 		return nil, fmt.Errorf("parsing history response: %w", err)
+	}
+	if err := degeneracy.Check("/api/history/period", &outer); err != nil {
+		return nil, err
 	}
 
 	if len(outer) == 0 || len(outer[0]) == 0 {
@@ -1334,6 +1362,9 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 	var states []entityState
 	if unmarshalErr := json.Unmarshal(statesData, &states); unmarshalErr != nil {
 		return fmt.Errorf("parsing states: %w", unmarshalErr)
+	}
+	if degErr := degeneracy.Check("/api/states", &states); degErr != nil {
+		return degErr
 	}
 
 	// Fetch entity registry for device/area relationships

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -157,6 +158,9 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 	if jsonErr := json.Unmarshal(listRaw, &listResp); jsonErr != nil {
 		return "", fmt.Errorf("parsing /addons response: %w", jsonErr)
 	}
+	if degErr := degeneracy.Check("supervisor /addons", &listResp); degErr != nil {
+		return "", degErr
+	}
 
 	slug := matchCompanion(listResp.Addons)
 	if slug == "" {
@@ -174,6 +178,9 @@ func Discover(ctx context.Context, cfg *config.Config, ws *haapi.WSClient) (stri
 	var info addonInfo
 	if jsonErr := json.Unmarshal(infoRaw, &info); jsonErr != nil {
 		return "", fmt.Errorf("parsing /addons/%s/info response: %w", slug, jsonErr)
+	}
+	if degErr := degeneracy.Check("supervisor /addons/<slug>/info", &info); degErr != nil {
+		return "", degErr
 	}
 	if info.IngressURL == "" {
 		slog.Debug("companion add-on info has no ingress_url", "slug", slug, "state", info.State)

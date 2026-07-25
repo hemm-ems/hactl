@@ -13,6 +13,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -141,6 +142,9 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 	if statesErr == nil {
 		var allStates []entityState
 		if jsonErr := json.Unmarshal(states, &allStates); jsonErr == nil {
+			if degErr := degeneracy.Check("/api/states", &allStates); degErr != nil {
+				return degErr
+			}
 			for _, s := range allStates {
 				if strings.HasPrefix(s.EntityID, found.Domain+".") {
 					entityIDs = append(entityIDs, s.EntityID)
@@ -283,32 +287,9 @@ func fetchCustomComponents(ctx context.Context, cfg *config.Config, client *haap
 		order = append(order, m.Domain)
 	}
 
-	// Enrich version from a matching update.* entity's installed_version, when
-	// present. Can only adjust a domain already confirmed above — never add one.
 	if len(components) > 0 {
-		statesData, err := client.GetStates(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("fetching states: %w", err)
-		}
-		var states []struct {
-			Attributes map[string]any `json:"attributes"`
-			EntityID   string         `json:"entity_id"`
-		}
-		if err := json.Unmarshal(statesData, &states); err != nil {
-			return nil, fmt.Errorf("parsing states: %w", err)
-		}
-		for _, s := range states {
-			if !strings.HasPrefix(s.EntityID, "update.") {
-				continue
-			}
-			domain := strings.TrimPrefix(s.EntityID, "update.")
-			info, ok := components[domain]
-			if !ok {
-				continue
-			}
-			if v, _ := s.Attributes["installed_version"].(string); v != "" {
-				info.Version = v
-			}
+		if err := enrichVersionsFromUpdateEntities(ctx, client, components); err != nil {
+			return nil, err
 		}
 	}
 
@@ -318,4 +299,39 @@ func fetchCustomComponents(ctx context.Context, cfg *config.Config, client *haap
 		result = append(result, *components[d])
 	}
 	return result, nil
+}
+
+// enrichVersionsFromUpdateEntities overwrites a component's version with the
+// installed_version of its matching update.* entity, when HA reports one. It
+// can only adjust a domain manifest/list already confirmed — never add one.
+func enrichVersionsFromUpdateEntities(
+	ctx context.Context, client *haapi.Client, components map[string]*ccInfo,
+) error {
+	statesData, err := client.GetStates(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching states: %w", err)
+	}
+	// entityState, not an anonymous struct: an anonymous type cannot carry an
+	// Identity, so a /api/states that stopped answering entity_id here would
+	// silently enrich nothing and report every version as unchanged.
+	var states []entityState
+	if err := json.Unmarshal(statesData, &states); err != nil {
+		return fmt.Errorf("parsing states: %w", err)
+	}
+	if err := degeneracy.Check("/api/states", &states); err != nil {
+		return err
+	}
+	for _, s := range states {
+		if !strings.HasPrefix(s.EntityID, "update.") {
+			continue
+		}
+		info, ok := components[strings.TrimPrefix(s.EntityID, "update.")]
+		if !ok {
+			continue
+		}
+		if v, _ := s.Attributes["installed_version"].(string); v != "" {
+			info.Version = v
+		}
+	}
+	return nil
 }

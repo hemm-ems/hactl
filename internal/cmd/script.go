@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/writer"
@@ -271,6 +272,9 @@ func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
 	if err := json.Unmarshal(stateData, &ent); err != nil {
 		return fmt.Errorf("parsing script state: %w", err)
 	}
+	if err := degeneracy.Check("/api/states/"+entityID, &ent); err != nil {
+		return err
+	}
 
 	if flagJSON {
 		return renderScriptShowJSON(ctx, w, cfg, ent)
@@ -406,6 +410,9 @@ func fetchScripts(ctx context.Context, client *haapi.Client) ([]scriptEntity, er
 	var allStates []scriptEntity
 	if err := json.Unmarshal(data, &allStates); err != nil {
 		return nil, fmt.Errorf("parsing states: %w", err)
+	}
+	if err := degeneracy.Check("/api/states", &allStates); err != nil {
+		return nil, err
 	}
 
 	scripts := make([]scriptEntity, 0, len(allStates))
@@ -623,6 +630,9 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	if stateData, stateErr := client.GetState(ctx, entityID); stateErr == nil {
 		var ent scriptEntity
 		if jsonErr := json.Unmarshal(stateData, &ent); jsonErr == nil {
+			// Best-effort echo: Check poisons EntityID/State in place, so a
+			// degenerate payload prints the marker instead of a blank line.
+			_ = degeneracy.Check("/api/states/"+entityID, &ent)
 			_, _ = fmt.Fprintf(w, "state:   %s %s\n", ent.EntityID, ent.State)
 		}
 	}

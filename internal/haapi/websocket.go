@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
 
 // WSClient is a WebSocket client for the Home Assistant API.
@@ -94,6 +96,9 @@ func (ws *WSClient) TraceList(ctx context.Context, domain string) (TraceListResu
 	var flat []TraceSummary
 	if err := json.Unmarshal(resp.Result, &flat); err != nil {
 		return nil, fmt.Errorf("parsing trace list: %w", err)
+	}
+	if err := degeneracy.Check("trace/list", &flat); err != nil {
+		return nil, err
 	}
 
 	result := make(TraceListResult, len(flat))
@@ -195,6 +200,9 @@ func (ws *WSClient) ValidateConfig(ctx context.Context, triggers, conditions, ac
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return nil, fmt.Errorf("parsing validate_config result: %w", err)
 	}
+	if err := degeneracy.Check("validate_config", &result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -231,6 +239,9 @@ func (ws *WSClient) SystemLogList(ctx context.Context) ([]SystemLogEntry, error)
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return nil, fmt.Errorf("parsing system log entries: %w", err)
 	}
+	if err := degeneracy.Check("system_log/list", &result); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -262,6 +273,9 @@ func (ws *WSClient) EntityRegistryList(ctx context.Context) ([]EntityRegistryEnt
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing entity registry: %w", err)
 	}
+	if err := degeneracy.Check("config/entity_registry/list", &entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
 }
 
@@ -276,6 +290,9 @@ func (ws *WSClient) AreaRegistryList(ctx context.Context) ([]AreaEntry, error) {
 	var entries []AreaEntry
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing area registry: %w", err)
+	}
+	if err := degeneracy.Check("config/area_registry/list", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -292,6 +309,9 @@ func (ws *WSClient) LabelRegistryList(ctx context.Context) ([]LabelEntry, error)
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing label registry: %w", err)
 	}
+	if err := degeneracy.Check("config/label_registry/list", &entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
 }
 
@@ -306,6 +326,9 @@ func (ws *WSClient) FloorRegistryList(ctx context.Context) ([]FloorEntry, error)
 	var entries []FloorEntry
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing floor registry: %w", err)
+	}
+	if err := degeneracy.Check("config/floor_registry/list", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -323,6 +346,9 @@ func (ws *WSClient) UserList(ctx context.Context) ([]UserEntry, error) {
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing user list: %w", err)
 	}
+	if err := degeneracy.Check("config/auth/list", &entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
 }
 
@@ -337,6 +363,9 @@ func (ws *WSClient) DeviceRegistryList(ctx context.Context) ([]DeviceRegistryEnt
 	var entries []DeviceRegistryEntry
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing device registry: %w", err)
+	}
+	if err := degeneracy.Check("config/device_registry/list", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -395,6 +424,9 @@ func (ws *WSClient) LabelRegistryCreate(ctx context.Context, name, color, icon, 
 	if err := json.Unmarshal(result, &entry); err != nil {
 		return nil, fmt.Errorf("parsing created label: %w", err)
 	}
+	if err := degeneracy.Check("config/label_registry/create", &entry); err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -423,6 +455,9 @@ func (ws *WSClient) AreaRegistryCreate(ctx context.Context, name, icon string, f
 	var entry AreaEntry
 	if err := json.Unmarshal(result, &entry); err != nil {
 		return nil, fmt.Errorf("parsing created area: %w", err)
+	}
+	if err := degeneracy.Check("config/area_registry/create", &entry); err != nil {
+		return nil, err
 	}
 	return &entry, nil
 }
@@ -453,6 +488,9 @@ func (ws *WSClient) FloorRegistryCreate(ctx context.Context, name, icon string, 
 	if err := json.Unmarshal(result, &entry); err != nil {
 		return nil, fmt.Errorf("parsing created floor: %w", err)
 	}
+	if err := degeneracy.Check("config/floor_registry/create", &entry); err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -474,6 +512,9 @@ func (ws *WSClient) DashboardList(ctx context.Context) ([]LovelaceDashboard, err
 	var entries []LovelaceDashboard
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing dashboard list: %w", err)
+	}
+	if err := degeneracy.Check("lovelace/dashboards/list", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -540,6 +581,9 @@ func (ws *WSClient) DashboardCreate(ctx context.Context, p DashboardCreateParams
 	if err := json.Unmarshal(result, &entry); err != nil {
 		return nil, fmt.Errorf("parsing created dashboard: %w", err)
 	}
+	if err := degeneracy.Check("lovelace/dashboards/create", &entry); err != nil {
+		return nil, err
+	}
 	return &entry, nil
 }
 
@@ -561,6 +605,9 @@ func (ws *WSClient) LovelaceInfo(ctx context.Context) (*LovelaceInfo, error) {
 	var info LovelaceInfo
 	if err := json.Unmarshal(result, &info); err != nil {
 		return nil, fmt.Errorf("parsing lovelace info: %w", err)
+	}
+	if err := degeneracy.Check("lovelace/info", &info); err != nil {
+		return nil, err
 	}
 	return &info, nil
 }
@@ -584,6 +631,9 @@ func (ws *WSClient) IntegrationManifestList(ctx context.Context) ([]IntegrationM
 	var entries []IntegrationManifest
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing manifest list: %w", err)
+	}
+	if err := degeneracy.Check("manifest/list", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -657,6 +707,9 @@ func (ws *WSClient) ResourceList(ctx context.Context) ([]LovelaceResource, error
 	var entries []LovelaceResource
 	if err := json.Unmarshal(result, &entries); err != nil {
 		return nil, fmt.Errorf("parsing resource list: %w", err)
+	}
+	if err := degeneracy.Check("lovelace/resources", &entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }

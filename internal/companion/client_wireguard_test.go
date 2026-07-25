@@ -21,7 +21,14 @@ func TestWireGuardStatusActive(t *testing.T) {
 			Tunnel:    "wg0",
 			State:     "active",
 			Interface: &WireGuardIface{PublicKey: "PUB", ListeningPort: 36317},
-			Peers:     []WireGuardPeer{{Endpoint: "1.2.3.4:51820", LatestHandshake: "42 seconds ago"}},
+			// `wg show <iface> dump` puts the peer's public key in field 0, so
+			// the companion always reports one; a peer without it is a shape
+			// the wire cannot produce.
+			Peers: []WireGuardPeer{{
+				PublicKey:       "PEERPUB",
+				Endpoint:        "1.2.3.4:51820",
+				LatestHandshake: "42 seconds ago",
+			}},
 		})
 	}))
 	defer srv.Close()

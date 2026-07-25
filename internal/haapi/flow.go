@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
 
 // FlowResult represents a response from the config entries flow API.
@@ -61,6 +63,13 @@ func parseFlowResult(data []byte) (*FlowResult, error) {
 	}
 
 	result.DataSchema = parseSchemaFields(raw.DataSchema)
+
+	// A flow step that decoded to nothing must not read as a step hactl simply
+	// does not handle: without a type there is no form, no create_entry and no
+	// abort, and `config flow-start` would print an empty form as progress.
+	if err := degeneracy.Check("config_entries flow response", result); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }

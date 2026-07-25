@@ -19,6 +19,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/writer"
@@ -345,6 +346,9 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 	if err := json.Unmarshal(stateData, &ent); err != nil {
 		return fmt.Errorf("parsing automation state: %w", err)
 	}
+	if err := degeneracy.Check("/api/states/"+entityID, &ent); err != nil {
+		return err
+	}
 
 	// H-10: --json is a machine contract. Build the result up front and emit it
 	// as one document at the end, so a partially-rendered failure can never
@@ -488,6 +492,9 @@ func fetchAutomations(ctx context.Context, client *haapi.Client) ([]automationEn
 	if err := json.Unmarshal(data, &allStates); err != nil {
 		return nil, fmt.Errorf("parsing states: %w", err)
 	}
+	if err := degeneracy.Check("/api/states", &allStates); err != nil {
+		return nil, err
+	}
 
 	autos := make([]automationEntity, 0, len(allStates))
 	for _, s := range allStates {
@@ -515,6 +522,9 @@ func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since 
 	var entries []logbookEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("parsing logbook: %w", err)
+	}
+	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
+		return nil, err
 	}
 
 	counts := make(map[string]int)

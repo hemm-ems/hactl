@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -92,6 +93,9 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 	var entries []logbookEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return fmt.Errorf("parsing logbook: %w", err)
+	}
+	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
+		return err
 	}
 
 	if len(entries) == 0 {

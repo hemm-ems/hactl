@@ -17,6 +17,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -84,6 +85,9 @@ func runHealth(ctx context.Context, w io.Writer) error {
 	var haCfg haConfig
 	if unmarshalErr := json.Unmarshal(configData, &haCfg); unmarshalErr != nil {
 		return fmt.Errorf("parsing HA config: %w", unmarshalErr)
+	}
+	if degErr := degeneracy.Check("/api/config", &haCfg); degErr != nil {
+		return degErr
 	}
 
 	// Check recorder

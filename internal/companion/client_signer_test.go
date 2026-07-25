@@ -57,7 +57,7 @@ func TestClient_AttachesIngressSessionCookie(t *testing.T) {
 			return
 		}
 		cookieVal = c.Value
-		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "0.2.0"})
 	}))
 	defer srv.Close()
 
@@ -80,7 +80,7 @@ func TestClient_DoesNotFetchSessionForDirectURL(t *testing.T) {
 		if _, err := r.Cookie("ingress_session"); err == nil {
 			t.Error("direct URL should not carry ingress_session cookie")
 		}
-		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "0.2.0"})
 	}))
 	defer srv.Close()
 
@@ -104,7 +104,7 @@ func TestClient_CachesSessionAcrossRequests(t *testing.T) {
 			return
 		}
 		seenCookies = append(seenCookies, c.Value)
-		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "0.2.0"})
 	}))
 	defer srv.Close()
 
@@ -145,7 +145,7 @@ func TestClient_RefreshesSessionOnUnauthorized(t *testing.T) {
 			http.Error(w, "expired", http.StatusUnauthorized)
 		case 2:
 			second = val
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok", Version: "0.2.0"})
 		default:
 			t.Errorf("unexpected 3rd request")
 		}
