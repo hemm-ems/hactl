@@ -493,3 +493,62 @@ expose.
   `make test` (unit tier, no Docker). The `(method, path)` half stays in
   `internal/companiontest/contract_test.go`, now derived from the same
   `companion.Endpoints` table.
+
+## H-16 — A detector is proven against history containing what it looks for, never against an empty answer
+
+`ent anomalies` and long-window `ent hist` are only meaningful over a span long
+enough to contain the behaviour they report. Every test of them must therefore
+run against recorded history that is **known in advance to contain** a gap, a
+stuck run and a spike, and must run against a well-behaved control entity that
+contains none of the three. An empty result is a valid answer only about the
+control, and only when the size of the series it is empty about has been read
+back from Home Assistant in the same test.
+
+This exists because the opposite was true for the entire life of the commands.
+The only coverage `ent anomalies` had was `TestEntAnomaliesJSONParsesStrictly`,
+which accepted `[]` as success — so a detector that found nothing and a detector
+that was broken produced the same green (mechanisms M1 and M3 in one assertion).
+The cause was fixture-shaped rather than lazy: HA has no API that can write
+past-dated history, a freshly booted test container holds minutes of it, and no
+gap, stuck run or spike can exist inside minutes. Nothing could be asserted, so
+nothing was.
+
+`hatest.Instance.Backfill` removes the excuse. It stops the container, writes the
+rows HA's own recorder would have written straight into `home-assistant_v2.db`,
+and restarts it, so the history is authored by the test and served by HA through
+its ordinary APIs. Three properties keep that rig from becoming a
+fixture-fiction generator, and each is enforced rather than documented:
+
+- **It refuses to write into a recorder schema it was not verified against.**
+  `supportedRecorderSchema` is a tripwire, not a formality: writing a stale row
+  shape into a future HA would manufacture plausible-but-wrong history, which is
+  the exact disease the harness treats. The image in use today reports schema 53.
+- **Its rows are reconciled against HA, not against their author.** Every
+  backfilled series is read back through HA's own history API over plain HTTP
+  with hactl nowhere in the path, and the `last_changed_ts` convention that
+  governs HA's significant-changes filter is pinned by writing twelve
+  attributes-only updates and requiring HA to return exactly one.
+- **The fixture is checked for still being distinguishing before the container
+  starts.** A changed cadence or a value collision that silently removed the
+  anomaly from the input fails loudly instead of turning the suite green for the
+  wrong reason.
+
+The anomaly expectations themselves are hand-stated, which is legitimate here for
+one reason and only that reason: the input was authored by the test and HA has
+confirmed it holds exactly that input. What is deliberately never used as an
+expected value is anything computed by re-running hactl's own gap / stuck /
+z-score logic over the series — that would confirm the detector against itself.
+The `ent hist` expectations have no such licence and are computed from HA's raw
+series at test time (count, min, max, mean, span).
+
+- Enforced by: `internal/integration/backfill_test.go`, `TestRecorderBackfill` —
+  `make test-int` (Docker tier). Subtests: `rig_lands_in_has_own_history` (the
+  rig writes what HA reads back, and HA's attribute-only filter still behaves as
+  the row shape assumes), `anomalies_finds_injected_gap`,
+  `anomalies_finds_injected_stuck_run`, `anomalies_finds_injected_spike` (each
+  pins the anomaly's position and duration, not merely its presence),
+  `anomalies_negative_control_is_quiet` (a detector that flags everything fails
+  here), `hist_long_window_buckets` and `hist_long_window_drops_empty_buckets`
+  (bucket averaging, and empty buckets omitted rather than rendered as a zero
+  reading the recorder never held). The rig itself is
+  `internal/hatest/recorder.go`.
