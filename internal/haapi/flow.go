@@ -133,6 +133,25 @@ func (c *Client) StartConfigFlowOnce(ctx context.Context, domain string) ([]byte
 	return c.doPostOnce(ctx, "/api/config/config_entries/flow", body)
 }
 
+// ConfigFlowHandlers lists the integration domains that expose a config flow —
+// HA's own authority on what StartConfigFlow will accept. Unlike manifest/list
+// (which reports only the integrations HA has currently *loaded*), this includes
+// every installable integration with a config flow, loaded or not, so a dry run
+// resolving a not-yet-configured domain accepts exactly what the confirmed run
+// would.
+// GET /api/config/config_entries/flow_handlers
+func (c *Client) ConfigFlowHandlers(ctx context.Context) ([]string, error) {
+	data, err := c.doGet(ctx, "/api/config/config_entries/flow_handlers")
+	if err != nil {
+		return nil, err
+	}
+	var handlers []string
+	if err := json.Unmarshal(data, &handlers); err != nil {
+		return nil, fmt.Errorf("parsing config flow handlers: %w", err)
+	}
+	return handlers, nil
+}
+
 // StepFlow submits data to advance a config/options flow.
 // If options is true: POST /api/config/config_entries/options/flow/<flow_id>
 // If options is false: POST /api/config/config_entries/flow/<flow_id>

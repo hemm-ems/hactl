@@ -485,6 +485,31 @@ func TestStartConfigFlow(t *testing.T) {
 	}
 }
 
+func TestConfigFlowHandlers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/config/config_entries/flow_handlers" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = fmt.Fprint(w, `["met_eireann","mqtt","sun"]`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok")
+	handlers, err := c.ConfigFlowHandlers(context.Background())
+	if err != nil {
+		t.Fatalf("ConfigFlowHandlers: %v", err)
+	}
+	want := []string{"met_eireann", "mqtt", "sun"}
+	if len(handlers) != len(want) {
+		t.Fatalf("handlers = %v, want %v", handlers, want)
+	}
+	for i := range want {
+		if handlers[i] != want[i] {
+			t.Errorf("handlers[%d] = %q, want %q", i, handlers[i], want[i])
+		}
+	}
+}
+
 func TestStartConfigFlowOnce(t *testing.T) {
 	flowJSON := `{"flow_id":"once1","type":"abort","handler":"mqtt"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
