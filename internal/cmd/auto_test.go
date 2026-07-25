@@ -64,6 +64,44 @@ func TestFormatShortTime_OtherDay(t *testing.T) {
 	}
 }
 
+// pinLocalZone points time.Local at a fixed zone for the duration of the test,
+// so a renderer that formats in the reader's zone can be tested for a definite
+// answer instead of one that depends on where the suite happens to run.
+//
+//nolint:gosmopolitan // Pinning the zone is the only way to make a local-time renderer testable in CI, which runs in UTC.
+func pinLocalZone(t *testing.T, zone *time.Location) {
+	t.Helper()
+
+	restore := time.Local
+	time.Local = zone
+
+	t.Cleanup(func() { time.Local = restore })
+}
+
+// TestFormatShortTime_UTCWireRendersInLocalTime pins the shape Home Assistant
+// actually sends. HA reports last_changed/last_updated in UTC ("…Z"), but the
+// two tests above build their input with time.Now().Format(RFC3339), which
+// carries the *local* offset — a shape the wire never produces. So neither of
+// them could see that the renderer printed the UTC wall-clock as if it were
+// local, and compared a UTC calendar day against a local "today".
+func TestFormatShortTime_UTCWireRendersInLocalTime(t *testing.T) {
+	// A zone east of UTC, fixed so this test means the same thing in CI (which
+	// runs in UTC) as it does on a developer's machine.
+	zone := time.FixedZone("TEST+02", 2*60*60)
+	pinLocalZone(t, zone)
+
+	// 00:30 local today. The same instant is 22:30 *yesterday* in UTC, which is
+	// what the wire carries — so this is a "today" timestamp whatever the hour,
+	// and the test does not depend on when it runs.
+	now := time.Now()
+	local := time.Date(now.Year(), now.Month(), now.Day(), 0, 30, 0, 0, zone)
+	iso := local.UTC().Format(time.RFC3339)
+
+	if got, want := formatShortTime(iso), "00:30"; got != want {
+		t.Errorf("formatShortTime(%q) = %q, want %q — today's timestamp, in local time", iso, got, want)
+	}
+}
+
 func TestFormatShortTime_Empty(t *testing.T) {
 	if got := formatShortTime(""); got != "-" {
 		t.Errorf("formatShortTime('') = %q, want '-'", got)

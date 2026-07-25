@@ -705,6 +705,13 @@ func formatShortTime(isoTime string) string {
 			return isoTime
 		}
 	}
+	// Home Assistant reports these timestamps in UTC. Render them where the
+	// person reading them lives: without this, "15:04" is a UTC wall-clock
+	// presented as if it were local, and the same-day test compares a UTC
+	// calendar day against a local "today" — so between local midnight and the
+	// UTC offset, a timestamp seconds old is stamped with yesterday's date.
+	//nolint:gosmopolitan // gosmopolitan guards server code against assuming the host's zone; hactl is a CLI and the host's zone is the reader's.
+	t = t.Local()
 	now := time.Now()
 	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
 		return t.Format("15:04")
