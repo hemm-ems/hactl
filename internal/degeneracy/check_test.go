@@ -1,6 +1,9 @@
 package degeneracy_test
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -176,4 +179,34 @@ func TestCheck_IgnoresNilAndUntypedNil(t *testing.T) {
 
 func timeoutAfterSeconds(n int) <-chan time.Time {
 	return time.After(time.Duration(n) * time.Second)
+}
+
+// TestCheck_ErrorIsIdentifiableByCallersWithAFallback pins the sentinel that
+// lets a caller distinguish "this source is unavailable" from "this source
+// answered in a shape hactl cannot decode".
+//
+// This exists because of a real hole the T6 mutation sweep found:
+// cmd.fetchLogEntries treated *any* SystemLogList error as "system_log is
+// unavailable" and silently fell back to the far less structured
+// /api/error_log. A renamed field in system_log/list would therefore have been
+// detected by degeneracy.Check and then thrown away one frame up, and `hactl
+// log` would have kept printing a plausible answer from a different source —
+// the exact failure this package exists to prevent, reintroduced by a fallback.
+func TestCheck_ErrorIsIdentifiableByCallersWithAFallback(t *testing.T) {
+	entries := []record{{Note: "no id"}}
+	err := degeneracy.Check("system_log/list", &entries)
+	if err == nil {
+		t.Fatal("a record with no identity decoded without complaint")
+	}
+	if !errors.Is(err, degeneracy.ErrDegenerate) {
+		t.Errorf("a degeneracy error must be identifiable with errors.Is: %v", err)
+	}
+	// A caller's fallback must not trip on an unrelated transport failure.
+	if errors.Is(fmt.Errorf("reading response: %w", io.EOF), degeneracy.ErrDegenerate) {
+		t.Error("an ordinary transport error was misreported as a degeneracy error")
+	}
+	// The human-readable half must survive the wrapping.
+	if !strings.Contains(err.Error(), degeneracy.Marker) {
+		t.Errorf("the marker was lost from the error text: %q", err)
+	}
 }

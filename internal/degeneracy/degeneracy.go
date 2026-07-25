@@ -27,6 +27,7 @@
 package degeneracy
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -42,6 +43,13 @@ import (
 // analyze.UnparsedMarker is defined as this constant; the trace renderer prints
 // it as the result of a trace that decoded to nothing.
 const Marker = "UNPARSED"
+
+// ErrDegenerate is wrapped by every error Check returns, so a caller that has a
+// fallback path can tell "this source is unavailable" (fall back) from "this
+// source answered in a shape hactl no longer understands" (do not fall back —
+// falling back would silently serve a different, quieter answer, which is the
+// exact failure this package exists to prevent).
+var ErrDegenerate = errors.New("wire payload decoded without its identity")
 
 // Field is one component of a record's identity: the wire field name (for the
 // diagnostic) and a pointer to the decoded value (so Check can poison it).
@@ -234,6 +242,6 @@ func (c *collector) err(source string) error {
 			c.missing[k], c.seen[typeName], typeName, field))
 	}
 	return fmt.Errorf("%s returned %s data: %s — the payload does not match the shape hactl decodes "+
-		"(a renamed or removed wire field decodes to a zero value, not to an error)",
-		source, Marker, strings.Join(parts, "; "))
+		"(a renamed or removed wire field decodes to a zero value, not to an error): %w",
+		source, Marker, strings.Join(parts, "; "), ErrDegenerate)
 }
