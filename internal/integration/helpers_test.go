@@ -28,7 +28,7 @@ func runHactl(t *testing.T, args ...string) string {
 	if err != nil {
 		t.Fatalf("hactl %v failed: %v\noutput: %s", args, err, buf.String())
 	}
-	assertNoDegenerateOutput(t, args, buf.String())
+	assertNoDegenerateOutput(t, args, buf.String(), err)
 	return buf.String()
 }
 
@@ -42,7 +42,7 @@ func runHactlDir(t *testing.T, dir string, args ...string) string {
 	if err != nil {
 		t.Fatalf("hactl %v failed: %v\noutput: %s", args, err, buf.String())
 	}
-	assertNoDegenerateOutput(t, args, buf.String())
+	assertNoDegenerateOutput(t, args, buf.String(), err)
 	return buf.String()
 }
 
@@ -54,7 +54,7 @@ func runHactlErr(t *testing.T, args ...string) (string, error) {
 
 	var buf bytes.Buffer
 	err := cmd.RunWithOutput(append([]string{"hactl"}, args...), &buf)
-	assertNoDegenerateOutput(t, args, buf.String())
+	assertNoDegenerateOutput(t, args, buf.String(), err)
 	return buf.String(), err
 }
 
@@ -66,7 +66,7 @@ func runHactlDirErr(t *testing.T, dir string, args ...string) (string, error) {
 
 	var buf bytes.Buffer
 	err := cmd.RunWithOutput(append([]string{"hactl"}, args...), &buf)
-	assertNoDegenerateOutput(t, args, buf.String())
+	assertNoDegenerateOutput(t, args, buf.String(), err)
 	return buf.String(), err
 }
 

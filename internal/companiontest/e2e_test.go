@@ -50,6 +50,11 @@ func runHactlE2E(t *testing.T, args ...string) (string, error) {
 	// --confirm guard.
 	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
 	out, err := cmd.CombinedOutput()
+	// H-14: this is the only tier that drives the real binary against a real HA
+	// and a real companion, so it is the only place a genuine wire-shape change
+	// would appear. Scanning here makes every E2E test a detector for the class,
+	// including the ones that assert nothing about their output.
+	assertNoDegenerateE2EOutput(t, fullArgs, string(out))
 	return string(out), err
 }
 
