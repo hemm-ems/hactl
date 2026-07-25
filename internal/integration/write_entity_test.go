@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -248,12 +249,7 @@ func TestEntSetAreaRoundTrip(t *testing.T) {
 // areaContains asks HA itself which entities an area holds (invariant H-9).
 func areaContains(t *testing.T, inst *hatest.Instance, areaID, entityID string) bool {
 	t.Helper()
-	for _, e := range oracleAreaEntities(t, inst, areaID) {
-		if e == entityID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(oracleAreaEntities(t, inst, areaID), entityID)
 }
 
 // TestEntSetLabelAndSetAreaAgreeOnUnknownEntity pins the two commands to the

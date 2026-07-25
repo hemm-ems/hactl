@@ -46,10 +46,10 @@ const (
 
 // configEntriesFromHA reads HA's own config-entry list over REST, so no part of
 // the expectation travels through the flow write path under test.
-func configEntriesFromHA(t *testing.T, inst *hatest.Instance) []map[string]any {
+func configEntriesFromHA(ctx context.Context, t *testing.T, inst *hatest.Instance) []map[string]any {
 	t.Helper()
 	client := haapi.New(inst.URL(), inst.Token())
-	raw, err := client.GetConfigEntries(context.Background())
+	raw, err := client.GetConfigEntries(ctx)
 	if err != nil {
 		t.Fatalf("reading config entries from HA: %v", err)
 	}
@@ -60,9 +60,9 @@ func configEntriesFromHA(t *testing.T, inst *hatest.Instance) []map[string]any {
 	return entries
 }
 
-func configEntryByDomain(t *testing.T, inst *hatest.Instance, domain string) (map[string]any, bool) {
+func configEntryByDomain(ctx context.Context, t *testing.T, inst *hatest.Instance, domain string) (map[string]any, bool) {
 	t.Helper()
-	for _, e := range configEntriesFromHA(t, inst) {
+	for _, e := range configEntriesFromHA(ctx, t, inst) {
 		if e["domain"] == domain {
 			return e, true
 		}
@@ -70,14 +70,17 @@ func configEntryByDomain(t *testing.T, inst *hatest.Instance, domain string) (ma
 	return nil, false
 }
 
-func configEntryByID(t *testing.T, inst *hatest.Instance, entryID string) (map[string]any, bool) {
+// configEntryExists answers only the question its callers ask — whether HA still
+// lists the entry. It used to return the entry too; nothing ever read it, so the
+// signature promised more than any caller wanted.
+func configEntryExists(ctx context.Context, t *testing.T, inst *hatest.Instance, entryID string) bool {
 	t.Helper()
-	for _, e := range configEntriesFromHA(t, inst) {
+	for _, e := range configEntriesFromHA(ctx, t, inst) {
 		if e["entry_id"] == entryID {
-			return e, true
+			return true
 		}
 	}
-	return nil, false
+	return false
 }
 
 // TestConfigFlowCreateDeleteRoundTrip drives flow-start → flow-step →
@@ -90,14 +93,14 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 
 	// Precondition: the domain must not already be configured, or flow-start
 	// aborts with already_configured and never reaches create_entry.
-	if _, ok := configEntryByDomain(t, inst, flowDomain); ok {
+	if _, ok := configEntryByDomain(ctx, t, inst, flowDomain); ok {
 		t.Fatalf("precondition failed: %s is already configured on this instance", flowDomain)
 	}
 
 	// Assert cleanup even if an assertion below fails midway: an orphaned entry
 	// leaves a weather entity in the registry that later tests would see.
 	t.Cleanup(func() {
-		if e, ok := configEntryByDomain(t, inst, flowDomain); ok {
+		if e, ok := configEntryByDomain(ctx, t, inst, flowDomain); ok {
 			id, _ := e["entry_id"].(string)
 			if _, err := client.DeleteConfigEntry(ctx, id); err != nil {
 				t.Errorf("cleanup: deleting %s entry %s: %v", flowDomain, id, err)
@@ -107,7 +110,7 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 
 	// --- flow-start dry-run must not create anything ---
 	runHactlDir(t, inst.Dir(), "config", "flow-start", flowDomain)
-	if _, ok := configEntryByDomain(t, inst, flowDomain); ok {
+	if _, ok := configEntryByDomain(ctx, t, inst, flowDomain); ok {
 		t.Fatal("dry-run flow-start created a config entry")
 	}
 
@@ -131,7 +134,7 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 
 	// --- flow-step dry-run must not complete the flow (no entry appears) ---
 	runHactlDir(t, inst.Dir(), "config", "flow-step", flowID, "--data", "{}")
-	if _, ok := configEntryByDomain(t, inst, flowDomain); ok {
+	if _, ok := configEntryByDomain(ctx, t, inst, flowDomain); ok {
 		t.Fatal("dry-run flow-step created a config entry")
 	}
 
@@ -146,7 +149,7 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 	}
 
 	// --- the entry now exists in HA's own list, with witnessed fields ---
-	entry, ok := configEntryByDomain(t, inst, flowDomain)
+	entry, ok := configEntryByDomain(ctx, t, inst, flowDomain)
 	if !ok {
 		t.Fatal("flow-step create_entry did not reach HA: no config entry for " + flowDomain)
 	}
@@ -166,13 +169,13 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 
 	// --- delete dry-run leaves the entry in place ---
 	runHactlDir(t, inst.Dir(), "config", "delete", entryID)
-	if _, ok := configEntryByID(t, inst, entryID); !ok {
+	if !configEntryExists(ctx, t, inst, entryID) {
 		t.Fatal("dry-run delete removed the entry from HA")
 	}
 
 	// --- delete --confirm removes it from HA's own list ---
 	runHactlDir(t, inst.Dir(), "config", "delete", entryID, "--confirm")
-	if _, ok := configEntryByID(t, inst, entryID); ok {
+	if configEntryExists(ctx, t, inst, entryID) {
 		t.Fatal("delete --confirm did not reach HA: entry is still listed")
 	}
 }
@@ -243,8 +246,9 @@ func setMetElevationDirect(t *testing.T, client *haapi.Client, entryID string, e
 func TestConfigOptionsRoundTrip(t *testing.T) {
 	inst := getWriteHA(t)
 	client := haapi.New(inst.URL(), inst.Token())
+	ctx := context.Background()
 
-	entry, ok := configEntryByDomain(t, inst, optionsDomain)
+	entry, ok := configEntryByDomain(ctx, t, inst, optionsDomain)
 	if !ok {
 		// Visible, bounded skip: the options round-trip needs an options-capable
 		// entry, and default_config's met weather entry is the cheap one. If a

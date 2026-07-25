@@ -39,8 +39,15 @@ func dashConfigFromHA(t *testing.T, inst *hatest.Instance, urlPath string) map[s
 	return out
 }
 
-// dashEntryFromHA returns HA's own dashboard-list entry, or false if absent.
-func dashEntryFromHA(t *testing.T, inst *hatest.Instance, urlPath string) (haapi.LovelaceDashboard, bool) {
+// dashRoundTripPath is the url_path the dashboard round-trip owns end to end.
+// It is a package-level constant rather than a helper parameter because only one
+// dashboard is ever looked up: a path parameter that always receives the same
+// value reads as generality the helper does not have.
+const dashRoundTripPath = "hactl-h12-roundtrip"
+
+// dashEntryFromHA returns HA's own dashboard-list entry for dashRoundTripPath,
+// or false if absent.
+func dashEntryFromHA(t *testing.T, inst *hatest.Instance) (haapi.LovelaceDashboard, bool) {
 	t.Helper()
 	ws := writeWS(t, inst)
 	list, err := ws.DashboardList(context.Background())
@@ -48,7 +55,7 @@ func dashEntryFromHA(t *testing.T, inst *hatest.Instance, urlPath string) (haapi
 		t.Fatalf("listing dashboards: %v", err)
 	}
 	for _, d := range list {
-		if d.URLPath == urlPath {
+		if d.URLPath == dashRoundTripPath {
 			return d, true
 		}
 	}
@@ -68,7 +75,7 @@ func writeJSONFile(t *testing.T, body string) string {
 // checks each step against HA rather than against hactl's output.
 func TestDashCreateSaveDeleteRoundTrip(t *testing.T) {
 	inst := getWriteHA(t)
-	const urlPath = "hactl-h12-roundtrip"
+	const urlPath = dashRoundTripPath
 	ctx := context.Background()
 
 	t.Cleanup(func() {
@@ -88,14 +95,14 @@ func TestDashCreateSaveDeleteRoundTrip(t *testing.T) {
 
 	// --- create: dry-run writes nothing ---
 	runHactlDir(t, inst.Dir(), "dash", "create", "--url-path", urlPath, "--title", "H12", "--icon", "mdi:home")
-	if _, ok := dashEntryFromHA(t, inst, urlPath); ok {
+	if _, ok := dashEntryFromHA(t, inst); ok {
 		t.Fatal("dry-run create registered a dashboard in HA")
 	}
 
 	// --- create: confirmed write reaches HA, with the fields it was given ---
 	runHactlDir(t, inst.Dir(), "dash", "create", "--url-path", urlPath,
 		"--title", "H12 Round Trip", "--icon", "mdi:home", "--confirm")
-	entry, ok := dashEntryFromHA(t, inst, urlPath)
+	entry, ok := dashEntryFromHA(t, inst)
 	if !ok {
 		t.Fatal("create did not reach HA: dashboard is not in lovelace/dashboards/list")
 	}
@@ -147,11 +154,11 @@ func TestDashCreateSaveDeleteRoundTrip(t *testing.T) {
 
 	// --- delete: dry-run leaves it, confirm removes it from HA's own list ---
 	runHactlDir(t, inst.Dir(), "dash", "delete", urlPath)
-	if _, ok := dashEntryFromHA(t, inst, urlPath); !ok {
+	if _, ok := dashEntryFromHA(t, inst); !ok {
 		t.Fatal("dry-run delete removed the dashboard from HA")
 	}
 	runHactlDir(t, inst.Dir(), "dash", "delete", urlPath, "--confirm")
-	if _, ok := dashEntryFromHA(t, inst, urlPath); ok {
+	if _, ok := dashEntryFromHA(t, inst); ok {
 		t.Fatal("delete --confirm did not reach HA: dashboard is still listed")
 	}
 }

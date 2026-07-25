@@ -93,7 +93,7 @@ mode: single
 			restored, beforeAlias, rollbackOut)
 	}
 	if got, want := mustJSON(t, canonicalize(afterRollback)), mustJSON(t, canonicalize(before)); got != want {
-		t.Errorf("rollback restored a different config than was there before:\n before: %s\n after:  %s",
+		t.Errorf("rollback restored a config that differs from the one HA held:\n before: %s\n after:  %s",
 			want, got)
 	}
 }

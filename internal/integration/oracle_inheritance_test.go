@@ -166,7 +166,7 @@ func TestEntShowOverrideAreaViaDeviceEntities(t *testing.T) {
 // device-show entity table is plain text; there is one row per entity).
 func entityRowLine(t *testing.T, out, entityID string) string {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), entityID) {
 			return line
 		}
