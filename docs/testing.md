@@ -324,10 +324,23 @@ written to move a number, which is how the assertion-free tests got here.
 outside them — the command that used it had migrated to a weaker replacement, and
 because its tests stayed green, nothing recorded that a capability had been lost.
 
-`~/go/bin/deadcode -test=false ./cmd/hactl` reports this class in about two
-seconds. When it flags something, decide deliberately: wire it, or delete it with
-its tests. Leaving it is how a test suite comes to certify behaviour the product
-does not have.
+`make deadcode` reports this class in about two seconds, and it is part of
+`make gates` and of CI — it is a gate, not advice. It fails when a function is
+unreachable from the binary and not listed in `dev/deadcode-allow.txt`, and it
+fails just as loudly when a listed function *becomes* reachable again, so the
+allowlist cannot rot into a rubber stamp.
+
+Every allowlist line carries a class and a reason. `harness` means the function
+exists to serve a test or a gate (`RunWithOutput` is how every CLI test drives
+the cobra tree). `orphan` means product code with no path from `main` — a
+standing defect, and the tests under it are green while proving nothing about
+what a user can do. There are 19 of those today, including the entire
+`internal/cache.Store` trace/log cache and eight `companion.Client` methods no
+subcommand routes to.
+
+When the gate flags something new, decide deliberately: wire it, or delete it
+with its tests. Leaving it is how a test suite comes to certify behaviour the
+product does not have.
 
 ---
 

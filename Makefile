@@ -12,23 +12,60 @@ COMPANION_DIR  ?= ../hactl-companion
 COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
-.PHONY: build lint test test-int test-companion test-int-discovery test-matrix \
-        gates require-docker hooks hooks-check clean sync-spec check-spec-drift
+.PHONY: build lint deadcode tools test test-int test-companion test-int-discovery \
+        test-matrix gates require-docker hooks hooks-check clean sync-spec \
+        check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
 
-# golangci-lint is commonly installed to $GOPATH/bin, which is not always on
-# PATH. Resolve it either way so `make gates` works on a stock dev machine
+# Tool versions live here so the Makefile and CI cannot pin different ones.
+# CI runs `make tools` and then the same targets a developer runs locally.
+GOLANGCI_VERSION ?= v2.11.4
+DEADCODE_VERSION ?= v0.48.0
+
+# Both tools are commonly installed to $GOPATH/bin, which is not always on
+# PATH. Resolve them either way so `make gates` works on a stock dev machine
 # instead of failing before it reaches the tests that matter.
 GOLANGCI ?= $(shell command -v golangci-lint 2>/dev/null || echo "$$(go env GOPATH)/bin/golangci-lint")
+DEADCODE ?= $(shell command -v deadcode 2>/dev/null || echo "$$(go env GOPATH)/bin/deadcode")
 
+tools:
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
+
+# Every build configuration the gates compile must also be linted.
+#
+# golangci-lint only reads files whose build constraints the tags it was given
+# satisfy. Running it bare — as this target used to — means every file behind
+# `//go:build integration`, `//go:build companion` or
+# `//go:build companion_discovery` is invisible to every linter: the whole
+# Docker tier. Adding the tags surfaced 63 findings that no gate had ever
+# reported, including a `TestMain` that leaked a file holding a real HA token
+# on every setup failure, two dead harness functions, and a deprecated
+# reverse-proxy hook.
+#
+# The four invocations below mirror the four test targets one for one, so a
+# file any gate compiles is a file some lint invocation reads. They are
+# deliberately NOT collapsed into a single `--build-tags=a,b,c` run: that
+# combination is not a build that ever happens, and it lets a symbol used only
+# by the discovery tier look "used" in the companion tier.
 lint:
 	@test -x "$(GOLANGCI)" || { \
 	  echo "ERROR: golangci-lint not found (looked on PATH and in $$(go env GOPATH)/bin)."; \
-	  echo "Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"; \
+	  echo "Install: make tools"; \
 	  exit 1; }
 	$(GOLANGCI) run ./...
+	$(GOLANGCI) run --build-tags=integration ./...
+	$(GOLANGCI) run --build-tags=companion ./...
+	$(GOLANGCI) run --build-tags=companion_discovery ./...
+
+# Fail when a function is unreachable from the hactl binary and not on the
+# recorded allowlist. This is the structural defense against the escape
+# mechanism that cost the most: code the command tree no longer reaches, kept
+# alive and "covered" by its own tests. See dev/deadcode-gate.sh.
+deadcode:
+	@DEADCODE="$(DEADCODE)" ./dev/deadcode-gate.sh
 
 test:
 	@echo "NOTE: 'make test' is the unit tier only — it starts no Home Assistant."
@@ -48,11 +85,11 @@ test:
 # There is deliberately no way to mark a Docker tier optional. If Docker is not
 # running, this fails loudly rather than silently narrowing what was verified.
 # ---------------------------------------------------------------------------
-gates: require-docker lint test test-int test-companion test-int-discovery
+gates: require-docker lint deadcode test test-int test-companion test-int-discovery
 	@echo
 	@echo "================================================================"
-	@echo " ALL GATES GREEN — lint + unit + integration + companion +"
-	@echo " discovery, every Docker tier included."
+	@echo " ALL GATES GREEN — lint (every build tag) + deadcode + unit +"
+	@echo " integration + companion + discovery, every Docker tier included."
 	@echo "================================================================"
 
 require-docker:

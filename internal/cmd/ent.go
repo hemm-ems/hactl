@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +21,6 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
-	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
 var (
@@ -608,15 +606,9 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 			}
 			return emitEmptyList(w, "no history data")
 		}
-		return renderStateAnomalies(w, entityID, cfg.Dir, changes)
+		return renderStateAnomalies(w, entityID, changes)
 	}
 
-	// Setup ID registry
-	idsPath := filepath.Join(cfg.Dir, "cache", "ids.json")
-	reg := ids.NewRegistry(idsPath)
-	if loadErr := reg.Load(); loadErr != nil {
-		slog.Warn("could not load ids registry", "error", loadErr)
-	}
 
 	anomalies := analyze.DetectAll(points,
 		defaultGapThreshold,
@@ -633,23 +625,15 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"id", "type", "time", "detail"},
+		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
 	for i, a := range anomalies {
-		anomalyKey := entityID + "|" + string(a.Type) + "|" + a.Start.Format(time.RFC3339)
-		shortID := reg.GetOrCreate("anom", anomalyKey)
-
 		tbl.Rows[i] = []string{
-			shortID,
 			string(a.Type),
 			formatShortTime(a.Start.Format(time.RFC3339)),
 			a.Detail,
 		}
-	}
-
-	if saveErr := reg.Save(); saveErr != nil {
-		slog.Warn("could not save ids registry", "error", saveErr)
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -888,13 +872,7 @@ func renderStateTimeline(w io.Writer, entityID string, changes []analyze.StateCh
 	})
 }
 
-func renderStateAnomalies(w io.Writer, entityID, instanceDir string, changes []analyze.StateChange) error {
-	idsPath := filepath.Join(instanceDir, "cache", "ids.json")
-	reg := ids.NewRegistry(idsPath)
-	if loadErr := reg.Load(); loadErr != nil {
-		slog.Warn("could not load ids registry", "error", loadErr)
-	}
-
+func renderStateAnomalies(w io.Writer, entityID string, changes []analyze.StateChange) error {
 	var anomalies []analyze.Anomaly
 	for _, c := range changes {
 		if c.Duration >= defaultStateStuckDuration {
@@ -917,22 +895,15 @@ func renderStateAnomalies(w io.Writer, entityID, instanceDir string, changes []a
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"id", "type", "time", "detail"},
+		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
 	for i, a := range anomalies {
-		anomalyKey := entityID + "|" + string(a.Type) + "|" + a.Start.Format(time.RFC3339)
-		shortID := reg.GetOrCreate("anom", anomalyKey)
 		tbl.Rows[i] = []string{
-			shortID,
 			string(a.Type),
 			formatShortTime(a.Start.Format(time.RFC3339)),
 			a.Detail,
 		}
-	}
-
-	if saveErr := reg.Save(); saveErr != nil {
-		slog.Warn("could not save ids registry", "error", saveErr)
 	}
 
 	return tbl.Render(w, format.RenderOpts{

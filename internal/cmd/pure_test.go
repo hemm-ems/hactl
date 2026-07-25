@@ -422,8 +422,7 @@ func TestRenderStateAnomalies_NoAnomalies(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.x", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.x", changes); err != nil {
 		t.Fatalf("renderStateAnomalies failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no anomalies") {
@@ -439,8 +438,7 @@ func TestRenderStateAnomalies_WithStuck(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.door", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.door", changes); err != nil {
 		t.Fatalf("renderStateAnomalies with stuck failed: %v", err)
 	}
 	// If there's a stuck anomaly it should show it, otherwise 'no anomalies'
@@ -674,8 +672,7 @@ func TestRenderStateAnomalies_AnomalyDetected(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.door", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.door", changes); err != nil {
 		t.Fatalf("renderStateAnomalies with anomaly failed: %v", err)
 	}
 	out := buf.String()

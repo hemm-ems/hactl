@@ -1,0 +1,50 @@
+# Functions that `deadcode -test=false ./cmd/hactl` reports as unreachable from
+# the hactl binary and that are accepted, for now, with the reason on the line.
+#
+# Format: <file> <func>  # <class>: <reason>
+# Checked by dev/deadcode-gate.sh, which is part of `make gates` and CI.
+#
+# Two classes only:
+#
+#   harness — the function exists to serve a test or a gate and is not part of
+#             the product surface. Legitimate; it stays.
+#   orphan  — product code with no path from main. Every one of these is a
+#             standing defect: the tests below it are green and prove nothing
+#             about what a user can do. Wire it or delete it.
+#
+# Adding a line is a decision, not a formality. Deleting one is always safe:
+# the code is in git.
+
+# --- harness -----------------------------------------------------------------
+internal/cmd/root.go RunWithOutput            # harness: the entry point every CLI test drives the cobra tree through
+internal/cmd/introspect.go LeafCommandPaths   # harness: enumerates the cobra tree for the H-10 command-tree walk
+internal/mcpserver/gate.go ClassifiedPaths    # harness: enumerates the write-gate classification for its sweep tests
+
+# --- orphan ------------------------------------------------------------------
+# The trace/log disk cache (internal/cache.Store) is written and read by nothing
+# in the binary. Its six read/write methods are kept alive entirely by
+# store_test.go. Either `auto show`/`log` start using it or the subsystem goes.
+internal/cache/store.go Store.StoreTrace         # orphan: no caller in the binary
+internal/cache/store.go Store.GetTrace           # orphan: no caller in the binary
+internal/cache/store.go Store.GetTracesForItem   # orphan: no caller in the binary
+internal/cache/store.go Store.AppendLogs         # orphan: no caller in the binary
+internal/cache/store.go Store.ReadLogs           # orphan: no caller in the binary
+internal/cache/store.go Store.TrimLogs           # orphan: no caller in the binary
+
+# companion.Client methods with no command behind them. client_test.go and the
+# companion Docker tier exercise them against a real companion, so they are
+# known to work — they are simply not offered to a user by any subcommand.
+internal/companion/client.go Client.WriteConfigFile     # orphan: no command routes here
+internal/companion/client.go Client.ListTemplates       # orphan: no command routes here
+internal/companion/client.go Client.WriteTemplate       # orphan: no command routes here
+internal/companion/client.go Client.ListScriptDefs      # orphan: no command routes here
+internal/companion/client.go Client.ListAutomationDefs  # orphan: no command routes here
+internal/companion/client.go Client.WriteAutomationDef  # orphan: no command routes here
+internal/companion/client.go Client.UpdateHelper        # orphan: no command routes here
+internal/companion/client.go Client.ReloadDomain        # orphan: no command routes here
+
+internal/haapi/client.go Client.GetEvents        # orphan: no command lists HA event types
+internal/haapi/flow.go Client.StartConfigFlow    # orphan: `config flow-start` does not call it
+internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
+internal/cmd/companion_cmd.go formatCompanionStatusLine  # orphan: companion status renders its own lines
+internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
