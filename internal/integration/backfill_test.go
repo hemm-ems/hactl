@@ -520,8 +520,17 @@ func entAnomalies(t *testing.T, inst *hatest.Instance, entityID string) []anomal
 // decision hactl makes against the wall clock at render time; accepting either
 // keeps a midnight rollover between hactl's call and this assertion from being a
 // flake, while still pinning the timestamp to the minute.
+//
+// The plan's instants are UTC, because that is what the recorder stores, but
+// hactl renders timestamps in the zone of the person reading them. Comparing
+// against the UTC wall-clock would assert the bug fixed in `formatShortTime`,
+// and in the empty-bucket check it silently produced a *false positive*: a
+// point legitimately rendered at 06:56 local matched a forbidden set built from
+// 06:56 UTC — two different instants that print the same string.
 func shortTimeForms(ts time.Time) []string {
-	return []string{ts.Format("15:04"), ts.Format("01-02 15:04")}
+	local := ts.Local() //nolint:gosmopolitan // Mirrors hactl's own rendering; the host's zone is the reader's.
+
+	return []string{local.Format("15:04"), local.Format("01-02 15:04")}
 }
 
 func assertRenderedTime(t *testing.T, what string, got string, want time.Time) {
