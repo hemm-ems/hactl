@@ -56,6 +56,7 @@ type Instance struct {
 	url       string
 	token     string
 	dir       string // temp dir with .env
+	configDir string // host dir bind-mounted as /config (empty without a fixture)
 }
 
 // URL returns the base URL of the running HA instance (http://localhost:<port>).
@@ -161,6 +162,7 @@ func start(opts ...Option) (*Instance, error) {
 	}
 
 	// Mount fixture directory if specified (copy to temp dir to avoid polluting originals)
+	var configDir string
 	if o.fixture != "" {
 		fixtureDir, err := resolveFixtureDir(o.fixture)
 		if err != nil {
@@ -170,6 +172,7 @@ func start(opts ...Option) (*Instance, error) {
 		if cpErr != nil {
 			return nil, fmt.Errorf("copying fixture to temp dir: %w", cpErr)
 		}
+		configDir = tmpConfig
 		req.HostConfigModifier = func(hc *container.HostConfig) {
 			hc.Binds = append(hc.Binds, tmpConfig+":/config")
 		}
@@ -232,6 +235,7 @@ func start(opts ...Option) (*Instance, error) {
 		url:       baseURL,
 		token:     token,
 		dir:       dir,
+		configDir: configDir,
 	}, nil
 }
 
@@ -509,9 +513,7 @@ func createInstanceDir(baseURL, token string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Create .env
-	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=%s\n", baseURL, token)
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+	if err := writeEnvFile(dir, baseURL, token); err != nil {
 		return "", err
 	}
 	// Create cache dir
@@ -519,6 +521,15 @@ func createInstanceDir(baseURL, token string) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// writeEnvFile points an instance directory at a URL + token. Split out of
+// createInstanceDir because a container restart re-assigns the published host
+// port, so the .env has to be rewritten for hactl to keep finding the instance
+// (see Instance.Backfill).
+func writeEnvFile(dir, baseURL, token string) error {
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=%s\n", baseURL, token)
+	return os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600)
 }
 
 // copyFixtureToTemp copies a fixture directory to a temporary directory.
