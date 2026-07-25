@@ -17,56 +17,65 @@ import (
 	"github.com/hemm-ems/hactl/internal/companiontestutil"
 )
 
-const companionToken = "integration-test-token-discovery"
-
 var (
 	composeDir   string
 	companionURL string
 	fakeSup      *fakeSupervisor
 )
 
+// TestMain delegates to runTestMain so the deferred cancel below actually runs:
+// calling os.Exit from inside the setup sequence skips every pending defer
+// (gocritic exitAfterDefer).
 func TestMain(m *testing.M) {
+	os.Exit(runTestMain(m))
+}
+
+func runTestMain(m *testing.M) int {
+	// Every docker subprocess below runs under this context so a future
+	// deadline can abort a stack that never comes up.
+	rootCtx := context.Background()
+
 	composeDir = resolveComposeDir()
 	slog.Info("discovery-test: starting stack", "dir", composeDir)
 
-	if err := buildCompanion(); err != nil {
+	if err := buildCompanion(rootCtx); err != nil {
 		slog.Error("discovery-test: build companion failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	if err := composeUp(); err != nil {
+	if err := composeUp(rootCtx); err != nil {
 		slog.Error("discovery-test: compose up failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var err error
-	companionURL, err = mappedURL("companion", "9100")
+	companionURL, err = mappedURL(rootCtx, "companion", "9100")
 	if err != nil {
 		slog.Error("discovery-test: get companion port", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if err := waitForURL(ctx, companionURL+"/v1/health"); err != nil {
-		slog.Error("discovery-test: companion not ready", "error", err)
-		composeDown()
-		os.Exit(1)
+	if readyErr := waitForURL(ctx, companionURL+"/v1/health"); readyErr != nil {
+		slog.Error("discovery-test: companion not ready", "error", readyErr)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("discovery-test: companion ready", "url", companionURL)
 
-	if err := companiontestutil.SeedRelatedFixture(filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
-		slog.Error("discovery-test: seed related fixture", "error", err)
-		composeDown()
-		os.Exit(1)
+	if seedErr := companiontestutil.SeedRelatedFixture(rootCtx, filepath.Join(composeDir, "docker-compose.yaml"), "companion"); seedErr != nil {
+		slog.Error("discovery-test: seed related fixture", "error", seedErr)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("discovery-test: related fixture seeded")
 
-	fakeSup, err = startFakeSupervisor(companionURL)
+	fakeSup, err = startFakeSupervisor(rootCtx, companionURL)
 	if err != nil {
 		slog.Error("discovery-test: start fake supervisor", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("discovery-test: fake supervisor ready", "url", fakeSup.BaseURL())
 
@@ -75,8 +84,8 @@ func TestMain(m *testing.M) {
 	if shutdownErr := fakeSup.Shutdown(); shutdownErr != nil {
 		slog.Warn("discovery-test: fake supervisor shutdown", "error", shutdownErr)
 	}
-	composeDown()
-	os.Exit(code)
+	composeDown(rootCtx)
+	return code
 }
 
 func resolveComposeDir() string {
@@ -98,9 +107,10 @@ func resolveComposeDir() string {
 	return abs
 }
 
-func buildCompanion() error {
+func buildCompanion(ctx context.Context) error {
 	slog.Info("discovery-test: building companion image")
-	cmd := exec.Command("docker", "compose",
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"-f", filepath.Join(composeDir, "docker-compose.yaml"),
 		"build", "companion")
 	cmd.Stdout = os.Stdout
@@ -111,8 +121,9 @@ func buildCompanion() error {
 	return nil
 }
 
-func composeUp() error {
-	cmd := exec.Command("docker", "compose",
+func composeUp(ctx context.Context) error {
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"-f", filepath.Join(composeDir, "docker-compose.yaml"),
 		"up", "-d")
 	cmd.Stdout = os.Stdout
@@ -120,8 +131,9 @@ func composeUp() error {
 	return cmd.Run()
 }
 
-func composeDown() {
-	cmd := exec.Command("docker", "compose",
+func composeDown(ctx context.Context) {
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"-f", filepath.Join(composeDir, "docker-compose.yaml"),
 		"down", "-v")
 	cmd.Stdout = os.Stdout
@@ -129,8 +141,9 @@ func composeDown() {
 	_ = cmd.Run()
 }
 
-func mappedURL(service, port string) (string, error) {
-	cmd := exec.Command("docker", "compose",
+func mappedURL(ctx context.Context, service, port string) (string, error) {
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"-f", filepath.Join(composeDir, "docker-compose.yaml"),
 		"port", service, port)
 	out, err := cmd.Output()
@@ -149,10 +162,14 @@ func waitForURL(ctx context.Context, targetURL string) error {
 			return fmt.Errorf("timeout waiting for %s", targetURL)
 		default:
 		}
-		resp, err := http.Get(targetURL) //nolint:gosec // test URL
-		if err == nil {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if reqErr != nil {
+			return fmt.Errorf("building readiness request for %s: %w", targetURL, reqErr)
+		}
+		resp, getErr := http.DefaultClient.Do(req)
+		if getErr == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == 200 {
+			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}

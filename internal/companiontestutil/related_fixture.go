@@ -3,11 +3,15 @@
 package companiontestutil
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 )
 
+// Entity ids and the config-entry id written by SeedRelatedFixture. Tests
+// assert against these rather than re-typing the strings, so a fixture rename
+// cannot leave an assertion quietly matching nothing.
 const (
 	RelatedSourceEntityID    = "sensor.hactl_related_source"
 	RelatedGeneratedEntityID = "sensor.hactl_related_generated"
@@ -20,8 +24,8 @@ const (
 
 // SeedRelatedFixture writes deterministic related-graph fixture data into the
 // Docker Compose service's mounted /config directory.
-func SeedRelatedFixture(composeFile, service string) error {
-	cmd := exec.Command("docker", "compose", "-f", composeFile, "exec", "-T", service, "python3", "-c", relatedFixtureScript) //nolint:gosec // test harness command
+func SeedRelatedFixture(ctx context.Context, composeFile, service string) error {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "exec", "-T", service, "python3", "-c", relatedFixtureScript) //nolint:gosec // test harness command
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

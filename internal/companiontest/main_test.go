@@ -47,32 +47,46 @@ var (
 	hactlBin       string // path to built hactl binary
 )
 
+// TestMain delegates to runTestMain so every `defer` in the setup path actually
+// runs. It used to call os.Exit(1) directly from inside the setup sequence,
+// which skips deferred work by definition (gocritic exitAfterDefer): the
+// context cancels and the temp SUPERVISOR_TOKEN env file — which holds a real
+// long-lived HA token — were both leaked on every setup failure.
 func TestMain(m *testing.M) {
+	os.Exit(runTestMain(m))
+}
+
+func runTestMain(m *testing.M) int {
+	// Every docker/go subprocess below runs under this context, so a future
+	// deadline on it can abort a stack that never comes up instead of letting
+	// the whole tier hang until the CI job timeout.
+	rootCtx := context.Background()
+
 	// Resolve compose file location
 	composeDir = resolveComposeDir()
 
 	slog.Info("companion-test: starting stack", "dir", composeDir)
 
 	// Build companion image from local source
-	if err := buildCompanionImage(composeDir); err != nil {
+	if err := buildCompanionImage(rootCtx, composeDir); err != nil {
 		slog.Error("companion-test: build companion image failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Start HA only — companion's SUPERVISOR_TOKEN needs a real HA
 	// long-lived token (there's no real Supervisor in this stack), and that
 	// token only exists after onboarding, so HA must come up first.
-	if err := composeUpServices("homeassistant"); err != nil {
+	if err := composeUpServices(rootCtx, "homeassistant"); err != nil {
 		slog.Error("companion-test: compose up homeassistant failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var err error
-	haURL, err = getMappedURL("homeassistant", "8123")
+	haURL, err = getMappedURL(rootCtx, "homeassistant", "8123")
 	if err != nil {
 		slog.Error("companion-test: get HA port", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 
 	slog.Info("companion-test: HA URL", "ha", haURL)
@@ -80,10 +94,10 @@ func TestMain(m *testing.M) {
 	// Wait for HA
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	if err := waitForURL(ctx, haURL+"/api/onboarding"); err != nil {
-		slog.Error("companion-test: HA not ready", "error", err)
-		composeDown()
-		os.Exit(1)
+	if readyErr := waitForURL(ctx, haURL+"/api/onboarding"); readyErr != nil {
+		slog.Error("companion-test: HA not ready", "error", readyErr)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: HA ready")
 
@@ -91,8 +105,8 @@ func TestMain(m *testing.M) {
 	var onboardErr error
 	if haToken, onboardErr = completeOnboarding(ctx, haURL); onboardErr != nil {
 		slog.Error("companion-test: onboarding failed", "error", onboardErr)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	companionToken = haToken
 	slog.Info("companion-test: onboarding complete")
@@ -101,22 +115,22 @@ func TestMain(m *testing.M) {
 	envFile, envErr := writeSupervisorTokenEnvFile(companionToken)
 	if envErr != nil {
 		slog.Error("companion-test: writing supervisor token env file failed", "error", envErr)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	defer os.Remove(envFile) //nolint:errcheck // best-effort cleanup of a temp file
 
-	if err := composeUpCompanionWithEnv(envFile); err != nil {
-		slog.Error("companion-test: compose up companion failed", "error", err)
-		composeDown()
-		os.Exit(1)
+	if upErr := composeUpCompanionWithEnv(rootCtx, envFile); upErr != nil {
+		slog.Error("companion-test: compose up companion failed", "error", upErr)
+		composeDown(rootCtx)
+		return 1
 	}
 
-	compURL, err = getMappedURL("companion", "9100")
+	compURL, err = getMappedURL(rootCtx, "companion", "9100")
 	if err != nil {
 		slog.Error("companion-test: get companion port", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 
 	slog.Info("companion-test: companion URL", "companion", compURL)
@@ -124,10 +138,10 @@ func TestMain(m *testing.M) {
 	// Wait for companion
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel2()
-	if err := waitForURL(ctx2, compURL+"/v1/health"); err != nil {
-		slog.Error("companion-test: companion not ready", "error", err)
-		composeDown()
-		os.Exit(1)
+	if compReadyErr := waitForURL(ctx2, compURL+"/v1/health"); compReadyErr != nil {
+		slog.Error("companion-test: companion not ready", "error", compReadyErr)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: companion ready")
 
@@ -139,11 +153,11 @@ func TestMain(m *testing.M) {
 
 	// Build hactl binary for E2E CLI tests
 	var buildErr error
-	hactlBin, buildErr = buildHactl()
+	hactlBin, buildErr = buildHactl(rootCtx)
 	if buildErr != nil {
 		slog.Error("companion-test: failed to build hactl binary", "error", buildErr)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: hactl binary built", "path", hactlBin)
 
@@ -152,23 +166,23 @@ func TestMain(m *testing.M) {
 	instanceDir, instErr = createE2EInstanceDir(haURL, haToken, compURL, companionToken)
 	if instErr != nil {
 		slog.Error("companion-test: failed to create E2E instance dir", "error", instErr)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: E2E instance dir created", "path", instanceDir)
 
 	// Seed config files for CRUD tests
 	if err := seedConfigFiles(); err != nil {
 		slog.Error("companion-test: seeding config files failed", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: config files seeded")
 
-	if err := companiontestutil.SeedRelatedFixture(filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
+	if err := companiontestutil.SeedRelatedFixture(rootCtx, filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
 		slog.Error("companion-test: seeding related fixture failed", "error", err)
-		composeDown()
-		os.Exit(1)
+		composeDown(rootCtx)
+		return 1
 	}
 	slog.Info("companion-test: related fixture seeded")
 
@@ -182,8 +196,8 @@ func TestMain(m *testing.M) {
 	if hactlBin != "" {
 		_ = os.Remove(hactlBin)
 	}
-	composeDown()
-	os.Exit(code)
+	composeDown(rootCtx)
+	return code
 }
 
 func resolveComposeDir() string {
@@ -207,9 +221,9 @@ func resolveComposeDir() string {
 	return abs
 }
 
-func composeUpServices(services ...string) error {
+func composeUpServices(ctx context.Context, services ...string) error {
 	args := append([]string{"compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "up", "-d"}, services...)
-	cmd := exec.Command("docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // G204: fixed docker/go CLI, arguments are test-owned paths and service names
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -219,8 +233,9 @@ func composeUpServices(services ...string) error {
 // substituted from envFile — the container's env is fixed at creation, and the
 // real HA token doesn't exist until after HA onboarding, so companion must be
 // started separately from (and after) homeassistant.
-func composeUpCompanionWithEnv(envFile string) error {
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"),
+func composeUpCompanionWithEnv(ctx context.Context, envFile string) error {
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"),
 		"--env-file", envFile, "up", "-d", "companion")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -239,8 +254,8 @@ func writeSupervisorTokenEnvFile(token string) (string, error) {
 	return f.Name(), nil
 }
 
-func composeDown() {
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "down", "-v")
+func composeDown(ctx context.Context) {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "down", "-v") //nolint:gosec // G204: fixed docker/go CLI, arguments are test-owned paths and service names
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
@@ -248,9 +263,9 @@ func composeDown() {
 
 // buildCompanionImage builds the companion Docker image from the local source tree
 // using docker compose build so the image is available when composeUp runs.
-func buildCompanionImage(composeDir string) error {
+func buildCompanionImage(ctx context.Context, composeDir string) error {
 	slog.Info("companion-test: building companion image from local source")
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "build", "companion")
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "build", "companion") //nolint:gosec // G204: fixed docker/go CLI, arguments are test-owned paths and service names
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -377,7 +392,13 @@ func restartHA() error {
 func waitForCoreNotRunning(ctx context.Context, baseURL, token string) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
-		if state, err := coreState(ctx, baseURL, token); err != nil || state != "RUNNING" {
+		state, stateErr := coreState(ctx, baseURL, token)
+		if stateErr != nil {
+			// HA refusing the connection is the strongest possible form of
+			// "not RUNNING", so the error is the answer, not a failure.
+			return nil //nolint:nilerr // unreachable == not running, by definition
+		}
+		if state != "RUNNING" {
 			return nil
 		}
 		select {
@@ -434,8 +455,8 @@ func coreState(ctx context.Context, baseURL, token string) (string, error) {
 	return cfg.State, nil
 }
 
-func getMappedURL(service, port string) (string, error) {
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "port", service, port)
+func getMappedURL(ctx context.Context, service, port string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "port", service, port) //nolint:gosec // G204: fixed docker/go CLI, arguments are test-owned paths and service names
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("get port for %s:%s: %w", service, port, err)
@@ -453,10 +474,14 @@ func waitForURL(ctx context.Context, targetURL string) error {
 			return fmt.Errorf("timeout waiting for %s", targetURL)
 		default:
 		}
-		resp, err := http.Get(targetURL) //nolint:gosec // test URL
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if reqErr != nil {
+			return fmt.Errorf("building readiness request for %s: %w", targetURL, reqErr)
+		}
+		resp, getErr := http.DefaultClient.Do(req)
+		if getErr == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}
@@ -477,12 +502,12 @@ func completeOnboarding(ctx context.Context, baseURL string) (string, error) {
 		return "", fmt.Errorf("exchanging auth code: %w", err)
 	}
 
-	if err := completeStep(ctx, baseURL, accessToken, "/api/onboarding/core_config"); err != nil {
-		return "", fmt.Errorf("completing core_config: %w", err)
+	if stepErr := completeStep(ctx, baseURL, accessToken, "/api/onboarding/core_config"); stepErr != nil {
+		return "", fmt.Errorf("completing core_config: %w", stepErr)
 	}
 
-	if err := completeStep(ctx, baseURL, accessToken, "/api/onboarding/analytics"); err != nil {
-		return "", fmt.Errorf("completing analytics: %w", err)
+	if stepErr := completeStep(ctx, baseURL, accessToken, "/api/onboarding/analytics"); stepErr != nil {
+		return "", fmt.Errorf("completing analytics: %w", stepErr)
 	}
 
 	llToken, err := createLongLivedToken(ctx, baseURL, accessToken)
@@ -533,7 +558,7 @@ func exchangeAuthCode(ctx context.Context, baseURL, authCode string) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -628,7 +653,7 @@ func doJSONPost(ctx context.Context, targetURL, token string, body any) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -641,16 +666,18 @@ func doJSONPost(ctx context.Context, targetURL, token string, body any) ([]byte,
 
 // buildHactl compiles the hactl binary from source into a temp file.
 // Returns the path to the binary.
-func buildHactl() (string, error) {
+func buildHactl(ctx context.Context) (string, error) {
 	f, err := os.CreateTemp("", "hactl-e2e-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp file for binary: %w", err)
 	}
 	binPath := f.Name()
-	f.Close()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("closing temp file for binary: %w", err)
+	}
 
 	slog.Info("companion-test: building hactl binary", "output", binPath)
-	cmd := exec.Command("go", "build", "-o", binPath, "github.com/hemm-ems/hactl/cmd/hactl")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, "github.com/hemm-ems/hactl/cmd/hactl") //nolint:gosec // G204: fixed docker/go CLI, arguments are test-owned paths and service names
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

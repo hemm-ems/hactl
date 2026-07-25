@@ -12,6 +12,7 @@
 package companiontest_discovery
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -67,8 +68,9 @@ type wsRequest struct {
 // startFakeSupervisor binds a listener on a free port, proxies HTTP requests
 // under ingressPrefix to companionURL, and returns the URL clients should use
 // as their HA base.
-func startFakeSupervisor(companionURL string) (*fakeSupervisor, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func startFakeSupervisor(ctx context.Context, companionURL string) (*fakeSupervisor, error) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listening: %w", err)
 	}
@@ -84,21 +86,26 @@ func startFakeSupervisor(companionURL string) (*fakeSupervisor, error) {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
-		proxy:          httputil.NewSingleHostReverseProxy(companionParsed),
 		issuedSessions: make(map[string]bool),
 	}
 
 	// Strip the ingress prefix before forwarding and inject the header the
 	// Companion's auth middleware looks for. This mirrors what HA's Ingress
 	// proxy does in production.
-	originalDirector := f.proxy.Director
-	f.proxy.Director = func(req *http.Request) {
-		req.URL.Path = strings.TrimPrefix(req.URL.Path, strings.TrimRight(ingressPrefix, "/"))
-		if req.URL.Path == "" {
-			req.URL.Path = "/"
-		}
-		req.Header.Set("X-Ingress-Path", strings.TrimRight(ingressPrefix, "/"))
-		originalDirector(req)
+	//
+	// This uses Rewrite rather than Director: Director is deprecated (SA1019),
+	// and Rewrite additionally strips inbound hop-by-hop and X-Forwarded-*
+	// headers, so a test client cannot smuggle them past the fake the way it
+	// could through Director.
+	f.proxy = &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(companionParsed)
+			pr.Out.URL.Path = strings.TrimPrefix(pr.Out.URL.Path, strings.TrimRight(ingressPrefix, "/"))
+			if pr.Out.URL.Path == "" {
+				pr.Out.URL.Path = "/"
+			}
+			pr.Out.Header.Set("X-Ingress-Path", strings.TrimRight(ingressPrefix, "/"))
+		},
 	}
 
 	mux := http.NewServeMux()
@@ -144,21 +151,6 @@ func (f *fakeSupervisor) HTTPHits() int64 {
 	return f.httpHits.Load()
 }
 
-func (f *fakeSupervisor) handleIngress(w http.ResponseWriter, r *http.Request) {
-	f.httpHits.Add(1)
-	if f.requireSession {
-		cookie, err := r.Cookie("ingress_session")
-		f.mu.Lock()
-		known := err == nil && f.issuedSessions[cookie.Value]
-		f.mu.Unlock()
-		if !known {
-			http.Error(w, "fake supervisor: missing or unknown ingress_session cookie", http.StatusUnauthorized)
-			return
-		}
-	}
-	f.proxy.ServeHTTP(w, r)
-}
-
 // SetRequireSession toggles enforcement of an ingress_session cookie on the
 // ingress proxy. Tests that exercise the Ingress auth flow turn this on;
 // default-off keeps the discovery-only tests independent of the auth path.
@@ -173,6 +165,21 @@ func (f *fakeSupervisor) InvalidateSessions() {
 	f.mu.Lock()
 	f.issuedSessions = make(map[string]bool)
 	f.mu.Unlock()
+}
+
+func (f *fakeSupervisor) handleIngress(w http.ResponseWriter, r *http.Request) {
+	f.httpHits.Add(1)
+	if f.requireSession {
+		cookie, err := r.Cookie("ingress_session")
+		f.mu.Lock()
+		known := err == nil && f.issuedSessions[cookie.Value]
+		f.mu.Unlock()
+		if !known {
+			http.Error(w, "fake supervisor: missing or unknown ingress_session cookie", http.StatusUnauthorized)
+			return
+		}
+	}
+	f.proxy.ServeHTTP(w, r)
 }
 
 func (f *fakeSupervisor) handleWS(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ package companiontest
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,14 +60,7 @@ func TestListConfigFiles(t *testing.T) {
 	if len(files.Files) == 0 {
 		t.Fatal("no config files returned")
 	}
-	found := false
-	for _, f := range files.Files {
-		if f == "configuration.yaml" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(files.Files, "configuration.yaml") {
 		t.Errorf("configuration.yaml not in file list: %v", files.Files)
 	}
 }

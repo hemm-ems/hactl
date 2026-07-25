@@ -33,10 +33,10 @@ func TestRelatedEntityThroughDiscoveredIngress(t *testing.T) {
 	}
 
 	plain := companion.New(url, "any-token-accepted")
-	if _, err := plain.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID, false); err == nil {
+	if _, relErr := plain.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID, false); relErr == nil {
 		t.Fatal("plain RelatedEntity unexpectedly succeeded without Ingress auth")
-	} else if !strings.Contains(err.Error(), "401") {
-		t.Fatalf("plain RelatedEntity error = %v, want 401", err)
+	} else if !strings.Contains(relErr.Error(), "401") {
+		t.Fatalf("plain RelatedEntity error = %v, want 401", relErr)
 	}
 
 	authed := companion.New(url, "any-token-accepted").WithIngressAuth(ws)

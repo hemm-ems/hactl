@@ -62,22 +62,22 @@ func haStateOf(t *testing.T, entityID string) (state string, attrs map[string]an
 // waitForHAState polls until HA reports the entity (or stops reporting it).
 // Config writes reach HA through a reload the CLI has already waited on, but
 // entity registration is a further async hop inside HA.
-func waitForHAState(t *testing.T, entityID string, want bool) (string, map[string]any) {
+// waitForHAState waits for entityID to be registered in HA. It used to take a
+// `want bool`, but every caller passed true: the parameter promised a
+// wait-for-absence mode that was never implemented or exercised.
+func waitForHAState(t *testing.T, entityID string) (string, map[string]any) {
 	t.Helper()
 	var state string
 	var attrs map[string]any
 	for range 40 {
 		var ok bool
 		state, attrs, ok = haStateOf(t, entityID)
-		if ok == want {
+		if ok {
 			return state, attrs
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	if want {
-		t.Fatalf("HA never reported %s", entityID)
-	}
-	t.Fatalf("HA still reports %s (state=%q)", entityID, state)
+	t.Fatalf("HA never reported %s", entityID)
 	return "", nil
 }
 
@@ -214,7 +214,7 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 	if strings.Contains(out, "warning:") {
 		t.Errorf("HA confirmed nothing after create:\n%s", out)
 	}
-	_, attrs := waitForHAState(t, entityID, true)
+	_, attrs := waitForHAState(t, entityID)
 	if got := attrString(t, entityID, attrs, "friendly_name"); got != "H12 Script Round Trip" {
 		t.Errorf("HA friendly_name = %q, want %q", got, "H12 Script Round Trip")
 	}
@@ -249,8 +249,8 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 		"    - delay: \"00:00:02\"\n"
 	applyFile := writeTempYAML(t, "script-apply.yaml", applied)
 
-	if out, err := runHactlE2E(t, "script", "apply", id, "-f", applyFile); err != nil {
-		t.Fatalf("script apply (dry-run) failed (exit %v):\n%s", err, out)
+	if out, applyErr := runHactlE2E(t, "script", "apply", id, "-f", applyFile); applyErr != nil {
+		t.Fatalf("script apply (dry-run) failed (exit %v):\n%s", applyErr, out)
 	}
 	afterDry, err := testClient.GetScriptDef(ctx, id)
 	if err != nil {
@@ -261,8 +261,8 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 	}
 
 	// --- apply: confirmed write is a FULL replacement ---
-	if out, err := runHactlE2E(t, "script", "apply", id, "--confirm", "-f", applyFile); err != nil {
-		t.Fatalf("script apply --confirm failed (exit %v):\n%s", err, out)
+	if out, applyErr := runHactlE2E(t, "script", "apply", id, "--confirm", "-f", applyFile); applyErr != nil {
+		t.Fatalf("script apply --confirm failed (exit %v):\n%s", applyErr, out)
 	}
 	wantApplied := yamlDoc(t, applied)
 	gotApplied, err := testClient.GetScriptDef(ctx, id)
@@ -275,7 +275,7 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 	}
 	// HA reloaded and sees the new document, witness included.
 	for range 40 {
-		_, attrs = waitForHAState(t, entityID, true)
+		_, attrs = waitForHAState(t, entityID)
 		if attrs["mode"] == "restart" {
 			break
 		}
@@ -296,7 +296,7 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 	if len(backups) == 0 {
 		t.Errorf("apply --confirm wrote no backup under %s", filepath.Join(instanceDir, "backups"))
 	} else {
-		data, readErr := os.ReadFile(backups[0]) //nolint:gosec // path from our own glob
+		data, readErr := os.ReadFile(backups[0])
 		if readErr != nil {
 			t.Errorf("reading backup: %v", readErr)
 		} else if !reflect.DeepEqual(yamlDoc(t, string(data)), wantDoc) {
@@ -375,7 +375,7 @@ func TestE2ETplWriteRoundTripCLI(t *testing.T) {
 	if strings.Contains(out, "warning:") {
 		t.Errorf("HA confirmed nothing after create:\n%s", out)
 	}
-	state, attrs := waitForHAState(t, stateEntity, true)
+	state, attrs := waitForHAState(t, stateEntity)
 	if state != "42" {
 		t.Errorf("HA state = %q, want 42 (the template was not evaluated)", state)
 	}
@@ -411,11 +411,11 @@ func TestE2ETplWriteRoundTripCLI(t *testing.T) {
 		"    icon: mdi:flash\n"
 	blockFile := writeTempYAML(t, "tpl-block.yaml", block)
 
-	if out, err := runHactlE2E(t, "tpl", "create", "--confirm", "-f", blockFile); err != nil {
-		t.Fatalf("tpl create --confirm (trigger block) failed (exit %v):\n%s", err, out)
+	if out, blockErr := runHactlE2E(t, "tpl", "create", "--confirm", "-f", blockFile); blockErr != nil {
+		t.Fatalf("tpl create --confirm (trigger block) failed (exit %v):\n%s", blockErr, out)
 	}
-	if _, err := testClient.GetTemplate(ctx, triggerID); err != nil {
-		t.Fatalf("trigger-based template was not stored: %v", err)
+	if _, getErr := testClient.GetTemplate(ctx, triggerID); getErr != nil {
+		t.Fatalf("trigger-based template was not stored: %v", getErr)
 	}
 
 	// The regression gate: the neighbours in template.yaml still parse and
@@ -503,7 +503,7 @@ func TestE2EHelperWriteRoundTripCLI(t *testing.T) {
 	if !strings.Contains(out, "entity_id: "+entityID) {
 		t.Errorf("create did not confirm the live entity_id, got:\n%s", out)
 	}
-	_, attrs := waitForHAState(t, entityID, true)
+	_, attrs := waitForHAState(t, entityID)
 	if got := attrString(t, entityID, attrs, "friendly_name"); got != "H12 Helper Toggle" {
 		t.Errorf("HA friendly_name = %q, want %q", got, "H12 Helper Toggle")
 	}

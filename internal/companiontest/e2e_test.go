@@ -44,7 +44,7 @@ func entityRegistryContains(ctx context.Context, entityID string) (bool, error) 
 func runHactlE2E(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	fullArgs := append([]string{"--dir", instanceDir}, args...)
-	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
+	cmd := exec.CommandContext(t.Context(), hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
 	// These tests exercise command mechanics, not the agent protocol: piped
 	// output would otherwise trigger manual injection and the first-family
 	// --confirm guard.
@@ -141,7 +141,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
 		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
@@ -221,7 +223,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
 		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
@@ -261,7 +265,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name())
 	if execErr != nil {
@@ -301,7 +307,9 @@ actions: [{action: logbook.log, data: {name: x, message: y}}]
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	for _, mode := range []struct {
 		name string
@@ -466,7 +474,7 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating bad instanceDir: %v", err)
 	}
-	defer os.RemoveAll(badDir)
+	defer func() { _ = os.RemoveAll(badDir) }()
 
 	content := `- id: e2e_unavailable_test
   alias: E2E Unavailable Test
@@ -481,14 +489,16 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	// Override instanceDir just for this invocation. Manual delivery off:
 	// this must reach the companion error path, not the --confirm guard
 	// (and the injected how-to happens to contain "companion", which would
 	// let the assertion below pass for the wrong reason).
 	fullArgs := []string{"--dir", badDir, "auto", "create", "--confirm", "-f", f.Name()}
-	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source
+	cmd := exec.CommandContext(t.Context(), hactlBin, fullArgs...) //nolint:gosec // binary built from source
 	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
 	out, execErr := cmd.CombinedOutput()
 
@@ -520,7 +530,7 @@ func TestE2ESetupCLI(t *testing.T) {
 	// Pipe: URL (accept default), token, then "no" to companion prompt if any
 	input := fmt.Sprintf("%s\n%s\n", haURL, haToken)
 
-	cmd := exec.Command(hactlBin, "--dir", dir, "setup") //nolint:gosec
+	cmd := exec.CommandContext(t.Context(), hactlBin, "--dir", dir, "setup") //nolint:gosec
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
