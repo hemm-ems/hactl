@@ -456,3 +456,40 @@ the command's whole purpose. It now resolves against HA's `flow_handlers` list
   `internal/companiontest/write_config_test.go`
   (`TestE2EScriptWriteRoundTripCLI`, `TestE2ETplWriteRoundTripCLI`,
   `TestE2EHelperWriteRoundTripCLI`) — `make test-companion`
+
+## H-13 — A contract is field-level: every decoded field is documented, and every documented field is decoded
+
+Path-and-method presence is not a contract. For the companion seam, the
+contract holds in both directions: every `json:` tag on a Go response struct in
+`internal/companion` maps to a property the vendored spec
+(`testdata/companion-v1.yaml`) documents, and every response property the spec
+documents is decoded by the corresponding struct or carries an explicit,
+justified `decodeIgnore` entry. Both sweeps derive from one table —
+`companion.Endpoints`, which pairs each (method, path) with its decode target —
+so a new client call is covered automatically and a new spec path with no entry
+fails loudly.
+
+This exists because a path-only contract cannot see a field. HA's companion
+grew a `reloaded` flag; the Go create structs decoded no such field, so
+`tpl create`/`script create` printed "created …" for a definition HA never
+reloaded (D45). The same class hid `IntegrationManifest` decoding 4 of N
+manifest fields (D68). A `(method, path)` presence check — which is all
+`TestClientEndpointsInSpec`/`TestSpecPathCountMatchesClient` do — passes through
+every one of these: the route is unchanged, only the body drifted, and a
+wrong-shape body decodes to a zero value, not an error.
+
+The field sweep surfaced exactly this drift on `main` and it was closed by
+decoding, not ignore-listing: `reloaded`/`diff` on the shared write/delete
+acknowledgement (`ConfigDeleteResponse`), `validated` on the file-write
+response, and the `trigger` flag on the template list/get responses were all
+documented in the spec yet decoded by no struct. The `decodeIgnore` list is
+empty by design — a growing ignore list would re-hide the class it exists to
+expose.
+
+- Enforced by: `internal/companion/contract_conformance_test.go`
+  (`TestGoStructTagsAreDocumented` — every Go tag is documented;
+  `TestSpecResponseFieldsAreDecoded` — every documented field is decoded;
+  `TestEndpointsCoverSpecPaths` — the table covers the spec both ways) —
+  `make test` (unit tier, no Docker). The `(method, path)` half stays in
+  `internal/companiontest/contract_test.go`, now derived from the same
+  `companion.Endpoints` table.
