@@ -920,8 +920,12 @@ func TestWSClient_Close_Unconnected(t *testing.T) {
 }
 
 func TestWSClient_DashboardList(t *testing.T) {
+	// url_path is never empty in lovelace/dashboards/list: HA requires it when
+	// a dashboard is created, and the one dashboard that has no url_path — the
+	// default — is not in the list at all (see the note on
+	// TestRunDashDelete_ByURLPath in internal/cmd).
 	dashboards := []LovelaceDashboard{
-		{ID: "lovelace", URLPath: "", Title: "Home", Mode: "storage"},
+		{ID: "lovelace", URLPath: "lovelace", Title: "Home", Mode: "storage"},
 		{ID: "energy", URLPath: "energy", Title: "Energy Dashboard", Mode: "storage"},
 	}
 

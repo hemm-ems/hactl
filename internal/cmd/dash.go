@@ -110,7 +110,7 @@ var dashGrepCmd = &cobra.Command{
 		"dashboard and path of each hit. The match is whole-value and position-independent: a card's " +
 		"entity matches, and so does a markdown card whose content or a view whose title is exactly " +
 		"that string. A mention inside a longer string is not a hit; map keys are never matched.",
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDashGrep(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -123,7 +123,7 @@ var dashReplaceCmd = &cobra.Command{
 		"whole-value match `dash grep` reports, so it rewrites card entities, titles and markdown " +
 		"content alike, and never rewrites map keys. Omit url_path for the default dashboard. Use " +
 		"--confirm to save; `hactl ref replace` covers config files and dashboards in one pass.",
-	Args:  cobra.RangeArgs(2, 3),
+	Args: cobra.RangeArgs(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""
 		if len(args) > 2 {

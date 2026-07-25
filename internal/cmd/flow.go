@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -201,6 +202,9 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return fmt.Errorf("parsing config entries: %w", err)
 	}
+	if err := degeneracy.Check("/api/config/config_entries/entry", &entries); err != nil {
+		return err
+	}
 
 	// Filter by domain if requested
 	if flagConfigDomain != "" {
@@ -267,6 +271,9 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return fmt.Errorf("parsing config entries: %w", err)
 	}
+	if err := degeneracy.Check("/api/config/config_entries/entry", &entries); err != nil {
+		return err
+	}
 	entry, ok := findConfigEntry(entries, entryID)
 	if !ok {
 		return fmt.Errorf("unknown config entry %q (list them with 'hactl config entries')", entryID)
@@ -325,6 +332,9 @@ func resolveConfigEntry(ctx context.Context, client *haapi.Client, entryID strin
 	var entries []configEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("parsing config entries: %w", err)
+	}
+	if err := degeneracy.Check("/api/config/config_entries/entry", &entries); err != nil {
+		return nil, err
 	}
 	entry, ok := findConfigEntry(entries, entryID)
 	if !ok {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/pkg/ids"
@@ -229,6 +231,15 @@ func fetchLogEntries(ctx context.Context, cfg *config.Config) ([]analyze.LogEntr
 		if err == nil {
 			slog.Debug("fetched logs via system_log/list", "count", len(entries))
 			return systemLogToEntries(entries), nil
+		}
+		// H-14: "system_log answered in a shape hactl cannot decode" is not the
+		// same as "system_log is unavailable". Falling back here would quietly
+		// serve the less structured /api/error_log instead and look like a
+		// success — a wire drift rendered as a plausible answer, which is the
+		// whole class this poison exists to stop. Only genuine unavailability
+		// may fall back.
+		if errors.Is(err, degeneracy.ErrDegenerate) {
+			return nil, err
 		}
 		slog.Debug("system_log/list unavailable, trying REST", "error", err)
 	}

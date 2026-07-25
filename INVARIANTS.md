@@ -493,3 +493,82 @@ expose.
   `make test` (unit tier, no Docker). The `(method, path)` half stays in
   `internal/companiontest/contract_test.go`, now derived from the same
   `companion.Endpoints` table.
+
+## H-14 — A record that decoded without its identity is spelled UNPARSED, never rendered as an answer
+
+A wrong-shape JSON payload does not produce an error in Go. It produces a zero
+value, and a renderer prints a zero value as a plausible answer. Every wire
+record hactl decodes therefore declares its *identity* — the field or fields
+without which the record cannot be a real answer, an entity with no
+`entity_id`, a manifest with no `domain` — and every decode site calls
+`degeneracy.Check`. A record that arrives without its identity has that field
+overwritten with the literal `UNPARSED` and fails its command, naming the wire
+source. Both the poisoned value and the error text carry the marker, so the
+text renderer, the `--json` renderer and the error path are covered by one
+string.
+
+The converse is half the invariant: a record whose zero value is a *legitimate*
+answer must NOT declare an identity. A dashboard with no views is a real empty
+dashboard; a `restored` ghost automation really has no attributes; an
+automation with no `id:` is legal Home Assistant and the companion reports it
+with an empty id. Poisoning those makes the suite cry wolf on correct
+behaviour, and a gate that fires on correct behaviour gets deleted by the next
+person who trips it. Both of those cry-wolf identities were in the first draft
+of this invariant and were removed only after reading the companion routes that
+emit the field.
+
+This generalises H-7. `trace/get` decoded every automation run into an all-zero
+struct because hactl read the wrong wire tags, and `overallResult` rendered
+every run as `PASS` for months while sitting at 100% statement coverage (D1).
+The fix at the time — render `UNPARSED`, and have every `runHactl*` helper grep
+for it — turned integration tests that assert nothing about their output into
+detectors for the class, but it only ever matched the marker
+`analyze.FormatCondensed` emitted. Entity, registry, manifest, config-entry,
+flow and every companion decode stayed exposed to the identical mechanism.
+`analyze.UnparsedMarker` is now defined as `degeneracy.Marker`, so there is one
+token and one scan.
+
+- Classification enforced by: `internal/degeneracy/sweep_test.go`
+  (`TestSweep_EveryWireStructIsClassified` — every json-tagged struct in
+  `internal/{haapi,companion,cmd,analyze}` either declares an `Identity` or is
+  listed in `unidentifiedWireStructs` with the reason its zero value is a
+  legitimate answer; `TestSweep_EveryDecodeSiteIsChecked` — every
+  `json.Unmarshal` in those packages sits in a function that also calls
+  `degeneracy.Check`, or is listed in `uncheckedDecodeSites` with a reason).
+  Both tables are derived from the source and fail on a *stale* entry as well as
+  a missing one, so the classification cannot rot silently and an anonymous
+  decode target — which can never declare an identity — cannot ship unnoticed.
+- Semantics pinned by: `internal/degeneracy/check_test.go`
+  (`TestCheck_PoisonsMissingIdentityAndErrors`,
+  `TestCheck_EmptyAndNilAreLegitimateAnswers`,
+  `TestCheck_ConditionalIdentityOnlyAppliesWhenItClaimsFailure`,
+  `TestCheck_ReachesRecordsThroughSlicesMapsAndPointers`,
+  `TestCheck_DetectsThroughANonPointerValue`,
+  `TestCheck_TerminatesOnASelfReferentialType`).
+- Scanned in every test that runs a command by
+  `internal/integration/degeneracy_test.go` (`assertNoDegenerateOutput`, called
+  by all four `runHactl*` helpers on stdout *and* on the returned error) and by
+  `internal/companiontest/degeneracy_test.go` (`assertNoDegenerateE2EOutput`,
+  called by `runHactlE2E`). The predicates are proved against real
+  `degeneracy.Check` output rather than a hand-typed token
+  (`TestLooksDegenerate_FlagsPoisonedDecode`,
+  `TestLooksDegenerateE2E_FlagsPoisonedDecode`), and against legitimate empty
+  output for the no-false-positive half.
+- Marker/renderer lockstep for the trace half stays with H-7
+  (`internal/analyze/trace_unparsed_test.go:TestUnparsedMarkerMatchesRendering`).
+- Tier: `make test` for the sweeps and the semantics; `make test-int`,
+  `make test-companion` and `make test-int-discovery` for the scans, which are
+  the only tiers where a real server produces the payload.
+
+Scope, stated honestly. All 56 identity-declaring records were mutation-swept
+(each identity tag renamed to a name the wire never sends; see
+`audits-2026-07-25/t6-report.md` for the table). 51 of 56 are detected by the
+unit tier. The remaining five — `SystemLogEntry`, `FlowResult`, `SchemaField`,
+`addonEntry`, `addonInfo` — have no hand-written JSON fixture, so the unit tier
+is *structurally* blind to a tag rename there: a fixture built by marshalling
+the same Go struct moves with the mutation and round-trips unchanged. Those
+five are arbitrated by a real-wire tier instead. Note also that for ten
+companion records the unit-tier detection comes from H-13's static
+struct↔spec sweep rather than from this poison; H-13 and H-14 cover the
+companion seam together, and only H-13 can see a drift that never reaches a
+decode.

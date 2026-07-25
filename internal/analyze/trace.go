@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
 
 // StepResult represents the outcome of a single trace step.
@@ -27,7 +29,11 @@ const (
 // decode produced nothing. The integration harness greps every command's stdout
 // for it, so it must stay in lockstep with the rendering of StepUnknown —
 // TestUnparsedMarkerMatchesRendering enforces that.
-const UnparsedMarker = "UNPARSED"
+//
+// It is degeneracy.Marker: the trace renderer was the first thing to emit the
+// poison, and every other decode path now emits the same token (H-14), so the
+// harness has exactly one string to grep for.
+const UnparsedMarker = degeneracy.Marker
 
 // StepType represents the type of a trace step.
 type StepType string

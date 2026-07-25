@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -78,6 +79,24 @@ func (c *Client) WithTimeout(d time.Duration) *Client {
 	return c
 }
 
+// decodeResponse unmarshals a companion response body and immediately guards it
+// against an identity-less decode (H-14).
+//
+// Every client method decodes through here rather than calling json.Unmarshal
+// directly, so guarding is the default rather than something the next endpoint's
+// author has to remember. A renamed companion property does not fail
+// json.Unmarshal — it leaves a zero value that renders as a plausible answer,
+// which is the mechanism that made every automation run print PASS (D1).
+// degeneracy.Check poisons the missing identity with degeneracy.Marker and
+// returns an error carrying it, so both the rendered value and the failure
+// message say UNPARSED.
+func decodeResponse[T any](source string, data []byte, r *T) error {
+	if err := json.Unmarshal(data, r); err != nil {
+		return err
+	}
+	return degeneracy.Check("companion "+source, r)
+}
+
 // isIngressPath reports whether p is an HA Ingress URL path that requires
 // signing rather than a bare bearer token.
 func isIngressPath(p string) bool {
@@ -91,7 +110,7 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 		return nil, err
 	}
 	var r HealthResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/health", data, &r)
 }
 
 // Status calls GET /v1/status.
@@ -101,7 +120,7 @@ func (c *Client) Status(ctx context.Context) (*StatusResponse, error) {
 		return nil, err
 	}
 	var r StatusResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/status", data, &r)
 }
 
 // ListConfigFiles calls GET /v1/config/files.
@@ -111,7 +130,7 @@ func (c *Client) ListConfigFiles(ctx context.Context) (*ConfigFilesResponse, err
 		return nil, err
 	}
 	var r ConfigFilesResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/files", data, &r)
 }
 
 // ReadConfigFile calls GET /v1/config/file?path=<path>&resolve=<resolve>.
@@ -122,7 +141,7 @@ func (c *Client) ReadConfigFile(ctx context.Context, path string) (*ConfigFileRe
 		return nil, err
 	}
 	var r ConfigFileResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/file", data, &r)
 }
 
 // ReadConfigFileRaw calls GET /v1/config/file?path=<path>&resolve=false.
@@ -133,7 +152,7 @@ func (c *Client) ReadConfigFileRaw(ctx context.Context, path string) (*ConfigFil
 		return nil, err
 	}
 	var r ConfigFileResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/file", data, &r)
 }
 
 // ReadConfigBlock calls GET /v1/config/block?path=<path>&id=<id>.
@@ -144,7 +163,7 @@ func (c *Client) ReadConfigBlock(ctx context.Context, path, id string) (*ConfigB
 		return nil, err
 	}
 	var r ConfigBlockResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/block", data, &r)
 }
 
 // WriteConfigFile calls PUT /v1/config/file?path=<path>&dry_run=<dryRun>.
@@ -158,7 +177,7 @@ func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryR
 		return nil, err
 	}
 	var r ConfigWriteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/file", data, &r)
 }
 
 // RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>[&stale=true].
@@ -173,7 +192,7 @@ func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool)
 		return nil, err
 	}
 	var r RelatedEntityResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/related/entity", data, &r)
 }
 
 // RefScan calls GET /v1/ref/scan?target=<target> and returns every literal
@@ -185,7 +204,7 @@ func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, 
 		return nil, err
 	}
 	var r RefScanResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/ref/scan", data, &r)
 }
 
 // RefEntities calls GET /v1/ref/entities and returns every entity_id-shaped
@@ -197,7 +216,7 @@ func (c *Client) RefEntities(ctx context.Context) (*RefEntitiesResponse, error) 
 		return nil, err
 	}
 	var r RefEntitiesResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/ref/entities", data, &r)
 }
 
 // RefReplace calls POST /v1/ref/replace to rewrite oldVal to newVal across the
@@ -213,7 +232,7 @@ func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun b
 		return nil, err
 	}
 	var r RefReplaceResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/ref/replace", data, &r)
 }
 
 // --- Template CRUD ---
@@ -225,7 +244,7 @@ func (c *Client) ListTemplates(ctx context.Context) (*TemplatesResponse, error) 
 		return nil, err
 	}
 	var r TemplatesResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/templates", data, &r)
 }
 
 // GetTemplate calls GET /v1/config/template?id=<id>.
@@ -236,7 +255,7 @@ func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse,
 		return nil, err
 	}
 	var r TemplateResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
 // WriteTemplate calls PUT /v1/config/template?id=<id>&dry_run=<dryRun>.
@@ -250,7 +269,7 @@ func (c *Client) WriteTemplate(ctx context.Context, id, content string, dryRun b
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
 // CreateTemplate calls POST /v1/config/template?domain=<domain>.
@@ -264,7 +283,7 @@ func (c *Client) CreateTemplate(ctx context.Context, content, domain string) (*T
 		return nil, err
 	}
 	var r TemplateCreateResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
 // DeleteTemplate calls DELETE /v1/config/template?id=<id>.
@@ -275,7 +294,7 @@ func (c *Client) DeleteTemplate(ctx context.Context, id string) (*ConfigDeleteRe
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
 // --- Script CRUD ---
@@ -287,7 +306,7 @@ func (c *Client) ListScriptDefs(ctx context.Context) (*ScriptsResponse, error) {
 		return nil, err
 	}
 	var r ScriptsResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/scripts", data, &r)
 }
 
 // GetScriptDef calls GET /v1/config/script?id=<id>.
@@ -298,7 +317,7 @@ func (c *Client) GetScriptDef(ctx context.Context, id string) (*ScriptResponse, 
 		return nil, err
 	}
 	var r ScriptResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/script", data, &r)
 }
 
 // WriteScriptDef calls PUT /v1/config/script?id=<id>&dry_run=<dryRun>.
@@ -312,7 +331,7 @@ func (c *Client) WriteScriptDef(ctx context.Context, id, content string, dryRun 
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/script", data, &r)
 }
 
 // CreateScriptDef calls POST /v1/config/script.
@@ -322,7 +341,7 @@ func (c *Client) CreateScriptDef(ctx context.Context, content string) (*ScriptCr
 		return nil, err
 	}
 	var r ScriptCreateResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/script", data, &r)
 }
 
 // DeleteScriptDef calls DELETE /v1/config/script?id=<id>.
@@ -333,7 +352,7 @@ func (c *Client) DeleteScriptDef(ctx context.Context, id string) (*ConfigDeleteR
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/script", data, &r)
 }
 
 // --- Automation CRUD ---
@@ -345,7 +364,7 @@ func (c *Client) ListAutomationDefs(ctx context.Context) (*AutomationsResponse, 
 		return nil, err
 	}
 	var r AutomationsResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/automations", data, &r)
 }
 
 // GetAutomationDef calls GET /v1/config/automation?id=<id>.
@@ -356,7 +375,7 @@ func (c *Client) GetAutomationDef(ctx context.Context, id string) (*AutomationRe
 		return nil, err
 	}
 	var r AutomationResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
 // WriteAutomationDef calls PUT /v1/config/automation?id=<id>&dry_run=<dryRun>.
@@ -370,7 +389,7 @@ func (c *Client) WriteAutomationDef(ctx context.Context, id, content string, dry
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
 // CreateAutomationDef calls POST /v1/config/automation.
@@ -380,7 +399,7 @@ func (c *Client) CreateAutomationDef(ctx context.Context, content string) (*Auto
 		return nil, err
 	}
 	var r AutomationCreateResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
 // DeleteAutomationDef calls DELETE /v1/config/automation?id=<id>.
@@ -391,7 +410,7 @@ func (c *Client) DeleteAutomationDef(ctx context.Context, id string) (*ConfigDel
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
 // --- Helper CRUD ---
@@ -407,7 +426,7 @@ func (c *Client) ListHelpers(ctx context.Context, domain string) (*HelpersRespon
 		return nil, err
 	}
 	var r HelpersResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/helpers", data, &r)
 }
 
 // GetHelper calls GET /v1/config/helper?id=<id>.
@@ -418,7 +437,7 @@ func (c *Client) GetHelper(ctx context.Context, id string) (*HelperResponse, err
 		return nil, err
 	}
 	var r HelperResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
 // CreateHelper calls POST /v1/config/helper?domain=<domain>.
@@ -429,7 +448,7 @@ func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*Hel
 		return nil, err
 	}
 	var r HelperCreateResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
 // UpdateHelper calls PUT /v1/config/helper?id=<id>.
@@ -440,7 +459,7 @@ func (c *Client) UpdateHelper(ctx context.Context, id, content string) (*ConfigD
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
 // DeleteHelper calls DELETE /v1/config/helper?id=<id>.
@@ -451,7 +470,7 @@ func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResp
 		return nil, err
 	}
 	var r ConfigDeleteResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
 // ReloadDomain calls POST /v1/ha/reload/<domain>.
@@ -469,7 +488,7 @@ func (c *Client) CheckConfig(ctx context.Context) (valid bool, errors string, er
 		return false, "", err
 	}
 	var r CheckConfigResponse
-	if err := json.Unmarshal(data, &r); err != nil {
+	if err := decodeResponse("/v1/ha/check-config", data, &r); err != nil {
 		return false, "", fmt.Errorf("parsing check-config response: %w", err)
 	}
 	if r.Valid == nil {
@@ -489,7 +508,7 @@ func (c *Client) WireGuardStatus(ctx context.Context, tunnel string) (*WireGuard
 		return nil, err
 	}
 	var r WireGuardStatusResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/wireguard/status", data, &r)
 }
 
 // WireGuardConfig calls POST /v1/wireguard/config?tunnel=<tunnel> with a raw
@@ -500,7 +519,7 @@ func (c *Client) WireGuardConfig(ctx context.Context, tunnel, conf string) (*Wir
 		return nil, err
 	}
 	var r WireGuardActionResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/wireguard/config", data, &r)
 }
 
 // WireGuardStart calls POST /v1/wireguard/start?tunnel=<tunnel>.
@@ -511,7 +530,7 @@ func (c *Client) WireGuardStart(ctx context.Context, tunnel string) (*WireGuardA
 		return nil, err
 	}
 	var r WireGuardActionResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/wireguard/start", data, &r)
 }
 
 // WireGuardStop calls POST /v1/wireguard/stop?tunnel=<tunnel>.
@@ -522,7 +541,7 @@ func (c *Client) WireGuardStop(ctx context.Context, tunnel string) (*WireGuardAc
 		return nil, err
 	}
 	var r WireGuardActionResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/wireguard/stop", data, &r)
 }
 
 // --- Logs ---
@@ -548,7 +567,7 @@ func (c *Client) Logs(ctx context.Context, p LogsParams) (*LogsResponse, error) 
 		return nil, err
 	}
 	var r LogsResponse
-	return &r, json.Unmarshal(data, &r)
+	return &r, decodeResponse("/v1/logs", data, &r)
 }
 
 func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]byte, error) {

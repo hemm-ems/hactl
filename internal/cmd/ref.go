@@ -15,6 +15,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/jsonwalk"
@@ -506,6 +507,9 @@ func fetchStateEntityIDs(ctx context.Context, rest *haapi.Client) ([]string, err
 	var states []entityState
 	if err := json.Unmarshal(data, &states); err != nil {
 		return nil, fmt.Errorf("parsing states: %w", err)
+	}
+	if err := degeneracy.Check("/api/states", &states); err != nil {
+		return nil, err
 	}
 	ids := make([]string, 0, len(states))
 	for _, s := range states {

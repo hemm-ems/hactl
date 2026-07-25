@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -69,6 +70,9 @@ func runIssues(ctx context.Context, w io.Writer) error {
 	var resp issuesResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return fmt.Errorf("parsing issues: %w", err)
+	}
+	if err := degeneracy.Check("repairs/list_issues", &resp); err != nil {
+		return err
 	}
 
 	issues := resp.Issues

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -155,7 +156,11 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 		rows = append(rows, helperRow{ID: h.ID, Name: h.Name, Domain: h.Domain, Icon: h.Icon, Source: "yaml"})
 		yamlEntityIDs[h.Domain+"."+h.ID] = true
 	}
-	rows = append(rows, fetchStorageHelpers(ctx, yamlEntityIDs)...)
+	storage, err := fetchStorageHelpers(ctx, yamlEntityIDs)
+	if err != nil {
+		return err
+	}
+	rows = append(rows, storage...)
 
 	if flagHelperDomain != "" {
 		rows = filterHelperRowsByDomain(rows, flagHelperDomain)
@@ -196,24 +201,29 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 // Failures here are logged and treated as "no storage helpers found" rather
 // than failing the whole command: an unreachable HA shouldn't hide the
 // YAML-sourced list that already answered above.
-func fetchStorageHelpers(ctx context.Context, skip map[string]bool) []helperRow {
+func fetchStorageHelpers(ctx context.Context, skip map[string]bool) ([]helperRow, error) {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		slog.Warn("could not load config for storage helper discovery", "error", err)
-		return nil
+		return nil, nil
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
 	data, err := client.GetStates(ctx)
 	if err != nil {
 		slog.Warn("could not fetch states for storage helper discovery", "error", err)
-		return nil
+		return nil, nil
 	}
 
 	var states []entityState
 	if unmarshalErr := json.Unmarshal(data, &states); unmarshalErr != nil {
 		slog.Warn("could not parse states for storage helper discovery", "error", unmarshalErr)
-		return nil
+		return nil, nil
+	}
+	// An unreachable HA is best-effort; a states payload that decoded to
+	// nothing is not — it would silently hide every storage helper.
+	if degErr := degeneracy.Check("/api/states", &states); degErr != nil {
+		return nil, degErr
 	}
 
 	domains := make(map[string]bool, len(helperDomains))
@@ -234,7 +244,7 @@ func fetchStorageHelpers(ctx context.Context, skip map[string]bool) []helperRow 
 		icon, _ := s.Attributes["icon"].(string)
 		rows = append(rows, helperRow{ID: s.EntityID, Name: name, Domain: domain, Icon: icon, Source: "storage"})
 	}
-	return rows
+	return rows, nil
 }
 
 func filterHelperRowsByDomain(rows []helperRow, domain string) []helperRow {

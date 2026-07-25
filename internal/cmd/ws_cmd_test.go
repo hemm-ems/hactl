@@ -2997,7 +2997,7 @@ func TestRunDashShow_YAMLView(t *testing.T) {
 func TestRunDashGrep_FindsReferences(t *testing.T) {
 	cfg := `{"views":[{"cards":[{"type":"entity","entity":"light.gone"}]}]}`
 	ts := startCmdServer(t, map[string]any{
-		"lovelace/dashboards/list": []map[string]any{{"url_path": "lovelace-home", "title": "Home", "mode": "storage"}},
+		"lovelace/dashboards/list": []map[string]any{{"id": "lovelace-home", "url_path": "lovelace-home", "title": "Home", "mode": "storage"}},
 		"lovelace/config":          json.RawMessage(cfg),
 	}, nil)
 	withFlagDir(t, ts.dir)
@@ -4307,8 +4307,12 @@ func TestRunScriptShow_Basic(t *testing.T) {
 }
 
 func TestRunDashLs_WithDashboards(t *testing.T) {
+	// Every entry in lovelace/dashboards/list carries both an id and a
+	// url_path — url_path is vol.Required in HA's dashboard create schema, and
+	// it is the only thing `dash show`/`dash replace` can address a dashboard
+	// by. A stub that omits one describes a wire HA cannot emit.
 	dashboards := []map[string]any{
-		{"id": "lovelace", "url_path": "", "title": "Home", "mode": "storage"},
+		{"id": "lovelace", "url_path": "lovelace", "title": "Home", "mode": "storage"},
 		{"id": "energy", "url_path": "energy", "title": "Energy", "mode": "storage"},
 	}
 	ts := startCmdServer(t, map[string]any{

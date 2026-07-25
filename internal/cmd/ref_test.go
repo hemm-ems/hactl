@@ -271,7 +271,7 @@ func TestRunRefValidate_ReportsDanglingFiltersServicesAndStateOnly(t *testing.T)
 		"lovelace/dashboards/list":    []any{},
 		"lovelace/config":             dashCfg,
 		"config/entity_registry/list": []any{map[string]any{"entity_id": "sensor.real"}},
-	}, statesHandler(`[{"entity_id":"sun.sun"},{"entity_id":"sensor.real"}]`))
+	}, statesHandler(`[{"entity_id":"sun.sun","state":"above_horizon"},{"entity_id":"sensor.real","state":"21.5"}]`))
 	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
 	withFlagDir(t, ts.dir)
 
@@ -301,7 +301,7 @@ func TestRunRefValidate_NoDanglingReportsTemplateBlindSpot(t *testing.T) {
 		"lovelace/dashboards/list":    []any{},
 		"lovelace/config":             map[string]any{"views": []any{}},
 		"config/entity_registry/list": []any{map[string]any{"entity_id": "sensor.real"}},
-	}, statesHandler(`[{"entity_id":"sensor.real"}]`))
+	}, statesHandler(`[{"entity_id":"sensor.real","state":"21.5"}]`))
 	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
 	withFlagDir(t, ts.dir)
 
@@ -357,7 +357,7 @@ func TestRunRefValidate_ExitCodeFlagReturnsNonZero(t *testing.T) {
 		"lovelace/dashboards/list":    []any{},
 		"lovelace/config":             map[string]any{"views": []any{}},
 		"config/entity_registry/list": []any{map[string]any{"entity_id": "sensor.real"}},
-	}, statesHandler(`[{"entity_id":"sensor.real"}]`))
+	}, statesHandler(`[{"entity_id":"sensor.real","state":"21.5"}]`))
 	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
 	withFlagDir(t, ts.dir)
 	withRefFlag(t, &flagRefExitCode, true)
