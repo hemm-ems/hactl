@@ -3,10 +3,13 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 func TestDashLs(t *testing.T) {
@@ -26,12 +29,61 @@ func TestDashLsJSON(t *testing.T) {
 	}
 }
 
+// TestDashShowDefault requires `dash show` to agree with HA about the default
+// dashboard, in whichever of the two states HA is in.
+//
+// Home Assistant serves the default dashboard in "auto-generated" mode until
+// something stores a Lovelace config for it: `lovelace/config` then answers
+// with an error rather than a document. The old body — `out, err := …; _ = out;
+// _ = err` — accepted every outcome, which is precisely the wrong shape here,
+// because the failure worth catching is hactl printing a plausible *empty*
+// dashboard when HA has no config at all (TC-3).
+//
+// So the expected answer is read from HA first, and hactl is required to match
+// it: no stored config means hactl must refuse; a stored config means hactl
+// must render the views HA reported, by title and by path.
 func TestDashShowDefault(t *testing.T) {
-	// Default dashboard should exist (auto-gen mode).
-	// It may return an error if no config exists yet — that's OK.
+	cfg := loadConfig(t)
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	ctx := context.Background()
+	if err := ws.Connect(ctx); err != nil {
+		t.Fatalf("ws connect: %v", err)
+	}
+	defer func() { _ = ws.Close() }()
+
+	// "" is what `dash show` with no argument passes for the default dashboard.
+	haConfig, haErr := ws.DashboardConfig(ctx, "")
+
 	out, err := runHactlErr(t, "dash", "show")
-	_ = out
-	_ = err
+
+	if haErr != nil {
+		if err == nil {
+			t.Fatalf("HA has no stored config for the default dashboard (%v), but `dash show` "+
+				"answered successfully:\n%s", haErr, out)
+		}
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("HA returned a config for the default dashboard (%d views), but `dash show` failed: %v\noutput:\n%s",
+			len(haConfig.Views), err, out)
+	}
+	if len(haConfig.Views) == 0 {
+		assertContains(t, out, "no views")
+		return
+	}
+	for i, rawView := range haConfig.Views {
+		v := haapi.ParseViewSummary(rawView)
+		if v.Title == "" && v.Path == "" {
+			continue // nothing HA gave this view to identify it by
+		}
+		if v.Title != "" && !strings.Contains(out, v.Title) {
+			t.Errorf("dash show omitted view %d titled %q, which HA reports:\n%s", i, v.Title, out)
+		}
+		if v.Path != "" && !strings.Contains(out, v.Path) {
+			t.Errorf("dash show omitted view %d at path %q, which HA reports:\n%s", i, v.Path, out)
+		}
+	}
 }
 
 func TestDashShowDefaultJSON(t *testing.T) {

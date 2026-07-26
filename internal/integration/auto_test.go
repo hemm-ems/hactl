@@ -46,10 +46,45 @@ func TestAutoLsJSONSchema(t *testing.T) {
 	}
 }
 
+// autoLsIDs returns the `id` column of `auto ls --json`.
+func autoLsIDs(t *testing.T, raw string) []string {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		t.Fatalf("auto ls --json did not parse: %v\noutput:\n%s", err, raw)
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if v, ok := r["id"].(string); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// TestAutoLsFailing is the negative control for the `--failing` filter.
+//
+// The basic fixture's triggers are deliberately inert, so Home Assistant holds
+// no errored automation trace at all and the only correct answer is the empty
+// set — while plain `auto ls` still lists every automation. Asserting both
+// halves is what makes this a test: the old body was
+// `out := runHactl(t, "auto", "ls", "--failing"); _ = out`, which passed for a
+// filter that returned everything, for one that returned nothing whatever HA
+// held, and for one that returned three rows of fiction.
+//
+// The positive control lives in TestAutoLsFailingMatchesHA (oracle rig, where
+// automations really do fail); a filter needs both to be pinned.
 func TestAutoLsFailing(t *testing.T) {
-	// Should not error even when no automations are failing
-	out := runHactl(t, "auto", "ls", "--failing")
-	_ = out // just ensure no error
+	haFailing := oracleErroredTraceItemIDs(t, ha, "automation")
+
+	failing := autoLsIDs(t, runHactl(t, "auto", "ls", "--failing", "--top", "1000", "--json"))
+	assertSameSet(t, "auto ls --failing (HA's errored automation traces)", haFailing, failing)
+
+	all := autoLsIDs(t, runHactl(t, "auto", "ls", "--top", "1000", "--json"))
+	if len(all) == 0 {
+		t.Fatal("precondition: auto ls lists no automations at all, so --failing returning nothing " +
+			"would prove nothing; the basic fixture defines three")
+	}
 }
 
 func TestAutoShow(t *testing.T) {

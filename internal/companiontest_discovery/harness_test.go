@@ -4,7 +4,9 @@ package companiontest_discovery
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,9 +47,15 @@ func TestIngressProxyReachesCompanion(t *testing.T) {
 	}
 }
 
-// TestWSClientCanConnectToFake verifies that hactl's real WSClient can
-// complete the HA WS handshake against the Fake. Without this the
-// downstream Discover tests are meaningless.
+// TestWSClientCanConnectToFake verifies that hactl's real WSClient can complete
+// the HA WS handshake against the Fake *and then use the connection*. Without
+// this the downstream Discover tests are meaningless.
+//
+// "Connect returned nil" was the whole of it before, which is the weakest
+// possible claim: it holds for a connection that completed the handshake and
+// then answered nothing. So a command is issued over the same connection and
+// its answer is checked against what the Fake was built to report — the same
+// round trip Discover depends on, isolated from Discover's own logic.
 func TestWSClientCanConnectToFake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -57,6 +65,26 @@ func TestWSClientCanConnectToFake(t *testing.T) {
 		t.Fatalf("WSClient.Connect: %v", err)
 	}
 	defer ws.Close() //nolint:errcheck
+
+	raw, err := ws.SupervisorAPI(ctx, "/addons", "get", nil)
+	if err != nil {
+		t.Fatalf("supervisor/api /addons over the established connection: %v", err)
+	}
+	var got struct {
+		Addons []struct {
+			Slug string `json:"slug"`
+		} `json:"addons"`
+	}
+	if unmarshalErr := json.Unmarshal(raw, &got); unmarshalErr != nil {
+		t.Fatalf("decoding the Fake's /addons answer: %v\nraw: %s", unmarshalErr, raw)
+	}
+	var slugs []string
+	for _, a := range got.Addons {
+		slugs = append(slugs, a.Slug)
+	}
+	if !slices.Contains(slugs, addonSlug) {
+		t.Errorf("supervisor/api /addons returned %v, want it to include %q", slugs, addonSlug)
+	}
 }
 
 // TestDiscover_ResolvesViaSupervisorWSProxy verifies that the discovery flow

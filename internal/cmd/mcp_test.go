@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -73,27 +74,48 @@ func TestMCPFindCommandPathSkipsFlags(t *testing.T) {
 	}
 }
 
+// ctxProbeKey labels the context each invocation was handed, so the probe can
+// report *which* one reached it.
+type ctxProbeKey struct{}
+
 // TestRunWithOutputContextNoLeak guards against cobra's context caching:
 // cobra only assigns the root context to a subcommand when the subcommand's
 // ctx is nil, so without an explicit reset the second invocation of a command
 // runs with the first invocation's (long cancelled) context. Over MCP that
 // cancelled every HA request of a repeated tool call.
+//
+// The labelled contexts are what make the second run's nil error mean
+// something: nil is also what a probe that never ran at all would produce.
 func TestRunWithOutputContextNoLeak(t *testing.T) {
+	var seen []string
 	probe := &cobra.Command{
-		Use:  "ctxprobe",
-		RunE: func(c *cobra.Command, _ []string) error { return c.Context().Err() },
+		Use: "ctxprobe",
+		RunE: func(c *cobra.Command, _ []string) error {
+			label, _ := c.Context().Value(ctxProbeKey{}).(string)
+			seen = append(seen, label)
+			return c.Context().Err()
+		},
 	}
 	rootCmd.AddCommand(probe)
 	defer rootCmd.RemoveCommand(probe)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	first, cancel := context.WithCancel(context.WithValue(context.Background(), ctxProbeKey{}, "first"))
 	var buf bytes.Buffer
-	if err := RunWithOutputContext(ctx, []string{"hactl", "ctxprobe"}, &buf); err != nil {
+	if err := RunWithOutputContext(first, []string{"hactl", "ctxprobe"}, &buf); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	cancel()
-	if err := RunWithOutputContext(context.Background(), []string{"hactl", "ctxprobe"}, &buf); err != nil {
+
+	second := context.WithValue(context.Background(), ctxProbeKey{}, "second")
+	if err := RunWithOutputContext(second, []string{"hactl", "ctxprobe"}, &buf); err != nil {
 		t.Errorf("cancelled context leaked into the next invocation: %v", err)
+	}
+
+	// Without the reset, cobra hands the second run the first run's context:
+	// the labels come back as ["first", "first"] and this is the assertion that
+	// names the cause, rather than a context.Canceled the caller has to guess at.
+	if want := []string{"first", "second"}; !slices.Equal(seen, want) {
+		t.Errorf("contexts reaching the command = %v, want %v", seen, want)
 	}
 }
 

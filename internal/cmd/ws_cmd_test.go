@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hemm-ems/hactl/internal/analyze"
+	"github.com/hemm-ems/hactl/internal/cache"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -146,17 +148,77 @@ func TestRunCacheStatus_JSON(t *testing.T) {
 	}
 	withFlagDir(t, dir)
 
+	// Seed both caches so the numbers reported below are counts the command had
+	// to read out of the two databases, not the zeroes an empty cache reports
+	// whether or not the command looked. traces.db and timeseries.db are
+	// separate files behind separate handles — a status that only opens one of
+	// them still produces valid JSON, so both are seeded with distinct counts.
+	ctx := context.Background()
+	store, err := cache.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("opening cache: %v", err)
+	}
+	for _, runID := range []string{"run-a", "run-b"} {
+		if sErr := store.StoreTrace(ctx, runID, "automation", "climate_schedule",
+			"2026-01-01T10:00:00Z", "finished", "", "", "", []byte(`{}`)); sErr != nil {
+			t.Fatalf("seeding trace %s: %v", runID, sErr)
+		}
+	}
+	if mErr := store.SetMeta(ctx, "traces_sync", "2026-01-01T10:00:00Z"); mErr != nil {
+		t.Fatalf("seeding traces_sync: %v", mErr)
+	}
+	if cErr := store.Close(); cErr != nil {
+		t.Fatalf("closing cache: %v", cErr)
+	}
+	tsStore, err := cache.OpenTS(ctx, dir)
+	if err != nil {
+		t.Fatalf("opening timeseries cache: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	if sErr := tsStore.StoreSamples(ctx, "sensor.power",
+		[]time.Time{base, base.Add(time.Hour), base.Add(2 * time.Hour)},
+		[]float64{1, 2, 3}); sErr != nil {
+		t.Fatalf("seeding samples: %v", sErr)
+	}
+	if cErr := tsStore.Close(); cErr != nil {
+		t.Fatalf("closing timeseries cache: %v", cErr)
+	}
+
 	old := flagJSON
 	flagJSON = true
 	defer func() { flagJSON = old }()
 
 	var buf bytes.Buffer
-	if err := runCacheStatus(context.Background(), &buf); err != nil {
+	if err := runCacheStatus(ctx, &buf); err != nil {
 		t.Fatalf("runCacheStatus JSON failed: %v", err)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &parsed); err != nil {
 		t.Fatalf("JSON output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	numField := func(key string) float64 {
+		t.Helper()
+		v, ok := parsed[key].(float64)
+		if !ok {
+			t.Fatalf("%q missing or not a number in %s", key, buf.String())
+		}
+		return v
+	}
+	if got := numField("trace_count"); got != 2 {
+		t.Errorf("trace_count = %v, want 2 (two traces were seeded)", got)
+	}
+	if got := numField("timeseries_sample_count"); got != 3 {
+		t.Errorf("timeseries_sample_count = %v, want 3 (three samples were seeded)", got)
+	}
+	if got := numField("traces_db_size"); got <= 0 {
+		t.Errorf("traces_db_size = %v, want the on-disk size of a written traces.db", got)
+	}
+	if got, _ := parsed["traces_sync"].(string); got != "2026-01-01T10:00:00Z" {
+		t.Errorf("traces_sync = %q, want the seeded sync marker", got)
+	}
+	// The text renderer reports a log size too; JSON must not silently drop it.
+	if _, ok := parsed["log_size"]; !ok {
+		t.Errorf("log_size missing from JSON output: %s", buf.String())
 	}
 }
 
@@ -399,36 +461,90 @@ func TestRunEntLs_Empty(t *testing.T) {
 	if err := runEntLs(context.Background(), &buf); err != nil {
 		t.Fatalf("runEntLs empty failed: %v", err)
 	}
+	// An instance with no entities has to render as the header and nothing
+	// else. The two failure modes worth separating are a listing that invents
+	// rows and a listing that swallows the header along with the rows, so the
+	// caller cannot tell "no entities" from "the command printed nothing".
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("empty /api/states rendered %d lines, want header only: %q", len(lines), out)
+	}
+	if !strings.Contains(lines[0], "entity_id") || !strings.Contains(lines[0], "last_changed") {
+		t.Errorf("header line = %q, want the entity_id..last_changed columns", lines[0])
+	}
+	// The `restored` column is conditional on at least one restored entity;
+	// with no entities at all it must not appear.
+	if strings.Contains(out, "restored") {
+		t.Errorf("empty listing grew a restored column: %q", out)
+	}
 }
 
 // --- runLog (HTTP fallback path) ---
 
-func TestRunLog_HTTPFallback(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [comp.test] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
+// errorLogFixture is what /api/error_log serves to the runLog tests below. It
+// is deliberately more than one line: `--errors`, `--component` and `--unique`
+// each narrow the list, and a fixture holding a single ERROR from a single
+// component cannot tell a filter that works from a filter that returns
+// everything or nothing. The two "connection refused" lines are byte-identical
+// so the dedup path has something to collapse.
+const errorLogFixture = "2026-01-01 10:00:00.000 ERROR (Main) [homeassistant.components.alpha] connection refused\n" +
+	"2026-01-01 10:01:00.000 WARNING (Main) [homeassistant.components.beta] slow response\n" +
+	"2026-01-01 10:02:00.000 ERROR (Main) [homeassistant.components.alpha] connection refused\n"
+
+// startErrorLogServer starts a cmd server whose only log source is the REST
+// /api/error_log fallback: startCmdServer serves no system_log/list, so runLog
+// has to fall back exactly as it does against an HA where the WS handler is
+// missing.
+func startErrorLogServer(t *testing.T) *cmdTestServer {
+	t.Helper()
+	return startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+		"/api/error_log": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
+			_, _ = fmt.Fprint(w, errorLogFixture)
 		},
 	})
-	withFlagDir(t, ts.dir)
+}
 
-	// Reset log flags
-	old := flagLogErrors
-	flagLogErrors = false
-	defer func() { flagLogErrors = old }()
-	oldComp := flagLogComponent
-	flagLogComponent = ""
-	defer func() { flagLogComponent = oldComp }()
-	oldUniq := flagLogUnique
-	flagLogUnique = false
-	defer func() { flagLogUnique = oldUniq }()
+// withLogFlags sets the runLog narrowing flags for one test and restores them.
+// It names every one of them, including --warnings: a test that only set the
+// flags it cares about would inherit the rest from whichever test ran before
+// it, and the filter assertions below would then be about the wrong command.
+func withLogFlags(t *testing.T, errorsOnly bool, component string, unique bool) {
+	t.Helper()
+	oldErrors, oldWarnings := flagLogErrors, flagLogWarnings
+	oldComp, oldUniq := flagLogComponent, flagLogUnique
+	flagLogErrors, flagLogWarnings = errorsOnly, false
+	flagLogComponent, flagLogUnique = component, unique
+	t.Cleanup(func() {
+		flagLogErrors, flagLogWarnings = oldErrors, oldWarnings
+		flagLogComponent, flagLogUnique = oldComp, oldUniq
+	})
+}
+
+// TestRunLog_HTTPFallback proves the REST fallback renders what HA's error log
+// held. The body used to run the command and look at nothing, so an empty
+// table — the exact symptom of a fallback that parsed nothing — was green.
+func TestRunLog_HTTPFallback(t *testing.T) {
+	ts := startErrorLogServer(t)
+	withFlagDir(t, ts.dir)
+	withLogFlags(t, false, "", false)
 
 	var buf bytes.Buffer
 	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog HTTP fallback failed: %v", err)
 	}
-	// Should contain error log content or at least not fail
+	out := buf.String()
+
+	// Every record in the fixture, at its own level and component.
+	for _, want := range []string{"connection refused", "slow response", "ERROR", "WARNING", "alpha", "beta"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("runLog dropped %q from the error log:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "connection refused"); got != 2 {
+		t.Errorf("runLog rendered %d of the 2 identical ERROR lines; no filter was asked for:\n%s", got, out)
+	}
 }
 
 // --- runAutoLs (HTTP only, WS allowed to fail) ---
@@ -1228,6 +1344,13 @@ func TestRunEntAnomalies_NumericNoAnomalies(t *testing.T) {
 	if err := runEntAnomalies(context.Background(), &buf, "sensor.temp"); err != nil {
 		t.Fatalf("runEntAnomalies numeric failed: %v", err)
 	}
+	// 21.5/21.6/21.4 an hour apart is the boring case: no spike, no flap, no
+	// gap. The command owes an explicit "nothing found" naming the entity, not
+	// a bare blank and not a table with rows in it.
+	out := buf.String()
+	if out != "sensor.temp: no anomalies detected\n" {
+		t.Errorf("output = %q, want %q", out, "sensor.temp: no anomalies detected\n")
+	}
 }
 
 // --- runEntHistAttr (HTTP) ---
@@ -1643,21 +1766,36 @@ func TestRunCCShow_NotFound(t *testing.T) {
 
 // --- runCCLogs (WS+HTTP fallback) ---
 
+// TestRunCCLogs_HTTPFallback proves `cc logs <component>` renders that
+// component's records from the REST fallback, and only that component's.
+//
+// The fixture carries a second component so the filter has something to
+// exclude; with the single hacs line the old test used, "no log entries for
+// hacs" and a correct answer produced the same nil error and nobody looked.
 func TestRunCCLogs_HTTPFallback(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [hacs] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
-		},
-	})
+	ts := startErrorLogServer(t)
 	withFlagDir(t, ts.dir)
+	withCCLogsUnique(t, false)
 
 	var buf bytes.Buffer
-	if err := runCCLogs(context.Background(), &buf, "hacs", false); err != nil {
+	if err := runCCLogs(context.Background(), &buf, "alpha", false); err != nil {
 		t.Fatalf("runCCLogs HTTP fallback failed: %v", err)
 	}
-	// Should have rendered log entries
+	out := buf.String()
+	if got := strings.Count(out, "connection refused"); got != 2 {
+		t.Errorf("cc logs alpha rendered %d of alpha's 2 records:\n%s", got, out)
+	}
+	if strings.Contains(out, "beta") || strings.Contains(out, "slow response") {
+		t.Errorf("cc logs alpha included beta's record:\n%s", out)
+	}
+}
+
+// withCCLogsUnique sets flagCCLogsUnique for one test and restores it.
+func withCCLogsUnique(t *testing.T, unique bool) {
+	t.Helper()
+	old := flagCCLogsUnique
+	flagCCLogsUnique = unique
+	t.Cleanup(func() { flagCCLogsUnique = old })
 }
 
 // --- runRollback (HTTP) ---
@@ -2587,6 +2725,45 @@ func TestRunEntHist_NumericWithResample(t *testing.T) {
 	if err := runEntHist(context.Background(), &buf, "sensor.power"); err != nil {
 		t.Fatalf("runEntHist with resample failed: %v", err)
 	}
+	// Three hourly samples over a 2h span, bucketed at 1h, collapse to two
+	// buckets: 10:00-11:00 holds 100.0 alone, the closing bucket holds 110.0
+	// and 105.0 → 107.50. 105.0 is the newest reading, and a resampler whose
+	// last bucket is half-open drops it and reports 110.00 here instead — which
+	// is exactly what this command used to do (see analyze.Resample).
+	out := buf.String()
+	if !strings.HasPrefix(out, "sensor.power: 2 points\n") {
+		t.Errorf("output does not report 2 resampled points: %q", out)
+	}
+	values := histValueColumn(t, out)
+	want := []string{"100.00", "107.50"}
+	if len(values) != len(want) {
+		t.Fatalf("value column = %v, want %v", values, want)
+	}
+	for i := range want {
+		if values[i] != want[i] {
+			t.Errorf("bucket %d value = %s, want %s (full output: %q)", i, values[i], want[i], out)
+		}
+	}
+}
+
+// histValueColumn returns the `value` column of an `ent hist` table, skipping
+// the summary line and the header. The time column is rendered in local time,
+// so only the values are portable enough to assert on.
+func histValueColumn(t *testing.T, out string) []string {
+	t.Helper()
+	var values []string
+	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		last := fields[len(fields)-1]
+		if last == "value" || strings.HasSuffix(line, "points") {
+			continue
+		}
+		values = append(values, last)
+	}
+	return values
 }
 
 // --- runAreaDelete (confirm=true, WS) ---
@@ -2880,10 +3057,19 @@ func TestRunHelperCreate_Confirm_EntityNotCreated(t *testing.T) {
 // --- runCCShow (fetches custom components from states) ---
 
 func TestRunCCShow_Found(t *testing.T) {
-	// Create a state that looks like a HACS update entity
+	// The component inventory comes from WS manifest/list; a built-in sits
+	// alongside the custom one so "found hacs" cannot be a fluke of taking
+	// whatever manifest happened to be first.
+	manifests := []map[string]any{
+		{"domain": "mqtt", "name": "MQTT", "version": "", "is_built_in": true},
+		{"domain": "hacs", "name": "HACS", "version": "1.34.0", "is_built_in": false},
+	}
+	// update.hacs carries the *installed* version, which must win over the
+	// manifest's 1.34.0. The two hacs.* entities are what `entities:` counts;
+	// sensor.temp and the built-in's entity must not be counted.
 	states := []map[string]any{
 		{
-			"entity_id": "update.hacs_update",
+			"entity_id": "update.hacs",
 			"state":     "off",
 			"attributes": map[string]any{
 				"installed_version": "1.32.0",
@@ -2891,11 +3077,16 @@ func TestRunCCShow_Found(t *testing.T) {
 				"title":             "HACS",
 			},
 		},
+		{"entity_id": "hacs.default", "state": "ok"},
+		{"entity_id": "hacs.repositories", "state": "ok"},
+		{"entity_id": "mqtt.broker", "state": "ok"},
 		{"entity_id": "sensor.temp", "state": "21.5"},
 	}
 	statesJSON, _ := json.Marshal(states)
 
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": manifests,
+	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(statesJSON)
@@ -2903,12 +3094,29 @@ func TestRunCCShow_Found(t *testing.T) {
 	})
 	withFlagDir(t, ts.dir)
 
+	oldFull, oldJSON := flagFull, flagJSON
+	flagFull, flagJSON = false, false
+	defer func() { flagFull, flagJSON = oldFull, oldJSON }()
+
 	var buf bytes.Buffer
-	// runCCShow searches for the component by domain name
-	// "hacs" domain would need to match "update.hacs_update"
-	// The exact match depends on fetchCustomComponents logic
-	// Just verify it doesn't crash
-	_ = runCCShow(context.Background(), &buf, "hacs")
+	if err := runCCShow(context.Background(), &buf, "hacs"); err != nil {
+		t.Fatalf("runCCShow hacs failed: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"domain:   hacs",
+		"name:     HACS",
+		"version:  1.32.0", // installed_version from update.hacs, not the manifest
+		"entities: 2",      // hacs.default + hacs.repositories only
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q: %q", want, out)
+		}
+	}
+	// Without --full the entity ids stay off the report.
+	if strings.Contains(out, "hacs.default") {
+		t.Errorf("entity ids listed without --full: %q", out)
+	}
 }
 
 // --- runDashShow (raw mode) ---
@@ -3319,8 +3527,13 @@ func TestRunAutoDiff_NoChanges(t *testing.T) {
 	if err := runAutoDiff(context.Background(), &buf, "climate_schedule"); err != nil {
 		t.Fatalf("runAutoDiff failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no changes") {
-		t.Logf("runAutoDiff output: %q", buf.String())
+	// The local YAML says the same thing as the remote JSON, only with the keys
+	// in a different order. The whole point of the diff is that key order is
+	// not a change, so the answer is a single "no changes" line naming the
+	// automation — not a diff hunk, and not silence.
+	out := buf.String()
+	if out != "climate_schedule: no changes\n" {
+		t.Errorf("output = %q, want %q", out, "climate_schedule: no changes\n")
 	}
 }
 
@@ -3389,17 +3602,30 @@ func TestRunAutoApply_DryRun(t *testing.T) {
 
 func TestRunAutoApply_Confirm(t *testing.T) {
 	remoteJSON := `{"alias":"Old","trigger":[],"condition":[],"action":[]}`
+	// Record what was actually pushed and whether HA was told to reload: an
+	// apply that prints "applied" without writing the new config, or writes it
+	// and never reloads, is the failure this test exists to catch.
+	var mu sync.Mutex
+	var written []byte
+	reloads := 0
 	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
 		"/api/config/automation/config/": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == http.MethodGet {
 				_, _ = fmt.Fprint(w, remoteJSON)
 			} else {
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				written = body
+				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 				_, _ = fmt.Fprint(w, `{}`)
 			}
 		},
 		"/api/services/automation/reload": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reloads++
+			mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, `{}`)
 		},
@@ -3419,8 +3645,58 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 	defer func() { flagAutoConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
-	// May fail if route matching is tricky - that's ok, just test it runs
-	_ = runAutoApply(context.Background(), &buf, "the_auto")
+	if err := runAutoApply(context.Background(), &buf, "the_auto"); err != nil {
+		t.Fatalf("runAutoApply confirm failed: %v (output: %q)", err, buf.String())
+	}
+
+	mu.Lock()
+	pushed, reloadCount := string(written), reloads
+	mu.Unlock()
+
+	// What reached HA matters more than what was printed.
+	if pushed == "" {
+		t.Fatal("confirmed apply never wrote the automation config to HA")
+	}
+	var pushedCfg map[string]any
+	if err := json.Unmarshal([]byte(pushed), &pushedCfg); err != nil {
+		t.Fatalf("pushed body is not JSON: %v\n%s", err, pushed)
+	}
+	if pushedCfg["alias"] != "New" {
+		t.Errorf("pushed alias = %v, want \"New\" (the local file's alias)", pushedCfg["alias"])
+	}
+	if reloadCount != 1 {
+		t.Errorf("automation.reload called %d times, want exactly 1", reloadCount)
+	}
+
+	out := buf.String()
+	// The diff shown before applying has to be the real one: alias Old → New.
+	if !strings.Contains(out, "-alias: Old") || !strings.Contains(out, "+alias: New") {
+		t.Errorf("output does not show the alias change it applied: %q", out)
+	}
+	if !strings.Contains(out, "applied: the_auto") {
+		t.Errorf("output does not confirm which automation was applied: %q", out)
+	}
+	if !strings.Contains(out, "reload:  ok") {
+		t.Errorf("output does not report the reload result: %q", out)
+	}
+	// A confirmed apply must leave a restorable copy of the pre-change config
+	// behind, and must say where it is.
+	backupLine := ""
+	for line := range strings.SplitSeq(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "backup:"); ok {
+			backupLine = strings.TrimSpace(rest)
+		}
+	}
+	if backupLine == "" {
+		t.Fatalf("output names no backup file: %q", out)
+	}
+	backupBody, err := os.ReadFile(backupLine)
+	if err != nil {
+		t.Fatalf("backup named in the output does not exist: %v", err)
+	}
+	if !strings.Contains(string(backupBody), "Old") {
+		t.Errorf("backup does not hold the pre-apply config: %q", backupBody)
+	}
 }
 
 // --- runHealth (HTTP + companion) ---
@@ -3483,6 +3759,28 @@ func TestRunHealth_JSON(t *testing.T) {
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &parsed); err != nil {
 		t.Fatalf("JSON output is not valid: %v\n%s", err, buf.String())
+	}
+	for _, tc := range []struct{ key, want string }{
+		{"version", "2026.4.0"},
+		{"state", "RUNNING"},
+		{"location", "Home"},
+		{"timezone", "UTC"},
+		// components lists "recorder", so recorder is loaded.
+		{"recorder", "ok"},
+	} {
+		if got, _ := parsed[tc.key].(string); got != tc.want {
+			t.Errorf("%s = %q, want %q (full output: %s)", tc.key, got, tc.want, buf.String())
+		}
+	}
+	// /api/error_log 404s in this fixture, so the error count is unknown. The
+	// sentinel matters: reporting 0 here would tell an operator the instance is
+	// clean when in fact nothing could be read.
+	errs, ok := parsed["errors"].(float64)
+	if !ok {
+		t.Fatalf("errors missing or not a number: %s", buf.String())
+	}
+	if errs != -1 {
+		t.Errorf("errors = %v, want -1 (unknown) when the error log cannot be read", errs)
 	}
 }
 
@@ -4161,6 +4459,26 @@ func TestRunEntShow_JSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &parsed); err != nil {
 		t.Fatalf("JSON output is not valid JSON: %v\n%s", err, buf.String())
 	}
+	// --json is the machine-readable contract: the whole state object, not the
+	// human summary. Attributes in particular are dropped by the default
+	// rendering, so their survival here is the thing worth pinning.
+	for _, tc := range []struct{ key, want string }{
+		{"entity_id", "light.kitchen"},
+		{"state", "on"},
+		{"last_changed", "2026-01-01T10:00:00Z"},
+		{"last_updated", "2026-01-01T10:00:00Z"},
+	} {
+		if got, _ := parsed[tc.key].(string); got != tc.want {
+			t.Errorf("%s = %q, want %q (full output: %s)", tc.key, got, tc.want, buf.String())
+		}
+	}
+	attrs, ok := parsed["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes missing or not an object: %s", buf.String())
+	}
+	if bright, _ := attrs["brightness"].(float64); bright != 255 {
+		t.Errorf("attributes.brightness = %v, want 255", attrs["brightness"])
+	}
 }
 
 // --- runEntHist (HTTP) ---
@@ -4523,29 +4841,25 @@ func TestRunCCLs_ExcludesBuiltInUpdateEntities(t *testing.T) {
 
 // --- runLog filter flags ---
 
+// TestRunLog_ErrorsFilter proves --errors narrows to ERROR. Both halves matter:
+// the ERROR records survive and the WARNING record does not. The old fixture
+// held a single ERROR line and asserted nothing, so a filter that dropped
+// everything and a filter that dropped nothing were the same green.
 func TestRunLog_ErrorsFilter(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [comp.test] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
-		},
-	})
+	ts := startErrorLogServer(t)
 	withFlagDir(t, ts.dir)
-
-	old := flagLogErrors
-	flagLogErrors = true
-	defer func() { flagLogErrors = old }()
-	oldComp := flagLogComponent
-	flagLogComponent = ""
-	defer func() { flagLogComponent = oldComp }()
-	oldUniq := flagLogUnique
-	flagLogUnique = false
-	defer func() { flagLogUnique = oldUniq }()
+	withLogFlags(t, true, "", false)
 
 	var buf bytes.Buffer
 	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --errors failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "connection refused") {
+		t.Errorf("--errors dropped the ERROR records:\n%s", out)
+	}
+	if strings.Contains(out, "slow response") || strings.Contains(out, "WARNING") {
+		t.Errorf("--errors kept a WARNING record:\n%s", out)
 	}
 }
 
@@ -4596,55 +4910,54 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	}
 }
 
+// TestRunLog_ComponentFilter proves --component selects one logger and excludes
+// the others, across levels: the fixture's beta record is a WARNING, so a
+// component filter that quietly degenerated into a level filter fails here.
 func TestRunLog_ComponentFilter(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [comp.test] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
-		},
-	})
+	ts := startErrorLogServer(t)
 	withFlagDir(t, ts.dir)
-
-	old := flagLogErrors
-	flagLogErrors = false
-	defer func() { flagLogErrors = old }()
-	oldComp := flagLogComponent
-	flagLogComponent = "test"
-	defer func() { flagLogComponent = oldComp }()
-	oldUniq := flagLogUnique
-	flagLogUnique = false
-	defer func() { flagLogUnique = oldUniq }()
+	withLogFlags(t, false, "alpha", false)
 
 	var buf bytes.Buffer
 	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --component failed: %v", err)
 	}
+	out := buf.String()
+	if !strings.Contains(out, "connection refused") {
+		t.Errorf("--component alpha dropped alpha's own records:\n%s", out)
+	}
+	if strings.Contains(out, "beta") || strings.Contains(out, "slow response") {
+		t.Errorf("--component alpha kept a record from beta:\n%s", out)
+	}
 }
 
+// TestRunLog_Unique proves --unique collapses repeats and counts them.
+//
+// The count is the point. A "dedup" that simply dropped later occurrences would
+// also render one row, and the old test — one line in the fixture, nothing
+// asserted — could not have noticed either way.
 func TestRunLog_Unique(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [comp.test] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
-		},
-	})
+	ts := startErrorLogServer(t)
 	withFlagDir(t, ts.dir)
-
-	old := flagLogErrors
-	flagLogErrors = false
-	defer func() { flagLogErrors = old }()
-	oldComp := flagLogComponent
-	flagLogComponent = ""
-	defer func() { flagLogComponent = oldComp }()
-	oldUniq := flagLogUnique
-	flagLogUnique = true
-	defer func() { flagLogUnique = oldUniq }()
+	withLogFlags(t, false, "", true)
 
 	var buf bytes.Buffer
 	if err := runLog(context.Background(), &buf, false); err != nil {
 		t.Fatalf("runLog --unique failed: %v", err)
+	}
+	out := buf.String()
+	if got := strings.Count(out, "connection refused"); got != 1 {
+		t.Errorf("--unique rendered the repeated ERROR %d times, want 1:\n%s", got, out)
+	}
+	if !strings.Contains(out, "slow response") {
+		t.Errorf("--unique dropped the record that occurred once:\n%s", out)
+	}
+	// The deduped table leads with a count column; the repeated record must
+	// carry 2 and the single one must carry 1.
+	for _, want := range []struct{ count, message string }{{"2", "connection refused"}, {"1", "slow response"}} {
+		if !regexp.MustCompile(`(?m)^` + want.count + `\b.*` + want.message).MatchString(out) {
+			t.Errorf("--unique did not report %q with count %s:\n%s", want.message, want.count, out)
+		}
 	}
 }
 
@@ -4724,8 +5037,13 @@ func TestRunAutoLs_WithPattern(t *testing.T) {
 }
 
 func TestRunAutoLs_WithFailing(t *testing.T) {
+	// Two automations: one that errored in the window and one that ran cleanly.
+	// A --failing that returns everything and a --failing that returns nothing
+	// are both wrong, and a single-automation fixture cannot tell either apart
+	// from a filter that works.
 	states := []map[string]any{
 		{"entity_id": "automation.climate_schedule", "state": "on", "last_changed": "2026-01-01T10:00:00Z"},
+		{"entity_id": "automation.morning_lights", "state": "on", "last_changed": "2026-01-01T10:00:00Z"},
 	}
 	statesJSON, _ := json.Marshal(states)
 
@@ -4739,6 +5057,13 @@ func TestRunAutoLs_WithFailing(t *testing.T) {
 				"timestamp":        map[string]any{"start": time.Now().Add(-1 * time.Hour).Format(time.RFC3339Nano)},
 				"script_execution": "error",
 				"error":            "template error",
+			},
+			{
+				"run_id":           "run-002",
+				"domain":           "automation",
+				"item_id":          "morning_lights",
+				"timestamp":        map[string]any{"start": time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano)},
+				"script_execution": "finished",
 			},
 		},
 	}, map[string]http.HandlerFunc{
@@ -4771,6 +5096,68 @@ func TestRunAutoLs_WithFailing(t *testing.T) {
 	if err := runAutoLs(context.Background(), &buf); err != nil {
 		t.Fatalf("runAutoLs --failing failed: %v", err)
 	}
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("--failing rendered %d lines (header + rows), want header + 1 row: %q", len(lines), out)
+	}
+	header, row := lines[0], lines[1]
+	for _, col := range []string{"runs_24h", "errors", "last_err"} {
+		if !strings.Contains(header, col) {
+			t.Errorf("--failing header missing %q column: %q", col, header)
+		}
+	}
+	if !strings.HasPrefix(row, "climate_schedule ") {
+		t.Errorf("row = %q, want the failing automation climate_schedule", row)
+	}
+	if strings.Contains(out, "morning_lights") {
+		t.Errorf("--failing listed the automation whose only trace finished cleanly: %q", out)
+	}
+	// climate_schedule has exactly one trace in the window and it errored, so
+	// runs_24h and errors are both 1. Reading them by column keeps the check
+	// honest about which number is which.
+	if got := tableCell(t, header, row, "runs_24h"); got != "1" {
+		t.Errorf("runs_24h = %q, want 1", got)
+	}
+	if got := tableCell(t, header, row, "errors"); got != "1" {
+		t.Errorf("errors = %q, want 1", got)
+	}
+	if got := tableCell(t, header, row, "last_err"); got == "" {
+		t.Errorf("last_err is blank for an automation the fixture says errored: %q", row)
+	}
+}
+
+// tableCell reads one cell out of a padded table row by column name. Splitting
+// on whitespace does not work: area and labels are blank for these fixtures, so
+// the nth whitespace-separated field is not the nth column.
+func tableCell(t *testing.T, header, row, name string) string {
+	t.Helper()
+	cols := strings.Fields(header)
+	starts := make([]int, len(cols))
+	cursor := 0
+	for i, col := range cols {
+		off := strings.Index(header[cursor:], col)
+		if off < 0 {
+			t.Fatalf("column %q not found in header %q", col, header)
+		}
+		starts[i] = cursor + off
+		cursor = starts[i] + len(col)
+	}
+	for i, col := range cols {
+		if col != name {
+			continue
+		}
+		if starts[i] >= len(row) {
+			return ""
+		}
+		end := len(row)
+		if i+1 < len(cols) && starts[i+1] < end {
+			end = starts[i+1]
+		}
+		return strings.TrimSpace(row[starts[i]:end])
+	}
+	t.Fatalf("no %q column in header %q", name, header)
+	return ""
 }
 
 // --- runTraceShow full JSON mode ---
@@ -4800,23 +5187,24 @@ func TestRunTraceShow_FullJSON(t *testing.T) {
 
 // --- runCCLogs unique mode ---
 
+// TestRunCCLogs_Unique proves `cc logs --unique` collapses the component's
+// repeats and reports how many there were, rather than silently discarding all
+// but the first.
 func TestRunCCLogs_Unique(t *testing.T) {
-	logText := "2026-01-01 10:00:00.000 ERROR (Main) [hacs] Something broke\n"
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, logText)
-		},
-	})
+	ts := startErrorLogServer(t)
 	withFlagDir(t, ts.dir)
-
-	old := flagCCLogsUnique
-	flagCCLogsUnique = true
-	defer func() { flagCCLogsUnique = old }()
+	withCCLogsUnique(t, true)
 
 	var buf bytes.Buffer
-	if err := runCCLogs(context.Background(), &buf, "hacs", false); err != nil {
+	if err := runCCLogs(context.Background(), &buf, "alpha", false); err != nil {
 		t.Fatalf("runCCLogs --unique failed: %v", err)
+	}
+	out := buf.String()
+	if got := strings.Count(out, "connection refused"); got != 1 {
+		t.Errorf("cc logs --unique rendered alpha's repeated record %d times, want 1:\n%s", got, out)
+	}
+	if !regexp.MustCompile(`(?m)^2\b.*connection refused`).MatchString(out) {
+		t.Errorf("cc logs --unique did not report the record as occurring twice:\n%s", out)
 	}
 }
 
@@ -4850,6 +5238,25 @@ func TestRunEntHistAttr_Resample(t *testing.T) {
 	var buf bytes.Buffer
 	if err := runEntHist(context.Background(), &buf, "light.kitchen"); err != nil {
 		t.Fatalf("runEntHist with resample failed: %v", err)
+	}
+	// Same bucketing as TestRunEntHist_NumericWithResample, but the series is
+	// the `brightness` attribute rather than the state: 200 alone in the first
+	// bucket, then 255 and 100 averaged to 177.50. The heading has to name the
+	// attribute, otherwise the numbers cannot be told apart from the state
+	// series of the same entity.
+	out := buf.String()
+	if !strings.HasPrefix(out, "light.kitchen [brightness]: 2 points\n") {
+		t.Errorf("output does not report 2 resampled brightness points: %q", out)
+	}
+	values := histValueColumn(t, out)
+	want := []string{"200.00", "177.50"}
+	if len(values) != len(want) {
+		t.Fatalf("value column = %v, want %v", values, want)
+	}
+	for i := range want {
+		if values[i] != want[i] {
+			t.Errorf("bucket %d value = %s, want %s (full output: %q)", i, values[i], want[i], out)
+		}
 	}
 }
 
@@ -5103,7 +5510,20 @@ func TestRunEntAnomalies_WithAnomaly(t *testing.T) {
 	if err := runEntAnomalies(context.Background(), &buf, "sensor.power"); err != nil {
 		t.Fatalf("runEntAnomalies with anomaly failed: %v", err)
 	}
-	// Result should contain either "no anomalies" or anomaly table
+	// The fixture holds exactly one defect — the 8h reporting gap between the
+	// second and third sample — and the values themselves (100/101/102) are
+	// unremarkable. So the count, the kind and the measured gap are all pinned:
+	// "1 anomalies" alone would pass on a spike or a flap detected by accident.
+	out := buf.String()
+	if !strings.HasPrefix(out, "sensor.power: 1 anomalies\n") {
+		t.Errorf("output does not report exactly one anomaly for sensor.power: %q", out)
+	}
+	if !strings.Contains(out, "gap") {
+		t.Errorf("anomaly is not classified as a gap: %q", out)
+	}
+	if !strings.Contains(out, "no data for 8h0m0s") {
+		t.Errorf("gap detail does not report the 8h hole in the fixture: %q", out)
+	}
 }
 
 // --- runAutoLs with registry context (fetchRegistryContext body) ---

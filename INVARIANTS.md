@@ -678,3 +678,73 @@ machine without Docker.
   across runs — `make test-companion` (Docker tier). The comparison is over
   stdout alone because hactl's slog handler stamps every stderr line with
   `time=`.
+
+## H-19 — A test must be able to fail for a reason other than the process dying
+
+Every test function in this repository, in every tier, must reach a failure site
+that observes a value. Running a command, checking that it returned no error and
+then discarding its answer is not a test: it goes green whether the command
+answered correctly, answered nothing, or answered garbage. That floor is not a
+review convention — it is enforced mechanically, and a thirteenth such test
+cannot be added.
+
+The rule is deliberately structural rather than lexical. `out := runHactl(t, …)`
+followed by `_ = out` is only the most visible spelling; a gate that grepped for
+it would be satisfied by renaming the variable. What the analyzer looks for is a
+`t.Error*`/`t.Fatal*` whose nearest enclosing condition inspects something other
+than an error:
+
+- `if out != want`, `if !strings.Contains(out, x)`, `if len(rows) == 0` — all
+  observational, all count.
+- `if err == nil { t.Fatal("want error") }` counts: requiring the command to
+  refuse is a behavioural claim.
+- `if err != nil { t.Fatalf(…) }` does **not** count. That is the liveness check
+  the whole rule is named after; every command that runs at all passes it.
+  `t.Skip` in any form does not count either — a skip is a silent pass (TC-8).
+- A call to a same-package helper counts when the helper is itself
+  assertion-bearing, so `assertContains(t, out, "dry-run")` is an assertion even
+  though the `t.Errorf` lives a frame down. A helper only qualifies if it
+  **returns nothing**: `runHactl` hands its output back, so its internal
+  `t.Fatalf(… failed …)` is ambient — it applies identically to every test in
+  the tier and therefore distinguishes none of them. Descending into it would
+  mark all 274 integration tests as asserting and the gate would prove nothing.
+
+**What it deliberately does not catch.** It does not judge whether the asserted
+value was worth asserting, and in particular it cannot see a test that asserts a
+value it had itself just supplied ("write X, read back X through the same
+tool") — that is a dataflow property across a process boundary, not a syntactic
+one. H-12 covers that class by requiring every write family to read back from
+Home Assistant directly and assert a witness field the command never mentioned.
+It also says nothing about assertion strength: one `assertContains` on a header
+row passes. This is the floor beneath H-12, not a substitute for it.
+
+**Opt-out.** A test that genuinely has nothing to observe declares it in its doc
+comment:
+
+```go
+//test:no-assert <why this test can only prove liveness>
+```
+
+The reason is mandatory, is held to a minimum length so `n/a` cannot become the
+idiom, and is printed by the gate — an exemption is a visible decision with an
+author, in the same spirit as the repo's `//nolint` suppressions. An exemption on
+a test that *does* assert is itself a failure, so exemptions cannot rot in place.
+**No test in the repository uses one today**, and the tally the gate prints is
+the number to keep at zero.
+
+The gate refuses to pass on an empty or lopsided corpus: each tier is known to
+hold a non-trivial number of tests, so a walker that stopped early or a build tag
+that stopped matching fails loudly instead of reporting a perfect score over
+nothing (TC-7).
+
+- Enforced by: `internal/testaudit/assertions.go` and
+  `internal/testaudit/assertions_test.go`, `TestAssertionFloor` — the **unit**
+  tier, no Docker required, run as its own step by `make test-assert-floor`
+  (named ahead of the tiers it judges in `make gates`, and its own CI step) as
+  well as incidentally by `make test`. Files are parsed from disk rather than
+  loaded through `go/packages`, so the build-tag-gated tiers are covered too;
+  the tier is derived from the file's `//go:build` line, and an unrecognised tag
+  fails the gate rather than silently widening the blind spot. The classifier's
+  own two load-bearing verdicts — `err != nil` is not an assertion, a
+  value-returning helper is not an assertion helper — are pinned by
+  `TestClassifierVerdicts` against synthetic packages.

@@ -323,12 +323,45 @@ func TestEntHistJSONParsesStrictly(t *testing.T) {
 	}
 }
 
+// TestEntAnomaliesJSONParsesStrictly pins the shape of the *empty* answer, and
+// only that. Whether the detector detects is H-15's job, proved against
+// backfilled history in TestRecorderBackfill; this instance holds minutes of
+// history and cannot contain a gap, a stuck run or a spike.
+//
+// The test used to accept `[]` as success without ever establishing that the
+// series was non-empty, which is the exact pairing of M1 and M3 that H-15 was
+// written about: a detector that found nothing and a detector that was handed
+// nothing printed the same green. So the series is read back from HA first —
+// if `ent hist` reports no points, the empty anomaly list is not evidence of
+// anything and this test fails rather than passing quietly.
 func TestEntAnomaliesJSONParsesStrictly(t *testing.T) {
 	inst, _ := getOracleHA(t)
+
+	histRaw := runHactlDir(t, inst.Dir(), "ent", "hist", "input_number.oracle_level", "--json")
+	var points []map[string]any
+	if err := json.Unmarshal([]byte(histRaw), &points); err != nil {
+		t.Fatalf("ent hist --json did not parse: %v\noutput:\n%s", err, histRaw)
+	}
+	if len(points) == 0 {
+		t.Fatal("precondition: input_number.oracle_level has no recorded history, " +
+			"so an empty anomaly list would say nothing about the detector")
+	}
+
 	raw := runHactlDir(t, inst.Dir(), "ent", "anomalies", "input_number.oracle_level", "--json")
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
 		t.Fatalf("ent anomalies --json did not parse: %v\noutput:\n%s", err, raw)
+	}
+	if rows == nil {
+		t.Fatalf("ent anomalies --json over %d history points decoded to nil; "+
+			"an empty result must be [] so a caller can range over it (H-10)\noutput:\n%s",
+			len(points), raw)
+	}
+	// Minutes of a value HA moved once cannot hold a gap, a stuck run or a
+	// spike. Anything reported here is the detector inventing one.
+	if len(rows) != 0 {
+		t.Errorf("ent anomalies reported %d anomalies over %d points of freshly recorded history, want none:\n%s",
+			len(rows), len(points), raw)
 	}
 }
 

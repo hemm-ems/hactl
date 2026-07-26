@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -525,7 +526,17 @@ func TestWriter_Apply_Confirm(t *testing.T) {
 }
 
 func TestWriter_Apply_InvalidYAML(t *testing.T) {
-	srv := makeWriterServer(t, "test_auto", `{"alias":"Old"}`)
+	// Records every path HA is asked for, so the test can prove the refusal
+	// happened before any of them.
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"alias":"Old"}`)
+	}))
 	defer srv.Close()
 
 	localDir := t.TempDir()
@@ -536,11 +547,37 @@ func TestWriter_Apply_InvalidYAML(t *testing.T) {
 	}
 
 	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, t.TempDir())
+	backupDir := t.TempDir()
+	w := New(client, nil, backupDir)
 
-	// YAML parsing error - might succeed or fail depending on yaml parser strictness
-	// Just ensure no panic
-	_, _ = w.Apply(context.Background(), "test_auto", localFile, false)
+	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
+
+	// An unparseable local file is a refusal, not a dry run: Apply has to name
+	// the parse as the reason and hand back no result for the caller to print.
+	if err == nil {
+		t.Fatalf("Apply on unparseable YAML returned no error (result = %+v)", result)
+	}
+	if !strings.Contains(err.Error(), "parsing local YAML") {
+		t.Errorf("error = %v, want it to name the local YAML parse", err)
+	}
+	if result != nil {
+		t.Errorf("result = %+v, want nil alongside the error", result)
+	}
+	// And it must refuse before touching HA or the backup dir: a file hactl
+	// cannot parse is never a reason to validate, back up or write anything.
+	mu.Lock()
+	got := append([]string(nil), calls...)
+	mu.Unlock()
+	if len(got) != 0 {
+		t.Errorf("HA was called %v on an unparseable local file, want no calls", got)
+	}
+	entries, readErr := os.ReadDir(backupDir)
+	if readErr != nil {
+		t.Fatalf("reading backup dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("backup dir has %d entries after a refused apply, want 0", len(entries))
+	}
 }
 
 func TestWriter_Apply_MissingFile(t *testing.T) {
