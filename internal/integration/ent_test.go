@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -19,11 +20,38 @@ func TestEntLs(t *testing.T) {
 	}
 }
 
+// TestEntLsPattern proves that --pattern selects, which needs two facts and not
+// one: every row it returned matches, and the unfiltered listing held rows it
+// did not return. A filter that silently matched everything satisfies the first
+// alone, and a filter that silently matched nothing satisfies it vacuously —
+// so the empty case is a failure here, not a pass.
 func TestEntLsPattern(t *testing.T) {
-	// Filter by a pattern that matches something (person.* should exist after onboarding)
-	out := runHactl(t, "ent", "ls", "--pattern", "person.*")
-	// Should succeed without error; may or may not have results
-	_ = out
+	const domain = "person." // HA creates person.* during onboarding
+
+	all := runHactlJSON[[]map[string]string](t, "ent", "ls")
+	var wantMatches, wantExcluded int
+	for _, e := range all {
+		if strings.HasPrefix(e["entity_id"], domain) {
+			wantMatches++
+		} else {
+			wantExcluded++
+		}
+	}
+	if wantMatches == 0 || wantExcluded == 0 {
+		t.Fatalf("precondition: need both %s* and non-%s* entities to prove a filter, got %d and %d",
+			domain, domain, wantMatches, wantExcluded)
+	}
+
+	got := runHactlJSON[[]map[string]string](t, "ent", "ls", "--pattern", domain+"*")
+	if len(got) != wantMatches {
+		t.Errorf("ent ls --pattern %s* returned %d rows, HA has %d matching entities",
+			domain, len(got), wantMatches)
+	}
+	for _, e := range got {
+		if !strings.HasPrefix(e["entity_id"], domain) {
+			t.Errorf("ent ls --pattern %s* returned %q, which does not match", domain, e["entity_id"])
+		}
+	}
 }
 
 func TestEntLsJSON(t *testing.T) {
@@ -151,6 +179,13 @@ func TestEntAnomaliesUnknown(t *testing.T) {
 	}
 }
 
+// TestWebSocketConnection proves the WS handshake carries an identity and that
+// HA answers a command over it with content.
+//
+// "Connect returned nil" is not enough on its own: it is equally consistent
+// with a handshake that never authenticated. The wrong-token half is what makes
+// the right-token half mean something — if hactl ever stopped sending
+// auth/access_token, or HA stopped checking it, only that half goes red.
 func TestWebSocketConnection(t *testing.T) {
 	cfg := loadConfig(t)
 	ctx := context.Background()
@@ -161,10 +196,60 @@ func TestWebSocketConnection(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 
-	// TraceList should succeed (may be empty)
-	_, err := ws.TraceList(ctx, "automation")
+	entries, err := ws.EntityRegistryList(ctx)
 	if err != nil {
-		t.Fatalf("TraceList failed: %v", err)
+		t.Fatalf("EntityRegistryList over the WS connection failed: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("entity registry came back empty over WS; a running HA always has registered entities")
+	}
+	// The oracle is HA's own REST state list, not a hard-coded entity: which
+	// entities are *registry*-backed depends on the fixture and on how HA has
+	// grown (sun.sun, for instance, is a state without a registry entry here),
+	// so naming one would pin the fixture rather than the transport. Every
+	// enabled registry entry is an entity HA has loaded, so it must also have a
+	// state — a WS reply that came back stale, truncated or belonging to
+	// another instance fails this, an empty one fails above.
+	client := haapi.New(cfg.URL, cfg.Token)
+	rawStates, err := client.GetStates(ctx)
+	if err != nil {
+		t.Fatalf("get states over REST (the oracle for the WS registry): %v", err)
+	}
+	var restStates []struct {
+		EntityID string `json:"entity_id"`
+	}
+	if err := json.Unmarshal(rawStates, &restStates); err != nil {
+		t.Fatalf("decode states: %v", err)
+	}
+	haveState := map[string]bool{}
+	for _, st := range restStates {
+		haveState[st.EntityID] = true
+	}
+	matched := 0
+	for _, e := range entries {
+		if e.EntityID == "" {
+			t.Errorf("entity registry entry with no entity_id: %+v", e)
+			continue
+		}
+		if e.DisabledBy != "" {
+			continue
+		}
+		if !haveState[e.EntityID] {
+			t.Errorf("WS registry lists enabled %s, but HA's own state list over REST does not hold it",
+				e.EntityID)
+			continue
+		}
+		matched++
+	}
+	if matched == 0 {
+		t.Errorf("none of the %d WS registry entries has a state in HA's REST state list; "+
+			"the two sources describe different instances", len(entries))
+	}
+
+	bad := haapi.NewWSClient(cfg.URL, cfg.Token+"-not-the-token")
+	if err := bad.Connect(ctx); err == nil {
+		_ = bad.Close()
+		t.Fatal("WS handshake accepted a wrong token; the authenticated connection above proves nothing")
 	}
 }
 

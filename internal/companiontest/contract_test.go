@@ -43,10 +43,31 @@ func loadSpec(t *testing.T) *openapi3.T {
 	return spec
 }
 
+// TestOpenAPISpecValid proves the vendored companion spec is a valid OpenAPI
+// document *and* that it is the companion's document.
+//
+// Validation alone is not enough: an empty `openapi: 3.0.0` stub with no paths
+// validates perfectly, and every other test in this file walks
+// `companion.Endpoints` against `spec.Paths`, so an empty spec would take the
+// whole contract suite green with it. The identity checks below are what stop
+// a truncated or mis-vendored file from reading as a passing contract.
 func TestOpenAPISpecValid(t *testing.T) {
 	spec := loadSpec(t)
 	if err := spec.Validate(context.Background()); err != nil {
 		t.Fatalf("spec validation failed: %v", err)
+	}
+	if spec.Info == nil || spec.Info.Title == "" || spec.Info.Version == "" {
+		t.Fatalf("vendored spec has no info block to identify it: %+v", spec.Info)
+	}
+	if got := len(spec.Paths.Map()); got == 0 {
+		t.Fatal("vendored spec declares no paths; an empty document validates and proves nothing")
+	}
+	// The client's own endpoint table is the floor: a spec that cannot describe
+	// every route hactl calls is not the contract hactl is compiled against.
+	for _, ep := range companion.Endpoints {
+		if spec.Paths.Find(ep.Path) == nil {
+			t.Errorf("vendored spec has no path %q, which the companion client calls (%s)", ep.Path, ep.Method)
+		}
 	}
 }
 

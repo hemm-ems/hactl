@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +62,12 @@ func getRealisticHA(t *testing.T) *hatest.Instance {
 	return realisticHA
 }
 
+// seededTemperatures is the ladder seedHistory drives
+// input_number.outdoor_temperature through, in order. Tests read it rather than
+// restating it, so a changed fixture cannot leave an expectation behind
+// asserting values HA was never asked to record (TC-7).
+var seededTemperatures = []float64{15.0, 18.5, 22.0, 19.5, 16.0}
+
 // seedHistory uses the HA REST API to set input_number values,
 // creating state-change history that ent hist / ent anomalies can query.
 func seedHistory(t *testing.T, inst *hatest.Instance) {
@@ -69,8 +76,7 @@ func seedHistory(t *testing.T, inst *hatest.Instance) {
 	ctx := context.Background()
 
 	// Simulate temperature readings over time
-	temps := []float64{15.0, 18.5, 22.0, 19.5, 16.0}
-	for _, temp := range temps {
+	for _, temp := range seededTemperatures {
 		err := client.CallService(ctx, "input_number", "set_value", map[string]any{
 			"entity_id": "input_number.outdoor_temperature",
 			"value":     temp,
@@ -175,20 +181,50 @@ func TestRealisticLogErrors(t *testing.T) {
 	assertNotContains(t, out, "panic")
 }
 
+// TestRealisticLogJSON proves the machine rendering of `log` carries the same
+// records as the human one (H-10).
+//
+// It used to return early on error and then only look at the output if it began
+// with "[", so an error, an empty string and a prose sentence were all green.
+// Now the error is a failure, `[]` is required to be spelled as an array a
+// caller can range over, and every row the table shows must be present in the
+// JSON with its fields populated — the direction that catches a `--json` path
+// that renders a different, thinner record than the table path.
 func TestRealisticLogJSON(t *testing.T) {
 	inst := getRealisticHA(t)
-	out, err := runHactlDirErr(t, inst.Dir(), "log", "--json", "--full")
-	if err != nil {
-		t.Log("log --json returned error:", err)
-		return
+
+	raw := runHactlDir(t, inst.Dir(), "log", "--json", "--full", "--top", "1000")
+	var rows []struct {
+		ID        string `json:"id"`
+		Time      string `json:"time"`
+		Level     string `json:"level"`
+		Component string `json:"component"`
+		Message   string `json:"message"`
 	}
-	// Should be valid JSON (array)
-	trimmed := strings.TrimSpace(out)
-	if trimmed != "" && strings.HasPrefix(trimmed, "[") {
-		var entries []json.RawMessage
-		if jsonErr := json.Unmarshal([]byte(trimmed), &entries); jsonErr != nil {
-			t.Errorf("log --json invalid JSON: %v", jsonErr)
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		t.Fatalf("log --json did not parse: %v\noutput:\n%s", err, raw)
+	}
+	if rows == nil {
+		t.Fatalf("log --json decoded to nil; an empty log must still be [] (H-10)\noutput:\n%s", raw)
+	}
+
+	table := runHactlDir(t, inst.Dir(), "log", "--full", "--top", "1000")
+	for _, r := range rows {
+		if r.ID == "" || r.Level == "" || r.Component == "" || r.Time == "" {
+			t.Errorf("log --json row decoded without content: %+v", r)
+			continue
 		}
+		if !strings.Contains(table, r.ID) {
+			t.Errorf("log --json reports record %s (%s/%s) that the table rendering never shows:\n%s",
+				r.ID, r.Level, r.Component, table)
+		}
+	}
+	// Both directions: the short id is unique per record, so counting it pins
+	// the table to the same number of records the JSON claimed. A renderer that
+	// dropped rows on one path only cannot satisfy both halves.
+	if got := strings.Count(table, "log:"); got != len(rows) {
+		t.Errorf("log table shows %d records, log --json returned %d\ntable:\n%s\njson:\n%s",
+			got, len(rows), table, raw)
 	}
 }
 
@@ -248,20 +284,55 @@ func TestRealisticEntHistNumeric(t *testing.T) {
 	assertContains(t, out, "value")
 }
 
+// TestRealisticEntHistJSON proves `ent hist` reports the series Home Assistant
+// recorded, not merely a well-formed array.
+//
+// seedHistory drove input_number.outdoor_temperature through a known ladder of
+// values through HA's own service API, so the expected readings are stated by
+// the fixture rather than computed from hactl's own decode. The test used to
+// skip on error and then accept any JSON at all, which passed for an empty
+// series — the state H-15 was written about.
 func TestRealisticEntHistJSON(t *testing.T) {
 	inst := getRealisticHA(t)
-	out, err := runHactlDirErr(t, inst.Dir(), "ent", "hist", "input_number.outdoor_temperature", "--since", "1h", "--json")
-	if err != nil {
-		t.Skip("no numeric history data yet")
+	raw := runHactlDir(t, inst.Dir(), "ent", "hist", "input_number.outdoor_temperature", "--since", "1h", "--json")
+
+	var points []struct {
+		Time  string `json:"time"`
+		Value string `json:"value"`
 	}
-	trimmed := strings.TrimSpace(out)
-	// May have header line before JSON
-	if idx := strings.Index(trimmed, "["); idx >= 0 {
-		trimmed = trimmed[idx:]
+	if err := json.Unmarshal([]byte(raw), &points); err != nil {
+		t.Fatalf("ent hist --json did not parse: %v\noutput:\n%s", err, raw)
 	}
-	var entries []map[string]string
-	if jsonErr := json.Unmarshal([]byte(trimmed), &entries); jsonErr != nil {
-		t.Errorf("ent hist --json invalid JSON: %v\noutput: %s", jsonErr, out)
+	if len(points) == 0 {
+		t.Fatalf("ent hist returned no points for an entity seedHistory drove through %v", seededTemperatures)
+	}
+
+	got := make([]float64, 0, len(points))
+	for _, p := range points {
+		if p.Time == "" {
+			t.Errorf("ent hist --json point has no time: %+v", p)
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(p.Value), 64)
+		if err != nil {
+			t.Errorf("ent hist --json point value %q is not numeric: %v", p.Value, err)
+			continue
+		}
+		got = append(got, v)
+	}
+
+	// Every value the fixture wrote must appear, in the order it was written.
+	// A decode that lost points, reordered them, or read the wrong entity's
+	// series fails here; the old test passed for all three.
+	i := 0
+	for _, want := range seededTemperatures {
+		for i < len(got) && got[i] != want {
+			i++
+		}
+		if i == len(got) {
+			t.Fatalf("ent hist over the last hour does not contain the seeded ladder %v in order; got %v\noutput:\n%s",
+				seededTemperatures, got, raw)
+		}
+		i++
 	}
 }
 
@@ -513,17 +584,61 @@ func TestRealisticChanges(t *testing.T) {
 	assertNotContains(t, out, "panic")
 }
 
+// TestRealisticChangesJSON proves `changes` reports the state changes the test
+// itself caused Home Assistant to record.
+//
+// The old body only looked at the output when it happened to start with "[",
+// and logged rather than failed when the list was empty — so an empty answer, a
+// prose answer and a correct answer were indistinguishable. seedHistory drives
+// input_number.outdoor_temperature through a known ladder minutes before this
+// runs, so the last hour of the logbook is known in advance to contain it.
 func TestRealisticChangesJSON(t *testing.T) {
 	inst := getRealisticHA(t)
-	out := runHactlDir(t, inst.Dir(), "changes", "--since", "1h", "--json")
-	trimmed := strings.TrimSpace(out)
-	if strings.HasPrefix(trimmed, "[") {
-		var entries []json.RawMessage
-		if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
-			t.Errorf("changes --json invalid JSON: %v", err)
+	raw := runHactlDir(t, inst.Dir(), "changes", "--since", "1h", "--json", "--full", "--top", "2000")
+
+	// The field is `when`, not `time` (internal/cmd/changes.go). A struct tag
+	// that matches nothing decodes to the zero value in silence, which is how a
+	// test asserting on the wrong name still "passes" — the H-13 field-level
+	// contract exists for exactly this, and it is why the loop below refuses a
+	// row whose timestamp came back empty.
+	var rows []struct {
+		When     string `json:"when"`
+		EntityID string `json:"entity_id"`
+		State    string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		t.Fatalf("changes --json did not parse: %v\noutput:\n%s", err, raw)
+	}
+	if rows == nil {
+		t.Fatalf("changes --json decoded to nil; an empty logbook must still be [] (H-10)\noutput:\n%s", raw)
+	}
+
+	const seeded = "input_number.outdoor_temperature"
+	var states []float64
+	for _, r := range rows {
+		// Every logbook entry is an event at a time, so a row without `when`
+		// is either a decode that lost the field or an entry HA should not
+		// have returned. `entity_id` is genuinely optional — HA's logbook also
+		// holds entries that belong to no entity, such as its own start-up —
+		// so an absent one is skipped rather than failed.
+		if r.When == "" {
+			t.Errorf("changes --json row decoded without a timestamp: %+v", r)
+			continue
 		}
-		if len(entries) == 0 {
-			t.Log("no changes in last 1h (possible on very fast test)")
+		if r.EntityID != seeded {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(r.State), 64)
+		if err != nil {
+			t.Errorf("changes reports %s in non-numeric state %q: %v", seeded, r.State, err)
+			continue
+		}
+		states = append(states, v)
+	}
+	for _, want := range seededTemperatures {
+		if !slices.Contains(states, want) {
+			t.Errorf("changes over the last hour never reports %s reaching %v; states seen: %v\noutput:\n%s",
+				seeded, want, states, raw)
 		}
 	}
 }
@@ -672,15 +787,39 @@ func TestRealisticScriptLs(t *testing.T) {
 	assertContains(t, out, "state")
 }
 
+// TestRealisticScriptLsJSON proves every row of the machine rendering carries
+// the columns the table declares (H-10: --json is complete, not a subset).
+//
+// The old body skipped when the list came back empty, which turned the one
+// interesting failure — `script ls` finding none of the fixture's scripts —
+// into a silent pass. The fixture's scripts are pinned by
+// TestRealisticScriptLsHasFixtures; what is pinned here is the row shape.
 func TestRealisticScriptLsJSON(t *testing.T) {
 	inst := getRealisticHA(t)
-	out := runHactlDir(t, inst.Dir(), "script", "ls", "--json")
+	raw := runHactlDir(t, inst.Dir(), "script", "ls", "--json")
 	var entries []map[string]string
-	if err := json.Unmarshal([]byte(out), &entries); err != nil {
-		t.Fatalf("script ls --json invalid JSON: %v\noutput: %s", err, out)
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatalf("script ls --json invalid JSON: %v\noutput: %s", err, raw)
 	}
 	if len(entries) == 0 {
-		t.Skip("no scripts loaded in realistic HA")
+		t.Fatalf("script ls --json returned no rows; the realistic fixture defines scripts\noutput:\n%s", raw)
+	}
+
+	// The header list is script.go's own; a column added there and forgotten in
+	// the JSON path shows up as a missing key rather than as silence.
+	want := []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"}
+	for _, e := range entries {
+		for _, key := range want {
+			if _, ok := e[key]; !ok {
+				t.Errorf("script ls --json row is missing column %q: %v", key, e)
+			}
+		}
+		if e["id"] == "" {
+			t.Errorf("script ls --json row has an empty id: %v", e)
+		}
+		if e["state"] == "" {
+			t.Errorf("script ls --json row %q has no state", e["id"])
+		}
 	}
 }
 
