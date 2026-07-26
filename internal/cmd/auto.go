@@ -178,8 +178,14 @@ type automationAttributes struct {
 }
 
 // autoRow holds combined state+trace data for one automation.
+//
+// id is the entity object id (the `id` column). configID is the automation's
+// config `id:` — not displayed here, but displayed by `auto show`/`auto create`
+// and required by `auto cat`/`diff`/`apply`, which is why `--pattern` has to
+// match it (invariant H-17).
 type autoRow struct {
 	id       string
+	configID string
 	state    string
 	lastErr  string
 	area     string
@@ -505,26 +511,57 @@ func fetchAutomations(ctx context.Context, client *haapi.Client) ([]automationEn
 	return autos, nil
 }
 
+// fireCounts is the logbook's answer to "how often did each automation run in
+// the window", together with whether the logbook answered at all.
+//
+// INVARIANT H-18: the distinction is load-bearing. "The logbook answered and
+// holds no entry for this automation" means zero runs; "the logbook did not
+// answer" means unknown. Conflating them is D65: an automation whose every
+// trigger was blocked by its condition has no logbook entry, so runs_24h
+// silently fell through to the raw trace count and reported runs for an
+// automation that never ran — while the same column, for any automation that did
+// run at least once, reported the logbook's number and therefore excluded
+// blocked triggers. One column, two meanings, depending on data.
+type fireCounts struct {
+	byEntityID map[string]int
+	ok         bool
+}
+
+// runs reports the number of runs the logbook recorded for entityID, and
+// whether the logbook is an answer at all.
+func (f fireCounts) runs(entityID string) (int, bool) {
+	if !f.ok {
+		return 0, false
+	}
+	return f.byEntityID[entityID], true
+}
+
 // fetchAutomationFireCounts pulls a window of logbook entries via REST and buckets
-// them by entity_id where domain == "automation". One logbook entry per fire
-// (HA records "Foo triggered by ..." for every actual run), so the count reflects
-// actual fires rather than the bounded trace storage.
-func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since time.Duration) (map[string]int, error) {
+// them by entity_id where domain == "automation".
+//
+// HA writes exactly one automation-domain logbook entry per RUN — it fires
+// EVENT_AUTOMATION_TRIGGERED after the automation's conditions are evaluated and
+// before the action script starts, so a trigger the conditions blocked is traced
+// but never logged. That is the definition of a run this column reports
+// (invariant H-18), and it is HA's own. Counting the logbook rather than the
+// traces also keeps the number honest for high-fire automations, whose trace
+// storage HA caps (default 5).
+func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since time.Duration) (fireCounts, error) {
 	now := time.Now()
 	startTime := now.Add(-since)
 	data, err := client.GetLogbook(ctx,
 		startTime.Format(time.RFC3339),
 		now.Format(time.RFC3339))
 	if err != nil {
-		return nil, fmt.Errorf("fetching logbook: %w", err)
+		return fireCounts{}, fmt.Errorf("fetching logbook: %w", err)
 	}
 
 	var entries []logbookEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parsing logbook: %w", err)
+		return fireCounts{}, fmt.Errorf("parsing logbook: %w", err)
 	}
 	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
-		return nil, err
+		return fireCounts{}, err
 	}
 
 	counts := make(map[string]int)
@@ -533,7 +570,16 @@ func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since 
 			counts[e.EntityID]++
 		}
 	}
-	return counts, nil
+	// A logbook that carries no automation entry AT ALL is not an answer about
+	// automations. Excluding the automation domain from the recorder or the
+	// logbook is ordinary HA tuning, and it makes this endpoint return 200 with
+	// nothing to say about any automation, forever — under "an answered logbook
+	// is authoritative" that would report runs_24h = 0 for the whole instance.
+	// Once even one automation entry is present the logbook is demonstrably
+	// recording them, and its silence about a particular automation is a zero.
+	// On a genuinely idle instance both sources are empty, so standing the
+	// traces in costs nothing.
+	return fireCounts{byEntityID: counts, ok: len(counts) > 0}, nil
 }
 
 func fetchTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceListResult, error) {
@@ -550,16 +596,19 @@ func fetchTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceListRes
 	return result, nil
 }
 
-// buildAutoRows combines per-automation state, fire counts, and trace data.
+// buildAutoRows combines per-automation state, run counts, and trace data.
 //
-// Fire counts come from the logbook (fires map): one entry per actual run within
-// the cutoff window. If the logbook lookup failed (fires == nil or missing key),
-// runs falls back to the count of in-window traces.
+// INVARIANT H-18 — what a run is: a trigger whose conditions passed, i.e. the
+// automation entered its actions. The logbook is the primary source because HA
+// writes one entry at exactly that moment and because trace storage is capped
+// per automation (default 5), which would undercount a high-fire rule badly.
+// When the logbook could not be read at all, the in-window traces stand in —
+// but they are then filtered by the SAME definition (traceIsRun), so the column
+// means one thing regardless of which source produced it.
 //
-// Traces still drive errors/lastErr because they carry execution status, but they
-// are bounded per automation by HA's stored_traces setting (default 5) and so
-// must not be used to derive runs.
-func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires map[string]int, cutoff time.Time) []autoRow {
+// Traces still drive errors/lastErr because they carry execution status; an
+// errored run is still a run, and the errors column is where it is reported.
+func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires fireCounts, cutoff time.Time) []autoRow {
 	rows := make([]autoRow, 0, len(autos))
 	for _, a := range autos {
 		// Use entity_id suffix as the display ID — this is what auto show/diff/apply accept.
@@ -567,6 +616,7 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 
 		row := autoRow{
 			id:       id,
+			configID: a.Attributes.ID,
 			state:    a.State,
 			restored: a.Attributes.Restored,
 		}
@@ -577,35 +627,17 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 		// automation whose config id differs from its object_id — which is the
 		// default for anything authored in HA's UI, where the config id is a
 		// millisecond timestamp and the entity_id comes from the alias.
-		traceRunsInWindow := 0
-		var latestErr time.Time
-		if ts, ok := traces[automationTraceKey(a)]; ok {
-			row.traces = ts
-			for _, tr := range ts {
-				t, err := time.Parse(time.RFC3339Nano, tr.Timestamp.Start)
-				if err != nil {
-					continue
-				}
-				if t.After(cutoff) {
-					traceRunsInWindow++
-					if isTraceError(tr) {
-						row.errors++
-						// "last" means most recent. HA does not guarantee
-						// trace order, so compare timestamps rather than
-						// keeping whichever arrived first.
-						if row.lastErr == "" || t.After(latestErr) {
-							latestErr = t
-							row.lastErr = formatShortTime(tr.Timestamp.Start) + " " + shortenStep(tr.LastStep)
-						}
-					}
-				}
-			}
-		}
+		row.traces = traces[automationTraceKey(a)]
+		scanned := scanTraceWindow(row.traces, cutoff)
+		row.errors = scanned.errors
+		row.lastErr = scanned.lastErr
 
-		if n, ok := fires[a.EntityID]; ok {
+		// H-18: a logbook that answered is authoritative even when its answer is
+		// zero. Only a logbook that did not answer lets the traces stand in.
+		if n, answered := fires.runs(a.EntityID); answered {
 			row.runs = n
 		} else {
-			row.runs = traceRunsInWindow
+			row.runs = scanned.runs
 		}
 
 		rows = append(rows, row)
@@ -617,10 +649,64 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 	return rows
 }
 
+// traceWindow is what one automation's stored traces say about a time window.
+type traceWindow struct {
+	// runs counts only traces that are runs under H-18's definition, so the
+	// number means the same thing as the logbook's would.
+	runs    int
+	errors  int
+	lastErr string
+}
+
+// scanTraceWindow summarises the traces HA still stores for one automation,
+// counting only those inside the window.
+//
+// INVARIANT H-18: runs counts runs, not triggers. traceIsRun is the one place
+// that decides, and `auto show`'s result column is derived from the same
+// classification, so the two commands cannot disagree about a trace.
+func scanTraceWindow(ts []haapi.TraceSummary, cutoff time.Time) traceWindow {
+	var out traceWindow
+	var latestErr time.Time
+	for _, tr := range ts {
+		t, err := time.Parse(time.RFC3339Nano, tr.Timestamp.Start)
+		if err != nil || !t.After(cutoff) {
+			continue
+		}
+		if traceIsRun(tr) {
+			out.runs++
+		}
+		if !isTraceError(tr) {
+			continue
+		}
+		out.errors++
+		// "last" means most recent. HA does not guarantee trace order, so
+		// compare timestamps rather than keeping whichever arrived first.
+		if out.lastErr == "" || t.After(latestErr) {
+			latestErr = t
+			out.lastErr = formatShortTime(tr.Timestamp.Start) + " " + shortenStep(tr.LastStep)
+		}
+	}
+	return out
+}
+
+// filterAutosByPattern keeps rows matching pattern on ANY identifier that
+// addresses the automation (invariant H-17): the entity object id, the full
+// entity_id, and the config `id:`.
+//
+// The config id is the one that used to be missing, and it is the one hactl
+// hands the caller: `auto show` prints it as config_id, `auto create` prints it
+// as the id it just wrote, and `auto cat`/`diff`/`apply` all key on it. HA's UI
+// mints a millisecond timestamp for it and derives the entity_id from the alias,
+// so for essentially every UI-authored automation it is a completely different
+// string from the `id` column — and `auto ls --pattern <that id>` answered
+// "nothing", which under the manual's stop-at-the-first-miss rule reads as "no
+// such automation" (D6/R2).
 func filterAutosByPattern(rows []autoRow, pattern string) []autoRow {
 	result := make([]autoRow, 0, len(rows))
 	for _, r := range rows {
-		if matchPattern(r.id, pattern) || matchPattern("automation."+r.id, pattern) {
+		if matchPattern(r.id, pattern) ||
+			matchPattern("automation."+r.id, pattern) ||
+			(r.configID != "" && matchPattern(r.configID, pattern)) {
 			result = append(result, r)
 		}
 	}
@@ -672,14 +758,43 @@ func isTraceError(tr haapi.TraceSummary) bool {
 	return tr.Execution == "error" || tr.Error != ""
 }
 
+// traceFailedConditions is HA's own `script_execution` word for a trigger its
+// automation's conditions stopped (homeassistant/components/automation:
+// script_execution_set("failed_conditions"), set before EVENT_AUTOMATION_TRIGGERED
+// is fired — which is why such a trigger never reaches the logbook).
+const traceFailedConditions = "failed_conditions"
+
+// traceResult is the outcome word `auto show` prints in its `result` column, in
+// HA's own vocabulary.
+//
+// It is the ONLY place this package classifies a trace. traceIsRun reads its
+// answer back instead of re-deriving one from script_execution, so `auto show`'s
+// table and `auto ls`'s runs_24h column cannot reach two different conclusions
+// about the same trace (invariant H-18).
 func traceResult(tr haapi.TraceSummary) string {
 	if isTraceError(tr) {
 		return "error"
 	}
 	if tr.Execution == "" {
+		// A trace still in flight carries no script_execution yet.
 		return tr.State
 	}
 	return tr.Execution
+}
+
+// traceIsRun reports whether a trace represents a RUN of the automation.
+//
+// INVARIANT H-18: a run is a trigger whose conditions passed — the automation
+// entered its actions. A condition-blocked trigger is traced but never ran and
+// is never counted as a run. An errored run is still a run: it is reported in
+// the errors column, not by omission from runs_24h. A trace still in flight has
+// already cleared its conditions to be executing at all, so it counts.
+//
+// The answer comes from traceResult, i.e. from the very word `auto show` prints
+// for this trace — that shared derivation is what makes the two commands
+// reconcile rather than merely resemble each other.
+func traceIsRun(tr haapi.TraceSummary) bool {
+	return traceResult(tr) != traceFailedConditions
 }
 
 func shortenStep(step string) string {

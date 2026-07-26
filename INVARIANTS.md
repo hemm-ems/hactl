@@ -630,3 +630,114 @@ series at test time (count, min, max, mean, span).
   (bucket averaging, and empty buckets omitted rather than rendered as a zero
   reading the recorder never held). The rig itself is
   `internal/hatest/recorder.go`.
+
+## H-17 — An identifier hactl prints is an identifier hactl accepts
+
+Whatever hactl displays as a name for a resource, every hactl command that
+filters or resolves that resource must match it. The rule is one-directional and
+absolute: printing is a promise. A caller who copies a string out of one command
+and pastes it into another is doing the thing the output invited, and the second
+command answering "nothing" is hactl contradicting itself.
+
+Home Assistant carries three interchangeable names for one automation: the
+config `id:` (surfaced as `attributes.id`, and the key HA files traces under),
+the `entity_id` it derives from the alias, and that entity_id's object id. HA's
+UI mints a millisecond timestamp for the config id, so for essentially every
+UI-authored automation it is a *completely different string* from the object id
+`auto ls` prints in its `id` column.
+
+hactl printed all three and resolved all three — `auto show` displays the
+entity_id and the `config_id`, `auto create` prints the config id it just wrote,
+and `auto cat`/`diff`/`apply`/`delete` key on it — while `auto ls --pattern` and
+`ent ls --pattern` matched only the entity_id forms. So an id hactl printed was
+an id hactl refused (D6/R2). The consequence is worse than an inconvenience: the
+manual routes a caller who cannot find something to `ent ls --pattern` as the
+discovery fallback, and under the stop-at-the-first-miss rule an empty listing
+there reads as "no such entity" — a wrong answer, not a missing one.
+
+Two bounds keep the rule from degrading into "match anything":
+
+- **Only identifiers hactl actually prints for that resource count.** The
+  automation config id is claimed because hactl prints it; a `sensor` that
+  happens to carry an `id` attribute is not addressable by it, because nothing
+  in hactl ever offers it as that sensor's name.
+- **A resource that matches on two of its identifiers is still one row.** The
+  filter widens what matches, never how often.
+
+- Enforced by: `internal/cmd/auto_test.go` —
+  `TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints`,
+  `TestFilterAutosByPattern_MatchesEachAutomationOnce`,
+  `TestBuildAutoRows_CarriesTheConfigID`; `internal/cmd/ent_test.go` —
+  `TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints` (its
+  `sensor.thermostat` row is the scope bound),
+  `TestFilterEntitiesByPattern_MatchesEachEntityOnce`;
+  `internal/integration/oracle_pattern_test.go` —
+  `TestPatternAcceptsEveryIdentifierHactlPrints` (reads the entity_id/config id
+  pairs from the live instance's `/api/states`, asserts `auto show` prints the
+  config id HA reports, then requires `auto ls --pattern` and `ent ls --pattern`
+  to match on every one of the three forms) and
+  `TestPatternStillRejectsWhatDoesNotExist` (the negative control — a filter that
+  matched everything would satisfy the first test just as well). `make test-int`
+  (Docker tier).
+
+## H-18 — `runs_24h` counts runs, and it counts the same runs `auto show` lists
+
+A **run** is a trigger whose conditions passed: the automation entered its
+actions. An errored run is still a run — the `errors` column reports it, not the
+absence of a count. A trigger the conditions blocked is not a run, and never
+appears in the number, whichever source produced it.
+
+The definition is Home Assistant's own, not hactl's. HA fires
+`EVENT_AUTOMATION_TRIGGERED` — the logbook's only record of an automation —
+after the conditions have been evaluated and before the action script starts, so
+a condition-blocked trigger is traced (`script_execution: failed_conditions`) but
+never logged. Two consequences are load-bearing:
+
+- **A logbook that answered and holds no entry for an automation is a zero, not a
+  blank.** Conflating "answered, nothing to say" with "could not be read" is
+  D65. An automation whose every trigger was condition-blocked has no logbook
+  entry, so the count silently fell through to the raw trace count and reported
+  runs for an automation that never ran — while for any automation that ran at
+  least once it reported the logbook's number, which excludes blocked triggers.
+  One column, two meanings, depending on the data. The two states are now a
+  named type (`fireCounts`) rather than a nil map.
+- **The fallback applies the same definition.** When the logbook genuinely
+  cannot be read the in-window traces stand in, filtered by `traceIsRun`. A
+  fallback that counted triggers would make the column mean "runs" with a
+  logbook and "triggers" without one.
+
+The logbook is preferred over the traces where both exist because HA caps stored
+traces per automation (default 5), which would undercount a high-fire rule
+badly. It is *not* preferred when it demonstrably records no automation at all:
+excluding the automation domain from the recorder or the logbook is ordinary HA
+tuning, and that answers 200 with nothing to say about automations forever, which
+under "an answered logbook is authoritative" would report `0` for the whole
+instance. An automation-less logbook is therefore classified as no answer.
+
+Because `auto ls` counts and `auto show` lists the same underlying traces, the
+two commands must not reach two different conclusions about one trace. They
+cannot: `traceResult` is the only place this package classifies a trace, and
+`traceIsRun` reads its answer back rather than re-deriving one. The difference
+between the trace table's row count and `runs_24h` is exactly the rows the table
+itself marks `failed_conditions`, with nothing else unaccounted for. This is the
+H-11 reconciliation rule applied across two commands.
+
+- Enforced by: `internal/cmd/auto_test.go` —
+  `TestFetchAutomationFireCounts_ClassifiesTheLogbooksAnswer` (which wire
+  response lands in which state, including the automation-less logbook),
+  `TestFireCounts_AnsweredZeroIsNotUnknown`,
+  `TestBuildAutoRows_BlockedTriggersAreNotRuns` (the direct D65 regression, run
+  in both states), `TestBuildAutoRows_AnsweredSilenceIsZeroNotUnknown`,
+  `TestBuildAutoRows_TraceFallbackCountsRunsNotTriggers`,
+  `TestTraceIsRun_MatchesTheWordAutoShowPrints`,
+  `TestRuns24hReconcilesWithAutoShowTraceTable`;
+  `internal/integration/oracle_runcount_test.go` —
+  `TestRuns24hMatchesHAsOwnRunCount` (reconciles HA's logbook against HA's
+  traces first, so the expectation is never hactl's own model of a run, then
+  requires `runs_24h` to equal both), `TestRuns24hIsZeroWhenEveryTriggerWasBlocked`,
+  `TestAutoShowTraceTableReconcilesWithRuns24h`, and
+  `TestOracleGatedFixtureHasBothOutcomes` — the fixture guard, because an
+  automation whose triggers all ran, and one whose triggers were all blocked, are
+  each satisfied by counting traces; only `cfgid_gated_charge`, which the rig
+  gates shut for three triggers and open for two, can see the difference.
+  `make test-int` (Docker tier).

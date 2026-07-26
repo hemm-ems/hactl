@@ -8,6 +8,7 @@
 #   cfgid_missing_service     Oracle Missing Service   -> automation.oracle_missing_service
 #   cfgid_blocked_cond        Oracle Blocked Cond      -> automation.oracle_blocked_cond
 #   cfgid_bad_template        Oracle Bad Template      -> automation.oracle_bad_template
+#   cfgid_gated_charge        Oracle Gated Charge      -> automation.oracle_gated_charge
 #
 # Each is fired by a real state trigger (not automation.trigger), so conditions
 # genuinely evaluate and a blocked action is genuinely skipped.
@@ -72,4 +73,34 @@
         entity_id: input_number.oracle_level
       data:
         value: 1
+  mode: single
+
+# INVARIANT H-18: one automation, both outcomes. Its condition follows
+# input_boolean.oracle_gate, which the rig holds off for the first triggers and
+# opens for the last ones — so HA produces condition-blocked traces AND real
+# runs for the SAME automation, in one window. That mix is what runs_24h has to
+# get right: an all-blocked automation and an all-run automation are both
+# satisfied by counting traces, and neither can see the defect.
+#
+# stored_traces is raised above HA's default of 5 so trace truncation can never
+# be mistaken for a counting rule.
+- id: cfgid_gated_charge
+  alias: Oracle Gated Charge
+  description: Condition follows input_boolean.oracle_gate — blocked while it is off, a real run while it is on.
+  trace:
+    stored_traces: 20
+  trigger:
+    - platform: state
+      entity_id: input_boolean.oracle_trigger_c
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_boolean.oracle_gate
+      state: "on"
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.oracle_level
+      data:
+        value: 42
   mode: single
