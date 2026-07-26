@@ -354,11 +354,6 @@ verified. `make test` is the unit tier alone and is never acceptance — it star
 no Home Assistant, so it cannot see a wrong lookup key or a missing registry
 fallback. Install the pre-push hook with `make hooks`.
 
-See [PLAN-next-session.md](PLAN-next-session.md) for the open work and
-[HANDOFF-2026-07-23-oracle-testing.md](HANDOFF-2026-07-23-oracle-testing.md)
-for the audit that produced invariants H-8..H-11.
-
-
 The only hard prerequisite is a running Docker daemon. You can verify this with:
 
 ```bash
