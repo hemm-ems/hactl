@@ -334,9 +334,10 @@ Every allowlist line carries a class and a reason. `harness` means the function
 exists to serve a test or a gate (`RunWithOutput` is how every CLI test drives
 the cobra tree). `orphan` means product code with no path from `main` — a
 standing defect, and the tests under it are green while proving nothing about
-what a user can do. There are 19 of those today, including the entire
-`internal/cache.Store` trace/log cache and eight `companion.Client` methods no
-subcommand routes to.
+what a user can do. Read `dev/deadcode-allow.txt` for the current list rather
+than trusting a count written here; today it is dominated by the whole
+`internal/cache.Store` trace/log cache and by `companion.Client` methods that
+no subcommand routes to.
 
 When the gate flags something new, decide deliberately: wire it, or delete it
 with its tests. Leaving it is how a test suite comes to certify behaviour the

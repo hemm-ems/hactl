@@ -44,7 +44,7 @@ internal/companion/client.go Client.UpdateHelper        # orphan: no command rou
 internal/companion/client.go Client.ReloadDomain        # orphan: no command routes here
 
 internal/haapi/client.go Client.GetEvents        # orphan: no command lists HA event types
-internal/haapi/flow.go Client.StartConfigFlow    # orphan: `config flow-start` does not call it
+internal/haapi/flow.go Client.StartConfigFlow    # orphan: `flow start` routes to StartConfigFlowOnce; this variant has no caller
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
 internal/cmd/companion_cmd.go formatCompanionStatusLine  # orphan: companion status renders its own lines
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer

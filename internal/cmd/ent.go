@@ -609,7 +609,6 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		return renderStateAnomalies(w, entityID, changes)
 	}
 
-
 	anomalies := analyze.DetectAll(points,
 		defaultGapThreshold,
 		defaultStuckThreshold,

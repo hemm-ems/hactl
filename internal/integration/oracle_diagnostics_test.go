@@ -356,4 +356,3 @@ func TestLogShowJSONParses(t *testing.T) {
 		t.Errorf("log show --json id = %v, want %q", shown["id"], id)
 	}
 }
-

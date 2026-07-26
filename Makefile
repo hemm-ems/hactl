@@ -50,15 +50,33 @@ tools:
 # deliberately NOT collapsed into a single `--build-tags=a,b,c` run: that
 # combination is not a build that ever happens, and it lets a symbol used only
 # by the discovery tier look "used" in the companion tier.
+#
+# All four run even when an earlier one fails, for the same reason
+# `issues.uniq-by-line: false` is set in .golangci.yml: a gate has to report
+# everything it knows in one run. Stopping at the first red invocation would
+# hide the companion tier's findings behind an untagged one and turn a single
+# fix into four round trips.
+LINT_TAGSETS := untagged integration companion companion_discovery
+
 lint:
 	@test -x "$(GOLANGCI)" || { \
 	  echo "ERROR: golangci-lint not found (looked on PATH and in $$(go env GOPATH)/bin)."; \
 	  echo "Install: make tools"; \
 	  exit 1; }
-	$(GOLANGCI) run ./...
-	$(GOLANGCI) run --build-tags=integration ./...
-	$(GOLANGCI) run --build-tags=companion ./...
-	$(GOLANGCI) run --build-tags=companion_discovery ./...
+	@status=0; \
+	for tags in $(LINT_TAGSETS); do \
+	  if [ "$$tags" = untagged ]; then \
+	    echo "==> $(GOLANGCI) run ./..."; \
+	    $(GOLANGCI) run ./... || status=1; \
+	  else \
+	    echo "==> $(GOLANGCI) run --build-tags=$$tags ./..."; \
+	    $(GOLANGCI) run --build-tags=$$tags ./... || status=1; \
+	  fi; \
+	done; \
+	if [ "$$status" -ne 0 ]; then \
+	  echo "ERROR: lint failed in at least one build configuration (see above)."; \
+	fi; \
+	exit $$status
 
 # Fail when a function is unreachable from the hactl binary and not on the
 # recorded allowlist. This is the structural defense against the escape
