@@ -17,7 +17,7 @@ import (
 // on its declared base URL. Catches harness regressions independent of
 // hactl's code under test.
 func TestFakeSupervisorBoots(t *testing.T) {
-	resp, err := http.Get(fakeSup.BaseURL() + "/api/websocket")
+	resp, err := httpGet(t, fakeSup.BaseURL()+"/api/websocket")
 	if err != nil {
 		t.Fatalf("GET fake /api/websocket: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestFakeSupervisorBoots(t *testing.T) {
 // the Companion's auth middleware exempts.
 func TestIngressProxyReachesCompanion(t *testing.T) {
 	url := fakeSup.BaseURL() + ingressPrefix + "v1/health"
-	resp, err := http.Get(url)
+	resp, err := httpGet(t, url)
 	if err != nil {
 		t.Fatalf("GET via fake ingress proxy: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestDiscover_ResolvedURLServesCompanionHealth(t *testing.T) {
 		t.Fatalf("Discover failed: %v", err)
 	}
 
-	resp, err := http.Get(url + "v1/health")
+	resp, err := httpGet(t, url+"v1/health")
 	if err != nil {
 		t.Fatalf("GET discovered URL: %v", err)
 	}
@@ -132,4 +132,17 @@ func TestDiscover_ResolvedURLServesCompanionHealth(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("discovered URL /v1/health = %d, want 200", resp.StatusCode)
 	}
+}
+
+// httpGet issues a GET bound to the test's context, so a hung fake supervisor
+// fails the test at its deadline instead of blocking until the tier timeout.
+// The URL is always one the harness itself constructed from a listener it
+// started, which is why gosec's variable-URL warning does not apply.
+func httpGet(t *testing.T, url string) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return http.DefaultClient.Do(req)
 }

@@ -40,11 +40,11 @@ func TestCompanionCall_WithIngressAuth_SucceedsThroughIngress(t *testing.T) {
 
 	// Without IngressAuth: must fail (proves the session requirement is real).
 	plain := companion.New(url, "any-token-accepted")
-	if _, err := plain.Health(ctx); err == nil {
+	if _, healthErr := plain.Health(ctx); healthErr == nil {
 		t.Error("Companion call without IngressAuth unexpectedly succeeded — " +
 			"is requireSession really enforced?")
-	} else if !strings.Contains(err.Error(), "401") {
-		t.Errorf("expected 401 without IngressAuth, got: %v", err)
+	} else if !strings.Contains(healthErr.Error(), "401") {
+		t.Errorf("expected 401 without IngressAuth, got: %v", healthErr)
 	}
 
 	// With IngressAuth: must succeed.

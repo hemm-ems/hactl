@@ -91,61 +91,11 @@ func (s *TSStore) StoreSamples(ctx context.Context, entityID string, times []tim
 	return tx.Commit()
 }
 
-// GetSamples retrieves cached data points for an entity within a time range.
-func (s *TSStore) GetSamples(ctx context.Context, entityID string, since, until time.Time) ([]time.Time, []float64, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT time, value FROM samples
-		WHERE entity_id = ? AND time >= ? AND time <= ?
-		ORDER BY time ASC`,
-		entityID,
-		since.UTC().Format(time.RFC3339Nano),
-		until.UTC().Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("querying samples: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var times []time.Time
-	var values []float64
-	for rows.Next() {
-		var timeStr string
-		var value float64
-		if scanErr := rows.Scan(&timeStr, &value); scanErr != nil {
-			return nil, nil, fmt.Errorf("scanning sample: %w", scanErr)
-		}
-		t, parseErr := time.Parse(time.RFC3339Nano, timeStr)
-		if parseErr != nil {
-			continue
-		}
-		times = append(times, t)
-		values = append(values, value)
-	}
-	return times, values, rows.Err()
-}
-
-// LatestSample returns the most recent sample time for an entity, or zero time if none.
-func (s *TSStore) LatestSample(ctx context.Context, entityID string) (time.Time, error) {
-	var timeStr sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		SELECT MAX(time) FROM samples WHERE entity_id = ?`, entityID).Scan(&timeStr)
-	if err != nil || !timeStr.Valid {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, timeStr.String)
-}
-
 // SampleCount returns the total number of cached samples.
 func (s *TSStore) SampleCount(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM samples").Scan(&count)
 	return count, err
-}
-
-// ClearEntity removes all cached samples for an entity.
-func (s *TSStore) ClearEntity(ctx context.Context, entityID string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM samples WHERE entity_id = ?", entityID)
-	return err
 }
 
 // Clear removes all cached timeseries data.

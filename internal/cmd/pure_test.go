@@ -422,8 +422,7 @@ func TestRenderStateAnomalies_NoAnomalies(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.x", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.x", changes); err != nil {
 		t.Fatalf("renderStateAnomalies failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no anomalies") {
@@ -439,8 +438,7 @@ func TestRenderStateAnomalies_WithStuck(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.door", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.door", changes); err != nil {
 		t.Fatalf("renderStateAnomalies with stuck failed: %v", err)
 	}
 	// If there's a stuck anomaly it should show it, otherwise 'no anomalies'
@@ -674,8 +672,7 @@ func TestRenderStateAnomalies_AnomalyDetected(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.door", dir, changes); err != nil {
+	if err := renderStateAnomalies(&buf, "binary_sensor.door", changes); err != nil {
 		t.Fatalf("renderStateAnomalies with anomaly failed: %v", err)
 	}
 	out := buf.String()
@@ -763,5 +760,108 @@ func TestParseResampleDuration_RejectsNonPositive(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Errorf("parseResampleDuration(%q) error = %v, want error: %v", tc.in, err, tc.wantErr)
 		}
+	}
+}
+
+// --- dedupeAndSortRelated ---
+
+// TestDedupeAndSortRelated_Canonical pins the property the companion tier's
+// determinism check depends on.
+//
+// TestE2EEntRelatedCompanionGraphCLI asserts that three consecutive
+// `ent related` invocations produce byte-identical stdout. That assertion is
+// only sound because runEntRelated's four row sources are canonicalised before
+// rendering: two of them (findDeviceSiblings, findAreaNeighbors) walk
+// rc.entityByID, a Go map, so they hand back rows in an order the runtime
+// deliberately randomises per iteration. Nothing downstream re-sorts —
+// format.Table renders rows in slice order — so if dedupeAndSortRelated ever
+// stopped imposing a total order, the E2E check would become a flake that
+// reproduces on someone else's machine and not on ours.
+//
+// This test states the property in the unit tier, where it is machine- and
+// Docker-independent: permute the same set arbitrarily, get the same slice.
+// It is a total order, not merely "sorted by entity_id": dedup keys on the
+// whole struct, so any two surviving rows differ in at least one field and
+// the three-field comparator can never call them equal — which is what makes
+// the unstable sort.Slice safe here.
+func TestDedupeAndSortRelated_Canonical(t *testing.T) {
+	// Deliberately includes rows that share an entity_id and differ only in
+	// relationship, and rows that share both and differ only in detail: those
+	// are the pairs a comparator that stopped at the first field would leave
+	// in input order.
+	base := []relatedEntry{
+		{entityID: "sensor.b", relationship: "area-neighbor", detail: "area=Kitchen"},
+		{entityID: "sensor.a", relationship: "yaml-reference", detail: "configuration.yaml"},
+		{entityID: "sensor.a", relationship: "device-sibling", detail: "device=xyz"},
+		{entityID: "sensor.a", relationship: "device-sibling", detail: "device=abc"},
+		{entityID: "sensor.c", relationship: "group-member", detail: "group contains this entity"},
+	}
+
+	want := []relatedEntry{
+		{entityID: "sensor.a", relationship: "device-sibling", detail: "device=abc"},
+		{entityID: "sensor.a", relationship: "device-sibling", detail: "device=xyz"},
+		{entityID: "sensor.a", relationship: "yaml-reference", detail: "configuration.yaml"},
+		{entityID: "sensor.b", relationship: "area-neighbor", detail: "area=Kitchen"},
+		{entityID: "sensor.c", relationship: "group-member", detail: "group contains this entity"},
+	}
+
+	// Every permutation, not a sample: five rows is 120 orderings, which is
+	// cheap and leaves no ordering unexercised.
+	perms := 0
+	permute(base, 0, func(in []relatedEntry) {
+		perms++
+		// Copy: dedupeAndSortRelated sorts in place, and permute reuses its
+		// backing array.
+		arg := append([]relatedEntry(nil), in...)
+		got := dedupeAndSortRelated(arg)
+		if len(got) != len(want) {
+			t.Fatalf("permutation %v: got %d rows, want %d", in, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("permutation %v: row %d = %+v, want %+v", in, i, got[i], want[i])
+			}
+		}
+	})
+	if perms != 120 {
+		t.Fatalf("permute visited %d orderings, want 120", perms)
+	}
+}
+
+// TestDedupeAndSortRelated_DropsExactDuplicates covers the other half of
+// canonicalisation: the same edge can arrive from the companion scan and from
+// the registry walk, and the two must collapse to one row rather than to two
+// rows whose relative order then depends on which source ran first.
+func TestDedupeAndSortRelated_DropsExactDuplicates(t *testing.T) {
+	dup := relatedEntry{entityID: "sensor.a", relationship: "yaml-reference", detail: "configuration.yaml"}
+	other := relatedEntry{entityID: "sensor.b", relationship: "device-sibling", detail: "device=abc"}
+
+	got := dedupeAndSortRelated([]relatedEntry{dup, other, dup, other, dup})
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2 after dedup: %+v", len(got), got)
+	}
+	if got[0] != dup || got[1] != other {
+		t.Fatalf("got %+v, want [%+v %+v]", got, dup, other)
+	}
+
+	// An entry with no entity_id renders a blank row, so it is dropped — but
+	// only once there is something to sort. See the len<2 early return.
+	blank := relatedEntry{relationship: "yaml-reference", detail: "configuration.yaml"}
+	got = dedupeAndSortRelated([]relatedEntry{blank, other})
+	if len(got) != 1 || got[0] != other {
+		t.Fatalf("blank entity_id was not dropped: %+v", got)
+	}
+}
+
+// permute calls fn once per ordering of in, reusing in's backing array.
+func permute(in []relatedEntry, i int, fn func([]relatedEntry)) {
+	if i == len(in) {
+		fn(in)
+		return
+	}
+	for j := i; j < len(in); j++ {
+		in[i], in[j] = in[j], in[i]
+		permute(in, i+1, fn)
+		in[i], in[j] = in[j], in[i]
 	}
 }

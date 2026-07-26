@@ -55,3 +55,10 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # golangci-lint reports at most one issue per source line by default, so a
+  # second linter's finding on the same line is silently dropped until the
+  # first one is fixed. That makes the reported count a lower bound rather
+  # than the truth: suppressing a gosec warning on an `exec.Command` line here
+  # revealed a noctx finding that had been hidden underneath it. A gate has to
+  # report everything it knows in one run.
+  uniq-by-line: false

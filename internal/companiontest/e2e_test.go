@@ -3,6 +3,7 @@
 package companiontest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -43,56 +44,109 @@ func entityRegistryContains(ctx context.Context, entityID string) (bool, error) 
 // and companion credentials. Returns combined stdout+stderr and any exec error.
 func runHactlE2E(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	stdout, stderr, err := runHactlE2EStreams(t, args...)
+	return stdout + stderr, err
+}
+
+// runHactlE2EStreams is runHactlE2E with the two streams kept apart. Only the
+// determinism check needs this: hactl renders its answer on stdout and logs on
+// stderr through a slog text handler that stamps every line with `time=`, so
+// comparing combined output compares a clock as well as an answer.
+func runHactlE2EStreams(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
 	fullArgs := append([]string{"--dir", instanceDir}, args...)
-	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
+	cmd := exec.CommandContext(t.Context(), hactlBin, fullArgs...) //nolint:gosec // binary built from source in TestMain
 	// These tests exercise command mechanics, not the agent protocol: piped
 	// output would otherwise trigger manual injection and the first-family
 	// --confirm guard.
 	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	// H-14: this is the only tier that drives the real binary against a real HA
 	// and a real companion, so it is the only place a genuine wire-shape change
 	// would appear. Scanning here makes every E2E test a detector for the class,
 	// including the ones that assert nothing about their output.
-	assertNoDegenerateE2EOutput(t, fullArgs, string(out))
-	return string(out), err
+	assertNoDegenerateE2EOutput(t, fullArgs, stdout.String()+stderr.String())
+	return stdout.String(), stderr.String(), err
 }
 
-func runHactlE2ETimed(t *testing.T, args ...string) (string, time.Duration, error) {
-	t.Helper()
-	start := time.Now()
-	out, err := runHactlE2E(t, args...)
-	return out, time.Since(start), err
-}
+// entRelatedRepeats is how many times TestE2EEntRelatedCompanionGraphCLI drives
+// `ent related` at the same entity. Two is the minimum that compares anything;
+// three costs ~25ms more per run (measured) and takes one more independent
+// sample of an ordering that nothing downstream re-canonicalises.
+const entRelatedRepeats = 3
 
+// TestE2EEntRelatedCompanionGraphCLI drives `ent related` through the real
+// companion several times and requires the same answer every time.
+//
+// It used to assert wall-clock ceilings instead — cold <=10s, warm <=3s — on
+// the premise that the second run hit a cache. There is no cache: `ent related`
+// calls companion.Discover and GET /v1/related/entity on every invocation, and
+// nothing memoises between processes. The runs do identical work, so the
+// numbers measured process start-up and whatever else the machine was doing;
+// on shared CI hardware that is a flake generator with no subject.
+//
+// What repeating the command can prove without a clock is that the answer is
+// stable. Stability is not free here: runEntRelated concatenates rows from four
+// sources — the companion's scan, findDeviceSiblings and findAreaNeighbors over
+// the rc.entityByID map, and findGroupMemberships — and only dedupeAndSortRelated
+// makes the result canonical, by deduping on the whole relatedEntry struct and
+// then sorting on all three of its fields. Every content assertion in this file
+// is a substring check that passes on any permutation, so a reordering has
+// nothing else in the suite watching for it.
+//
+// Scope, measured rather than assumed: `sensor.hactl_related_source` is absent
+// from both HA's entity registry and its state machine (the fixture's seeded
+// .storage entries do not survive HA's loader), so this command renders the
+// "not in the registry ... dangling reference(s)" branch and the graph consists
+// of the companion's two rows alone. The three registry-walk sources contribute
+// nothing at this tier, which means this test pins the companion half's order
+// and the renderer, not the map-iteration half. Recorded in
+// audits-2026-07-25/t9-t14-t21-t19-report.md; the fixture is worth repairing so
+// the other half gets covered, but that is a change to what this tier asserts,
+// not to what it forbids.
+//
+// The comparison is over stdout alone, deliberately. hactl logs through a slog
+// text handler that stamps every line with `time=`, and two paths in this
+// command legitimately log on a transient hiccup (companion request retry,
+// websocket reconnect), so comparing combined output would compare a clock as
+// well as an answer and fail for a reason that is not the subject.
+//
+// The pathological-slowness case the old ceilings were reaching for is covered
+// structurally: every invocation runs under the test's context, so a command
+// that hangs dies at the test deadline rather than at a number someone guessed.
 func TestE2EEntRelatedCompanionGraphCLI(t *testing.T) {
-	out, cold, err := runHactlE2ETimed(t, "ent", "related", companiontestutil.RelatedSourceEntityID)
-	if err != nil {
-		t.Fatalf("hactl ent related failed (exit: %v):\n%s", err, out)
-	}
-	if cold > 10*time.Second {
-		t.Fatalf("cold hactl ent related took %s, want <=10s\noutput:\n%s", cold, out)
-	}
-	assertEntRelatedOutput(t, out,
-		companiontestutil.RelatedGeneratedEntityID,
-		companiontestutil.RelatedYAMLPeerEntityID,
-		"config-entry-reference",
-		"yaml-reference",
-	)
+	var first string
+	for i := range entRelatedRepeats {
+		start := time.Now()
+		stdout, stderr, err := runHactlE2EStreams(t, "ent", "related", companiontestutil.RelatedSourceEntityID)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("hactl ent related run %d failed (exit: %v):\nstdout:\n%s\nstderr:\n%s", i+1, err, stdout, stderr)
+		}
+		assertEntRelatedOutput(t, stdout,
+			companiontestutil.RelatedGeneratedEntityID,
+			companiontestutil.RelatedYAMLPeerEntityID,
+			"config-entry-reference",
+			"yaml-reference",
+		)
 
-	out, warm, err := runHactlE2ETimed(t, "ent", "related", companiontestutil.RelatedSourceEntityID)
-	if err != nil {
-		t.Fatalf("warm hactl ent related failed (exit: %v):\n%s", err, out)
+		// Logged, never asserted on: useful when reading a CI run, worthless as
+		// a gate. An order-of-magnitude spread here is a prompt to look, not a
+		// reason to fail a build on someone else's load.
+		t.Logf("ent related run %d: %s (%d bytes stdout, %d bytes stderr)", i+1, elapsed, len(stdout), len(stderr))
+
+		if i == 0 {
+			first = stdout
+			continue
+		}
+		if stdout != first {
+			t.Fatalf("ent related is not deterministic: run %d disagreed with run 1\nrun 1:\n%s\nrun %d:\n%s\nstderr of run %d:\n%s",
+				i+1, first, i+1, stdout, i+1, stderr)
+		}
 	}
-	if warm > 3*time.Second {
-		t.Fatalf("warm hactl ent related took %s, want <=3s\noutput:\n%s", warm, out)
-	}
-	assertEntRelatedOutput(t, out,
-		companiontestutil.RelatedGeneratedEntityID,
-		companiontestutil.RelatedYAMLPeerEntityID,
-		"config-entry-reference",
-		"yaml-reference",
-	)
 
 	reverseOut, err := runHactlE2E(t, "ent", "related", companiontestutil.RelatedGeneratedEntityID)
 	if err != nil {
@@ -141,7 +195,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
 		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
@@ -221,7 +277,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name()); execErr != nil {
 		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
@@ -261,7 +319,9 @@ action:
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", f.Name())
 	if execErr != nil {
@@ -301,7 +361,9 @@ actions: [{action: logbook.log, data: {name: x, message: y}}]
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing temp YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	for _, mode := range []struct {
 		name string
@@ -466,7 +528,7 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating bad instanceDir: %v", err)
 	}
-	defer os.RemoveAll(badDir)
+	defer func() { _ = os.RemoveAll(badDir) }()
 
 	content := `- id: e2e_unavailable_test
   alias: E2E Unavailable Test
@@ -481,14 +543,16 @@ func TestE2ECompanionUnavailableCLI(t *testing.T) {
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("writing YAML: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing temp YAML: %v", err)
+	}
 
 	// Override instanceDir just for this invocation. Manual delivery off:
 	// this must reach the companion error path, not the --confirm guard
 	// (and the injected how-to happens to contain "companion", which would
 	// let the assertion below pass for the wrong reason).
 	fullArgs := []string{"--dir", badDir, "auto", "create", "--confirm", "-f", f.Name()}
-	cmd := exec.Command(hactlBin, fullArgs...) //nolint:gosec // binary built from source
+	cmd := exec.CommandContext(t.Context(), hactlBin, fullArgs...) //nolint:gosec // binary built from source
 	cmd.Env = append(os.Environ(), "HACTL_MANUAL_MODE=off")
 	out, execErr := cmd.CombinedOutput()
 
@@ -520,7 +584,7 @@ func TestE2ESetupCLI(t *testing.T) {
 	// Pipe: URL (accept default), token, then "no" to companion prompt if any
 	input := fmt.Sprintf("%s\n%s\n", haURL, haToken)
 
-	cmd := exec.Command(hactlBin, "--dir", dir, "setup") //nolint:gosec
+	cmd := exec.CommandContext(t.Context(), hactlBin, "--dir", dir, "setup") //nolint:gosec
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

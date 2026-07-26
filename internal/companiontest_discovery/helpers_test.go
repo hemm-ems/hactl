@@ -3,9 +3,6 @@
 package companiontest_discovery
 
 import (
-	"errors"
-
-	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 )
 
@@ -16,10 +13,4 @@ func minimalConfig(haURL string) *config.Config {
 		URL:   haURL,
 		Token: "any-token-accepted",
 	}
-}
-
-// asDiscoveryError is a tiny wrapper around errors.As to keep the assertion
-// in tests readable.
-func asDiscoveryError(err error, target **companion.DiscoveryError) bool {
-	return errors.As(err, target)
 }

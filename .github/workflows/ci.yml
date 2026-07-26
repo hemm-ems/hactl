@@ -14,6 +14,13 @@ permissions:
   contents: read
 
 jobs:
+  # Lint runs `make lint`, not golangci-lint directly, so CI and a developer's
+  # machine cannot lint different things. That mattered: the action ran
+  # golangci-lint with no build tags, which means it never read a single file
+  # behind //go:build integration / companion / companion_discovery — the whole
+  # Docker tier was unlinted in CI and locally alike. `make lint` runs one
+  # invocation per build configuration; the tool version is pinned in the
+  # Makefile so there is exactly one place to bump it.
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -22,9 +29,24 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      - name: Install pinned tools
+        run: make tools
+      - run: make lint
+
+  # Reachability from the binary, which coverage cannot measure:
+  # `findAutomationRelations` was 86.4% covered and reachable only from its own
+  # tests, so the suite certified a capability the product had already lost.
+  deadcode:
+    name: Reachability (deadcode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          version: v2.11.4
+          go-version-file: go.mod
+      - name: Install pinned tools
+        run: make tools
+      - run: make deadcode
 
   test-unit:
     name: Unit Tests
@@ -122,43 +144,144 @@ jobs:
       - run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - run: govulncheck ./...
 
+  # ---------------------------------------------------------------------------
+  # Companion-backed tiers run against TWO companions.
+  #
+  # `released` (required) is the companion a user actually runs alongside this
+  # hactl. Its ref is derived from `info.version` inside the vendored spec, so
+  # the pin has no second home to fall out of sync with: `make sync-spec` after
+  # a companion release moves the vendored spec and the pin together.
+  #
+  # `main` (advisory) is the early warning that an unreleased companion change
+  # will break hactl. It is deliberately non-blocking, mirroring how the HA
+  # `dev` matrix leg is treated in test-integration.
+  #
+  # Before this, both jobs checked out companion `main` with no `ref:`, so every
+  # companion-backed result described a companion nobody runs — and any merge to
+  # companion main could redden an unrelated hactl PR through check-spec-drift.
+  #
+  # Consequence to know about: a hactl change that NEEDS an unreleased companion
+  # change now has a red required leg and a green advisory leg. That is the
+  # truthful report — hactl main should not carry code that does not work
+  # against the released companion — and it matches the release order this
+  # project already follows (companion first, then hactl). To iterate before the
+  # companion release, temporarily set `ref: main` on the released leg.
+  # ---------------------------------------------------------------------------
   test-companion:
-    name: Companion Tests
+    name: Companion Tests (companion ${{ matrix.companion }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        companion: [released, main]
+        include:
+          - companion: released
+            required: true
+          - companion: main
+            required: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Resolve companion ref
+        id: companion
+        run: |
+          if [ "${{ matrix.companion }}" = "main" ]; then
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v=$(awk '/^info:/{f=1; next} f && /^  version:/{gsub(/"/,"",$2); print $2; exit}' testdata/companion-v1.yaml)
+          if [ -z "$v" ]; then
+            echo "::error::could not read info.version from testdata/companion-v1.yaml"
+            exit 1
+          fi
+          echo "::notice::vendored spec is contracted against companion v${v}"
+          echo "ref=v${v}" >> "$GITHUB_OUTPUT"
       - name: Check out hactl-companion for local Docker build
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: hemm-ems/hactl-companion
+          ref: ${{ steps.companion.outputs.ref }}
           path: companion-src
       - name: Check vendored companion spec for drift
+        if: matrix.required
         run: make check-spec-drift COMPANION_DIR=companion-src
+      - name: Report companion main spec drift (non-blocking)
+        if: '!matrix.required'
+        run: |
+          if make check-spec-drift COMPANION_DIR=companion-src; then
+            echo "::notice::companion main's spec matches the vendored copy"
+          else
+            echo "::warning::companion main's spec has moved ahead of the vendored copy — hactl needs 'make sync-spec' after the next companion release"
+          fi
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
       - name: Run companion tests
-        run: go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...
+        if: matrix.required
+        run: make test-companion
+        env:
+          COMPANION_SRC: ${{ github.workspace }}/companion-src
+      - name: Run companion tests (non-blocking)
+        if: '!matrix.required'
+        run: |
+          if make test-companion; then
+            echo "::notice::companion main tests passed"
+          else
+            echo "::warning::companion main tests failed (non-blocking)"
+          fi
         env:
           COMPANION_SRC: ${{ github.workspace }}/companion-src
 
   test-discovery:
-    name: Discovery Tests
+    name: Discovery Tests (companion ${{ matrix.companion }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        companion: [released, main]
+        include:
+          - companion: released
+            required: true
+          - companion: main
+            required: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Resolve companion ref
+        id: companion
+        run: |
+          if [ "${{ matrix.companion }}" = "main" ]; then
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v=$(awk '/^info:/{f=1; next} f && /^  version:/{gsub(/"/,"",$2); print $2; exit}' testdata/companion-v1.yaml)
+          if [ -z "$v" ]; then
+            echo "::error::could not read info.version from testdata/companion-v1.yaml"
+            exit 1
+          fi
+          echo "ref=v${v}" >> "$GITHUB_OUTPUT"
       - name: Check out hactl-companion for local Docker build
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: hemm-ems/hactl-companion
+          ref: ${{ steps.companion.outputs.ref }}
           path: companion-src
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
       - name: Run discovery tests
-        run: go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
+        if: matrix.required
+        run: make test-int-discovery
+        env:
+          COMPANION_SRC: ${{ github.workspace }}/companion-src
+      - name: Run discovery tests (non-blocking)
+        if: '!matrix.required'
+        run: |
+          if make test-int-discovery; then
+            echo "::notice::companion main discovery tests passed"
+          else
+            echo "::warning::companion main discovery tests failed (non-blocking)"
+          fi
         env:
           COMPANION_SRC: ${{ github.workspace }}/companion-src
 
@@ -180,6 +303,7 @@ jobs:
     if: always()
     needs:
       - lint
+      - deadcode
       - test-unit
       - test-integration
       - test-companion
@@ -190,6 +314,7 @@ jobs:
         run: |
           declare -A results=(
             [lint]="${{ needs.lint.result }}"
+            [deadcode]="${{ needs.deadcode.result }}"
             [test-unit]="${{ needs.test-unit.result }}"
             [test-integration]="${{ needs.test-integration.result }}"
             [test-companion]="${{ needs.test-companion.result }}"

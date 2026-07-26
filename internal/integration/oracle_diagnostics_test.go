@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -245,7 +246,7 @@ func TestCCLsMatchesHACustomIntegrations(t *testing.T) {
 		}
 		checkedPhantom = true
 		phantomDomain := strings.TrimPrefix(s.EntityID, "update.")
-		if slicesContains(got, phantomDomain) && !slicesContains(want, phantomDomain) {
+		if slices.Contains(got, phantomDomain) && !slices.Contains(want, phantomDomain) {
 			t.Errorf("cc ls invented %q as a custom component from %s (a built-in integration's update entity, "+
 				"per HA's own manifest/list)", phantomDomain, s.EntityID)
 		}
@@ -354,14 +355,4 @@ func TestLogShowJSONParses(t *testing.T) {
 	if shown["id"] != id {
 		t.Errorf("log show --json id = %v, want %q", shown["id"], id)
 	}
-}
-
-// slicesContains is a tiny local helper.
-func slicesContains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
