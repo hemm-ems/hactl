@@ -387,9 +387,26 @@ func TestStore_TrimLogs_NoFile(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	// No log file written — should be a no-op
+	// No log file written — should be a no-op, and a no-op leaves no file
+	// behind. Tolerating ENOENT and creating an empty ring buffer are both
+	// "returned nil"; only the second would make LogSize report a cache that
+	// was never refreshed.
 	if trimErr := store.TrimLogs(); trimErr != nil {
 		t.Fatalf("TrimLogs on non-existent file failed: %v", trimErr)
+	}
+	size, err := store.LogSize()
+	if err != nil {
+		t.Fatalf("LogSize after TrimLogs: %v", err)
+	}
+	if size != 0 {
+		t.Errorf("TrimLogs on a missing log file produced a %d-byte file", size)
+	}
+	data, err := store.ReadLogs()
+	if err != nil {
+		t.Fatalf("ReadLogs after TrimLogs: %v", err)
+	}
+	if data != "" {
+		t.Errorf("TrimLogs on a missing log file invented content: %q", data)
 	}
 }
 
@@ -471,9 +488,34 @@ func TestStore_ClearLogs_NonExistent(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Clearing non-existent log file should not error
+	// Clearing a non-existent log file should not error, and must leave the
+	// store in the same state a clear always leaves it in: nothing to read.
+	// Then clearing a log that does exist must actually remove it, so the
+	// tolerant ENOENT path above cannot be satisfied by a ClearLogs that
+	// swallows every error and deletes nothing.
 	if clearErr := store.ClearLogs(); clearErr != nil {
 		t.Fatalf("ClearLogs on non-existent file failed: %v", clearErr)
+	}
+	data, err := store.ReadLogs()
+	if err != nil {
+		t.Fatalf("ReadLogs after ClearLogs: %v", err)
+	}
+	if data != "" {
+		t.Errorf("ClearLogs on a missing file left content behind: %q", data)
+	}
+
+	if refreshErr := store.RefreshLogs(ctx, "some log data\n"); refreshErr != nil {
+		t.Fatalf("RefreshLogs: %v", refreshErr)
+	}
+	if clearErr := store.ClearLogs(); clearErr != nil {
+		t.Fatalf("ClearLogs on an existing file failed: %v", clearErr)
+	}
+	data, err = store.ReadLogs()
+	if err != nil {
+		t.Fatalf("ReadLogs after the second ClearLogs: %v", err)
+	}
+	if data != "" {
+		t.Errorf("ClearLogs did not remove the log ring buffer: %q", data)
 	}
 }
 

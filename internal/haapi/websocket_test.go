@@ -672,7 +672,12 @@ func TestWSClient_AreaRegistryCreate(t *testing.T) {
 }
 
 func TestWSClient_AreaRegistryDelete(t *testing.T) {
+	// A delete that reports success without naming the right command and the
+	// right area_id deletes nothing (or the wrong area) while the caller is
+	// told the area is gone.
+	cmds := make(chan map[string]any, 1)
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		cmds <- cmd
 		sendWSResult(t, c, cmd, nil)
 	})
 	defer srv.Close()
@@ -682,6 +687,32 @@ func TestWSClient_AreaRegistryDelete(t *testing.T) {
 
 	if err := ws.AreaRegistryDelete(context.Background(), "kitchen"); err != nil {
 		t.Fatalf("AreaRegistryDelete failed: %v", err)
+	}
+
+	sent := <-cmds
+	if sent["type"] != "config/area_registry/delete" {
+		t.Errorf("command type = %v, want %q", sent["type"], "config/area_registry/delete")
+	}
+	if sent["area_id"] != "kitchen" {
+		t.Errorf("area_id = %v, want %q", sent["area_id"], "kitchen")
+	}
+
+	// The server's refusal is the answer: it must surface, not be swallowed
+	// into a silent success.
+	failSrv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSError(c, cmd, "not_found", "area kitchen does not exist")
+	})
+	defer failSrv.Close()
+
+	failWS := connectWSTest(t, failSrv)
+	defer func() { _ = failWS.Close() }()
+
+	err := failWS.AreaRegistryDelete(context.Background(), "kitchen")
+	if err == nil {
+		t.Fatal("a refused delete was reported as a successful one")
+	}
+	if !strings.Contains(err.Error(), "area kitchen does not exist") {
+		t.Errorf("error = %v, want it to carry the server's message", err)
 	}
 }
 
@@ -711,7 +742,11 @@ func TestWSClient_FloorRegistryCreate(t *testing.T) {
 }
 
 func TestWSClient_FloorRegistryDelete(t *testing.T) {
+	// Same contract as the area delete: the floor_id the caller named has to be
+	// the floor_id on the wire, under the floor (not area) delete command.
+	cmds := make(chan map[string]any, 1)
 	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		cmds <- cmd
 		sendWSResult(t, c, cmd, nil)
 	})
 	defer srv.Close()
@@ -721,6 +756,30 @@ func TestWSClient_FloorRegistryDelete(t *testing.T) {
 
 	if err := ws.FloorRegistryDelete(context.Background(), "ground"); err != nil {
 		t.Fatalf("FloorRegistryDelete failed: %v", err)
+	}
+
+	sent := <-cmds
+	if sent["type"] != "config/floor_registry/delete" {
+		t.Errorf("command type = %v, want %q", sent["type"], "config/floor_registry/delete")
+	}
+	if sent["floor_id"] != "ground" {
+		t.Errorf("floor_id = %v, want %q", sent["floor_id"], "ground")
+	}
+
+	failSrv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSError(c, cmd, "not_found", "floor ground does not exist")
+	})
+	defer failSrv.Close()
+
+	failWS := connectWSTest(t, failSrv)
+	defer func() { _ = failWS.Close() }()
+
+	err := failWS.FloorRegistryDelete(context.Background(), "ground")
+	if err == nil {
+		t.Fatal("a refused delete was reported as a successful one")
+	}
+	if !strings.Contains(err.Error(), "floor ground does not exist") {
+		t.Errorf("error = %v, want it to carry the server's message", err)
 	}
 }
 
@@ -911,11 +970,40 @@ func TestWSClient_ValidateConfig_Failure(t *testing.T) {
 }
 
 func TestWSClient_Close_Unconnected(t *testing.T) {
-	ws := NewWSClient("http://localhost:9999", "tok")
-	// Close before connecting should not panic
-	err := ws.Close()
-	if err != nil {
+	// Every command path defers Close, including the ones that bail out before
+	// Connect. Closing a client that never dialled has to be a no-op: report
+	// success, leave no connection behind, and leave the client usable.
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSResult(t, c, cmd, AreaEntry{AreaID: "kitchen", Name: "Kitchen"})
+	})
+	defer srv.Close()
+
+	wsURL := "http" + strings.TrimPrefix(srv.URL, "http")
+	ws := NewWSClient(wsURL, "tok")
+
+	if err := ws.Close(); err != nil {
 		t.Errorf("Close unconnected = %v, want nil", err)
+	}
+	if ws.conn != nil {
+		t.Errorf("conn = %v after closing an unconnected client, want nil", ws.conn)
+	}
+	// Idempotent: a second deferred Close must not start erroring either.
+	if err := ws.Close(); err != nil {
+		t.Errorf("second Close unconnected = %v, want nil", err)
+	}
+
+	// Post-state: the premature Close must not have left the client unusable.
+	if err := ws.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect after a premature Close failed: %v", err)
+	}
+	defer func() { _ = ws.Close() }()
+
+	entry, err := ws.AreaRegistryCreate(context.Background(), "Kitchen", "", "")
+	if err != nil {
+		t.Fatalf("command after a premature Close failed: %v", err)
+	}
+	if entry.AreaID != "kitchen" {
+		t.Errorf("AreaID = %q, want %q", entry.AreaID, "kitchen")
 	}
 }
 

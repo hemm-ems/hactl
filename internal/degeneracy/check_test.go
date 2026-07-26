@@ -168,12 +168,34 @@ func TestCheck_TerminatesOnASelfReferentialType(t *testing.T) {
 }
 
 func TestCheck_IgnoresNilAndUntypedNil(t *testing.T) {
+	// "Absent" and "present but identity-less" are different classifications.
+	// A caller that got nothing back has no record to be missing an id, so
+	// neither nil shape may be reported.
 	if err := degeneracy.Check("nothing", nil); err != nil {
 		t.Errorf("a nil payload is not a degenerate decode: %v", err)
 	}
 	var nilPtr *record
 	if err := degeneracy.Check("nothing", nilPtr); err != nil {
 		t.Errorf("a nil pointer is not a degenerate decode: %v", err)
+	}
+	var nilSlice []record
+	if err := degeneracy.Check("nothing", &nilSlice); err != nil {
+		t.Errorf("a nil slice is not a degenerate decode: %v", err)
+	}
+
+	// The positive control: the same source, one field of nesting away from
+	// those nils, still has to be classified degenerate — and with the sentinel
+	// callers branch on. Without this, silencing Check entirely would pass.
+	present := &record{}
+	err := degeneracy.Check("nothing", present)
+	if err == nil {
+		t.Fatal("a present record with no id was classified as a real answer")
+	}
+	if !errors.Is(err, degeneracy.ErrDegenerate) {
+		t.Errorf("Check error = %v, want it to wrap ErrDegenerate", err)
+	}
+	if present.ID != degeneracy.Marker {
+		t.Errorf("ID = %q, want the poison marker %q", present.ID, degeneracy.Marker)
 	}
 }
 

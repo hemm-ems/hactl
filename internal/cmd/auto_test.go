@@ -136,23 +136,44 @@ func TestShortenStep(t *testing.T) {
 	}
 }
 
+// TestIsTraceError pins how a run is judged failed, and what `auto ls` prints
+// for it.
+//
+// The body of this test used to be a table, a t.Run per row, and an empty
+// closure carrying a comment about a circular import that does not exist — this
+// file imports haapi twenty lines further down. So the four cases were declared
+// and never run: the test named after the function never called it. It now
+// covers isTraceError and the traceResult rendering it feeds, including the
+// row (`empty`) that the single-case tests below never reached.
 func TestIsTraceError(t *testing.T) {
 	tests := []struct {
-		name   string
-		exec   string
-		errMsg string
-		want   bool
+		name       string
+		exec       string
+		errMsg     string
+		state      string
+		want       bool
+		wantResult string
 	}{
-		{"error execution", "error", "", true},
-		{"error message", "finished", "some error", true},
-		{"ok", "finished", "", false},
-		{"empty", "", "", false},
+		{"error execution", "error", "", "stopped", true, "error"},
+		// An execution HA called finished is still a failure when it carries an
+		// error message. Losing this row is how a failing automation renders as
+		// a clean run.
+		{"error message", "finished", "some error", "stopped", true, "error"},
+		{"ok", "finished", "", "stopped", false, "finished"},
+		// No script_execution at all: the entity state is the only thing left
+		// to report, and it must not be spelled "error".
+		{"empty", "", "", "stopped", false, "stopped"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// We can't directly import haapi here without circular dep,
-			// but isTraceError is in the same package, so we test it via traceResult
+			tr := haapi.TraceSummary{Execution: tt.exec, Error: tt.errMsg, State: tt.state}
+			if got := isTraceError(tr); got != tt.want {
+				t.Errorf("isTraceError(%+v) = %v, want %v", tr, got, tt.want)
+			}
+			if got := traceResult(tr); got != tt.wantResult {
+				t.Errorf("traceResult(%+v) = %q, want %q", tr, got, tt.wantResult)
+			}
 		})
 	}
 }

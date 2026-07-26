@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -235,8 +236,14 @@ func TestOpenTS_CreatesDir(t *testing.T) {
 	}
 	defer func() { _ = ts.Close() }()
 
-	// Check cache dir exists
-	if _, statErr := os.Stat(dir + "/cache"); statErr != nil {
-		t.Errorf("cache dir not created: %v", statErr)
+	// A file at that path also makes os.Stat succeed, and would break the next
+	// OpenTS rather than this one — so what is checked is that the cache path
+	// is a directory, not merely that something is there.
+	info, statErr := os.Stat(filepath.Join(dir, "cache"))
+	if statErr != nil {
+		t.Fatalf("cache dir not created: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Errorf("cache path is a %s, want a directory", info.Mode().Type())
 	}
 }

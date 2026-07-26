@@ -3,6 +3,7 @@ package ids
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,9 +102,32 @@ func TestSaveAndLoad(t *testing.T) {
 }
 
 func TestLoad_NoFile(t *testing.T) {
-	reg := NewRegistry(filepath.Join(t.TempDir(), "nonexistent", "ids.json"))
+	path := filepath.Join(t.TempDir(), "nonexistent", "ids.json")
+	reg := NewRegistry(path)
 	if err := reg.Load(); err != nil {
 		t.Fatalf("Load on missing file should not error: %v", err)
+	}
+
+	// A first run has no ids file. Load must swallow only ENOENT — and it must
+	// leave a *usable empty* registry behind, not a half-initialised one: the
+	// maps a later GetOrCreate writes into are allocated by NewRegistry and a
+	// Load that replaced them with a nil map would panic on the first ID.
+	if _, ok := reg.Resolve("trc:00"); ok {
+		t.Error("Resolve on a registry loaded from no file claimed to know an ID")
+	}
+	id := reg.GetOrCreate("trc", "first_key")
+	if !strings.HasPrefix(id, "trc:") {
+		t.Errorf("GetOrCreate after an empty Load = %q, want a trc:-prefixed ID", id)
+	}
+	key, ok := reg.Resolve(id)
+	if !ok || key != "first_key" {
+		t.Errorf("Resolve(%q) = (%q, %v), want (%q, true)", id, key, ok, "first_key")
+	}
+
+	// Load reads; it does not create. A Load that wrote the file (or its parent
+	// directory) would leave state on disk for a command that only looked.
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("os.Stat(%q) after Load = %v, want a not-exist error", path, statErr)
 	}
 }
 

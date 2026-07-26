@@ -195,10 +195,30 @@ func TestRenderLogEntriesSimple_Basic(t *testing.T) {
 	}
 }
 
+// TestRenderLogEntriesSimple_Empty pins what "nothing to show" looks like: the
+// column header and not one line more. A renderer that emitted a blank data row
+// for an empty slice reads to a caller as one log entry with no content, which
+// is the degenerate answer H-7 exists to forbid — and it returns nil either way,
+// so the old body could not tell the two apart.
 func TestRenderLogEntriesSimple_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	if err := renderLogEntriesSimple(&buf, nil); err != nil {
 		t.Fatalf("renderLogEntriesSimple(nil) failed: %v", err)
+	}
+	assertHeaderOnly(t, buf.String(), "time", "level", "component", "message")
+}
+
+// assertHeaderOnly requires out to be exactly one line, naming every column.
+func assertHeaderOnly(t *testing.T, out string, columns ...string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("empty listing rendered %d lines, want only the header:\n%s", len(lines), out)
+	}
+	for _, c := range columns {
+		if !strings.Contains(lines[0], c) {
+			t.Errorf("header %q is missing column %q", lines[0], c)
+		}
 	}
 }
 
@@ -226,6 +246,7 @@ func TestRenderDedupedLogs_Empty(t *testing.T) {
 	if err := renderDedupedLogs(&buf, nil); err != nil {
 		t.Fatalf("renderDedupedLogs(nil) failed: %v", err)
 	}
+	assertHeaderOnly(t, buf.String(), "count", "level", "component", "first_seen", "last_seen", "message")
 }
 
 // --- buildScriptRows ---
@@ -431,20 +452,42 @@ func TestRenderStateAnomalies_NoAnomalies(t *testing.T) {
 	}
 }
 
+// TestRenderStateAnomalies_WithStuck exercises the threshold from both sides.
+//
+// The old body asserted nothing, and its fixture would not have reached the
+// branch it is named after even if it had: it used an 8h stuck run against a
+// 24h threshold, guessing in a comment that the constant "is likely 4+ hours".
+// The durations are now derived from defaultStateStuckDuration, so the case
+// cannot drift away from the boundary it is supposed to sit on.
 func TestRenderStateAnomalies_WithStuck(t *testing.T) {
-	// Duration >= defaultStateStuckDuration → anomaly
-	// defaultStateStuckDuration is likely 4+ hours
-	changes := []analyze.StateChange{
-		{Time: time.Now().Add(-10 * time.Hour), State: "on", Duration: 8 * time.Hour},
+	render := func(t *testing.T, d time.Duration) string {
+		t.Helper()
+		changes := []analyze.StateChange{
+			{Time: time.Now().Add(-2 * defaultStateStuckDuration), State: "on", Duration: d},
+		}
+		var buf bytes.Buffer
+		if err := renderStateAnomalies(&buf, "binary_sensor.door", t.TempDir(), changes); err != nil {
+			t.Fatalf("renderStateAnomalies(%s) failed: %v", d, err)
+		}
+		return buf.String()
 	}
 
-	var buf bytes.Buffer
-	dir := t.TempDir()
-	if err := renderStateAnomalies(&buf, "binary_sensor.door", dir, changes); err != nil {
-		t.Fatalf("renderStateAnomalies with stuck failed: %v", err)
+	// The comparison is `>=`, so the threshold itself is an anomaly.
+	out := render(t, defaultStateStuckDuration)
+	if !strings.Contains(out, "binary_sensor.door: 1 anomalies") {
+		t.Errorf("a %s stuck run was not reported as an anomaly:\n%s", defaultStateStuckDuration, out)
 	}
-	// If there's a stuck anomaly it should show it, otherwise 'no anomalies'
-	// Either way, should not error
+	for _, want := range []string{string(analyze.AnomalyStuck), `stuck "on"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("anomaly output does not name %q:\n%s", want, out)
+		}
+	}
+
+	// One tick under it is not, which is what stops a renderer that flags
+	// everything from satisfying the half above.
+	if out := render(t, defaultStateStuckDuration-time.Nanosecond); !strings.Contains(out, "no anomalies") {
+		t.Errorf("a run one tick under %s was reported as an anomaly:\n%s", defaultStateStuckDuration, out)
+	}
 }
 
 // --- renderHistoryPoints ---

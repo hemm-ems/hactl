@@ -30,20 +30,40 @@ func TestGetConfig_Success(t *testing.T) {
 }
 
 func TestGetConfig_AuthHeader(t *testing.T) {
+	// What reached the wire, captured over a channel so -race sees the
+	// happens-before edge between the handler and the assertions below.
+	type seen struct{ auth, method, path string }
+	seenCh := make(chan seen, 1)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := r.Header.Get("Authorization")
-		if got != "Bearer test-token" {
-			http.Error(w, "bad auth", http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+		seenCh <- seen{auth: r.Header.Get("Authorization"), method: r.Method, path: r.URL.Path}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"version":"2025.1"}`)
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL, "test-token")
-	_, err := c.GetConfig(context.Background())
+	body, err := c.GetConfig(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got seen
+	select {
+	case got = <-seenCh:
+	default:
+		t.Fatal("server was never called")
+	}
+	// The token has to arrive as a bearer credential: no header, or the bare
+	// token without the scheme, is a 401 from real HA.
+	if got.auth != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want %q", got.auth, "Bearer test-token")
+	}
+	if got.method != http.MethodGet || got.path != "/api/config" {
+		t.Errorf("request = %s %s, want GET /api/config", got.method, got.path)
+	}
+	if want := `{"version":"2025.1"}`; string(body) != want {
+		t.Errorf("body = %q, want %q", string(body), want)
 	}
 }
 
