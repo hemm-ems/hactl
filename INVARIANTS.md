@@ -630,3 +630,51 @@ series at test time (count, min, max, mean, span).
   (bucket averaging, and empty buckets omitted rather than rendered as a zero
   reading the recorder never held). The rig itself is
   `internal/hatest/recorder.go`.
+
+## H-16 — An answer is a function of the instance, never of map iteration order
+
+Two invocations of a read command against an unchanged Home Assistant MUST
+produce byte-identical output. Where a command assembles its answer from several
+sources — and especially where any of them walks a Go map — the assembled result
+MUST be made canonical before rendering, by a comparator that is a **total**
+order over everything that distinguishes two rows. Rendering MUST NOT be the
+place ordering is decided.
+
+`ent related` is the case that named the rule. It concatenates rows from four
+sources: the companion's config/YAML scan, `findDeviceSiblings` and
+`findAreaNeighbors` — both of which range over `registryContext.entityByID`, a
+map whose iteration order the Go runtime randomises on purpose — and
+`findGroupMemberships`. `format.Table` renders rows in slice order and re-sorts
+nothing. Only `dedupeAndSortRelated` stands between a randomised walk and the
+user's terminal, and it is load-bearing in a way that is easy to lose: it dedups
+on the whole `relatedEntry` struct and then sorts on all three of its fields, so
+no two surviving rows can compare equal and the unstable `sort.Slice` cannot
+choose between them. Weaken the comparator to `entityID` alone — the obvious
+"tidy-up" — and two device-siblings of the same entity start swapping places
+between runs.
+
+Nothing in the suite watched for this. Every content assertion on `ent related`
+is a substring check that passes on any permutation, so a reordering was
+invisible; and the one test that ran the command twice spent its second run
+asserting a wall-clock ceiling (`cold <=10s`, `warm <=3s`) against a command that
+has no cache, which measured process start-up and the machine's load and nothing
+about the answer. Determinism is what repeating a command can actually prove.
+
+The unit half of the enforcement is deliberate, not belt-and-braces: the
+companion tier's fixture entity is absent from HA's registry, so at that tier the
+graph comes entirely from the companion and the two map-walking sources
+contribute no rows. The E2E check therefore pins the renderer and the companion
+half; the map-iteration half is only pinned where it can be pinned on every
+machine without Docker.
+
+- Enforced by: `internal/cmd/pure_test.go`,
+  `TestDedupeAndSortRelated_Canonical` (all 120 permutations of a five-row set
+  that includes rows differing only in `relationship` and only in `detail`, so a
+  first-field-only comparator fails) and
+  `TestDedupeAndSortRelated_DropsExactDuplicates` — `make test`; plus
+  `internal/companiontest/e2e_test.go`,
+  `TestE2EEntRelatedCompanionGraphCLI`, which drives the real binary against a
+  real HA and a real companion three times and requires stdout to be identical
+  across runs — `make test-companion` (Docker tier). The comparison is over
+  stdout alone because hactl's slog handler stamps every stderr line with
+  `time=`.
