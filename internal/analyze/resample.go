@@ -38,10 +38,17 @@ func Resample(points []DataPoint, targetPoints int) []DataPoint {
 	for b := range targetPoints {
 		bStart := start.Add(time.Duration(b) * bucketDur)
 		bEnd := bStart.Add(bucketDur)
+		// The last bucket is closed at its upper end. Buckets are otherwise
+		// half-open, and `end` is by construction the timestamp of the final
+		// point, so a half-open last bucket would drop that point from every
+		// series it is ever handed. Integer division of the span can also leave
+		// a remainder past the last bStart+bucketDur, so the final bucket takes
+		// everything that is left rather than just the boundary sample.
+		last := b == targetPoints-1
 
 		sum := 0.0
 		count := 0
-		for pi < len(points) && points[pi].Time.Before(bEnd) {
+		for pi < len(points) && (last || points[pi].Time.Before(bEnd)) {
 			sum += points[pi].Value
 			count++
 			pi++
