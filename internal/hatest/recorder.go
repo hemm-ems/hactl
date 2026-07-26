@@ -73,6 +73,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -171,6 +172,20 @@ func (i *Instance) Backfill(ctx context.Context, series ...Series) error {
 		return err
 	}
 
+	// Linux bind mounts do not remap ownership (macOS Docker Desktop's do — see
+	// reownRecorderFiles), so on every Linux CI runner these files are root-owned
+	// at this point, from HA's own writes as the container's root user. This
+	// process is not root and has no way to chmod/chown them; it takes ownership
+	// of the directory entries instead, which needs no privilege at all.
+	if err := reownRecorderFiles(dbPath); err != nil {
+		// Same as the backfillDB failure below: restart the container so a
+		// t.Fatal'ing caller still has an instance to inspect and tear down.
+		if startErr := i.restartAfterBackfill(ctx); startErr != nil {
+			return fmt.Errorf("%w (and restarting the container afterwards failed: %w)", err, startErr)
+		}
+		return err
+	}
+
 	rows, err := backfillDB(ctx, dbPath, series)
 	if err != nil {
 		// Leave the instance running even when the write failed: a caller that
@@ -246,6 +261,96 @@ func (i *Instance) restartAfterBackfill(ctx context.Context) error {
 		return fmt.Errorf("hatest: HA did not come back up after backfill: %w", err)
 	}
 	slog.Info("hatest: HA running again after backfill", "url", i.url)
+	return nil
+}
+
+// reownRecorderFiles replaces the recorder database and its WAL/SHM sidecars
+// with host-owned copies, so that backfillDB's read/write open of dbPath does
+// not fail with SQLITE_READONLY.
+//
+// Whether this is needed at all depends on how the container runtime's bind
+// mount maps ownership across the host/container boundary, and that differs
+// by OS. HA always writes these files as the container's root user. On macOS,
+// Docker Desktop's bind mount is a virtiofs/gRPC-FUSE share into a Linux VM
+// that remaps ownership to the host user crossing that boundary, so the files
+// already appear host-owned outside the container — this function still runs
+// there, it just replaces each file with an identical copy of itself. On
+// Linux, the container shares the host kernel and the bind mount does no such
+// remapping: a file HA created as root is root-owned, mode 0644, on the host
+// too, and a non-root test process cannot open it read/write.
+//
+// Fixing that needs no privilege, because ownership is a property of the
+// inode but unlink() and rename() only consult the permissions of the
+// containing *directory* — never who owns the entry being replaced or
+// removed. copyFixtureToTemp's os.MkdirTemp directory is 0700 and owned by
+// this process, so it can read the root-owned file, write a host-owned copy
+// next to it, and atomically rename the copy over the original: the
+// directory entry ends up host-owned even though the original inode's
+// permissions were never touched, and could not have been, without root.
+//
+// Sidecar files are handled the same way but are optional: a clean SIGTERM
+// shutdown checkpoints the WAL and HA may not recreate -wal/-shm until it
+// reopens the database, so their absence here is expected, not an error.
+func reownRecorderFiles(dbPath string) error {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := reownFile(dbPath + suffix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reownFile replaces path with a host-owned copy of itself: read the
+// existing bytes, write them to a temp file in the same directory (so the
+// rename below is on one filesystem and therefore atomic), then rename the
+// temp file over path. Writing temp-then-rename, rather than truncating and
+// rewriting path in place, means a crash or failed copy leaves the original
+// file exactly as it was instead of leaving HA's database half-written. A
+// missing file is not an error — see reownRecorderFiles on -wal/-shm.
+func reownFile(path string) (err error) {
+	src, openErr := os.Open(path) //nolint:gosec // path is dbPath (+ a fixed -wal/-shm suffix) inside the instance's own configDir, not user input
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
+			return nil
+		}
+		return fmt.Errorf("hatest: opening %s to take ownership before backfill: %w", path, openErr)
+	}
+	defer src.Close() //nolint:errcheck // read-only handle
+
+	info, statErr := src.Stat()
+	if statErr != nil {
+		return fmt.Errorf("hatest: statting %s: %w", path, statErr)
+	}
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".reown-*")
+	if err != nil {
+		return fmt.Errorf("hatest: creating host-owned copy of %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if err != nil {
+			os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup after a failed copy
+		}
+	}()
+
+	if _, err = io.Copy(tmp, src); err != nil {
+		tmp.Close() //nolint:errcheck // already failing; the temp file is discarded above
+		return fmt.Errorf("hatest: copying %s to a host-owned temp file: %w", path, err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("hatest: closing host-owned copy of %s: %w", path, err)
+	}
+	// Match the original file's mode. It does not have to be writable by us —
+	// we already own the copy, and root inside the container ignores
+	// permission bits on its own writes after the restart — but there is no
+	// reason to diverge from what HA itself would have written.
+	if err = os.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("hatest: matching permissions of %s: %w", path, err)
+	}
+	if err = os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("hatest: replacing %s with a host-owned copy: %w", path, err)
+	}
 	return nil
 }
 
