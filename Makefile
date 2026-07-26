@@ -12,8 +12,8 @@ COMPANION_DIR  ?= ../hactl-companion
 COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
-.PHONY: build lint test test-int test-companion test-int-discovery test-matrix \
-        gates require-docker hooks hooks-check clean sync-spec check-spec-drift
+.PHONY: build lint test test-assert-floor test-int test-companion test-int-discovery \
+        test-matrix gates require-docker hooks hooks-check clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -35,6 +35,18 @@ test:
 	@echo "      It is a fast sanity check, never acceptance. Run 'make gates' before you call anything done."
 	go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic
 
+# test-assert-floor — H-19, the assertion floor. It parses every test file in
+# every tier from disk (so the build-tag-gated Docker tiers are covered too) and
+# fails any test that can only fail by crashing. It needs no Docker and no HA.
+#
+# `make test` already reaches it as one package among ./... . It is named here
+# anyway, and named before the tiers it judges, so that the rule is wired on
+# purpose: the floor is what stops a new "run the command, discard the answer"
+# test from being added, and that must not depend on nobody ever narrowing what
+# the unit tier compiles.
+test-assert-floor:
+	go test ./internal/testaudit/... -count=1
+
 # ---------------------------------------------------------------------------
 # gates — the ONLY definition of "done".
 #
@@ -48,11 +60,11 @@ test:
 # There is deliberately no way to mark a Docker tier optional. If Docker is not
 # running, this fails loudly rather than silently narrowing what was verified.
 # ---------------------------------------------------------------------------
-gates: require-docker lint test test-int test-companion test-int-discovery
+gates: require-docker lint test-assert-floor test test-int test-companion test-int-discovery
 	@echo
 	@echo "================================================================"
-	@echo " ALL GATES GREEN — lint + unit + integration + companion +"
-	@echo " discovery, every Docker tier included."
+	@echo " ALL GATES GREEN — lint + assertion floor + unit + integration +"
+	@echo " companion + discovery, every Docker tier included."
 	@echo "================================================================"
 
 require-docker:

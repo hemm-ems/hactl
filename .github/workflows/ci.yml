@@ -34,6 +34,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      # The assertion floor (H-19) judges the tagged Docker tiers too, from
+      # source, so it is worth its own red X rather than being buried in the
+      # unit tier's output.
+      - run: make test-assert-floor
       - run: make test
       - name: Check coverage threshold
         run: |
