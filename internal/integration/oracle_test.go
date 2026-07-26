@@ -275,6 +275,23 @@ func exerciseOracleRig(t *testing.T, inst *hatest.Instance) {
 		toggle("input_boolean.oracle_trigger_a")
 		toggle("input_boolean.oracle_trigger_b")
 	}
+
+	// H-18: cfgid_gated_charge gets BOTH outcomes in the same window — three
+	// triggers while its gate is shut (HA traces them as failed_conditions and
+	// never writes a logbook entry), then two with the gate open (real runs).
+	// trigger_c is its own trigger so the counts of every other automation stay
+	// exactly what they were.
+	for range 3 {
+		toggle("input_boolean.oracle_trigger_c")
+	}
+	if err := client.CallService(ctx, "input_boolean", "turn_on",
+		map[string]any{"entity_id": "input_boolean.oracle_gate"}); err != nil {
+		t.Fatalf("open input_boolean.oracle_gate: %v", err)
+	}
+	time.Sleep(600 * time.Millisecond)
+	for range 2 {
+		toggle("input_boolean.oracle_trigger_c")
+	}
 	for range 2 {
 		if err := client.CallService(ctx, "script", "turn_on",
 			map[string]any{"entity_id": "script.oracle_script_broken"}); err != nil {
@@ -401,6 +418,85 @@ func oracleCustomIntegrations(t *testing.T, inst *hatest.Instance) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// oracleAutomationConfigIDs returns HA's own entity_id -> config `id:` map for
+// every automation it holds, read from /api/states (HA surfaces the config id
+// as attributes.id). Automations without an `id:` are omitted — they have no
+// config id to be addressed by.
+func oracleAutomationConfigIDs(t *testing.T, inst *hatest.Instance) map[string]string {
+	t.Helper()
+	client := haapi.New(inst.URL(), inst.Token())
+	raw, err := client.GetStates(context.Background())
+	if err != nil {
+		t.Fatalf("oracle get states: %v", err)
+	}
+	var states []struct {
+		EntityID   string `json:"entity_id"`
+		Attributes struct {
+			ID string `json:"id"`
+		} `json:"attributes"`
+	}
+	if err := json.Unmarshal(raw, &states); err != nil {
+		t.Fatalf("oracle decode states: %v", err)
+	}
+	out := map[string]string{}
+	for _, s := range states {
+		if strings.HasPrefix(s.EntityID, "automation.") && s.Attributes.ID != "" {
+			out[s.EntityID] = s.Attributes.ID
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("oracle: HA reports no automation carrying a config id")
+	}
+	return out
+}
+
+// oracleTracesFor returns every trace HA holds for one item, exactly as HA
+// reports it — including the `script_execution` word that says how the run
+// ended. HA keys the map "<domain>.<item_id>" and item_id is the config id for
+// automations (H-9).
+func oracleTracesFor(t *testing.T, inst *hatest.Instance, domain, itemID string) []haapi.TraceSummary {
+	t.Helper()
+	ws := oracleWS(t, inst)
+	res, err := ws.TraceList(context.Background(), domain)
+	if err != nil {
+		t.Fatalf("oracle trace/list %s: %v", domain, err)
+	}
+	return res[domain+"."+itemID]
+}
+
+// oracleLogbookRunCount returns how many times HA's OWN logbook says an
+// automation ran inside the window.
+//
+// This is the independent half of the H-18 reconciliation: HA writes exactly
+// one automation-domain logbook entry per run, and it writes that entry after
+// the conditions are evaluated — so a trigger the conditions blocked is traced
+// but never logged. Reading it through /api/logbook/<period>?entity= (the
+// filtered endpoint hactl never calls) keeps the oracle off hactl's own path.
+func oracleLogbookRunCount(t *testing.T, inst *hatest.Instance, entityID string, since time.Duration) int {
+	t.Helper()
+	client := haapi.New(inst.URL(), inst.Token())
+	now := time.Now()
+	raw, err := client.GetLogbookFiltered(context.Background(),
+		now.Add(-since).Format(time.RFC3339), now.Format(time.RFC3339), entityID)
+	if err != nil {
+		t.Fatalf("oracle logbook for %s: %v", entityID, err)
+	}
+	var entries []struct {
+		EntityID string `json:"entity_id"`
+		Domain   string `json:"domain"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("oracle decode logbook for %s: %v", entityID, err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Domain == "automation" && e.EntityID == entityID {
+			n++
+		}
+	}
+	return n
 }
 
 // oracleLogNames returns HA's full logger names and their occurrence counts.

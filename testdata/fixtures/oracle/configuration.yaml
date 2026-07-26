@@ -40,8 +40,14 @@ input_boolean:
     name: Oracle Trigger A
   oracle_trigger_b:
     name: Oracle Trigger B
+  oracle_trigger_c:
+    name: Oracle Trigger C
   oracle_never:
     name: Oracle Never
+  # H-18: the gate cfgid_gated_charge's condition reads. Off for the first
+  # triggers (blocked, traced, never logged), on for the last ones (real runs).
+  oracle_gate:
+    name: Oracle Gate
 
 input_number:
   oracle_level:

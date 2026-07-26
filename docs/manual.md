@@ -171,7 +171,7 @@ hactl changes --since 24h     # logbook: what changed recently (state changes, a
 ```bash
 hactl auto ls                             # table: id, state, area, labels, runs_24h, errors, last_err
 hactl auto ls --failing                   # only automations with recent errors
-hactl auto ls --pattern 'ess_*'           # glob/substring filter on automation ID
+hactl auto ls --pattern 'ess_*'           # glob/substring on object id, entity_id or config id
 hactl auto ls --label victron             # filter by label name (substring)
 hactl auto ls --restored                  # only "ghost" automations (restored from registry, no live config)
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
@@ -179,6 +179,17 @@ hactl auto cat climate_schedule           # the automation's remote YAML, verbat
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
 hactl trace show trc:a7 --full            # raw trace JSON
 ```
+
+`runs_24h` counts **runs**, not triggers: a trigger whose conditions blocked it never
+entered the actions and is not a run, so it does not count here — it appears in
+`auto show`'s trace table as a row with `result: failed_conditions`. An errored run is
+still a run and is counted, with the failure reported in `errors`. The two commands
+therefore reconcile: `runs_24h` equals the trace rows `auto show` does *not* mark
+`failed_conditions` (exactly, whenever HA still stores the automation's whole history —
+it keeps the last 5 per automation by default, while `runs_24h` comes from the logbook,
+which is not capped). `script ls`'s `runs_24h` is a plain count of invocations: a script
+has no gate between being started and being traced, because its conditions are steps
+inside a sequence that is already executing.
 
 `auto show` summarizes; `auto cat` prints the stored config itself, so it is what
 you feed back into `auto diff -f` / `auto apply -f`. It accepts the config `id:`,
@@ -641,7 +652,8 @@ hactl script ls --pattern kino
 hactl ent ls --pattern 'sensor.wp_*'
 ```
 
-Pattern with `*` or `?` → glob. Otherwise → case-sensitive substring.
+Pattern with `*` or `?` → glob. Otherwise → case-sensitive substring. For automations
+`auto ls` and `ent ls` also match the config `id:` that `auto show` prints.
 
 `ent ls` also accepts three additional independent filters — combine freely:
 

@@ -174,6 +174,70 @@ func TestFilterEntitiesByPattern(t *testing.T) {
 	}
 }
 
+// TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints pins invariant H-17
+// on `ent ls`: an identifier hactl prints for a resource is an identifier every
+// hactl filter accepts for it.
+//
+// HA carries an automation's config `id:` as attributes.id; `auto show --json`
+// prints it as config_id, `auto create` prints it as the id it just wrote, and
+// `auto cat`/`diff`/`apply` require it. The manual routes a caller who cannot
+// find something to `ent ls --pattern` — which used to match entity_id only, so
+// pasting that config id there returned nothing, which reads as "no such
+// entity" (D6/R2).
+func TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints(t *testing.T) {
+	// The config id and the entity_id are independent strings — HA's UI mints a
+	// millisecond timestamp for the former and slugifies the alias for the
+	// latter — so the fixture keeps them apart (TC-4).
+	states := []entityState{
+		{EntityID: "automation.morning_alarm", Attributes: map[string]any{"id": "1678886400123"}},
+		{EntityID: "automation.evening_scene", Attributes: map[string]any{"id": "cfgid_evening"}},
+		{EntityID: "automation.legacy_yaml"}, // no config id at all
+		// A different domain that also carries an `id` attribute. hactl never
+		// prints it as this entity's identifier, so it must not become one.
+		{EntityID: "sensor.thermostat", Attributes: map[string]any{"id": "1678886400123"}},
+	}
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    []string
+	}{
+		{"exact config id", "1678886400123", []string{"automation.morning_alarm"}},
+		{"glob over config ids", "cfgid_*", []string{"automation.evening_scene"}},
+		{"entity_id still matches", "automation.legacy_*", []string{"automation.legacy_yaml"}},
+		{"config id that exists nowhere", "cfgid_absent", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterEntitiesByPattern(states, tt.pattern)
+			got := make([]string, 0, len(result))
+			for _, s := range result {
+				got = append(got, s.EntityID)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("filterEntitiesByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("filterEntitiesByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestFilterEntitiesByPattern_MatchesEachEntityOnce guards the shape of the fix:
+// an entity whose entity_id AND config id both match must still be one row.
+func TestFilterEntitiesByPattern_MatchesEachEntityOnce(t *testing.T) {
+	states := []entityState{
+		{EntityID: "automation.cfgid_same", Attributes: map[string]any{"id": "cfgid_same"}},
+	}
+	if got := filterEntitiesByPattern(states, "*cfgid_same*"); len(got) != 1 {
+		t.Errorf("filterEntitiesByPattern returned %d rows for one entity, want 1", len(got))
+	}
+}
+
 func TestFilterEntitiesByDomain(t *testing.T) {
 	states := []entityState{
 		{EntityID: "sensor.wp_vorlauf"},
