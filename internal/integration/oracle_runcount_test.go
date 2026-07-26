@@ -42,6 +42,12 @@ const (
 	// `auto show` renders the last 5 traces, so a reconciliation against its
 	// table is only exact while HA holds no more than that.
 	autoShowTraceLimit = 5
+
+	// The window the column is named after. It is a constant rather than a
+	// parameter on purpose: `runs_24h` answers about 24 hours by definition, so
+	// a helper that took a window would invite a caller to compute a number the
+	// column cannot be reconciled against.
+	runs24hWindow = 24 * time.Hour
 )
 
 // autoLsRuns24h returns hactl's runs_24h column per automation object id.
@@ -70,9 +76,9 @@ func autoLsRuns24h(t *testing.T, dir string) map[string]int {
 // haRunsAndBlocked splits the traces HA holds for one automation inside the
 // window into runs and condition-blocked triggers, using HA's own
 // script_execution word.
-func haRunsAndBlocked(t *testing.T, inst *hatest.Instance, configID string, since time.Duration) (runs, blocked, total int) {
+func haRunsAndBlocked(t *testing.T, inst *hatest.Instance, configID string) (runs, blocked, total int) {
 	t.Helper()
-	cutoff := time.Now().Add(-since)
+	cutoff := time.Now().Add(-runs24hWindow)
 	for _, tr := range oracleTracesFor(t, inst, "automation", configID) {
 		started, err := time.Parse(time.RFC3339Nano, tr.Timestamp.Start)
 		if err != nil || !started.After(cutoff) {
@@ -96,7 +102,7 @@ func haRunsAndBlocked(t *testing.T, inst *hatest.Instance, configID string, sinc
 func TestOracleGatedFixtureHasBothOutcomes(t *testing.T) {
 	inst, _ := getOracleHA(t)
 
-	runs, blocked, total := haRunsAndBlocked(t, inst, oracleGatedConfigID, 24*time.Hour)
+	runs, blocked, total := haRunsAndBlocked(t, inst, oracleGatedConfigID)
 	if runs == 0 || blocked == 0 {
 		t.Fatalf("H-18 fixture lapsed: HA holds %d traces for %s — %d executed, %d blocked by "+
 			"condition. Both must be non-zero, or runs_24h cannot be distinguished from a raw "+
@@ -109,7 +115,7 @@ func TestOracleGatedFixtureHasBothOutcomes(t *testing.T) {
 	}
 
 	// The all-blocked automation is the other end of the axis.
-	runs, blocked, total = haRunsAndBlocked(t, inst, oracleBlockedConfigID, 24*time.Hour)
+	runs, blocked, total = haRunsAndBlocked(t, inst, oracleBlockedConfigID)
 	if blocked == 0 || runs != 0 {
 		t.Fatalf("H-18 fixture lapsed: %s should be blocked on every trigger; HA holds %d traces "+
 			"— %d executed, %d blocked", oracleBlockedConfigID, total, runs, blocked)
@@ -125,16 +131,14 @@ func TestOracleGatedFixtureHasBothOutcomes(t *testing.T) {
 // definition of a run, so the expectation is never hactl's own model of it.
 func TestRuns24hMatchesHAsOwnRunCount(t *testing.T) {
 	inst, _ := getOracleHA(t)
-	const window = 24 * time.Hour
-
 	got := autoLsRuns24h(t, inst.Dir())
 	configIDs := oracleAutomationConfigIDs(t, inst)
 
 	checkedBlocked := 0
 	for entityID, configID := range configIDs {
 		objectID := strings.TrimPrefix(entityID, "automation.")
-		runs, blocked, total := haRunsAndBlocked(t, inst, configID, window)
-		logbook := oracleLogbookRunCount(t, inst, entityID, window)
+		runs, blocked, total := haRunsAndBlocked(t, inst, configID)
+		logbook := oracleLogbookRunCount(t, inst, entityID, runs24hWindow)
 		if blocked > 0 {
 			checkedBlocked++
 		}
@@ -175,14 +179,12 @@ func TestRuns24hMatchesHAsOwnRunCount(t *testing.T) {
 // column, two meanings, depending on the data.
 func TestRuns24hIsZeroWhenEveryTriggerWasBlocked(t *testing.T) {
 	inst, _ := getOracleHA(t)
-	const window = 24 * time.Hour
-
-	runs, blocked, total := haRunsAndBlocked(t, inst, oracleBlockedConfigID, window)
+	runs, blocked, total := haRunsAndBlocked(t, inst, oracleBlockedConfigID)
 	if blocked == 0 {
 		t.Fatalf("precondition: HA holds no condition-blocked trace for %s (%d traces total)",
 			oracleBlockedConfigID, total)
 	}
-	logbook := oracleLogbookRunCount(t, inst, oracleBlockedEntityID, window)
+	logbook := oracleLogbookRunCount(t, inst, oracleBlockedEntityID, runs24hWindow)
 	if logbook != 0 {
 		t.Fatalf("precondition: HA's logbook records %d runs for %s; it should record none",
 			logbook, oracleBlockedEntityID)
@@ -232,14 +234,12 @@ func autoShowTraceResults(t *testing.T, dir, ref string) []string {
 // `auto show` renders, so the reconciliation is exact rather than approximate.
 func TestAutoShowTraceTableReconcilesWithRuns24h(t *testing.T) {
 	inst, _ := getOracleHA(t)
-	const window = 24 * time.Hour
-
 	runs24h := autoLsRuns24h(t, inst.Dir())
 	configIDs := oracleAutomationConfigIDs(t, inst)
 
 	checkedMixed, checkedAllBlocked := 0, 0
 	for entityID, configID := range configIDs {
-		haRuns, haBlocked, haTotal := haRunsAndBlocked(t, inst, configID, window)
+		haRuns, haBlocked, haTotal := haRunsAndBlocked(t, inst, configID)
 		if haTotal == 0 || haTotal > autoShowTraceLimit {
 			// Nothing traced, or more traces than the table shows — the
 			// comparison would be against a different population.
