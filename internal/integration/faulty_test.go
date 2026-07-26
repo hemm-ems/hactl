@@ -89,7 +89,7 @@ func TestFaultyAutoLsFailing(t *testing.T) {
 
 	_, configIDToObject := haAutomations(t, inst)
 	var want []string
-	for _, itemID := range oracleErroredTraceItemIDs(t, inst, "automation") {
+	for _, itemID := range oracleErroredTraceItemIDs(t, inst) {
 		if obj, ok := configIDToObject[itemID]; ok {
 			want = append(want, obj)
 			continue
@@ -141,7 +141,7 @@ func TestFaultyAutoLsShowsDisabled(t *testing.T) {
 		t.Fatalf("auto ls --json did not parse: %v\noutput:\n%s", err, raw)
 	}
 	gotStates := map[string]string{}
-	var gotIDs []string
+	gotIDs := make([]string, 0, len(rows))
 	for _, r := range rows {
 		id, _ := r["id"].(string)
 		state, _ := r["state"].(string)

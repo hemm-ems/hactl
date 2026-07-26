@@ -360,8 +360,13 @@ func oracleTraceItemIDs(t *testing.T, inst *hatest.Instance, domain string) map[
 }
 
 // oracleErroredTraceItemIDs returns the item_ids that have at least one errored run.
-func oracleErroredTraceItemIDs(t *testing.T, inst *hatest.Instance, domain string) []string {
+//
+// The domain is fixed rather than a parameter: every caller has always asked
+// about automations, and HA's trace/list is the only source here that keys by
+// domain, so a parameter no caller varies would only invite a second meaning.
+func oracleErroredTraceItemIDs(t *testing.T, inst *hatest.Instance) []string {
 	t.Helper()
+	const domain = "automation"
 	ws := oracleWS(t, inst)
 	res, err := ws.TraceList(context.Background(), domain)
 	if err != nil {

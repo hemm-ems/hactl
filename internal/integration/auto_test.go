@@ -75,7 +75,7 @@ func autoLsIDs(t *testing.T, raw string) []string {
 // The positive control lives in TestAutoLsFailingMatchesHA (oracle rig, where
 // automations really do fail); a filter needs both to be pinned.
 func TestAutoLsFailing(t *testing.T) {
-	haFailing := oracleErroredTraceItemIDs(t, ha, "automation")
+	haFailing := oracleErroredTraceItemIDs(t, ha)
 
 	failing := autoLsIDs(t, runHactl(t, "auto", "ls", "--failing", "--top", "1000", "--json"))
 	assertSameSet(t, "auto ls --failing (HA's errored automation traces)", haFailing, failing)

@@ -78,7 +78,7 @@ func TestWSClientCanConnectToFake(t *testing.T) {
 	if unmarshalErr := json.Unmarshal(raw, &got); unmarshalErr != nil {
 		t.Fatalf("decoding the Fake's /addons answer: %v\nraw: %s", unmarshalErr, raw)
 	}
-	var slugs []string
+	slugs := make([]string, 0, len(got.Addons))
 	for _, a := range got.Addons {
 		slugs = append(slugs, a.Slug)
 	}

@@ -75,7 +75,7 @@ func TestOracleFixtureIsExercised(t *testing.T) {
 			t.Errorf("H-8: no traces for %s; expected the rig to have fired it (got %v)", want, counts)
 		}
 	}
-	errored := oracleErroredTraceItemIDs(t, inst, "automation")
+	errored := oracleErroredTraceItemIDs(t, inst)
 	if len(errored) == 0 {
 		t.Fatal("H-8: no errored automation traces exist; --failing cannot be tested")
 	}
@@ -117,7 +117,7 @@ func TestAutoShowFindsTracesForDivergentConfigID(t *testing.T) {
 func TestAutoLsFailingMatchesHA(t *testing.T) {
 	inst, _ := getOracleHA(t)
 
-	erroredItemIDs := oracleErroredTraceItemIDs(t, inst, "automation")
+	erroredItemIDs := oracleErroredTraceItemIDs(t, inst)
 	if len(erroredItemIDs) == 0 {
 		t.Fatal("precondition: HA reports no errored automation traces")
 	}
@@ -150,7 +150,7 @@ func TestAutoLsFailingMatchesHA(t *testing.T) {
 func TestAutoLsErrorCountsMatchHA(t *testing.T) {
 	inst, _ := getOracleHA(t)
 
-	erroredItemIDs := oracleErroredTraceItemIDs(t, inst, "automation")
+	erroredItemIDs := oracleErroredTraceItemIDs(t, inst)
 	if len(erroredItemIDs) == 0 {
 		t.Fatal("precondition: HA reports no errored automation traces")
 	}
