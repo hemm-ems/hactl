@@ -55,10 +55,16 @@ func runTestMain(m *testing.M) int {
 		return 1
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 3 minutes, and the container's logs on the way out: a 60s ceiling here
+	// expired on a machine running three Docker tiers against one daemon, and
+	// the `composeDown -v` on the next line destroyed the evidence. See the
+	// matching comment in internal/companiontest/main_test.go — this is a
+	// liveness bound, not a performance assertion.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if readyErr := waitForURL(ctx, companionURL+"/v1/health"); readyErr != nil {
 		slog.Error("discovery-test: companion not ready", "error", readyErr)
+		dumpComposeLogs(rootCtx, "companion")
 		composeDown(rootCtx)
 		return 1
 	}
@@ -129,6 +135,21 @@ func composeUp(ctx context.Context) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// dumpComposeLogs prints a service's container logs before the setup-failure
+// path tears the stack down with `down -v`. Without it a readiness timeout
+// reports the URL it gave up on and nothing about the process that never
+// answered. Errors are ignored: this runs while the tier is already failing.
+func dumpComposeLogs(ctx context.Context, service string) {
+	slog.Error("discovery-test: dumping container logs before teardown", "service", service)
+	//nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd := exec.CommandContext(ctx, "docker", "compose",
+		"-f", filepath.Join(composeDir, "docker-compose.yaml"),
+		"logs", "--no-color", "--tail=200", service)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
 }
 
 func composeDown(ctx context.Context) {

@@ -96,6 +96,7 @@ func runTestMain(m *testing.M) int {
 	defer cancel()
 	if readyErr := waitForURL(ctx, haURL+"/api/onboarding"); readyErr != nil {
 		slog.Error("companion-test: HA not ready", "error", readyErr)
+		dumpComposeLogs(rootCtx, "homeassistant")
 		composeDown(rootCtx)
 		return 1
 	}
@@ -135,11 +136,26 @@ func runTestMain(m *testing.M) int {
 
 	slog.Info("companion-test: companion URL", "companion", compURL)
 
-	// Wait for companion
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	// Wait for companion.
+	//
+	// This ceiling used to be 60s and it expired on a developer machine that was
+	// running three Docker tiers against one daemon: the tier failed before a
+	// single test body ran, and — because the next thing that happened was
+	// `composeDown -v` — the container that would have said why was already
+	// gone. Two things follow, and both are here.
+	//
+	// The number matches HA's wait above rather than being a second guess at how
+	// long a container "should" take. It is a liveness bound, not a performance
+	// assertion: nothing is asserted about how long readiness took, and the real
+	// upper bound on a hung stack is the tier's own `go test -timeout` and CI's
+	// job timeout. A number small enough to be a load detector is a number that
+	// fails on someone else's load — the same reasoning that removed the
+	// wall-clock ceilings from TestE2EEntRelatedCompanionGraphCLI.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel2()
 	if compReadyErr := waitForURL(ctx2, compURL+"/v1/health"); compReadyErr != nil {
 		slog.Error("companion-test: companion not ready", "error", compReadyErr)
+		dumpComposeLogs(rootCtx, "companion")
 		composeDown(rootCtx)
 		return 1
 	}
@@ -252,6 +268,20 @@ func writeSupervisorTokenEnvFile(token string) (string, error) {
 		return "", fmt.Errorf("writing supervisor token env file: %w", err)
 	}
 	return f.Name(), nil
+}
+
+// dumpComposeLogs prints a service's container logs. Every caller is on a
+// setup-failure path that is about to run `composeDown -v`, which deletes the
+// only record of what went wrong: without this, a readiness timeout reports the
+// URL it gave up on and nothing about the process that never answered. Failures
+// here are ignored on purpose — this runs while the tier is already failing and
+// must not replace the real error with its own.
+func dumpComposeLogs(ctx context.Context, service string) {
+	slog.Error("companion-test: dumping container logs before teardown", "service", service)
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "logs", "--no-color", "--tail=200", service) //nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
 }
 
 func composeDown(ctx context.Context) {
