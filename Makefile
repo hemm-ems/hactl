@@ -12,7 +12,7 @@ COMPANION_DIR  ?= ../hactl-companion
 COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
-.PHONY: build lint deadcode tools test test-assert-floor test-surface surfaces \
+.PHONY: build lint check-markers deadcode tools test test-assert-floor test-surface surfaces \
         test-int test-companion test-int-discovery test-matrix gates require-docker \
         hooks hooks-check clean sync-spec check-spec-drift
 
@@ -58,7 +58,16 @@ tools:
 # fix into four round trips.
 LINT_TAGSETS := untagged integration companion companion_discovery
 
-lint:
+# check-markers — a [NEEDS ORACLE: ...] marker records an assumption about HA
+# that has not been verified against a live instance. Markers may exist on a
+# branch; they may not merge. Resolve by probing, then delete the marker.
+check-markers:
+	@if git grep -n --untracked "NEEDS ORACLE" -- ':!Makefile' ':!AGENTS.md'; then \
+	  echo "ERROR: unresolved [NEEDS ORACLE] markers — probe a live HA, then remove them."; \
+	  exit 1; \
+	fi
+
+lint: check-markers
 	@test -x "$(GOLANGCI)" || { \
 	  echo "ERROR: golangci-lint not found (looked on PATH and in $$(go env GOPATH)/bin)."; \
 	  echo "Install: make tools"; \

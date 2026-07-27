@@ -4,7 +4,18 @@ Cross-cutting rules the CLI must satisfy regardless of which command grows
 next. Server-side counterparts (auth on every route, dry-run defaults,
 backup-before-mutate) live in the hactl-companion repo's `INVARIANTS.md`.
 
-**Discipline:** a rule without an enforcing test does not get added here.
+**Discipline:** a law enters this file only through this checklist, in the PR
+that adds it:
+
+- It states a **universal over a set a gate can derive** (cobra tree, source
+  scan, spec) — never over "the commands below".
+- It declares a **pole**, not parity with a sibling (parity was satisfied by
+  the commit that broke `device ls --pattern`).
+- It names its enforcing test under "Enforced by:", and that test was
+  **watched to fail** against the defect it covers.
+- Its site set is dispositioned in `dev/surfaces/invariant.manifest`.
+- It contains **no hand-maintained count**.
+
 When behavior changes intentionally, the test and this file change in the
 same PR.
 
@@ -874,3 +885,23 @@ nothing (TC-7).
   own two load-bearing verdicts — `err != nil` is not an assertion, a
   value-returning helper is not an assertion helper — are pinned by
   `TestClassifierVerdicts` against synthetic packages.
+
+## H-20 — A rendered time is in the reader's zone, and `--since` counts back from now
+
+Every wall-clock hactl prints is converted to the local zone before rendering;
+a raw HA timestamp (UTC) never reaches the terminal. `--since` names how far
+*back* to look — a positive duration (`24h`, `7d`), rejected when negative,
+because an inverted window returns HA's empty answer, which the manual's
+"stop at the first miss" rule turns into a confident wrong negative.
+
+The timezone half shipped wrong twice: the first fix converted the renderers
+it grepped for, and `analyze.shortTimestamp` — a fourth renderer that never
+parses a time at all — kept rendering UTC, with a unit test pinning
+UTC-in/UTC-out as correct (#94). The pole is therefore stated here once, and
+the set of renderers is derived, not listed.
+
+- Enforced by: `internal/surfaceaudit/surface_test.go`
+  (`TestClockSurfaceIsClosed` — derives every clock layout in the source, so a
+  new renderer must be dispositioned before it merges),
+  `internal/cmd/since_test.go` (`TestParseSince_RejectsNegative`),
+  `internal/cmd/ws_cmd_test.go` (`TestApplyLogSince`).

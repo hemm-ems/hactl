@@ -35,3 +35,7 @@ After unit tests are updated, run linter, fix, and test again.
 
 **Manage context.** Use subagents for long tasks. Use intermediate files to store knowledge.
 
+**Spec before code.** The ordering ritual — probe HA before assuming (marker rule, lint-gated),
+disposition surfaces first, manual prose first — lives in the workspace `AGENTS.md` one directory
+up. Decisions tests can't express go in `docs/decisions.md` before code builds on them.
+
