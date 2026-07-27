@@ -207,7 +207,7 @@ func runCCLogs(ctx context.Context, w io.Writer, name string, sinceSet bool) err
 	}
 
 	if flagCCLogsUnique {
-		return renderDedupedLogs(w, entries)
+		return renderDedupedLogs(w, cfg, entries)
 	}
 
 	return renderLogEntriesSimple(w, entries)

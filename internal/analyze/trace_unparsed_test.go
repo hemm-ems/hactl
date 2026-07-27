@@ -3,6 +3,7 @@ package analyze
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // This file covers one rule: an empty decode is not a success.
@@ -99,11 +100,24 @@ func TestUnparsedMarkerMatchesRendering(t *testing.T) {
 
 // TestFormatCondensed_KeepsHeaderLayout ensures the omit-empty-ID change does
 // not disturb the normal header (run id, automation id, time, result).
+//
+// The expected time was "09:42:00" — the fixture's UTC wall clock, with no
+// date. Both were wrong: the fixture's 09:42Z is 11:42 for a reader in CEST,
+// and docs/manual.md documents this header with a date. The zone is pinned so
+// the assertion means the same thing wherever it runs.
 func TestFormatCondensed_KeepsHeaderLayout(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	t.Setenv("TZ", "Europe/Berlin")
+	//nolint:gosmopolitan // pinning the reader's zone is exactly what this test asserts about
+	time.Local = berlin
+
 	raw := loadTestTrace(t, "climate_schedule_pass.json")
 	out := FormatCondensed(Condense(raw))
 	head, _, _ := strings.Cut(out, "\n")
-	want := "run-pass-001  automation.climate_schedule  09:42:00  PASS"
+	want := "run-pass-001  automation.climate_schedule  04-16 11:42:00  PASS"
 	if head != want {
 		t.Errorf("header = %q, want %q", head, want)
 	}

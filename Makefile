@@ -12,9 +12,9 @@ COMPANION_DIR  ?= ../hactl-companion
 COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
-.PHONY: build lint deadcode tools test test-assert-floor test-int test-companion \
-        test-int-discovery test-matrix gates require-docker hooks hooks-check \
-        clean sync-spec check-spec-drift
+.PHONY: build lint deadcode tools test test-assert-floor test-surface surfaces \
+        test-int test-companion test-int-discovery test-matrix gates require-docker \
+        hooks hooks-check clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -102,6 +102,28 @@ test:
 test-assert-floor:
 	go test ./internal/testaudit/... -count=1
 
+# test-surface — the closure gates. Every other gate in this repository answers
+# "does the thing I fixed stay fixed?". This one answers "did I fix every place
+# this applies?", which nothing answered before, and which is the question all
+# four defects reported against v2026.7.12 turned on: each was the unfixed half
+# of a fix shipped in the same release.
+#
+# A surface is derived mechanically — from the cobra tree, from the source, from
+# INVARIANTS.md — and a manifest in dev/surfaces/ must disposition every site on
+# it as proven, knowingly exempt, or recorded debt. A site nobody has considered
+# fails the build the day it appears. Debt is legal; invisible debt is not.
+#
+# Run with -v to read the outstanding debt on each surface. See
+# dev/surfaces/README.md. Needs no Docker and no HA.
+test-surface:
+	go test ./internal/surfaceaudit/... -count=1 -v
+	go test ./internal/cmd/ -count=1 -run 'Surface|FilterFlagsAgreeOnCase' -v
+
+# surfaces — print every ledger without judging it, for deciding what to work on.
+surfaces:
+	@go test ./internal/surfaceaudit/... -count=1 -v -run 'IsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+	@go test ./internal/cmd/ -count=1 -v -run 'ConfirmSurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+
 # ---------------------------------------------------------------------------
 # gates — the ONLY definition of "done".
 #
@@ -115,12 +137,12 @@ test-assert-floor:
 # There is deliberately no way to mark a Docker tier optional. If Docker is not
 # running, this fails loudly rather than silently narrowing what was verified.
 # ---------------------------------------------------------------------------
-gates: require-docker lint deadcode test-assert-floor test test-int test-companion test-int-discovery
+gates: require-docker lint deadcode test-assert-floor test-surface test test-int test-companion test-int-discovery
 	@echo
 	@echo "================================================================"
 	@echo " ALL GATES GREEN — lint (every build tag) + deadcode + assertion"
-	@echo " floor + unit + integration + companion + discovery, every Docker"
-	@echo " tier included."
+	@echo " floor + surface closure + unit + integration + companion +"
+	@echo " discovery, every Docker tier included."
 	@echo "================================================================"
 
 require-docker:

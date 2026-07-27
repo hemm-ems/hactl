@@ -131,6 +131,18 @@ func runCacheRefresh(ctx context.Context, w io.Writer, category string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// An unrecognised category used to leave both of these false, so the
+	// function skipped both blocks and returned nil having written zero bytes.
+	// `hactl cache refresh trace` (singular) reported success, refreshed
+	// nothing, and every later `trace show` answered from stale data while the
+	// operator believed it was current. Args is MaximumNArgs(1), so cobra
+	// accepts any string; the check has to be here.
+	switch category {
+	case "", "traces", "logs":
+	default:
+		return fmt.Errorf("unknown cache category %q: expected \"traces\", \"logs\", or no argument to refresh both", category)
+	}
+
 	refreshTraces := category == "" || category == "traces"
 	refreshLogs := category == "" || category == "logs"
 

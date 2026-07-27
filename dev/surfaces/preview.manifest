@@ -1,0 +1,14 @@
+# preview — a preview is built with dryRun(), which is the only renderer in
+# internal/cmd that consults --json (INVARIANTS.md H-2, second half).
+#
+# This is a VIOLATION surface, not a census: internal/surfaceaudit.PreviewSurface
+# lists only the --confirm-gated entrypoints that assemble their preview some
+# other way. Empty is the goal, and it is empty. The extractor is guarded
+# against silently matching nothing by TestPreviewExtractorFlagsAHandRolledPlan,
+# which feeds it a known-bad function, rather than by a non-empty check.
+#
+# It was not empty. Nine previews were prose under --json — svc call, script
+# run, script apply, auto apply, dash replace and the three wireguard
+# mutations — while the enforcement H-2 cited, TestPreviewJSONIsMachineReadable,
+# exercised `helper create` and nothing else.
+#ceiling 0

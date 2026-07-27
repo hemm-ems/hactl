@@ -1044,13 +1044,28 @@ func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 	return result
 }
 
-// matchPattern matches entity IDs against a glob or substring pattern.
-// If the pattern contains no glob characters (* or ?), it is treated as a
-// substring match. Otherwise it is matched as a glob.
+// matchPattern matches a record's name against a glob or substring pattern,
+// ignoring case. If the pattern contains no glob characters (* or ?), it is
+// treated as a substring match. Otherwise it is matched as a glob.
+//
+// Case is ignored because every sibling filter ignores it — `--name`, `--area`
+// and `--label` all do — and because the values this matches are not always
+// machine-cased. The doc comment used to say "matches entity IDs", which are
+// always lowercase, so case genuinely could not bite; then `device ls
+// --pattern` reused the function against `name`, which Home Assistant carries
+// exactly as a human typed it ("WoziSued", "Wozi Tv"). `--pattern wozi`
+// answered "no devices" for eight matching devices, and an empty listing reads
+// as "no such thing" rather than "not spelled the way I store it".
+//
+// `device ls --pattern` was in fact case-insensitive once. Commit 17039dd
+// deleted the strings.ToLower to make it consistent with `ent ls --pattern` —
+// harmonising toward the sibling with no stake in the answer. Consistency was
+// the right instinct and the wrong direction.
 func matchPattern(s, pattern string) bool {
 	if pattern == "" {
 		return s == ""
 	}
+	s, pattern = strings.ToLower(s), strings.ToLower(pattern)
 	if !strings.ContainsAny(pattern, "*?") {
 		return strings.Contains(s, pattern)
 	}
@@ -1106,12 +1121,22 @@ func parseEntityDomain(entityID string) string {
 	return entityID
 }
 
+// filterEntitiesByArea matches an area by the id `area ls` prints in its first
+// column, or by its name — the same pair `device ls --area` has always matched.
+//
+// It matched the name only. `area ls` prints `area_id` first, and
+// docs/manual.md routes a caller who cannot find something to "the matching
+// registry `ls`" — which handed them the id that returned zero rows, exit 0,
+// while `device ls --area <same id>` returned the row. H-17: an identifier
+// hactl prints is an identifier hactl accepts.
 func filterEntitiesByArea(states []entityState, rc *registryContext, area string) []entityState {
-	areaLower := strings.ToLower(area)
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
-		name := strings.ToLower(rc.areaName(s.EntityID))
-		if name != "" && strings.Contains(name, areaLower) {
+		areaID := rc.effectiveAreaID(s.EntityID)
+		if areaID == "" {
+			continue
+		}
+		if containsFold(areaID, area) || containsFold(rc.areaName(s.EntityID), area) {
 			result = append(result, s)
 		}
 	}
@@ -1405,15 +1430,34 @@ func runEntRelated(ctx context.Context, w io.Writer, entityID string) error {
 		return renderStaleRefs(w, entityID, staleRefs)
 	}
 
+	// An entity that is in neither the registry nor the state machine AND has
+	// no references anywhere is a miss, and a miss is an error — the rule
+	// `ent hist`, `ent who`, `ent anomalies` and `ent show` already follow.
+	//
+	// Only the empty case. An unknown entity WITH references is a real and
+	// useful answer: a config-only entity that HA never instantiated still has
+	// automations pointing at it, and reporting those dangling references is
+	// most of why this command exists.
+	//
+	// The narrow case was broken in one output mode only. Text said "not in the
+	// registry (stale/renamed or deleted); 0 relations found"; --json returned
+	// before `known` was ever consulted and emitted `[]` — the identical
+	// document a live entity with no relations produces. The manual tells a
+	// caller "an empty answer means the entity was quiet, never that it was
+	// mistyped", and TestEmptyResultJSON_EntRelated pinned that [] as correct.
+	//
+	// `--stale` is the documented way to ask about an entity that is gone and
+	// has already returned above, so this cannot break it.
 	if len(related) == 0 {
+		if !known {
+			return fmt.Errorf("entity %q is not in the registry or the state machine and nothing references it "+
+				"(stale, renamed, deleted, or mistyped) — use 'ent related %s --stale' to search the config files",
+				entityID, entityID)
+		}
 		if flagJSON {
 			return writeEmptyJSONArray(w)
 		}
-		if known {
-			_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
-		} else {
-			_, _ = fmt.Fprintf(w, "%s: not in the registry (stale/renamed or deleted); 0 relations found\n", entityID)
-		}
+		_, _ = fmt.Fprintf(w, "%s: no related entities found\n", entityID)
 		return nil
 	}
 

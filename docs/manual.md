@@ -408,10 +408,9 @@ guest_mode:
   icon: mdi:toggle-switch
 ```
 
-A bare `name:`/`icon:` mapping is rejected on `--confirm` (400 from the
-companion). The dry-run does not read the file's contents, so it previews an
-invalid file as happily as a valid one — validate the shape yourself before
-confirming.
+A bare `name:`/`icon:` mapping is rejected by the dry run as well as by
+`--confirm`: the file must be a mapping with exactly one top-level key, the
+helper id, with `name:`/`icon:` nested under it.
 
 ### Templates & services
 
@@ -641,19 +640,19 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 
 > **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop. Do not chain fallback patterns or broaden the search unless the user explicitly asks.
 
-> **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area name), confirm it exists (`--help`, the matching registry `ls`, or `rtfm`) before reporting a negative result — that one verification call is exempt from the stop-at-first-miss rule.
+> **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area), confirm it exists (the matching registry `ls`) before reporting a negative — that one call is exempt from stop-at-first-miss.
 
-Three commands support `--pattern` (glob or substring on the item ID):
+Four commands take `--pattern` (glob or substring, case-insensitive, on the id or user-facing name):
 
 ```bash
-hactl auto ls --pattern victron           # substring: matches "victron" anywhere in ID
-hactl auto ls --pattern 'victron_*'       # glob: IDs starting with victron_
-hactl script ls --pattern kino
+hactl auto ls --pattern victron           # substring, anywhere in the id
+hactl auto ls --pattern 'victron_*'       # glob
+hactl device ls --pattern wozi            # matches the device named "Wozi Tv"
 hactl ent ls --pattern 'sensor.wp_*'
 ```
 
-Pattern with `*` or `?` → glob. Otherwise → case-sensitive substring. For automations
-`auto ls` and `ent ls` also match the config `id:` that `auto show` prints.
+`*`/`?` → glob, otherwise substring; either way case is ignored. `auto ls` and
+`ent ls` also match the config `id:` that `auto show` prints.
 
 `ent ls` also accepts three additional independent filters — combine freely:
 
@@ -704,14 +703,14 @@ hactl auto ls --restored                       # same, automation-scoped table
 ## Output conventions
 
 - **Token estimate:** Add `--tokens` to print a compact `[~N tok]` estimate (`stderr` in JSON mode).
-- **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable. Use filters to reduce output rather than raising the cap.
+- **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable; prefer filters over raising the cap.
 - **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
-- **Stable IDs:** `trc:a7`, `anom:g3`, `log:f2` — short, persistent in `cache/ids.json`. Safe to reference in follow-up calls until `cache clear`, which drops them along with the records they point at.
-- **Timestamps:** tables print short form (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so there the short string survives and numbers come back as strings (`"runs_24h": "0"`).
-- **No decoration:** no emojis, no color. `--color` is accepted and does nothing; it is kept so existing callers do not break.
+- **Stable IDs:** `trc:a7` (`auto`/`script show`) and `log:f2` (`log` incl. `--unique`, `cc logs`) — persistent in `cache/ids.json` until `cache clear`. `ent anomalies` mints none.
+- **Timestamps:** short form in your local zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so the short string survives and numbers come back as strings (`"runs_24h": "0"`).
+- **No decoration:** no emojis, no color. `--color` is accepted and does nothing.
 - **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`). Dry-run previews return `{"dry_run":true,"action","details","hint"}`.
-- **Dry runs resolve their target** before printing a plan, and parse the `-f` file before reporting on it: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan.
-- **`--stats`:** prints raw response size + estimated token count to stderr after any command.
+- **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A family's **first `--confirm`** is refused non-interactively (how-to on stderr, exit 1): dry-run first, then repeat.
+- **`--stats`:** raw response size + estimated token count on stderr, after any command including a failing one.
 
 ---
 
@@ -722,7 +721,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
 | `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
 | `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
-| `--full` | off | Raw/verbose output, per command: all attributes for `ent show`, raw JSON for `trace show`. Changes nothing on tables |
+| `--full` | off | Raw/verbose: all attributes for `ent show`, raw JSON for `trace show`. **On tables it lifts the `--top` cap** — prefer `--top N`, or risk `--tokensmax` byte-truncating the table |
 | `--json` | off | JSON output |
 | `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |

@@ -131,3 +131,11 @@ func (f *FlowResult) Identity() []degeneracy.Field {
 func (s *SchemaField) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "name", Value: &s.Name}}
 }
+
+// Identity reports the service registry key. A zero decode here is not a
+// legitimate answer: `svc call` refuses a service it cannot find in this list,
+// so a renamed `domain` field would turn every service call into "not
+// registered in Home Assistant".
+func (s *ServiceDomain) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "domain", Value: &s.Domain}}
+}

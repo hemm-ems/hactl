@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestCondense_PassingTrace(t *testing.T) {
@@ -165,13 +166,37 @@ func TestShortenError(t *testing.T) {
 	}
 }
 
+// TestShortTimestamp — INVERTED. This test previously asserted
+// shortTimestamp("2026-04-16T09:42:00+00:00") == "09:42:00": UTC in, UTC out,
+// no date. That was the defect, pinned as correct, which is why the suite
+// stayed green while `trace show` displayed a clock two hours off the one
+// `auto show` printed for the same run and dropped the date the manual
+// documents. The old expectation being wrong is the finding.
+//
+// The zone is pinned so the test means the same thing in CI (UTC) and on a
+// developer's machine, and it fails at any hour rather than only inside a
+// window.
 func TestShortTimestamp(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	t.Setenv("TZ", "Europe/Berlin")
+	//nolint:gosmopolitan // pinning the reader's zone is exactly what this test asserts about
+	time.Local = berlin
+
 	tests := []struct {
 		input string
 		want  string
 	}{
-		{"2026-04-16T09:42:00.000000+00:00", "09:42:00"},
-		{"2026-04-16T09:42:00+00:00", "09:42:00"},
+		// 09:42 UTC is 11:42 in CEST. The date is present because the fixture
+		// is not today.
+		{"2026-04-16T09:42:00.000000+00:00", "04-16 11:42:00"},
+		{"2026-04-16T09:42:00+00:00", "04-16 11:42:00"},
+		// An offset other than zero is honoured, not assumed.
+		{"2026-04-16T09:42:00+02:00", "04-16 09:42:00"},
+		// Unparseable input comes back verbatim: a wire change must show up as
+		// itself, never as a plausible time.
 		{"plain", "plain"},
 	}
 
@@ -379,15 +404,15 @@ func TestShortenError_Long(t *testing.T) {
 // sort ordered "action/10" before "action/2".
 func TestSortedStepPaths_NumericSegments(t *testing.T) {
 	steps := map[string][]RawTraceRun{
-		"action/10":               nil,
-		"action/9":                nil,
-		"action/2":                nil,
-		"action/1":                nil,
-		"action/0":                nil,
+		"action/10":                  nil,
+		"action/9":                   nil,
+		"action/2":                   nil,
+		"action/1":                   nil,
+		"action/0":                   nil,
 		"action/0/repeat/sequence/0": nil,
-		"condition/1":             nil,
-		"condition/0":             nil,
-		"condition/0/entity_id/0": nil,
+		"condition/1":                nil,
+		"condition/0":                nil,
+		"condition/0/entity_id/0":    nil,
 		// Real HA emits a bare "trigger" key for a service-triggered run.
 		"trigger":   nil,
 		"trigger/0": nil,

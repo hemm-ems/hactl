@@ -13,6 +13,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hemm-ems/hactl/internal/degeneracy"
+	"github.com/hemm-ems/hactl/internal/httpretry"
 )
 
 // Client is a REST client for the Home Assistant API.
@@ -100,6 +103,54 @@ func (c *Client) RenderTemplate(ctx context.Context, template string) (string, e
 func (c *Client) UpdateAutomationConfig(ctx context.Context, automationID string, config any) error {
 	_, err := c.doPost(ctx, "/api/config/automation/config/"+automationID, config)
 	return err
+}
+
+// ServiceDomain is one entry of GET /api/services: a domain and the services
+// it registers, keyed by service name.
+type ServiceDomain struct {
+	Services map[string]json.RawMessage `json:"services"`
+	Domain   string                     `json:"domain"`
+}
+
+// ServiceExists reports whether Home Assistant has a service registered under
+// domain.service.
+//
+// It exists so a dry run can refuse a misspelled service. `svc call` used to
+// preview any string containing a dot without contacting HA at all, so
+// "would call: light.turn_onn" was the artifact a human approved before
+// --confirm — and --confirm then failed with HA's 400. The manual routes
+// "turn X on" through the preview as the verification step; it verified only
+// that the argument had a dot in it.
+//
+// A failure to reach /api/services is reported as (false, err) so the caller
+// can distinguish "HA says no such service" from "we could not ask".
+func (c *Client) ServiceExists(ctx context.Context, domain, service string) (bool, error) {
+	body, err := c.doGet(ctx, "/api/services")
+	if err != nil {
+		return false, err
+	}
+	var domains []ServiceDomain
+	if unmarshalErr := json.Unmarshal(body, &domains); unmarshalErr != nil {
+		return false, fmt.Errorf("parsing /api/services: %w", unmarshalErr)
+	}
+	if degErr := degeneracy.Check("/api/services", &domains); degErr != nil {
+		return false, degErr
+	}
+	// A live Home Assistant always registers services, so an empty list is not
+	// the answer "no such service" — it is the absence of an answer, and
+	// reporting it as the former would refuse calls that work (H-7). The
+	// caller warns and proceeds unverified.
+	if len(domains) == 0 {
+		return false, errors.New("/api/services returned no domains")
+	}
+	for _, d := range domains {
+		if d.Domain != domain {
+			continue
+		}
+		_, ok := d.Services[service]
+		return ok, nil
+	}
+	return false, nil
 }
 
 // CallService calls POST /api/services/<domain>/<service> with optional service data.
@@ -307,7 +358,14 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 
 		slog.Debug("HTTP request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // structured log
 
-		if resp.StatusCode >= 500 && attempt < maxAttempts-1 {
+		// A 5xx means Home Assistant received the request and may already have
+		// acted on it, so only an idempotent method may be re-sent (H-1). This
+		// check used to be absent: every POST retried, so `svc call --confirm`
+		// against an HA that delivered a notification and *then* raised sent it
+		// three times, and `config flow-step --confirm` could create three
+		// config entries. The companion client had the rule and this one did
+		// not, which is why the predicate now lives in one shared package.
+		if resp.StatusCode >= 500 && attempt < maxAttempts-1 && httpretry.IsIdempotent(req.Method) {
 			slog.Debug("retrying request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // structured log
 			time.Sleep(backoff(attempt))
 			continue

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -502,12 +503,17 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 	}
 
 	if !flagDashConfirm {
-		_, _ = fmt.Fprintf(w, "dry-run: would replace in dashboard %s (%d occurrence(s)):\n", dashDisplayPath(urlPath), len(changed))
+		sites := make([]string, 0, len(changed))
 		for _, p := range changed {
-			_, _ = fmt.Fprintf(w, "  %s: %q → %q\n", p.String(), oldVal, newVal)
+			sites = append(sites, p.String())
 		}
-		_, _ = fmt.Fprintln(w, "use --confirm to apply")
-		return nil
+		return dryRun("replace in dashboard "+dashDisplayPath(urlPath)).
+			with("dashboard", dashDisplayPath(urlPath)).
+			with("from", oldVal).
+			with("to", newVal).
+			with("occurrences", len(changed)).
+			with("paths", sites).
+			render(w)
 	}
 
 	out, err := json.Marshal(result)
@@ -523,6 +529,28 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 }
 
 func runDashCreate(ctx context.Context, w io.Writer) error {
+	// Validate the input before reporting a plan for it (H-2). HA's lovelace
+	// url_slug validator requires a hyphen and refuses a path already in use,
+	// and the flag's own help text says so — but the preview checked neither
+	// and contacted nothing, so it printed a confident plan for a path
+	// --confirm would reject, without even an instance configured.
+	if flagDashURLPath == "" {
+		return errors.New("--url-path is required")
+	}
+	if !strings.Contains(flagDashURLPath, "-") {
+		return fmt.Errorf("--url-path %q must contain a hyphen (Home Assistant's url_slug rule)", flagDashURLPath)
+	}
+
+	ws, err := connectWS(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ws.Close() }()
+
+	if existing, findErr := findDashboard(ctx, ws, flagDashURLPath); findErr == nil {
+		return fmt.Errorf("dashboard %q already exists (id: %s)", existing.URLPath, existing.ID)
+	}
+
 	if !flagDashConfirm {
 		return dryRun("create dashboard").
 			with("url_path", flagDashURLPath).
@@ -532,12 +560,6 @@ func runDashCreate(ctx context.Context, w io.Writer) error {
 			with("admin", flagDashAdmin).
 			render(w)
 	}
-
-	ws, err := connectWS(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ws.Close() }()
 
 	d, err := ws.DashboardCreate(ctx, haapi.DashboardCreateParams{
 		URLPath:       flagDashURLPath,

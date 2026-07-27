@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,31 +15,31 @@ func TestSvcCallCmd_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestSvcCallCmd_DryRunByDefault(t *testing.T) {
-	// No --confirm: prints the plan and returns before any config load or
-	// network call, so it must succeed even without an instance .env.
-	var buf bytes.Buffer
-	err := RunWithOutput([]string{"hactl", "svc", "call", "automation.turn_off",
-		"--dir", t.TempDir(), "--data", `{"entity_id":"automation.x"}`}, &buf)
-	if err != nil {
-		t.Fatalf("dry-run must not error: %v", err)
-	}
-	out := buf.String()
-	for _, want := range []string{"dry-run", "automation.turn_off", `"automation.x"`, "--confirm"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("dry-run output missing %q, got %q", want, out)
+// TestSvcCallAgreesWithItselfOnAMissingInstance — INVERTED, and merged from
+// two tests that sat next to each other documenting a disagreement without
+// naming it.
+//
+// TestSvcCallCmd_DryRunByDefault asserted that a preview "returns before any
+// config load or network call, so it must succeed even without an instance
+// .env", while TestSvcCallCmd_ConfirmRequiresInstance asserted that --confirm
+// fails on exactly the same argument. Both passed. That gap is the whole of
+// H-2: a preview must fail where the confirmed run would, and a preview that
+// never contacts Home Assistant cannot check that the service it is describing
+// exists — so "would call: light.turn_onn" was the artifact a human approved.
+func TestSvcCallAgreesWithItselfOnAMissingInstance(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		name := "dry-run"
+		args := []string{"hactl", "svc", "call", "automation.turn_off", "--dir", t.TempDir()}
+		if confirm {
+			name = "confirm"
+			args = append(args, "--confirm")
 		}
-	}
-}
-
-func TestSvcCallCmd_ConfirmRequiresInstance(t *testing.T) {
-	// With --confirm the call proceeds past the dry-run gate and fails on
-	// the missing instance config — proving the gate no longer short-circuits.
-	var buf bytes.Buffer
-	err := RunWithOutput([]string{"hactl", "svc", "call", "automation.turn_off",
-		"--dir", t.TempDir(), "--confirm"}, &buf)
-	if err == nil {
-		t.Fatal("expected config error for --confirm without instance")
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := RunWithOutput(args, &buf); err == nil {
+				t.Errorf("%s succeeded with no instance configured; the other half of this command fails on the same input:\n%s", name, buf.String())
+			}
+		})
 	}
 }
 

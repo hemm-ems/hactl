@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hemm-ems/hactl/internal/analyze"
+	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -231,22 +232,29 @@ func TestRenderDedupedLogs_Basic(t *testing.T) {
 		{Timestamp: "2026-01-01 10:02:00.000", Level: "WARNING", Component: "mqtt", Message: "Connection lost"},
 	}
 
+	cfg := &config.Config{Dir: t.TempDir()}
 	var buf bytes.Buffer
-	if err := renderDedupedLogs(&buf, entries); err != nil {
+	if err := renderDedupedLogs(&buf, cfg, entries); err != nil {
 		t.Fatalf("renderDedupedLogs failed: %v", err)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "zha") {
 		t.Errorf("output missing component 'zha': %q", out)
 	}
+	// The manual routes `log --errors --warnings --unique` to `log show <id>`,
+	// so the deduped view has to mint the ids that drill-down takes.
+	if !strings.Contains(out, "log:") {
+		t.Errorf("deduped rows carry no log: id, so the documented drill-down has nothing to reference: %q", out)
+	}
 }
 
 func TestRenderDedupedLogs_Empty(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
 	var buf bytes.Buffer
-	if err := renderDedupedLogs(&buf, nil); err != nil {
+	if err := renderDedupedLogs(&buf, cfg, nil); err != nil {
 		t.Fatalf("renderDedupedLogs(nil) failed: %v", err)
 	}
-	assertHeaderOnly(t, buf.String(), "count", "level", "component", "first_seen", "last_seen", "message")
+	assertHeaderOnly(t, buf.String(), "id", "count", "level", "component", "first_seen", "last_seen", "message")
 }
 
 // --- buildScriptRows ---
@@ -264,7 +272,7 @@ func TestBuildScriptRows_Basic(t *testing.T) {
 		},
 	}
 
-	rows := buildScriptRows(scripts, traces, cutoff)
+	rows := buildScriptRows(scripts, traces, cutoff, fireCounts{})
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -291,7 +299,7 @@ func TestBuildScriptRows_NoTraces(t *testing.T) {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	scripts := []scriptEntity{{EntityID: "script.empty", State: "on"}}
 
-	rows := buildScriptRows(scripts, nil, cutoff)
+	rows := buildScriptRows(scripts, nil, cutoff, fireCounts{})
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -310,7 +318,7 @@ func TestBuildScriptRows_OutsideWindow(t *testing.T) {
 		},
 	}
 
-	rows := buildScriptRows(scripts, traces, cutoff)
+	rows := buildScriptRows(scripts, traces, cutoff, fireCounts{})
 	if rows[0].runs != 0 {
 		t.Errorf("runs outside window = %d, want 0", rows[0].runs)
 	}

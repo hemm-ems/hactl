@@ -172,14 +172,21 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 		return nil, fmt.Errorf("restoring config: %w", err)
 	}
 
+	// Reloaded reports what happened, not what was attempted. This field used
+	// to be hardcoded true while the reload error went to a WARN, so a rollback
+	// whose reload failed printed "reload: ok" — telling the operator the old
+	// config was live at the exact moment Home Assistant was still running the
+	// broken one. Apply, forty lines up, always reported it correctly.
+	reloaded := true
 	if reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
-		slog.Warn("reload failed after rollback", "error", reloadErr)
+		slog.Warn("reload failed after rollback; the restored config is on disk but HA has not read it", "error", reloadErr)
+		reloaded = false
 	}
 
 	return &ApplyResult{
 		AutomationID: automationID,
 		BackupPath:   backupFile,
-		Reloaded:     true,
+		Reloaded:     reloaded,
 	}, nil
 }
 

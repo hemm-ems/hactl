@@ -3,7 +3,9 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -21,10 +23,44 @@ func TestSvcCallInvalidFormat(t *testing.T) {
 }
 
 func TestSvcCallDryRunDefault(t *testing.T) {
-	// Without --confirm nothing is executed; the planned call is printed.
+	// Without --confirm nothing is executed; the planned call is printed in the
+	// shared preview shape, which is the only one that honours --json.
 	out := runHactl(t, "svc", "call", "homeassistant.check_config")
-	assertContains(t, out, "dry-run: no service was called")
-	assertContains(t, out, "would call: homeassistant.check_config")
+	assertContains(t, out, "dry-run: would call homeassistant.check_config")
+	assertContains(t, out, "re-run with --confirm")
+}
+
+// TestSvcCallDryRunRefusesAServiceHADoesNotHave — H-2 against the live
+// registry.
+//
+// The preview used to check only that the argument contained a dot: it never
+// loaded the instance config, never contacted HA, and printed "would call:
+// light.turn_onn" as the artifact a human approves before --confirm. The
+// manual routes "turn X on" through this preview as the verification step.
+func TestSvcCallDryRunRefusesAServiceHADoesNotHave(t *testing.T) {
+	out, err := runHactlErr(t, "svc", "call", "homeassistant.check_configg")
+	if err == nil {
+		t.Fatalf("previewed a service Home Assistant does not register:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "not registered") {
+		t.Errorf("the refusal must name the reason, got: %v", err)
+	}
+	if strings.Contains(out, "would call") {
+		t.Errorf("a refused preview must print no plan on stdout:\n%s", out)
+	}
+}
+
+// TestSvcCallPreviewIsMachineReadable — the other half of H-2. This preview was
+// prose under --json, and it is one of the two an MCP caller reaches for most.
+func TestSvcCallPreviewIsMachineReadable(t *testing.T) {
+	out := runHactl(t, "svc", "call", "homeassistant.check_config", "--json")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("--json preview does not parse: %v\n%s", err, out)
+	}
+	if got["dry_run"] != true {
+		t.Errorf("preview object must state dry_run:true, got %v", got["dry_run"])
+	}
 }
 
 func TestSvcCallCheckConfig(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hemm-ems/hactl/internal/clock"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
 
@@ -419,19 +420,20 @@ func shortenError(errMsg string) string {
 	return errMsg
 }
 
+// shortTimestamp renders a trace timestamp in the reader's zone.
+//
+// It used to be pure string surgery — cut on "T", cut on "." — which produced
+// the wire's own wall clock and, because Home Assistant reports UTC, showed a
+// reader in CEST a time two hours off the one `auto show` printed for the same
+// run. It also dropped the date, so a trace from last week was
+// indistinguishable from one this morning, and docs/manual.md documents the
+// condensed header with a date in it.
+//
+// Nothing could have fixed this by looking at time handling: the function
+// never called time.Parse, so no fixture and no layout change could reach it.
+// TestShortTimestamp pinned "09:42:00" for a `+00:00` input as correct.
 func shortTimestamp(ts string) string {
-	// Extract HH:MM:SS from ISO timestamp
-	_, rest, found := strings.Cut(ts, "T")
-	if !found {
-		return ts
-	}
-	if before, _, ok := strings.Cut(rest, "."); ok {
-		return before
-	}
-	if before, _, ok := strings.Cut(rest, "+"); ok {
-		return before
-	}
-	return rest
+	return clock.ShortSeconds(ts)
 }
 
 // FormatCondensed renders a condensed trace as text.

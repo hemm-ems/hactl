@@ -268,6 +268,22 @@ func runHelperShow(ctx context.Context, w io.Writer, helperID string) error {
 		return fmt.Errorf("fetching helper: %w", err)
 	}
 
+	// --json used to be a byte-for-byte no-op here: the flag was never read and
+	// the text form came back, exit 0, so a caller that standardised on --json
+	// got a hard parse error from a command every one of whose siblings returns
+	// an object. It survived because `helper show` sits on json_contract_test's
+	// companionRequired skip list, which is logged and not asserted on. Its
+	// verbatim sibling is `helper cat`; this command is not verbatim.
+	if flagJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{
+			"id":      resp.ID,
+			"domain":  resp.Domain,
+			"content": resp.Content,
+		})
+	}
+
 	_, _ = fmt.Fprintf(w, "id:     %s\n", resp.ID)
 	_, _ = fmt.Fprintf(w, "domain: %s\n", resp.Domain)
 	_, _ = fmt.Fprintf(w, "---\n%s", resp.Content)
@@ -377,10 +393,29 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 			render(w)
 	}
 
+	// Resolve while the entity is still real; afterwards a registry entry is
+	// indistinguishable from an older ghost.
+	//
+	// This cleanup was the fourth family's share of a fix that reached three.
+	// removeOrphanedEntity was extracted precisely so `auto`, `script` and
+	// `tpl` would stop leaving different amounts of debris for the same
+	// operation — and `helper delete` was not in the sentence, so it kept
+	// leaving the `unavailable`/`restored: true` row that docs/manual.md
+	// promises is removed, in a block that names `helper delete` explicitly.
+	cfg, cfgErr := config.Load(flagDir)
+	orphan := ""
+	if cfgErr == nil {
+		orphan = registeredEntityID(ctx, cfg, remote.Domain+"."+remote.ID)
+	}
+
 	if _, err := cc.DeleteHelper(ctx, helperID); err != nil {
 		return fmt.Errorf("deleting helper: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "deleted helper %q\n", helperID)
+
+	if orphan != "" {
+		removeOrphanedEntity(ctx, cfg, orphan)
+	}
 	return nil
 }

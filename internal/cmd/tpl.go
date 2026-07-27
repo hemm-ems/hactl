@@ -305,7 +305,7 @@ func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
 	// confirmed run would rather than describing a delete that cannot happen.
 	remote, err := cc.GetTemplate(ctx, uniqueID)
 	if err != nil {
-		return fmt.Errorf("template %q not found (use 'tpl ls' to see available templates): %w", uniqueID, err)
+		return fmt.Errorf("template %q not found (there is no 'tpl ls'; read the definitions with: hactl config file template.yaml): %w", uniqueID, err)
 	}
 
 	// Resolve while the entities are still real; afterwards a registry entry is

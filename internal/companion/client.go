@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,11 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/httpretry"
 )
 
 // Content-Type values sent per endpoint. Most write endpoints declare a
@@ -731,43 +730,18 @@ func drainBody(req *http.Request) ([]byte, error) {
 // (expired signature) is safe to retry for any method: the server rejected the
 // request before acting on it.
 func shouldRetry(err error, status int, signed bool, method string) bool {
-	idempotent := isIdempotentMethod(method)
-	if err != nil {
-		if idempotent {
-			return true
-		}
-		return neverSent(err)
+	// The transport-error and 5xx halves are httpretry.ShouldRetry, shared with
+	// the Home Assistant client so the two cannot drift apart again — they had,
+	// and the HA client retried every POST on 5xx for months while this file
+	// carried the comment explaining why that is wrong.
+	if httpretry.ShouldRetry(err, status, method) {
+		return true
 	}
-	if status >= 500 {
-		return idempotent
+	if err != nil || status >= 500 {
+		return false
 	}
+	// The one rule that is this client's alone: a signed 401 means the Ingress
+	// session expired and the server rejected the request before acting on it,
+	// so re-signing and re-sending is safe for any method.
 	return signed && status == http.StatusUnauthorized
-}
-
-// isIdempotentMethod reports whether retrying method cannot cause duplicate
-// side effects (per RFC 7231 idempotency).
-func isIdempotentMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions:
-		return true
-	default:
-		return false
-	}
-}
-
-// neverSent reports whether a transport error occurred before the request was
-// put on the wire (a dial / connection-refused failure), making a retry safe
-// even for a non-idempotent method — the server cannot have acted on it.
-func neverSent(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return true
-	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) && opErr.Op == "dial" {
-		return true
-	}
-	return false
 }

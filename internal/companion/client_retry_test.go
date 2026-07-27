@@ -43,21 +43,6 @@ func TestShouldRetry_Idempotency(t *testing.T) {
 	}
 }
 
-func TestNeverSent(t *testing.T) {
-	if !neverSent(&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}) {
-		t.Error("dial ECONNREFUSED should count as never-sent")
-	}
-	if !neverSent(syscall.ECONNREFUSED) {
-		t.Error("bare ECONNREFUSED should count as never-sent")
-	}
-	if neverSent(errors.New("read: connection reset by peer")) {
-		t.Error("a generic transport error must not count as never-sent")
-	}
-	if neverSent(nil) {
-		t.Error("nil is not a transport error")
-	}
-}
-
 // TestPostNotRetriedOn5xx proves a non-idempotent create is issued exactly once
 // even when the server 5xxs — retrying could duplicate the create.
 func TestPostNotRetriedOn5xx(t *testing.T) {

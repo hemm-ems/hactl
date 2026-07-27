@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/clock"
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
@@ -547,6 +548,18 @@ func (f fireCounts) runs(entityID string) (int, bool) {
 // traces also keeps the number honest for high-fire automations, whose trace
 // storage HA caps (default 5).
 func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since time.Duration) (fireCounts, error) {
+	return fetchFireCounts(ctx, client, since, "automation")
+}
+
+// fetchFireCounts is the same query for any domain HA logs one entry per run
+// for. `script ls` needs it too: it counted stored traces, which HA bounds per
+// item (`stored_traces`, default 5), so a script invoked forty times reported
+// five. The comment at the automation call site has said why that is wrong
+// since the automation column was fixed — "traces are bounded per automation,
+// so they undercount runs_24h dramatically for high-fire rules" — and the
+// sibling column was left counting traces anyway. docs/manual.md tells the
+// reader the script one is "a plain count of invocations".
+func fetchFireCounts(ctx context.Context, client *haapi.Client, since time.Duration, domain string) (fireCounts, error) {
 	now := time.Now()
 	startTime := now.Add(-since)
 	data, err := client.GetLogbook(ctx,
@@ -566,7 +579,7 @@ func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since 
 
 	counts := make(map[string]int)
 	for _, e := range entries {
-		if e.Domain == "automation" && e.EntityID != "" {
+		if e.Domain == domain && e.EntityID != "" {
 			counts[e.EntityID]++
 		}
 	}
@@ -808,30 +821,16 @@ func shortenStep(step string) string {
 	return step
 }
 
+// formatShortTime renders a Home Assistant timestamp in the reader's zone.
+//
+// The conversion itself lives in internal/clock, shared with every other
+// renderer in the product. It was not, and the other four disagreed with this
+// one; see that package's doc comment.
 func formatShortTime(isoTime string) string {
 	if isoTime == "" {
 		return "-"
 	}
-	t, err := time.Parse(time.RFC3339Nano, isoTime)
-	if err != nil {
-		// Try without nanoseconds
-		t, err = time.Parse(time.RFC3339, isoTime)
-		if err != nil {
-			return isoTime
-		}
-	}
-	// Home Assistant reports these timestamps in UTC. Render them where the
-	// person reading them lives: without this, "15:04" is a UTC wall-clock
-	// presented as if it were local, and the same-day test compares a UTC
-	// calendar day against a local "today" — so between local midnight and the
-	// UTC offset, a timestamp seconds old is stamped with yesterday's date.
-	//nolint:gosmopolitan // gosmopolitan guards server code against assuming the host's zone; hactl is a CLI and the host's zone is the reader's.
-	t = t.Local()
-	now := time.Now()
-	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
-		return t.Format("15:04")
-	}
-	return t.Format("01-02 15:04")
+	return clock.Short(isoTime)
 }
 
 // compactDiffContext is how many unchanged context lines the compact diff
@@ -904,7 +903,9 @@ func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 	backupDir := filepath.Join(cfg.Dir, "backups")
 	wr := writer.New(client, nil, backupDir)
 
-	diff, err := wr.Diff(ctx, autoID, flagAutoFile)
+	configID := resolveAutomationConfigID(ctx, client, autoID)
+
+	diff, err := wr.Diff(ctx, configID, flagAutoFile)
 	if err != nil {
 		return err
 	}
@@ -944,66 +945,102 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 
 	wr := writer.New(client, wsClient, backupDir)
 
-	// Show diff first
-	diff, diffErr := wr.Diff(ctx, autoID, flagAutoFile)
-	switch {
-	case diffErr != nil:
-		slog.Warn("could not generate diff", "error", diffErr)
-	case diff.HasChanges:
-		_, _ = fmt.Fprintf(w, "diff:\n")
-		renderAutoDiff(w, diff.Lines)
-	default:
+	configID := resolveAutomationConfigID(ctx, client, autoID)
+
+	// The diff is also the resolution step, and its failure must end the
+	// command before anything is printed.
+	//
+	// This error used to go to slog.Warn and execution fell through. On the
+	// dry-run path writer.Apply returns before the backup fetch — the only
+	// other call that touches the target — so nothing downstream could fail:
+	// a fabricated id produced "validation: ok (HA validate_config)" and
+	// "dry-run: no changes written to X (use --confirm to apply)" at exit 0,
+	// with the 404 visible only as a WARN on stderr. `validation: ok` is a
+	// true statement about the local file that reads as one about the
+	// operation, and POST to that endpoint is create-or-update, so an agent
+	// that believed the plan and confirmed it would have created a new
+	// automation rather than updating the intended one.
+	//
+	// `script apply`, the sibling, has always returned this error. The manual
+	// promises it for both: "a preview fails exactly where --confirm would".
+	diff, diffErr := wr.Diff(ctx, configID, flagAutoFile)
+	if diffErr != nil {
+		return diffErr
+	}
+	if !diff.HasChanges {
 		_, _ = fmt.Fprintf(w, "no changes detected\n")
 		return nil
 	}
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "diff:\n")
+		renderAutoDiff(w, diff.Lines)
+	}
 
-	result, err := wr.Apply(ctx, autoID, flagAutoFile, flagAutoConfirm)
+	result, err := wr.Apply(ctx, configID, flagAutoFile, flagAutoConfirm)
 	if err != nil {
 		return err
 	}
 
-	if result.Validated {
-		_, _ = fmt.Fprintf(w, "\nvalidation: ok (HA validate_config)\n")
-	} else {
-		_, _ = fmt.Fprintf(w, "\nvalidation: skipped (validate_config unavailable; HA still validates on write)\n")
+	validation := "ok (HA validate_config)"
+	if !result.Validated {
+		validation = "skipped (validate_config unavailable; HA still validates on write)"
 	}
 
 	if result.DryRun {
-		_, _ = fmt.Fprintf(w, "dry-run: no changes written to %s (use --confirm to apply)\n", autoID)
-		return nil
+		// One object under --json rather than a prose line and then an object.
+		// `validation: ok` used to be Fprintf'd straight to w ahead of the
+		// preview, which made stdout unparseable on a successful command.
+		return dryRun("apply automation").
+			with("automation", autoID).
+			with("config_id", configID).
+			with("validation", validation).
+			with("changed_lines", len(diff.Lines)).
+			render(w)
 	}
 
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "\nvalidation: %s\n", validation)
+	}
 	_, _ = fmt.Fprintf(w, "applied: %s\n", autoID)
 	if result.BackupPath != "" {
 		_, _ = fmt.Fprintf(w, "backup:  %s\n", result.BackupPath)
 	}
 	if result.Reloaded {
 		_, _ = fmt.Fprintf(w, "reload:  ok\n")
+	} else {
+		_, _ = fmt.Fprintf(w, "warning: written but HA did not confirm reload\n")
 	}
 	return nil
 }
 
-// validateAutoCreateCandidate runs HA's validate_config against a single-automation
-// YAML mapping and prints the same `validation:` status line `auto apply` prints.
-// It returns an error (refusing the create) when HA rejects a section. A YAML
-// parse failure is a hard error, mirroring `auto apply` (writer.Apply returns
-// "parsing local YAML: %w" on the same failure) — a config the parser chokes on
-// must never be reported as "checked". Inputs that parse cleanly but are not a
-// top-level mapping (e.g. a YAML list) are left for the companion to handle,
-// matching the pre-validation behavior.
-func validateAutoCreateCandidate(ctx context.Context, w io.Writer, data []byte) error {
+// validateAutoCreateCandidate runs HA's validate_config against a
+// single-automation YAML mapping and RETURNS the `validation:` status `auto
+// apply` reports. It returns an error (refusing the create) when HA rejects a
+// section. A YAML parse failure is a hard error, mirroring `auto apply`
+// (writer.Apply returns "parsing local YAML: %w" on the same failure) — a
+// config the parser chokes on must never be reported as "checked". Inputs that
+// parse cleanly but are not a top-level mapping (e.g. a YAML list) are left for
+// the companion to handle, matching the pre-validation behavior.
+//
+// It returns the status rather than printing it because it used to print it,
+// unconditionally, to the same writer the caller then rendered a JSON preview
+// on. `hactl auto create -f x.yaml --json` emitted a prose line and then an
+// object, so stdout did not parse on a *successful* command. Deciding how to
+// render belongs to the caller, which is the only place that knows whether the
+// answer is prose or a machine object.
+func validateAutoCreateCandidate(ctx context.Context, data []byte) (string, error) {
 	var parsed any
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
-		return fmt.Errorf("parsing local YAML: %w", err)
+		return "", fmt.Errorf("parsing local YAML: %w", err)
 	}
 	candidate, ok := parsed.(map[string]any)
 	if !ok {
-		return nil
+		return "", nil
 	}
 
 	cfg, err := config.Load(flagDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
@@ -1018,14 +1055,12 @@ func validateAutoCreateCandidate(ctx context.Context, w io.Writer, data []byte) 
 
 	validated, err := writer.New(client, wsClient, "").ValidateCandidate(ctx, candidate)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if validated {
-		_, _ = fmt.Fprintf(w, "\nvalidation: ok (HA validate_config)\n")
-	} else {
-		_, _ = fmt.Fprintf(w, "\nvalidation: skipped (validate_config unavailable; HA still validates on write)\n")
+		return "ok (HA validate_config)", nil
 	}
-	return nil
+	return "skipped (validate_config unavailable; HA still validates on write)", nil
 }
 
 func runAutoCreate(ctx context.Context, w io.Writer) error {
@@ -1044,7 +1079,8 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 	// it, letting a broken config reach the companion and load as `unavailable`. A
 	// rejected config is now refused (nothing written) in both dry-run and
 	// --confirm mode.
-	if valErr := validateAutoCreateCandidate(ctx, w, data); valErr != nil {
+	validation, valErr := validateAutoCreateCandidate(ctx, data)
+	if valErr != nil {
 		return valErr
 	}
 
@@ -1055,7 +1091,12 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		return dryRun("create automation").
 			with("file", flagAutoFile).
 			with("bytes", len(data)).
+			withIf(validation != "", "validation", validation).
 			render(w)
+	}
+
+	if validation != "" && !flagJSON {
+		_, _ = fmt.Fprintf(w, "\nvalidation: %s\n", validation)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -1105,6 +1146,29 @@ func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (a
 		}
 	}
 	return automationEntity{}, false
+}
+
+// resolveAutomationConfigID turns any identifier hactl prints for an automation
+// into the config id the Config API keys on.
+//
+// H-17, applied to the half of the family that never had it. `auto ls` prints
+// the entity object id in a column headed `id`; `auto show`, `auto cat` and
+// `auto delete` accept it, while `auto diff` and `auto apply` handed it
+// straight to `GET /api/config/automation/config/<id>`, which keys on the
+// config `id:` only. HA's UI mints a millisecond timestamp for that field, so
+// for essentially every UI-authored automation the two are different strings
+// and the printed one 404s.
+//
+// A reference that matches no live automation is passed through unchanged
+// rather than refused here. That is deliberate: an automation present in
+// automations.yaml but not loaded has a config id and no live entity, and the
+// Config API is the authority on whether it exists. The caller's job is to let
+// that fetch's error escape — which is the other half of this fix.
+func resolveAutomationConfigID(ctx context.Context, client *haapi.Client, ref string) string {
+	if a, ok := resolveAutomation(ctx, client, ref); ok && a.Attributes.ID != "" {
+		return a.Attributes.ID
+	}
+	return ref
 }
 
 // resolveAutomationEntityID is resolveAutomation narrowed to the live

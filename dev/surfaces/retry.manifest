@@ -1,0 +1,21 @@
+# retry — a non-idempotent request is never retried against a server that may
+# already have acted on it (INVARIANTS.md H-1).
+#
+# A VIOLATION surface: internal/surfaceaudit.RetrySurface lists only the POST
+# call sites that route through a helper whose retry policy is not method-aware.
+# Empty is the goal, and it is empty, because the policy moved into
+# internal/httpretry and both clients import it. Guarded against silently
+# matching nothing by TestPostNotRetriedOn5xx and TestGetStillRetriedOn5xx in
+# internal/haapi, which pin both directions against a counting server.
+#
+# It was not empty. H-1 cited internal/companion/client_retry_test.go and
+# nothing else, so the rule was enforced against one of the two HTTP clients.
+# The other — the one that talks to Home Assistant — had no method check at all:
+# `if resp.StatusCode >= 500 && attempt < maxAttempts-1`. Seven POST sites went
+# through it, including CallService, so `svc call notify.x --confirm` against an
+# HA that delivered the push and then raised sent it three times.
+#
+# doPostOnce is the tell: it was added because retrying a flow-start left
+# dangling flows, and it was applied to the two call sites where that symptom
+# appeared rather than to doWithRetry.
+#ceiling 0
