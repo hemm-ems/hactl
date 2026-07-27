@@ -706,6 +706,19 @@ machine without Docker.
   across runs — `make test-companion` (Docker tier). The comparison is over
   stdout alone because hactl's slog handler stamps every stderr line with
   `time=`.
+- Quantified by: `internal/surfaceaudit/surface_test.go`
+  (`TestMapRangeSurfaceIsClosed`) — the set of map walks is derived from the
+  typed source across every build-tag configuration, and
+  `dev/surfaces/maprange.manifest` dispositions every one of them, so a new
+  map-range site cannot appear silently. The hand sweep this replaces ran once
+  (2026-07-26), found `companion wireguard status` printing one arbitrary map
+  entry, and was never run again. Mechanising it immediately found a second
+  live violation the hand sweep had cleared: `renderFlowResult` printed a
+  failed flow-step's per-field errors in map order. Both renders are now pinned
+  byte-identical by `internal/cmd/wireguard_format_test.go`
+  (`TestWriteWireguardStatus_ResolvedRenderIsDeterministic`) and
+  `internal/cmd/flow_render_test.go`
+  (`TestRenderFlowResult_ErrorsAreDeterministic`) — `make test`.
 
 ## H-17 — An identifier hactl prints is an identifier hactl accepts
 

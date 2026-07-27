@@ -68,6 +68,7 @@ not an act at all. That asymmetry is the whole design.
 | `confirm` | the live cobra tree | a preview fails exactly where `--confirm` would (H-2) |
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
+| `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

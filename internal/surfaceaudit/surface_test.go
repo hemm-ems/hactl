@@ -155,3 +155,17 @@ func TestPreviewSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.PreviewSurface(repoRoot(t))
 	runGate(t, s, err)
 }
+
+// TestMapRangeSurfaceIsClosed — every range over a Go map in the module's
+// non-test sources declares whether its iteration order can reach rendered
+// output, and how that is prevented.
+//
+// H-16 states the rule as a universal and cited three commands. The other
+// map walks were swept by hand once (2026-07-26), the sweep found the
+// `companion wireguard status` defect, and nothing ever re-ran it — so the
+// 29th map-range would have arrived carrying the same risk with no gate in
+// its way. This is that re-run, standing.
+func TestMapRangeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.MapRangeSurface(repoRoot(t))
+	runGate(t, s, err)
+}

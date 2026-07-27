@@ -174,6 +174,9 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		{"clock", surfaceaudit.ClockSurface, "internal/clock/render.go:Short"},
 		{"target", surfaceaudit.TargetSurface, "internal/cmd/cc.go:runCCShow"},
 		{"invariant", surfaceaudit.InvariantSurface, "H-17"},
+		// The named site is the one the maprange surface exists for: the walk
+		// that rendered one arbitrary entry of a map for a whole release.
+		{"maprange", surfaceaudit.MapRangeSurface, "internal/cmd/wireguard_cmd.go:writeWireguardMonitor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := tc.derive(root)

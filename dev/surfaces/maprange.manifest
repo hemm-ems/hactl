@@ -1,0 +1,54 @@
+# maprange — a walk over a Go map is made canonical before anything it feeds is
+# rendered; an answer is a function of the instance, never of map iteration
+# order (INVARIANTS.md H-16).
+#
+# The surface is derived by internal/surfaceaudit.MapRangeSurface: every
+# `range` statement in the module's non-test sources whose expression is a map,
+# found with go/types across every build-tag configuration the sources declare.
+# A parser cannot see half of these (a struct field, a named map type), and a
+# hand sweep saw all of them exactly once — 2026-07-26, when it found
+# `companion wireguard status` printing one arbitrary entry of m.Resolved — and
+# was never run again. This ledger is that sweep, standing.
+#
+# No AST can prove sortedness, so each line carries the judgment a reviewer
+# made about the walk: `proven` names a test that pins the fed output
+# byte-identical across runs; `exempt` states why the order is structurally
+# unobservable (a set is built, a slice is sorted before use, a single-key map
+# is length-guarded, a store re-orders on read). A new walk is unclassified
+# and fails the gate the day it appears.
+#
+# The ceiling is the number of walks known to be unproven. It may fall without
+# ceremony and may only rise by editing this line on purpose.
+#ceiling 0
+
+# --- walks that feed rendered output, pinned deterministic by a test ----------
+internal/analyze/trace.go:sortedStepPaths = proven: TestSortedStepPaths_NumericSegments
+internal/cmd/ent.go:findAreaNeighbors = proven: TestDedupeAndSortRelated_Canonical
+internal/cmd/ent.go:findDeviceSiblings = proven: TestDedupeAndSortRelated_Canonical
+internal/cmd/flow.go:sortedKeys = proven: TestRenderFlowResult_ErrorsAreDeterministic
+internal/cmd/wireguard_cmd.go:writeWireguardMonitor = proven: TestWriteWireguardStatus_ResolvedRenderIsDeterministic
+
+# --- walks whose order is destroyed before anything reads it ------------------
+internal/cmd/ent.go:runEntShow = exempt: collects the unshown attribute keys into a slice that is sort.Strings-ed before the render loop reads it
+internal/cmd/ent_who.go:runEntWho = exempt: tallies trigger counts into summary rows sorted by a total order (count desc, then trigger asc) before rendering
+internal/cmd/rtfm.go:runRTFMFamilies = exempt: groups aliases per family and sort.Strings-es each family's slice before rendering; family order comes from the fixed Families() slice
+internal/degeneracy/degeneracy.go:(*collector).err = exempt: collects the missing-field keys and sort.Strings them before composing the error text
+internal/hatest/recorder.go:knownSchemaVersions = exempt: collects the schema versions and sort.Ints them before joining into the message
+internal/jsonwalk/jsonwalk.go:sortedKeys = exempt: this IS a canonicalizer — it collects keys and sort.Strings them so every YAML/JSON walk visits children in one order
+internal/surfaceaudit/surface.go:Check = exempt: the stale-entry sweep appends to a slice that is sort.Strings-ed before the report renders
+internal/testaudit/assertions.go:scanDir = exempt: ScanRepo sorts the combined tests by file and line before any caller reads them
+
+# --- walks whose order is structurally unobservable ---------------------------
+internal/cmd/cache.go:refreshTracesFromHA = exempt: rows land in SQLite and every read back out orders by start_time in the query, so the walk's order never reaches an answer
+internal/cmd/helper.go:helperCreateID = exempt: guarded by len(top) != 1 just above, so the walk visits exactly one key — there is no order to observe
+internal/cmd/label.go:matchingLabelIDs = exempt: builds a set of label ids consumed by membership checks only; iteration order cannot reach output
+internal/cmd/script.go:normalizeScriptCreateYAML = exempt: guarded by len(top) != 1 just above, so the walk visits exactly one key — there is no order to observe
+internal/cmd/script.go:normalizeScriptYAML = exempt: entered only when len(top) == 1, so the walk visits exactly one key — there is no order to observe
+internal/manual/state.go:loadSession = exempt: TTL eviction deletes expired sessions during the walk; nothing renders and the surviving set is order-independent
+internal/mcpserver/gate.go:ClassifiedPaths = exempt: feeds the classification exhaustiveness tests, which compare membership in both directions; per-set slice order is never rendered
+internal/surfaceaudit/scan.go:callArgsMention = exempt: membership scan returning a bool; no order is observable in the answer
+internal/surfaceaudit/scan.go:targetAliases = exempt: fixpoint over a set of identifier aliases consumed by membership checks only
+internal/hatest/recorder.go:verifyRecorderSchema = exempt: presence check over required columns; which missing column aborts first may vary, but that is the test rig refusing to run, never a command's answer
+internal/testaudit/assertions.go:(*pkgScope).lookup = exempt: searches for a package-level func by name; Go allows one declaration per package, so every order finds the same answer
+internal/testaudit/assertions.go:mergeNames = exempt: set union consumed by membership checks only; no order is observable
+pkg/ids/ids.go:(*Registry).Load = exempt: rebuilds the reverse index; Mint refuses colliding short ids, so the pairs are unique and insertion order is immaterial
