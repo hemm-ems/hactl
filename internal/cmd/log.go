@@ -192,9 +192,12 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 
 	// pkg/ids.Registry stores every prefix's short IDs in one flat reverse
 	// map (Resolve doesn't check which prefix minted an entry), so without
-	// this check a "trc:" or "anom:" ID resolves cleanly here too. Those
+	// this check a foreign-namespace ID resolves cleanly here too: a live
+	// "trc:" ID, or an "anom:" ID — no longer minted by anything (D-5 in
+	// docs/decisions.md), but cache/ids.json persists across upgrades, so a
+	// registry written by an older hactl can still hold them. Those
 	// namespaces' keys happen to also be pipe-delimited 3-part strings (e.g.
-	// anom: is "entity_id|type|start_time"), so the branch below would print
+	// anom: was "entity_id|type|start_time"), so the branch below would print
 	// them as if they were a log entry's timestamp/component/message —
 	// fabricated fields lifted from an unrelated record. Mirrors the same
 	// prefix check trace.go's resolveTraceID does for "trc:".

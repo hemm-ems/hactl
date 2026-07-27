@@ -391,6 +391,17 @@ timestamp/component/message. `log show` now rejects any ID without a `log:`
 prefix before resolving, mirroring the same check `trace.go`'s
 `resolveTraceID` already did for `trc:`.
 
+The `anom:` namespace itself no longer exists. `ent anomalies` minted those
+ids into `cache/ids.json` and printed them in an `id` column while no command
+accepted one — an identifier without a consumer is a fabricated address, this
+invariant's class in its purest form — so the minting was deleted rather than
+given a consumer (D69; D-5 in `docs/decisions.md`), and a standing gate pins
+both anomaly renderers, both output formats and the id-registry file, so
+re-minting can only arrive in the same PR as its consumer. `log show`'s
+prefix check stays load-bearing regardless: `cache/ids.json` persists across
+upgrades, so a registry written by an older hactl can still hold `anom:`
+entries, and `Resolve` accepts any prefix.
+
 - Enforced by: `internal/analyze/logdedup_test.go`
   (`TestDeduplicateLogs_SumsPreAggregatedCounts`,
   `TestDeduplicateLogs_ZeroCountTreatedAsOne`,
@@ -402,6 +413,8 @@ prefix before resolving, mirroring the same check `trace.go`'s
   `internal/cmd/ws_cmd_test.go` (`TestRunCCLs_ExcludesBuiltInUpdateEntities`,
   `TestRunCCShow_RejectsBuiltInDomain`, `TestRunLogShow_RejectsForeignNamespace`,
   `TestRunLogShow_JSON`, `TestRunCCShow_JSON`),
+  `internal/cmd/ent_anomalies_id_test.go` (`TestEntAnomaliesMintsNoIdentifier`
+  — the D-5 standing gate, watched red against the re-introduced minting),
   `internal/integration/oracle_diagnostics_test.go` (all tests, checked
   against HA's own `system_log/list`, `manifest/list`, and logbook —
   invariant H-9)
