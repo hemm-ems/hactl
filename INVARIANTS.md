@@ -755,14 +755,17 @@ absolute: printing is a promise. A caller who copies a string out of one command
 and pastes it into another is doing the thing the output invited, and the second
 command answering "nothing" is hactl contradicting itself.
 
-Home Assistant carries three interchangeable names for one automation: the
+Home Assistant carries four interchangeable names for one automation: the
 config `id:` (surfaced as `attributes.id`, and the key HA files traces under),
-the `entity_id` it derives from the alias, and that entity_id's object id. HA's
-UI mints a millisecond timestamp for the config id, so for essentially every
-UI-authored automation it is a *completely different string* from the object id
-`auto ls` prints in its `id` column.
+the alias (`attributes.friendly_name`, verbatim), the `entity_id` HA derives
+from the alias, and that entity_id's object id. HA's UI mints a millisecond
+timestamp for the config id, so for essentially every UI-authored automation it
+is a *completely different string* from the object id `auto ls` prints in its
+`id` column. D-1 (docs/decisions.md) fixes the pole for the family: every
+command that takes an automation accepts every one of these forms, and where
+one is printed as *the* identifier, it is the config id.
 
-hactl printed all three and resolved all three — `auto show` displays the
+hactl printed all of them and resolved most — `auto show` displays the
 entity_id and the `config_id`, `auto create` prints the config id it just wrote,
 and `auto cat`/`diff`/`apply`/`delete` key on it — while `auto ls --pattern` and
 `ent ls --pattern` matched only the entity_id forms. So an id hactl printed was
@@ -771,30 +774,58 @@ manual routes a caller who cannot find something to `ent ls --pattern` as the
 discovery fallback, and under the stop-at-the-first-miss rule an empty listing
 there reads as "no such entity" — a wrong answer, not a missing one.
 
+The same mechanism recurred twice after the `--pattern` fix, in the two family
+members whose lookup did not route through the shared resolver. `auto rollback`
+matched the caller's raw reference against backup filenames, which `auto apply`
+keys by config id — so the object id, the entity_id and the alias all answered
+"no backup found" for an automation whose backup existed. And `auto delete`
+forwarded the raw reference to the companion, whose DELETE resolves a config
+id, an alias, or a live entity_id but never the bare object id — the one
+identifier `auto ls` prints — so the preview succeeded (the live entity
+resolves) and `--confirm` 404'd, H-2's contract inverted. Both are why the set
+of resolver sites is now derived from the source rather than remembered: every
+entrypoint taking an automation reference must reach `resolveAutomation`.
+
 Two bounds keep the rule from degrading into "match anything":
 
 - **Only identifiers hactl actually prints for that resource count.** The
-  automation config id is claimed because hactl prints it; a `sensor` that
-  happens to carry an `id` attribute is not addressable by it, because nothing
-  in hactl ever offers it as that sensor's name.
+  automation config id and alias are claimed because hactl prints them; a
+  `sensor` that happens to carry an `id` attribute — or a friendly_name — is
+  not addressable by it, because nothing in hactl ever offers either as that
+  sensor's name or resolves the sensor by it.
 - **A resource that matches on two of its identifiers is still one row.** The
   filter widens what matches, never how often.
 
 - Enforced by: `internal/cmd/auto_test.go` —
   `TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints`,
+  `TestFilterAutosByPattern_AcceptsTheAliasHactlPrints`,
   `TestFilterAutosByPattern_MatchesEachAutomationOnce`,
   `TestBuildAutoRows_CarriesTheConfigID`; `internal/cmd/ent_test.go` —
-  `TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints` (its
-  `sensor.thermostat` row is the scope bound),
+  `TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints`,
+  `TestFilterEntitiesByPattern_AcceptsTheAliasHactlPrints` (their
+  `sensor.thermostat` rows are the scope bound),
   `TestFilterEntitiesByPattern_MatchesEachEntityOnce`;
+  `internal/cmd/rollback_target_test.go` —
+  `TestAutoRollbackAcceptsTheIdentifierAutoLsPrints`,
+  `TestAutoRollbackStillRefusesWhatDoesNotExist`;
+  `internal/cmd/auto_delete_target_test.go` —
+  `TestAutoDeleteSendsTheCompanionAnIdItAccepts`,
+  `TestAutoDeleteDryRunStillRefusesUnresolvable`;
+  `internal/companiontest/e2e_test.go` — `TestE2EAutoDeleteByObjectIDCLI`
+  (`make test-companion`, Docker tier);
   `internal/integration/oracle_pattern_test.go` —
-  `TestPatternAcceptsEveryIdentifierHactlPrints` (reads the entity_id/config id
-  pairs from the live instance's `/api/states`, asserts `auto show` prints the
-  config id HA reports, then requires `auto ls --pattern` and `ent ls --pattern`
-  to match on every one of the three forms) and
+  `TestPatternAcceptsEveryIdentifierHactlPrints` (reads the entity_id/config
+  id/alias tuples from the live instance's `/api/states`, asserts `auto show`
+  prints the config id HA reports, then requires `auto ls --pattern` and
+  `ent ls --pattern` to match on every form) and
   `TestPatternStillRejectsWhatDoesNotExist` (the negative control — a filter that
   matched everything would satisfy the first test just as well). `make test-int`
   (Docker tier).
+- Quantified by: `internal/surfaceaudit`
+  (`TestAutomationRefSurfaceIsClosed`, `make test-surface`) — the set of
+  entrypoints taking an automation reference is derived from the source, and
+  one that bypasses `resolveAutomation` fails the build the day it appears;
+  and `TestTargetSurfaceIsClosed` for the wider any-resource half.
 
 ## H-18 — `runs_24h` counts runs, and it counts the same runs `auto show` lists
 

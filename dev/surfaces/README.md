@@ -67,6 +67,7 @@ not an act at all. That asymmetry is the whole design.
 |---|---|---|
 | `confirm` | the live cobra tree | a preview fails exactly where `--confirm` would (H-2) |
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
+| `autoref` | `internal/cmd` entrypoints taking an automation reference | the reference reaches `resolveAutomation`, so every command accepts every identifier form the family prints (D-1, H-17) |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
 | `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
 | `decode` | every decode site the H-14 json sweep cannot see — yaml, decoder constructions, websocket `ReadJSON`, json outside `degeneracy.WirePackages` | a decode that yields nothing never renders as success (H-7) |

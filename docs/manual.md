@@ -171,7 +171,7 @@ hactl changes --since 24h     # logbook: what changed recently (state changes, a
 ```bash
 hactl auto ls                             # table: id, state, area, labels, runs_24h, errors, last_err
 hactl auto ls --failing                   # only automations with recent errors
-hactl auto ls --pattern 'ess_*'           # glob/substring on object id, entity_id or config id
+hactl auto ls --pattern 'ess_*'           # glob/substring on object id, entity_id, config id or alias
 hactl auto ls --label victron             # filter by label name (substring)
 hactl auto ls --restored                  # only "ghost" automations (restored from registry, no live config)
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
@@ -191,9 +191,17 @@ which is not capped). `script ls`'s `runs_24h` is a plain count of invocations: 
 has no gate between being started and being traced, because its conditions are steps
 inside a sequence that is already executing.
 
+**Automation identifiers:** every command that takes an automation — `auto
+show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
+interchangeable names: the config `id:`, the alias, the entity_id, or the
+entity_id's object id (the `id` column of `auto ls`). Copy an identifier out of
+any listing and it works in the next command. The config `id:` is the canonical
+one hactl prints (`auto show --json`'s `config_id`, `auto create`'s result);
+`--pattern` matches all forms.
+
 `auto show` summarizes; `auto cat` prints the stored config itself, so it is what
-you feed back into `auto diff -f` / `auto apply -f`. It accepts the config `id:`,
-the entity_id, or the alias, and needs the companion. Output is YAML by design —
+you feed back into `auto diff -f` / `auto apply -f`. It needs the companion.
+Output is YAML by design —
 `--json` does not change it (same for `script|helper|tpl cat`, `auto|script diff`,
 `tpl eval`, `config file|block`).
 
@@ -250,7 +258,7 @@ Requires hactl-companion. YAML file format matches HA scripts.yaml (top-level ke
 
 ```bash
 hactl ent ls                              # all entities
-hactl ent ls --pattern 'sensor.wp_*'      # glob/substring on entity_id
+hactl ent ls --pattern 'sensor.wp_*'      # glob/substring on entity_id (automations: also config id + alias)
 hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)

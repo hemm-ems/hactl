@@ -1,0 +1,20 @@
+# autoref — an automation reference reaches resolveAutomation, so every
+# command accepts every identifier form the family prints (docs/decisions.md
+# D-1; INVARIANTS.md H-17).
+#
+# A VIOLATION surface: internal/surfaceaudit.AutomationRefSurface lists only
+# the run-entrypoints whose automation target never passes through the shared
+# resolver — directly or via one of its one-hop wrappers
+# (resolveAutomationConfigID, resolveAutomationEntityID, automationConfigIDFor).
+# Empty is the goal, and it is empty. Guarded against silently matching nothing
+# by TestAutomationRefExtractorFlagsAnUnresolvedTarget, which feeds the
+# extractor a known-bad function.
+#
+# It was not empty. `auto rollback` matched the caller's reference against
+# backup filenames, which `auto apply` keys by config id — so the object id
+# `auto ls` prints, the entity_id and the alias all answered "no backup found
+# for automation …" for an automation whose backup sat right there. The same
+# mechanism had already produced issue #94's `auto diff`/`auto apply` defect:
+# a parallel narrower lookup beside a resolver whose own doc comment named
+# them as callers.
+#ceiling 0

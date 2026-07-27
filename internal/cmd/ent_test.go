@@ -227,11 +227,59 @@ func TestFilterEntitiesByPattern_AcceptsTheConfigIDHactlPrints(t *testing.T) {
 	}
 }
 
+// TestFilterEntitiesByPattern_AcceptsTheAliasHactlPrints pins the alias third
+// of D-1 on `ent ls`, the manual's discovery fallback: an automation is
+// addressed by config `id:`, alias, or entity_id, everywhere. HA carries the
+// alias verbatim as friendly_name, every `auto` target command resolves it,
+// and `ent show` displays it as the automation's name.
+//
+// The sensor row is the scope bound, exactly as it is for the config id: a
+// sensor's friendly_name is a display name, not an identifier — no hactl
+// command resolves a sensor by it — so it must not start matching.
+func TestFilterEntitiesByPattern_AcceptsTheAliasHactlPrints(t *testing.T) {
+	states := []entityState{
+		{EntityID: "automation.morning_alarm", Attributes: map[string]any{
+			"id": "1678886400123", "friendly_name": "Morgen Wecker"}},
+		{EntityID: "automation.legacy_yaml"}, // no alias at all
+		{EntityID: "sensor.thermostat", Attributes: map[string]any{
+			"friendly_name": "Morgen Wecker Temperatur"}},
+	}
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    []string
+	}{
+		{"exact alias", "Morgen Wecker", []string{"automation.morning_alarm"}},
+		{"alias substring, caller-cased", "morgen w", []string{"automation.morning_alarm"}},
+		{"alias that exists nowhere", "Nacht Wecker", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterEntitiesByPattern(states, tt.pattern)
+			got := make([]string, 0, len(result))
+			for _, s := range result {
+				got = append(got, s.EntityID)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("filterEntitiesByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("filterEntitiesByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // TestFilterEntitiesByPattern_MatchesEachEntityOnce guards the shape of the fix:
-// an entity whose entity_id AND config id both match must still be one row.
+// an entity whose entity_id, config id AND alias all match must still be one row.
 func TestFilterEntitiesByPattern_MatchesEachEntityOnce(t *testing.T) {
 	states := []entityState{
-		{EntityID: "automation.cfgid_same", Attributes: map[string]any{"id": "cfgid_same"}},
+		{EntityID: "automation.cfgid_same", Attributes: map[string]any{
+			"id": "cfgid_same", "friendly_name": "cfgid_same"}},
 	}
 	if got := filterEntitiesByPattern(states, "*cfgid_same*"); len(got) != 1 {
 		t.Errorf("filterEntitiesByPattern returned %d rows for one entity, want 1", len(got))

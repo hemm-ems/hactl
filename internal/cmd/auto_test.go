@@ -820,10 +820,61 @@ func TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints(t *testing.T) {
 	}
 }
 
+// TestFilterAutosByPattern_AcceptsTheAliasHactlPrints pins the alias third of
+// D-1 (docs/decisions.md): an automation is addressed by config `id:`, alias,
+// or entity_id, everywhere. `auto show`/`cat`/`diff`/`apply`/`delete` all
+// resolve the alias (HA carries it verbatim as friendly_name), `ent show`
+// displays it as the automation's name, and `auto cat` prints it in the YAML —
+// so a caller can be holding it, and `auto ls --pattern` answering "nothing"
+// for it is hactl refusing an identifier its own commands accept (H-17).
+func TestFilterAutosByPattern_AcceptsTheAliasHactlPrints(t *testing.T) {
+	// The alias is human-cased with spaces — HA slugifies it into the object
+	// id — so a filter that only ever matched the machine forms cannot pass by
+	// accident (TC-4).
+	rows := []autoRow{
+		{id: "morning_alarm", configID: "1678886400123", alias: "Morgen Wecker"},
+		{id: "evening_scene", configID: "cfgid_evening", alias: "Evening Scene"},
+		{id: "legacy_yaml"}, // YAML-authored: no config id, no alias
+	}
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    []string
+	}{
+		{"exact alias", "Morgen Wecker", []string{"morning_alarm"}},
+		{"alias substring, caller-cased", "morgen", []string{"morning_alarm"}},
+		{"glob over aliases", "Evening *", []string{"evening_scene"}},
+		{"alias that exists nowhere", "Nacht Wecker", nil},
+		// An automation with no alias must not be swept up by a glob that
+		// would match the empty string.
+		{"empty pattern matches no alias-less row", "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterAutosByPattern(rows, tt.pattern)
+			got := make([]string, 0, len(result))
+			for _, r := range result {
+				got = append(got, r.id)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("filterAutosByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("filterAutosByPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // TestFilterAutosByPattern_MatchesEachAutomationOnce guards the shape of the
-// fix: an automation whose object id AND config id both match is still one row.
+// fix: an automation whose object id, config id AND alias all match is still
+// one row.
 func TestFilterAutosByPattern_MatchesEachAutomationOnce(t *testing.T) {
-	rows := []autoRow{{id: "cfgid_same", configID: "cfgid_same"}}
+	rows := []autoRow{{id: "cfgid_same", configID: "cfgid_same", alias: "cfgid_same"}}
 	if got := filterAutosByPattern(rows, "*cfgid_same*"); len(got) != 1 {
 		t.Errorf("filterAutosByPattern returned %d rows for one automation, want 1", len(got))
 	}
@@ -835,7 +886,7 @@ func TestFilterAutosByPattern_MatchesEachAutomationOnce(t *testing.T) {
 func TestBuildAutoRows_CarriesTheConfigID(t *testing.T) {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	autos := []automationEntity{
-		{EntityID: "automation.morning_alarm", State: "on", Attributes: automationAttributes{ID: "1678886400123"}},
+		{EntityID: "automation.morning_alarm", State: "on", Attributes: automationAttributes{ID: "1678886400123", FriendlyName: "Morgen Wecker"}},
 		{EntityID: "automation.legacy_yaml", State: "on"},
 	}
 
@@ -851,6 +902,12 @@ func TestBuildAutoRows_CarriesTheConfigID(t *testing.T) {
 	}
 	if got := byID["legacy_yaml"].configID; got != "" {
 		t.Errorf("configID = %q for an automation HA reports no id for, want empty", got)
+	}
+	// D-1: the alias travels the same way, or the filter has nothing to match.
+	if got := byID["morning_alarm"].alias; got != "Morgen Wecker" {
+		t.Errorf("alias = %q, want %q — HA reports it as friendly_name and every "+
+			"`auto` target command resolves it, so `auto ls --pattern` has to be "+
+			"able to match it (D-1/H-17)", got, "Morgen Wecker")
 	}
 }
 

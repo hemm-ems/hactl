@@ -10,21 +10,23 @@ import (
 )
 
 // ============================================================================
-// H-17 — an identifier hactl prints is an identifier hactl accepts.
+// H-17 / D-1 — an identifier hactl prints is an identifier hactl accepts.
 //
-// Home Assistant carries three interchangeable names for one automation: the
-// config `id:` (surfaced as attributes.id, and what HA keys traces by), the
-// entity_id it derives from the alias, and that entity_id's object id. hactl
-// prints all three — `auto ls` the object id, `auto show` the entity_id and the
-// config_id, `auto create` the config id it just wrote — and `auto show`,
-// `cat`, `diff`, `apply` and `delete` accept all three.
+// Home Assistant carries interchangeable names for one automation: the config
+// `id:` (surfaced as attributes.id, and what HA keys traces by), the alias
+// (attributes.friendly_name, verbatim), the entity_id HA derives from the
+// alias, and that entity_id's object id. hactl prints all of them — `auto ls`
+// the object id, `auto show` the entity_id and the config_id, `auto create`
+// the config id it just wrote, `ent show` and `auto cat` the alias — and
+// `auto show`, `cat`, `diff`, `apply`, `delete` and `rollback` accept all of
+// them (docs/decisions.md D-1).
 //
-// `--pattern` did not. A caller who copied the config id out of one command and
-// pasted it into `auto ls --pattern` / `ent ls --pattern` got an empty listing,
-// which under the manual's stop-at-the-first-miss rule reads as "no such
-// automation" (D6/R2). The rule is one-directional and absolute: whatever hactl
-// prints as an identifier for a resource, every hactl command that filters on
-// that resource's identifier must match.
+// `--pattern` did not. A caller who copied the config id (or the alias) out of
+// one command and pasted it into `auto ls --pattern` / `ent ls --pattern` got
+// an empty listing, which under the manual's stop-at-the-first-miss rule reads
+// as "no such automation" (D6/R2). The rule is one-directional and absolute:
+// whatever hactl prints as an identifier for a resource, every hactl command
+// that filters on that resource's identifier must match.
 // ============================================================================
 
 // lsIDsMatching returns the values of `column` from a `--json` listing filtered
@@ -57,18 +59,20 @@ func entLsIDsMatching(t *testing.T, dir, pattern string) []string {
 // TestPatternAcceptsEveryIdentifierHactlPrints is the R2/D6 gate.
 //
 // HA is the oracle for which identifiers exist: /api/states reports the config
-// id alongside the entity_id for every automation, and the test asserts against
-// that pair rather than against a list typed into the test.
+// id and the alias alongside the entity_id for every automation, and the test
+// asserts against those rather than against a list typed into the test.
 func TestPatternAcceptsEveryIdentifierHactlPrints(t *testing.T) {
 	inst, _ := getOracleHA(t)
-	configIDs := oracleAutomationConfigIDs(t, inst)
+	identities := oracleAutomationIdentities(t, inst)
 
 	divergent := 0
-	for entityID, configID := range configIDs {
+	for entityID, identity := range identities {
+		configID, alias := identity.ConfigID, identity.Alias
 		objectID := strings.TrimPrefix(entityID, "automation.")
-		if configID == objectID {
-			// Nothing to distinguish: the two identifiers are one string, so
-			// this automation cannot see the defect (H-8).
+		if configID == objectID || alias == "" || alias == objectID {
+			// Nothing to distinguish: an identifier that collapses into the
+			// object id cannot see the defect (H-8), and an automation with no
+			// alias has only the machine forms.
 			continue
 		}
 		divergent++
@@ -89,29 +93,31 @@ func TestPatternAcceptsEveryIdentifierHactlPrints(t *testing.T) {
 					show.ConfigID, entityID, configID)
 			}
 
-			for _, ref := range []string{configID, entityID, objectID} {
+			for _, ref := range []string{configID, entityID, objectID, alias} {
 				if got := autoLsIDsMatching(t, inst.Dir(), ref); !slices.Contains(got, objectID) {
 					t.Errorf("auto ls --pattern %q returned %v, missing %q.\n"+
 						"`auto show` displays and resolves that identifier for this very "+
-						"automation (entity_id %s, config id %s) — a command must not print "+
-						"an identifier another command refuses.",
-						ref, got, objectID, entityID, configID)
+						"automation (entity_id %s, config id %s, alias %q) — a command must "+
+						"not print an identifier another command refuses (D-1).",
+						ref, got, objectID, entityID, configID, alias)
 				}
 			}
 
-			if got := entLsIDsMatching(t, inst.Dir(), configID); !slices.Contains(got, entityID) {
-				t.Errorf("ent ls --pattern %q returned %v, missing %q.\n"+
-					"That is the config id HA reports for this entity and hactl prints in "+
-					"`auto show --json`; the manual routes callers to `ent ls --pattern` as the "+
-					"discovery fallback, so an empty answer here reads as 'no such entity'.",
-					configID, got, entityID)
+			for _, ref := range []string{configID, alias} {
+				if got := entLsIDsMatching(t, inst.Dir(), ref); !slices.Contains(got, entityID) {
+					t.Errorf("ent ls --pattern %q returned %v, missing %q.\n"+
+						"HA reports that identifier for this entity and hactl prints it; the "+
+						"manual routes callers to `ent ls --pattern` as the discovery fallback, "+
+						"so an empty answer here reads as 'no such entity'.",
+						ref, got, entityID)
+				}
 			}
 		})
 	}
 
 	if divergent == 0 {
-		t.Fatal("precondition: no automation has a config id that differs from its object id; " +
-			"H-17 cannot be observed (see TestOracleFixtureIsDistinguishing)")
+		t.Fatal("precondition: no automation has a config id and alias that differ from its object id; " +
+			"H-17/D-1 cannot be observed (see TestOracleFixtureIsDistinguishing)")
 	}
 }
 

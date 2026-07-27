@@ -202,6 +202,65 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 	}
 }
 
+// TestAutomationRefExtractorFlagsAnUnresolvedTarget guards the autoref
+// violation surface the way TestPreviewExtractorFlagsAHandRolledPlan guards
+// the preview one: the surface is legitimately empty, so a non-empty check
+// cannot tell a healthy gate from an extractor that stopped matching. Feed it
+// a known-bad function and require exactly that one flagged — including the
+// helper-hop case, so a wrapper like resolveAutomationConfigID keeps counting
+// as resolution.
+func TestAutomationRefExtractorFlagsAnUnresolvedTarget(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := `package cmd
+
+func resolveAutomation(ctx context.Context, c *int, ref string) (int, bool) { return 0, false }
+
+func resolveAutomationConfigID(ctx context.Context, c *int, ref string) string {
+	if _, ok := resolveAutomation(ctx, c, ref); ok {
+		return ref
+	}
+	return ref
+}
+
+func runAutoDirect(ctx context.Context, w io.Writer, autoID string) error {
+	_, _ = resolveAutomation(ctx, nil, autoID)
+	return nil
+}
+
+func runAutoViaHelper(ctx context.Context, w io.Writer, automationID string) error {
+	_ = resolveAutomationConfigID(ctx, nil, automationID)
+	return nil
+}
+
+func runAutoBareLookup(ctx context.Context, w io.Writer, autoID string) error {
+	return findBackup(autoID)
+}
+
+func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
+	return nil // not an automation reference; must not be swept in
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "thing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := surfaceaudit.AutomationRefSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	keys := make([]string, 0, len(s.Sites))
+	for _, site := range s.Sites {
+		keys = append(keys, site.Key)
+	}
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], ":runAutoBareLookup") {
+		t.Errorf("want exactly the unresolved automation target flagged, got %v", keys)
+	}
+}
+
 // TestPreviewExtractorFlagsAHandRolledPlan guards the one violation surface,
 // which is legitimately empty and therefore cannot be guarded by a non-empty
 // check.

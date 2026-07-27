@@ -111,7 +111,7 @@ var autoDeleteCmd = &cobra.Command{
 
 func init() {
 	autoLsCmd.Flags().BoolVar(&flagAutoFailing, "failing", false, "show only automations with recent errors")
-	autoLsCmd.Flags().StringVar(&flagAutoPattern, "pattern", "", "filter by name (substring or glob, e.g. ess_*)")
+	autoLsCmd.Flags().StringVar(&flagAutoPattern, "pattern", "", "filter by any automation identifier: object id, entity_id, config id or alias (substring or glob, e.g. ess_*)")
 	autoLsCmd.Flags().StringVar(&flagAutoLabel, "label", "", "filter automations by label (substring, e.g. ess)")
 	autoLsCmd.Flags().BoolVar(&flagAutoRestored, "restored", false, "show only restored 'ghost' automations (registry entry with no live config — deleted or re-authored under a new id)")
 	autoDiffCmd.Flags().StringVarP(&flagAutoFile, "file", "f", "", "local YAML file to diff/apply")
@@ -183,10 +183,13 @@ type automationAttributes struct {
 // id is the entity object id (the `id` column). configID is the automation's
 // config `id:` — not displayed here, but displayed by `auto show`/`auto create`
 // and required by `auto cat`/`diff`/`apply`, which is why `--pattern` has to
-// match it (invariant H-17).
+// match it (invariant H-17). alias is HA's friendly_name — the `alias:` field
+// verbatim — which every `auto` target command resolves (D-1), so `--pattern`
+// has to match it too.
 type autoRow struct {
 	id       string
 	configID string
+	alias    string
 	state    string
 	lastErr  string
 	area     string
@@ -630,6 +633,7 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 		row := autoRow{
 			id:       id,
 			configID: a.Attributes.ID,
+			alias:    a.Attributes.FriendlyName,
 			state:    a.State,
 			restored: a.Attributes.Restored,
 		}
@@ -703,8 +707,8 @@ func scanTraceWindow(ts []haapi.TraceSummary, cutoff time.Time) traceWindow {
 }
 
 // filterAutosByPattern keeps rows matching pattern on ANY identifier that
-// addresses the automation (invariant H-17): the entity object id, the full
-// entity_id, and the config `id:`.
+// addresses the automation (D-1, invariant H-17): the entity object id, the
+// full entity_id, the config `id:`, and the alias.
 //
 // The config id is the one that used to be missing, and it is the one hactl
 // hands the caller: `auto show` prints it as config_id, `auto create` prints it
@@ -714,12 +718,18 @@ func scanTraceWindow(ts []haapi.TraceSummary, cutoff time.Time) traceWindow {
 // string from the `id` column — and `auto ls --pattern <that id>` answered
 // "nothing", which under the manual's stop-at-the-first-miss rule reads as "no
 // such automation" (D6/R2).
+//
+// The alias joined by the same rule (D-1): every `auto` target command resolves
+// it (HA carries it verbatim as friendly_name), `ent show` displays it as the
+// automation's name, and `auto cat` prints it in the YAML — so it too is an
+// identifier a caller can be holding.
 func filterAutosByPattern(rows []autoRow, pattern string) []autoRow {
 	result := make([]autoRow, 0, len(rows))
 	for _, r := range rows {
 		if matchPattern(r.id, pattern) ||
 			matchPattern("automation."+r.id, pattern) ||
-			(r.configID != "" && matchPattern(r.configID, pattern)) {
+			(r.configID != "" && matchPattern(r.configID, pattern)) ||
+			(r.alias != "" && matchPattern(r.alias, pattern)) {
 			result = append(result, r)
 		}
 	}
@@ -1171,16 +1181,6 @@ func resolveAutomationConfigID(ctx context.Context, client *haapi.Client, ref st
 	return ref
 }
 
-// resolveAutomationEntityID is resolveAutomation narrowed to the live
-// entity_id, for callers (delete, show) that only need the entity address.
-func resolveAutomationEntityID(ctx context.Context, client *haapi.Client, ref string) (string, bool) {
-	a, ok := resolveAutomation(ctx, client, ref)
-	if !ok {
-		return "", false
-	}
-	return a.EntityID, true
-}
-
 // automationTraceKey returns the key HA files this automation's traces under.
 //
 // INVARIANT H-9: traces are keyed by the automation's CONFIG id (`id:` in
@@ -1211,17 +1211,34 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 	}
 
 	restClient := haapi.New(cfg.URL, cfg.Token)
-	liveEntityID, hadLiveEntity := resolveAutomationEntityID(ctx, restClient, autoID)
+	liveAuto, hadLiveEntity := resolveAutomation(ctx, restClient, autoID)
+	liveEntityID := liveAuto.EntityID
+
+	// The identifier handed to the companion is the config id whenever one is
+	// known (D-1: the canonical form), the entity_id for a live automation
+	// without one, and the caller's reference untouched otherwise. The
+	// companion resolves a config id, an alias, or a live entity_id — never
+	// the bare object id, which is exactly what `auto ls` prints in its `id`
+	// column — so forwarding the raw reference made `auto delete <object id>`
+	// preview happily and then 404 under --confirm (H-17, and H-2's contract
+	// inverted).
+	companionRef := autoID
+	if hadLiveEntity {
+		companionRef = liveAuto.EntityID
+		if liveAuto.Attributes.ID != "" {
+			companionRef = liveAuto.Attributes.ID
+		}
+	}
 
 	// Resolve before planning, so the dry run fails exactly where the
 	// confirmed run would rather than describing a delete that cannot happen.
 	//
 	// Both halves matter, and neither alone is the right test. The companion's
-	// DELETE accepts a config id, an alias, or a live entity_id, while its GET
-	// matches the config id only — so requiring GET to succeed would make the
-	// dry run refuse deletes that work (delete-by-alias, issue-#70's mismatch
-	// case), which is the same dishonesty pointing the other way.
-	_, defErr := cc.GetAutomationDef(ctx, autoID)
+	// GET matches the config id only, so an automation present in
+	// automations.yaml but not loaded (no live entity) is still resolvable —
+	// and one that is live but yaml-authored without an `id:` still is not,
+	// which is why a live entity alone also counts.
+	_, defErr := cc.GetAutomationDef(ctx, companionRef)
 	if defErr != nil && !hadLiveEntity {
 		return fmt.Errorf("automation %q not found (use 'auto ls' to see available automations): %w", autoID, defErr)
 	}
@@ -1229,11 +1246,12 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 	if !flagAutoConfirm {
 		return dryRun("delete automation").
 			with("id", autoID).
+			withIf(hadLiveEntity && liveAuto.Attributes.ID != "", "config_id", liveAuto.Attributes.ID).
 			withIf(hadLiveEntity, "entity_id", liveEntityID).
 			render(w)
 	}
 
-	if _, err := cc.DeleteAutomationDef(ctx, autoID); err != nil {
+	if _, err := cc.DeleteAutomationDef(ctx, companionRef); err != nil {
 		return fmt.Errorf("deleting automation: %w", err)
 	}
 
