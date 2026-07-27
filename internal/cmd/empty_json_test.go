@@ -356,7 +356,6 @@ func TestEmptyResultJSON_RefReplace(t *testing.T) {
 
 	ts := startCmdServer(t, map[string]any{
 		"lovelace/dashboards/list": []any{},
-		"lovelace/info":            map[string]any{"mode": "storage"},
 		"lovelace/config":          dashboardConfigWith("sensor.other"),
 	}, nil)
 	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)

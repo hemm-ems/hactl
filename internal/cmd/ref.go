@@ -49,8 +49,10 @@ var refReplaceCmd = &cobra.Command{
 	Use:   "replace <old> <new>",
 	Short: "Rename an entity reference everywhere (dry-run by default)",
 	Long: "Replace every exact occurrence of <old> with <new> across all YAML config files and every " +
-		"storage-mode dashboard in one pass. Dry-run by default; use --confirm to apply. References in " +
-		"non-storage-mode dashboards are reported but not rewritten.",
+		"writable dashboard in one pass — including the default dashboard whenever it has a stored " +
+		"config. Dry-run by default; use --confirm to apply. References in YAML-mode dashboards " +
+		"cannot be rewritten over the API, and a dashboard that cannot be scanned leaves the rename " +
+		"unverifiable — both refuse loudly unless --allow-partial is given.",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runRefReplace(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
@@ -78,6 +80,9 @@ var refValidateCmd = &cobra.Command{
 
 func init() {
 	refReplaceCmd.Flags().BoolVar(&flagRefConfirm, "confirm", false, "actually apply changes (default is dry-run)")
+	refReplaceCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
+		"rename in whatever can be scanned and written even when some dashboards cannot be "+
+			"(references in those dashboards are left unchanged)")
 	refValidateCmd.Flags().BoolVar(&flagRefExitCode, "exit-code", false, "exit 1 if any dangling reference is found (for CI/pre-commit gating)")
 	refValidateCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
 		"validate even when live states are unavailable and only the entity registry can be read "+
@@ -188,6 +193,38 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 
 	confirm := flagRefConfirm
 
+	// --- Dashboard side first: read-only planning (D-6) ---
+	// The whole dashboard plan is computed before the companion writes
+	// anything, so a partial-scan or yaml-mode refusal aborts with nothing
+	// written anywhere.
+	dashboards, err := src.ws.DashboardList(ctx)
+	if err != nil {
+		return fmt.Errorf("listing dashboards: %w", err)
+	}
+	plans, unscanned := planDashboardReplacements(ctx, src.ws, dashboards, oldVal, newVal)
+
+	// A dashboard that could not be scanned means the rename cannot claim to
+	// cover every reference — a silent skip here is exactly the failure this
+	// command exists to prevent (mirrors `ref validate`'s asymmetric-failure
+	// design: partial is refused unless explicitly allowed).
+	if len(unscanned) > 0 && !flagRefAllowPartial {
+		return fmt.Errorf("%d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
+			"every reference; nothing was renamed. Re-run with --allow-partial to rename in what could be read",
+			len(unscanned), strings.Join(unscanned, "; "))
+	}
+	if len(unscanned) > 0 {
+		slog.Warn("renaming with a partial dashboard scan (--allow-partial); references in unscanned dashboards are left unchanged",
+			"unscanned", unscanned)
+	}
+
+	// References found in YAML-mode dashboards cannot be rewritten over the
+	// API. A confirmed run that proceeded anyway would leave them dangling, so
+	// it refuses up front — before the companion writes the config half.
+	skippedHits, skippedLabels := unwritableHits(plans)
+	if confirm && skippedHits > 0 && !flagRefAllowPartial {
+		return yamlHitsError(skippedHits, skippedLabels, oldVal)
+	}
+
 	// --- Config side (companion) ---
 	// A write that silently skips config files is exactly the failure this tool
 	// exists to prevent, so a companion error aborts before anything is written.
@@ -195,22 +232,6 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	if err != nil {
 		return fmt.Errorf("companion ref replace (use `hactl dash replace` for dashboard-only renames): %w", err)
 	}
-
-	// --- Dashboard side (WS) ---
-	dashboards, err := src.ws.DashboardList(ctx)
-	if err != nil {
-		if confirm && len(cfgResp.Changes) > 0 {
-			// The config half is already written; be explicit so the operator
-			// knows the run was partial. Re-running is idempotent (the literal is
-			// gone from config, so only dashboards get rewritten on the retry).
-			return fmt.Errorf("config files were already updated (%d change(s)); dashboards could not be "+
-				"listed, so dashboard references were left unchanged: %w; re-run "+
-				"`hactl ref replace %q %q --confirm` (idempotent) once HA is reachable",
-				len(cfgResp.Changes), err, oldVal, newVal)
-		}
-		return fmt.Errorf("listing dashboards: %w", err)
-	}
-	plans := planDashboardReplacements(ctx, src.ws, dashboards, oldVal, newVal)
 
 	total := len(cfgResp.Changes)
 	for _, p := range plans {
@@ -228,8 +249,32 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 		}
 	}
 
-	rows := buildReplaceRows(ctx, src.ws, cfgResp.Changes, plans, confirm)
+	rows, saveErrs := buildReplaceRows(ctx, src.ws, cfgResp.Changes, plans, confirm)
 
+	if err := renderReplaceReport(w, rows, oldVal, newVal, total, confirm); err != nil {
+		return err
+	}
+
+	// The preview fails exactly where the confirmed run would (H-2): yaml-mode
+	// hits made the confirmed run refuse above, so the dry run reports the
+	// same refusal — after rendering the plan, so the caller sees what is stuck.
+	if !confirm && skippedHits > 0 && !flagRefAllowPartial {
+		return yamlHitsError(skippedHits, skippedLabels, oldVal)
+	}
+	// A confirmed run whose dashboard saves failed is a partial rename: the
+	// config half is written, so say so loudly. Re-running is idempotent (the
+	// literal is gone from config, so only dashboards get rewritten on retry).
+	if confirm && len(saveErrs) > 0 {
+		return fmt.Errorf("config files were updated, but %d dashboard(s) failed to save (%s); re-run "+
+			"`hactl ref replace %q %q --confirm` (idempotent) once HA is reachable",
+			len(saveErrs), strings.Join(saveErrs, "; "), oldVal, newVal)
+	}
+	return nil
+}
+
+// renderReplaceReport renders the merged rows as a table, a dry-run plan
+// object under --json, or the plain table for a confirmed run.
+func renderReplaceReport(w io.Writer, rows [][]string, oldVal, newVal string, total int, confirm bool) error {
 	// Under --json a preview and a completed rename used to return structurally
 	// identical documents, differing only in a `status` cell reading "pending"
 	// rather than "applied". A caller must be able to tell a plan from a result
@@ -258,17 +303,66 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	return nil
 }
 
-// planDashboardReplacements computes the pending rewrite for every dashboard,
-// recording which are writable (storage mode). Dashboards that cannot be fetched
-// are skipped. Only dashboards with at least one match are returned.
-func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard, oldVal, newVal string) []dashReplacePlan {
-	writable := dashboardWritability(ctx, ws, dashboards)
+// unwritableHits counts the pending changes that sit in dashboards hactl
+// cannot save back, and names those dashboards.
+func unwritableHits(plans []dashReplacePlan) (int, []string) {
+	var n int
+	var labels []string
+	for _, p := range plans {
+		if !p.writable {
+			n += len(p.changed)
+			labels = append(labels, p.label)
+		}
+	}
+	return n, labels
+}
 
-	var plans []dashReplacePlan
+// yamlHitsError is the loud half of D-6: references in YAML-mode dashboards
+// would survive a confirmed rename as dangling pointers, so the run refuses
+// unless the caller explicitly accepts a partial rename.
+func yamlHitsError(n int, labels []string, oldVal string) error {
+	return fmt.Errorf("%d reference(s) to %q sit in YAML-mode dashboard(s) hactl cannot write (%s); a "+
+		"confirmed rename would leave them dangling, so nothing was renamed. Rename them in the "+
+		"dashboards' YAML files, or re-run with --allow-partial to rename everywhere else",
+		n, oldVal, strings.Join(labels, ", "))
+}
+
+// planDashboardReplacements computes the pending rewrite for every dashboard,
+// recording which are writable.
+//
+// The default dashboard is classified by attempting `lovelace/config` (D-6):
+// a stored config joins the plan as writable; the auto-generated state holds
+// no config and therefore no references — a complete answer of zero hits, not
+// a failure; any other failure means the scan is partial and is returned in
+// unscanned for the caller to surface. A listed dashboard that cannot be
+// fetched is partial the same way. A YAML-mode default appears in the listed
+// set itself (url_path "lovelace", see dashboardScanTargets) with
+// mode "yaml", so it is scanned once and never writable.
+func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard, oldVal, newVal string) (plans []dashReplacePlan, unscanned []string) {
+	modeByPath := make(map[string]string, len(dashboards))
+	for _, d := range dashboards {
+		modeByPath[d.URLPath] = d.Mode
+	}
+
 	for _, t := range dashboardScanTargets(dashboards) {
+		writable := modeByPath[t.urlPath] == "storage"
+		if t.urlPath == "" {
+			state, _, classifyErr := classifyDefaultDashboard(ctx, ws)
+			switch state {
+			case defaultDashAutoGenerated:
+				// Nothing stored, so nothing to scan or rewrite: zero hits
+				// here is the whole truth about this dashboard.
+				continue
+			case defaultDashUnclassifiable:
+				unscanned = append(unscanned, fmt.Sprintf("%s: %v", t.label, classifyErr))
+				continue
+			case defaultDashStored:
+				writable = true
+			}
+		}
 		result, changed, replErr := dashReplaceOne(ctx, ws, t.urlPath, oldVal, newVal)
 		if replErr != nil {
-			slog.Debug("could not scan dashboard for replace", "dashboard", t.label, "error", replErr)
+			unscanned = append(unscanned, fmt.Sprintf("%s: %v", t.label, replErr))
 			continue
 		}
 		if len(changed) == 0 {
@@ -279,53 +373,43 @@ func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboar
 			urlPath:  t.urlPath,
 			result:   result,
 			changed:  changed,
-			writable: writable[t.urlPath],
+			writable: writable,
 		})
 	}
-	return plans
-}
-
-// dashboardWritability maps each dashboard url_path (plus "" for the default) to
-// whether it is in storage mode and can therefore be saved back.
-func dashboardWritability(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard) map[string]bool {
-	writable := make(map[string]bool, len(dashboards)+1)
-	if info, infoErr := ws.LovelaceInfo(ctx); infoErr == nil {
-		writable[""] = info.Mode == "storage"
-	} else {
-		slog.Debug("could not fetch lovelace info for default dashboard mode", "error", infoErr)
-	}
-	for _, d := range dashboards {
-		writable[d.URLPath] = d.Mode == "storage"
-	}
-	return writable
+	return plans, unscanned
 }
 
 // buildReplaceRows renders the merged config+dashboard change rows, applying the
 // dashboard writes when confirm is set. Config changes are already applied (or
-// dry-run reported) by the companion before this is called.
-func buildReplaceRows(ctx context.Context, ws *haapi.WSClient, configChanges []companion.RefChange, plans []dashReplacePlan, confirm bool) [][]string {
+// dry-run reported) by the companion before this is called. saveErrs carries
+// the confirmed saves that failed, one entry per dashboard.
+func buildReplaceRows(ctx context.Context, ws *haapi.WSClient, configChanges []companion.RefChange, plans []dashReplacePlan, confirm bool) (rows [][]string, saveErrs []string) {
 	configStatus := "pending"
 	if confirm {
 		configStatus = "applied" // the companion already wrote the files
 	}
-	var rows [][]string
 	for _, c := range configChanges {
 		rows = append(rows, []string{"config", c.Location, c.Path, configStatus})
 	}
 	for _, p := range plans {
 		status := dashboardStatus(ctx, ws, p, confirm)
+		if confirm && strings.HasPrefix(status, "error: ") {
+			saveErrs = append(saveErrs, p.label+": "+strings.TrimPrefix(status, "error: "))
+		}
 		for _, path := range p.changed {
 			rows = append(rows, []string{"dashboard", p.label, path.String(), status})
 		}
 	}
-	return rows
+	return rows, saveErrs
 }
 
 // dashboardStatus applies a single dashboard's rewrite when confirmed and
 // writable, returning the per-dashboard status string for the report.
 func dashboardStatus(ctx context.Context, ws *haapi.WSClient, p dashReplacePlan, confirm bool) string {
 	if !p.writable {
-		return "skipped: not storage-mode"
+		// Reaching here without --allow-partial only happens on a dry run —
+		// the confirmed run refuses these hits before writing anything.
+		return "skipped: yaml-mode (rename it in the dashboard's YAML file)"
 	}
 	if !confirm {
 		return "pending"

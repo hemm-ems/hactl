@@ -1009,9 +1009,9 @@ func TestWSClient_Close_Unconnected(t *testing.T) {
 
 func TestWSClient_DashboardList(t *testing.T) {
 	// url_path is never empty in lovelace/dashboards/list: HA requires it when
-	// a dashboard is created, and the one dashboard that has no url_path — the
-	// default — is not in the list at all (see the note on
-	// TestRunDashDelete_ByURLPath in internal/cmd).
+	// a dashboard is created, and the default dashboard is either absent from
+	// the list (storage / auto-generated) or listed under the reserved slug
+	// "lovelace" (YAML mode) — see internal/integration/lovelace_oracle_test.go.
 	dashboards := []LovelaceDashboard{
 		{ID: "lovelace", URLPath: "lovelace", Title: "Home", Mode: "storage"},
 		{ID: "energy", URLPath: "energy", Title: "Energy Dashboard", Mode: "storage"},
@@ -1041,6 +1041,51 @@ func TestWSClient_DashboardList(t *testing.T) {
 	}
 	if result[1].Title != "Energy Dashboard" {
 		t.Errorf("Title = %q, want 'Energy Dashboard'", result[1].Title)
+	}
+}
+
+// TestWSClient_DashboardList_YamlEntryHasNoID pins the conditional identity:
+// a YAML-mode dashboard — including the YAML-mode default, which HA lists
+// under url_path "lovelace" — carries NO id on the wire (HA 2026.7.4,
+// internal/integration/lovelace_oracle_test.go). Requiring an id
+// unconditionally made `dash ls` report UNPARSED on every instance with a
+// YAML dashboard. A storage entry, by contrast, must still carry its id.
+func TestWSClient_DashboardList_YamlEntryHasNoID(t *testing.T) {
+	// Verbatim wire shape from the oracle capture: no "id" key at all.
+	yamlList := json.RawMessage(`[{"title":"Overview","icon":"mdi:view-dashboard",` +
+		`"show_in_sidebar":true,"require_admin":false,"mode":"yaml",` +
+		`"filename":"ui-lovelace.yaml","url_path":"lovelace"}]`)
+
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSResult(t, c, cmd, yamlList)
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	result, err := ws.DashboardList(context.Background())
+	if err != nil {
+		t.Fatalf("DashboardList must accept a yaml entry without an id: %v", err)
+	}
+	if len(result) != 1 || result[0].URLPath != "lovelace" || result[0].Mode != "yaml" {
+		t.Fatalf("unexpected decode: %+v", result)
+	}
+}
+
+func TestWSClient_DashboardList_StorageEntryWithoutIDIsUnparsed(t *testing.T) {
+	// The other half of the conditional: a storage entry with no id did not
+	// decode (the id is what `dash delete` addresses), so it must poison.
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		sendWSResult(t, c, cmd, json.RawMessage(`[{"url_path":"my-dash","title":"X","mode":"storage"}]`))
+	})
+	defer srv.Close()
+
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	if _, err := ws.DashboardList(context.Background()); err == nil {
+		t.Fatal("a storage entry without an id must fail the identity check")
 	}
 }
 
@@ -1158,29 +1203,11 @@ func TestWSClient_DashboardDelete(t *testing.T) {
 	}
 }
 
-func TestWSClient_LovelaceInfo(t *testing.T) {
-	info := LovelaceInfo{Mode: "storage"}
-
-	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
-		if cmd["type"] != "lovelace/info" {
-			t.Errorf("expected lovelace/info, got %q", cmd["type"])
-			return
-		}
-		sendWSResult(t, c, cmd, info)
-	})
-	defer srv.Close()
-
-	ws := connectWSTest(t, srv)
-	defer func() { _ = ws.Close() }()
-
-	result, err := ws.LovelaceInfo(context.Background())
-	if err != nil {
-		t.Fatalf("LovelaceInfo failed: %v", err)
-	}
-	if result.Mode != "storage" {
-		t.Errorf("Mode = %q, want 'storage'", result.Mode)
-	}
-}
+// hactl no longer clients `lovelace/info`: the route answers only
+// {"resource_mode": ...} — the `mode` field the deleted client decoded does
+// not exist on the wire (HA 2026.7.4, lovelace_oracle_test.go), so every real
+// call failed its own identity check and `ref replace` read the zero value as
+// "not storage-mode" (D71).
 
 func TestWSClient_IntegrationManifestList(t *testing.T) {
 	manifests := []IntegrationManifest{

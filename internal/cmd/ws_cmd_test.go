@@ -35,6 +35,15 @@ type cmdTestServer struct {
 	cmdCounts map[string]int
 }
 
+// wsErrorResponse makes startCmdServer answer a WS command with success=false
+// and this error envelope — the shape HA uses for e.g. the auto-generated
+// default dashboard ({"code":"config_not_found","message":"No config found."},
+// captured from HA 2026.7.4; see internal/integration/lovelace_oracle_test.go).
+type wsErrorResponse struct {
+	Code    string
+	Message string
+}
+
 // startCmdServer creates an httptest server serving both HTTP and WS.
 // wsResponses maps WS command type → response data (nil → null result, error string → error).
 // httpHandlers maps path → HandlerFunc.
@@ -72,6 +81,15 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 					"type":    "result",
 					"success": false,
 					"error":   map[string]string{"code": "unknown", "message": "unknown command " + cmdType},
+				})
+				continue
+			}
+			if wsErr, isErr := respData.(wsErrorResponse); isErr {
+				_ = conn.WriteJSON(map[string]any{
+					"id":      cmd["id"],
+					"type":    "result",
+					"success": false,
+					"error":   map[string]string{"code": wsErr.Code, "message": wsErr.Message},
 				})
 				continue
 			}
@@ -1736,7 +1754,8 @@ func TestRunDashSave_Confirm(t *testing.T) {
 	}
 
 	ts := startCmdServer(t, map[string]any{
-		"lovelace/config/save": nil,
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config/save":     nil,
 	}, nil)
 	withFlagDir(t, ts.dir)
 
@@ -2419,7 +2438,7 @@ func TestRunCacheRefresh_LogsOnly(t *testing.T) {
 
 func TestRunDashDelete_Confirm(t *testing.T) {
 	dashboards := []map[string]any{
-		{"id": "energy-id", "url_path": "energy", "title": "Energy"},
+		{"id": "energy-id", "url_path": "energy", "title": "Energy", "mode": "storage"},
 	}
 	ts := startCmdServer(t, map[string]any{
 		"lovelace/dashboards/list":   dashboards,
@@ -3267,7 +3286,8 @@ func TestRunDashGrep_NoReferences(t *testing.T) {
 func TestRunDashReplace_DryRunDoesNotSave(t *testing.T) {
 	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
 	ts := startCmdServer(t, map[string]any{
-		"lovelace/config": json.RawMessage(cfg),
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          json.RawMessage(cfg),
 	}, nil)
 	withFlagDir(t, ts.dir)
 
@@ -3294,8 +3314,9 @@ func TestRunDashReplace_DryRunDoesNotSave(t *testing.T) {
 func TestRunDashReplace_ConfirmSaves(t *testing.T) {
 	cfg := `{"views":[{"cards":[{"entity":"light.old"}]}]}`
 	ts := startCmdServer(t, map[string]any{
-		"lovelace/config":      json.RawMessage(cfg),
-		"lovelace/config/save": nil,
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          json.RawMessage(cfg),
+		"lovelace/config/save":     nil,
 	}, nil)
 	withFlagDir(t, ts.dir)
 
@@ -3318,7 +3339,8 @@ func TestRunDashReplace_ConfirmSaves(t *testing.T) {
 func TestRunDashReplace_NotFound(t *testing.T) {
 	cfg := `{"views":[{"cards":[{"entity":"light.other"}]}]}`
 	ts := startCmdServer(t, map[string]any{
-		"lovelace/config": json.RawMessage(cfg),
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          json.RawMessage(cfg),
 	}, nil)
 	withFlagDir(t, ts.dir)
 
