@@ -186,3 +186,20 @@ func TestMapRangeSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.MapRangeSurface(repoRoot(t))
 	runGate(t, s, err)
 }
+
+// TestAutomationRefSurfaceIsClosed — every command entrypoint that takes an
+// automation reference hands it to the one shared resolver, or is
+// dispositioned for not doing so.
+//
+// D-1 (docs/decisions.md): an automation is addressed by its config `id:`, its
+// alias, or its entity_id, everywhere; the config id is the canonical printed
+// form. The resolver that makes all forms equivalent is resolveAutomation, and
+// a command that looks its target up some narrower way is the mechanism behind
+// both prior half-fixes: `auto diff`/`auto apply` refusing the id `auto ls`
+// prints (issue #94), and `auto rollback` matching the raw reference against
+// backup filenames keyed by config id (R2's sibling, found by this gate —
+// watched red on internal/cmd/rollback.go:runRollback before the fix).
+func TestAutomationRefSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.AutomationRefSurface(repoRoot(t))
+	runGate(t, s, err)
+}

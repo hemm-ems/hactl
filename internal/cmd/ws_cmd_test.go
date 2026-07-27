@@ -2913,17 +2913,23 @@ func TestRunAutoDelete_Confirm(t *testing.T) {
 
 // TestRunAutoDelete_Confirm_ByAlias covers deleting by the human-readable
 // alias (HA's attributes.friendly_name), not just config id or entity_id —
-// resolveAutomationEntityID previously only matched entity_id/attributes.id/
-// the entity_id slug, silently skipping registry cleanup for this case.
+// the resolver previously only matched entity_id/attributes.id/the entity_id
+// slug, silently skipping registry cleanup for this case.
+//
+// The fake companion accepts the CONFIG id, not the alias: since D-1 the CLI
+// resolves whatever the caller held to the canonical config id before calling
+// the companion, so that the object id `auto ls` prints — which the companion
+// alone cannot resolve — deletes like every other printed identifier.
 func TestRunAutoDelete_Confirm_ByAlias(t *testing.T) {
 	const alias = "Climate Schedule Alias Case"
+	const configID = "climate_schedule_config_id"
 	const liveEntityID = "automation.climate_schedule_alias_case"
 
 	statesJSON, _ := json.Marshal([]map[string]any{
 		{
 			"entity_id":  liveEntityID,
 			"state":      "on",
-			"attributes": map[string]any{"id": "climate_schedule_config_id", "friendly_name": alias},
+			"attributes": map[string]any{"id": configID, "friendly_name": alias},
 		},
 	})
 
@@ -2937,7 +2943,7 @@ func TestRunAutoDelete_Confirm_ByAlias(t *testing.T) {
 	})
 
 	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Query().Get("id") != alias {
+		if r.Method != http.MethodDelete || r.URL.Query().Get("id") != configID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

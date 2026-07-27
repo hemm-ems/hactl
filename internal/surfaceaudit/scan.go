@@ -725,7 +725,13 @@ func packageFuncs(files []srcFile, prefix string) map[string]*ast.FuncDecl {
 // only matched the direct call would have reported all three as defects, and a
 // gate that cries wolf is one people learn to override.
 func buildsAPreview(fn *ast.FuncDecl, pkg map[string]*ast.FuncDecl) bool {
-	if callsDryRun(fn) {
+	return reachesFunc(fn, "dryRun", pkg)
+}
+
+// reachesFunc reports whether fn calls the named same-package function,
+// directly or through one same-package helper hop.
+func reachesFunc(fn *ast.FuncDecl, name string, pkg map[string]*ast.FuncDecl) bool {
+	if callsNamedFunc(fn, name) {
 		return true
 	}
 	reached := false
@@ -738,7 +744,7 @@ func buildsAPreview(fn *ast.FuncDecl, pkg map[string]*ast.FuncDecl) bool {
 		if !isID {
 			return true
 		}
-		if helper, known := pkg[id.Name]; known && callsDryRun(helper) {
+		if helper, known := pkg[id.Name]; known && callsNamedFunc(helper, name) {
 			reached = true
 		}
 		return !reached
@@ -746,18 +752,93 @@ func buildsAPreview(fn *ast.FuncDecl, pkg map[string]*ast.FuncDecl) bool {
 	return reached
 }
 
-// callsDryRun reports whether a function calls the shared plan constructor.
-func callsDryRun(fn *ast.FuncDecl) bool {
+// callsNamedFunc reports whether a function directly calls the named
+// package-level function.
+func callsNamedFunc(fn *ast.FuncDecl, name string) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if id, isID := call.Fun.(*ast.Ident); isID && id.Name == "dryRun" {
+		if id, isID := call.Fun.(*ast.Ident); isID && id.Name == name {
 			found = true
 		}
 		return !found
 	})
 	return found
+}
+
+// ---------------------------------------------------------------------------
+// Automation-reference surface
+// ---------------------------------------------------------------------------
+
+// automationResolver is the one function that turns any identifier hactl
+// prints for an automation — config `id:`, alias, entity_id, or the entity's
+// object id — into the live automation. Every wrapper (resolveAutomationConfigID,
+// automationConfigIDFor, automationEntityIDFor) is a one-hop caller of it,
+// which is what reachesFunc follows.
+const automationResolver = "resolveAutomation"
+
+// automationTargetParam reports whether a run-entrypoint's target parameter is
+// an automation reference, by the package's own naming convention: the
+// caller-supplied identifier is named autoID or automationID, and nothing else
+// in internal/cmd names a parameter that way.
+func automationTargetParam(name string) bool {
+	return strings.Contains(strings.ToLower(name), "auto")
+}
+
+// AutomationRefSurface is every command entrypoint that takes an automation
+// reference from the caller but never hands it to the one shared resolver.
+//
+// Rule (docs/decisions.md D-1, INVARIANTS.md H-17): every command that takes an
+// automation identifier accepts every form the family prints — config `id:`,
+// alias, entity_id, object id — which in this codebase means exactly one thing:
+// the reference passes through resolveAutomation. A parallel, narrower lookup
+// is how the past half-fixes happened twice — `auto diff`/`auto apply` still
+// refused the id `auto ls` prints after the resolver existed and its own doc
+// comment named them as callers, and `auto rollback` matched the raw reference
+// against backup filenames that are keyed by config id.
+//
+// This is a VIOLATION surface: empty is the goal. A new `auto` command whose
+// entrypoint follows the run(ctx, w, autoID) convention is swept in
+// automatically, and doing its own resolution fails the gate until it is
+// dispositioned.
+func AutomationRefSurface(root string) (Surface, error) {
+	files, err := scanSources(root)
+	if err != nil {
+		return Surface{}, err
+	}
+	s := Surface{
+		Name:       "autoref",
+		Rule:       "an automation reference reaches resolveAutomation, so every command accepts every identifier form the family prints",
+		AllowEmpty: true,
+	}
+	cmdFuncs := packageFuncs(files, "internal/cmd/")
+	for _, f := range files {
+		if !strings.HasPrefix(f.rel, "internal/cmd/") {
+			continue
+		}
+		for _, decl := range f.ast.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			target, _ := runFuncTarget(fn)
+			if target == "" || !automationTargetParam(target) {
+				continue
+			}
+			if reachesFunc(fn, automationResolver, cmdFuncs) {
+				continue
+			}
+			s.Sites = append(s.Sites, Site{
+				Key:  f.rel + ":" + fn.Name.Name,
+				File: f.rel,
+				Line: f.fset.Position(fn.Pos()).Line,
+				Note: "takes " + target + " and never passes it through " + automationResolver,
+			})
+		}
+	}
+	sort.Slice(s.Sites, func(i, j int) bool { return s.Sites[i].Key < s.Sites[j].Key })
+	return s, nil
 }

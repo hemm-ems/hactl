@@ -70,6 +70,17 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 	client := haapi.New(cfg.URL, cfg.Token)
 	backupDir := filepath.Join(cfg.Dir, "backups")
 
+	// Backups are keyed by config id — `auto apply` resolves its target before
+	// backing up — so any other identifier the caller holds (the object id
+	// `auto ls` prints, the entity_id, the alias) must be resolved the same way
+	// or the lookup answers "no backup found" for an automation whose backup
+	// exists (D-1, H-17). A reference matching no live automation passes
+	// through unchanged: a deleted automation still has its backup under its
+	// config id, and that is the one identifier left for it.
+	if automationID != "" {
+		automationID = resolveAutomationConfigID(ctx, client, automationID)
+	}
+
 	if !flagRollbackConfirm {
 		plan, planErr := writer.New(client, nil, backupDir).PlanRollback(automationID)
 		if planErr != nil {

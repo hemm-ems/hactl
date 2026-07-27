@@ -420,11 +420,18 @@ func oracleCustomIntegrations(t *testing.T, inst *hatest.Instance) []string {
 	return out
 }
 
-// oracleAutomationConfigIDs returns HA's own entity_id -> config `id:` map for
-// every automation it holds, read from /api/states (HA surfaces the config id
-// as attributes.id). Automations without an `id:` are omitted — they have no
-// config id to be addressed by.
-func oracleAutomationConfigIDs(t *testing.T, inst *hatest.Instance) map[string]string {
+// oracleAutomationIdentity is HA's own answer to "what is this automation
+// called": the config `id:` (attributes.id) and the alias (attributes.
+// friendly_name, verbatim) for one entity_id.
+type oracleAutomationIdentity struct {
+	ConfigID string
+	Alias    string
+}
+
+// oracleAutomationIdentities returns HA's own entity_id -> identity map for
+// every automation it holds, read from /api/states. Automations without an
+// `id:` are omitted — they have no config id to be addressed by.
+func oracleAutomationIdentities(t *testing.T, inst *hatest.Instance) map[string]oracleAutomationIdentity {
 	t.Helper()
 	client := haapi.New(inst.URL(), inst.Token())
 	raw, err := client.GetStates(context.Background())
@@ -434,20 +441,35 @@ func oracleAutomationConfigIDs(t *testing.T, inst *hatest.Instance) map[string]s
 	var states []struct {
 		EntityID   string `json:"entity_id"`
 		Attributes struct {
-			ID string `json:"id"`
+			ID           string `json:"id"`
+			FriendlyName string `json:"friendly_name"`
 		} `json:"attributes"`
 	}
 	if err := json.Unmarshal(raw, &states); err != nil {
 		t.Fatalf("oracle decode states: %v", err)
 	}
-	out := map[string]string{}
+	out := map[string]oracleAutomationIdentity{}
 	for _, s := range states {
 		if strings.HasPrefix(s.EntityID, "automation.") && s.Attributes.ID != "" {
-			out[s.EntityID] = s.Attributes.ID
+			out[s.EntityID] = oracleAutomationIdentity{
+				ConfigID: s.Attributes.ID,
+				Alias:    s.Attributes.FriendlyName,
+			}
 		}
 	}
 	if len(out) == 0 {
 		t.Fatal("oracle: HA reports no automation carrying a config id")
+	}
+	return out
+}
+
+// oracleAutomationConfigIDs narrows oracleAutomationIdentities to the
+// entity_id -> config `id:` map, for the callers that only reconcile ids.
+func oracleAutomationConfigIDs(t *testing.T, inst *hatest.Instance) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for entityID, id := range oracleAutomationIdentities(t, inst) {
+		out[entityID] = id.ConfigID
 	}
 	return out
 }

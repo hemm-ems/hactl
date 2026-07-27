@@ -419,6 +419,63 @@ action:
 	}
 }
 
+// TestE2EAutoDeleteByObjectIDCLI verifies that `hactl auto delete --confirm
+// <object id>` — the identifier `auto ls` prints in its `id` column — deletes
+// the automation.
+//
+// D-1's delete gap: the companion's DELETE resolves a config id, an alias, or
+// a live entity_id, never the bare object id, and hactl used to forward the
+// caller's raw reference. So the one identifier the family's own listing
+// displays previewed happily (the live entity resolves) and then 404'd under
+// --confirm. The CLI now resolves to the config id first; this drives the real
+// binary against the real companion to prove the whole path. The config id and
+// the alias are both kept distinguishable from the object id (TC-4), so a
+// forwarding regression cannot pass by string coincidence.
+func TestE2EAutoDeleteByObjectIDCLI(t *testing.T) {
+	ctx := context.Background()
+
+	const configID = "cfgid_e2e_delete_by_objectid"
+	const alias = "E2E Delete By ObjectID Target"
+	const objectID = "e2e_delete_by_objectid_target"
+	content := `id: ` + configID + `
+alias: ` + alias + `
+mode: single
+trigger:
+  - platform: time
+    at: "09:00:00"
+action:
+  - delay: "00:00:01"
+`
+	if _, err := testClient.CreateAutomationDef(ctx, content); err != nil {
+		t.Fatalf("seeding automation for object-id-delete test: %v", err)
+	}
+
+	// Precondition: the live entity must exist, because the object id is only
+	// resolvable through it — without this the test would report the D-1
+	// defect for a fixture that never gave resolution a chance.
+	present, err := entityRegistryContains(ctx, "automation."+objectID)
+	if err != nil {
+		t.Fatalf("checking entity registry before delete: %v", err)
+	}
+	if !present {
+		t.Fatalf("expected automation.%s to be registered before delete", objectID)
+	}
+
+	out, execErr := runHactlE2E(t, "auto", "delete", "--confirm", objectID)
+	if execErr != nil {
+		t.Fatalf("hactl auto delete --confirm <object id> failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, "deleted automation") {
+		t.Errorf("expected 'deleted automation' in output, got:\n%s", out)
+	}
+
+	// The read-back from the companion is the proof the delete reached HA's
+	// config, not just hactl's stdout (H-12): the definition must be gone.
+	if _, err := testClient.GetAutomationDef(ctx, configID); err == nil {
+		t.Errorf("automation %q still has a definition after delete by object id", configID)
+	}
+}
+
 // TestE2EAutoDeleteByAliasCLI verifies that `hactl auto delete --confirm
 // <alias>` — the display identifier, not the config id — both removes the
 // config entry AND cleans up the orphaned entity registry entry.

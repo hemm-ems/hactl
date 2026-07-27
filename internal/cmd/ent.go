@@ -112,7 +112,7 @@ var entSetAreaCmd = &cobra.Command{
 }
 
 func init() {
-	entLsCmd.Flags().StringVar(&flagEntPattern, "pattern", "", "filter by name (substring or glob, e.g. sensor.wp_*)")
+	entLsCmd.Flags().StringVar(&flagEntPattern, "pattern", "", "filter by entity_id — for automations also config id or alias (substring or glob, e.g. sensor.wp_*)")
 	entLsCmd.Flags().StringVar(&flagEntDomain, "domain", "", "filter entities by domain (e.g. sensor, binary_sensor)")
 	entLsCmd.Flags().StringVar(&flagEntArea, "area", "", "filter entities by area/room name (substring)")
 	entLsCmd.Flags().StringVar(&flagEntLabel, "label", "", "filter entities by label name (substring)")
@@ -970,14 +970,16 @@ func renderHistoryPoints(w io.Writer, entityID string, points []analyze.DataPoin
 }
 
 // filterEntitiesByPattern keeps entities matching pattern on the entity_id or
-// on any other identifier hactl prints for them (invariant H-17).
+// on any other identifier hactl prints for them (D-1, invariant H-17).
 //
-// Today that second set is exactly the automation config `id:`. HA carries it as
-// attributes.id, `auto show --json` prints it as config_id, and `auto cat`/
-// `diff`/`apply` require it — so a caller can be holding it when they reach for
-// the discovery fallback the manual points them at, `ent ls --pattern`. Matching
-// only entity_id answered "nothing", which under the stop-at-the-first-miss rule
-// reads as "no such entity" (D6/R2).
+// Today that second set is exactly the automation's other two names: the config
+// `id:` and the alias. HA carries them as attributes.id and
+// attributes.friendly_name; `auto show --json` prints the former as config_id,
+// `auto cat`/`diff`/`apply` require it, and every `auto` target command
+// resolves the latter — so a caller can be holding either when they reach for
+// the discovery fallback the manual points them at, `ent ls --pattern`.
+// Matching only entity_id answered "nothing", which under the
+// stop-at-the-first-miss rule reads as "no such entity" (D6/R2).
 func filterEntitiesByPattern(states []entityState, pattern string) []entityState {
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
@@ -986,6 +988,10 @@ func filterEntitiesByPattern(states []entityState, pattern string) []entityState
 			continue
 		}
 		if cfgID := entityConfigID(s); cfgID != "" && matchPattern(cfgID, pattern) {
+			result = append(result, s)
+			continue
+		}
+		if alias := entityAlias(s); alias != "" && matchPattern(alias, pattern) {
 			result = append(result, s)
 		}
 	}
@@ -1002,6 +1008,20 @@ func entityConfigID(s entityState) string {
 	}
 	id, _ := s.Attributes["id"].(string)
 	return id
+}
+
+// entityAlias returns the alias HA carries for an automation entity (verbatim,
+// as friendly_name), or "" for anything else. The scope bound is the same as
+// entityConfigID's, and for the same reason: an automation's alias is an
+// identifier — every `auto` target command resolves it (D-1) — while another
+// domain's friendly_name is a display name no hactl command resolves anything
+// by, so matching it would widen the filter past what hactl accepts.
+func entityAlias(s entityState) string {
+	if parseEntityDomain(s.EntityID) != "automation" {
+		return ""
+	}
+	alias, _ := s.Attributes["friendly_name"].(string)
+	return alias
 }
 
 func filterEntitiesByRestored(states []entityState) []entityState {
