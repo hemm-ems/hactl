@@ -1,0 +1,6 @@
+views:
+  - title: YamlProbe
+    path: yaml-probe
+    cards:
+      - type: markdown
+        content: yaml mode oracle

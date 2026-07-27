@@ -287,9 +287,13 @@ cases are indistinguishable from a typo. An entity that was deleted but still
 has recorder history reports that history as before. `--resample` must be a
 positive duration; `0m` and negative values are refused rather than ignored.
 
-`ent show` includes a `changed_by:` line attributing the most recent change to a user (e.g. `User Jan`) or to `Home Assistant` when no user_id was on the state's `context`. `ent who` does the deeper attribution — it queries the logbook for the entity, classifies each event as `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant`, and aggregates a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window}`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
+`ent show`'s `changed_by:` line and `ent who` answer the same question — who or what changed this entity — through **one shared resolution**: the logbook's answer when the logbook has one, the state's own `context` otherwise, and every answer names its source (`source: logbook` or `source: state context`). The two sources are not equal: the logbook knows the proximate cause (`Automation: <alias>`, `Script: <id>`, `Device: <name>`), while the state context carries only the propagated user id, so a state-context answer can name the human who started a causal chain but never the automation that acted. Both commands classify labels identically: `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant` when nothing more specific is on the record.
 
-The `changes` command also gained a `who` column carrying the same per-event label.
+**The divergence rule — logbook-excluded entities.** HA's logbook permanently excludes some entities: "continuous" sensors — any sensor with a `unit_of_measurement`, a `state_class`, or a numeric `device_class` — and the `counter`, `image`, and `proximity` domains. For those the logbook answers `[]` forever even though the entity genuinely changes, which used to make `ent show` report a real recent change while `ent who` said "no changes" for the same entity — each faithful to its own source. Both commands now say what happened instead of silently disagreeing: `ent show` renders `changed_by: <actor> (source: state context; excluded from logbook — <reason>)`, and `ent who` states `HA's logbook excludes it (<reason>)` followed by the same state-context fallback for the most recent change. An excluded entity is **not** a quiet one: `no changes for <id> in the last 24h (source: logbook)` is the logbook's verified zero for an entity it covers.
+
+`ent who` aggregates per-event attribution over `--since` with a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window, source, logbook_excluded}`: `source` is `"logbook"` or `"state context"`, `logbook_excluded` distinguishes an excluded entity from a quiet one by fields rather than by emptiness, and for an excluded entity a top-level `changed_by` carries the shared fallback answer. `ent show --json` carries the same contract in `changed_by`, `changed_by_source`, and `logbook_excluded`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
+
+The `changes` command also carries a `who` column with the same per-event label; it is a raw logbook feed, so logbook-excluded entities never appear in it either.
 
 ### Devices
 
@@ -503,7 +507,7 @@ Every `config` command except `files`/`file`/`block` uses HA's REST API directly
 ```bash
 hactl dash ls                                      # list all dashboards (url_path, title, mode)
 hactl dash ls --json                               # structured JSON for all dashboards
-hactl dash show                                    # views summary for default dashboard
+hactl dash show                                    # default dashboard: views summary, or an honest auto-generated report
 hactl dash show my-dashboard                       # views summary by url_path (from `dash ls`, NOT a view path)
 hactl dash show my-dashboard --json                # pretty-printed full config JSON
 hactl dash show my-dashboard --raw                 # raw HA JSON (for round-trip editing)
@@ -523,6 +527,20 @@ hactl dash replace sensor.old sensor.new my-dash --confirm  # apply
 
 **LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API. `--view` scopes inspection output only; do not feed a single-view object to `dash save`.
 
+**The default dashboard has three states, and `dash show` (no argument) reports
+them honestly.** With a stored config (someone saved it, e.g. via the UI editor
+or `dash save --confirm`) you get the views summary; the same holds when
+configuration.yaml pins the default to YAML mode (the config is read from
+`ui-lovelace.yaml`). When the default is **auto-generated** — HA builds it at
+view time and holds no config, the state of every fresh instance — `dash show`
+says exactly that and points to `dash ls`; it never fabricates a rendering of
+what HA would generate. Under `--json` the auto-generated answer is an object
+with `"state": "auto-generated"` (a stored answer is the config document
+itself, which carries `views` and no `state` key — check for `state` to tell
+them apart). `--raw`/`--yaml` refuse in the auto-generated state: there is no
+stored document to round-trip. To make an auto-generated default editable,
+store a config for it with `dash save --confirm`.
+
 **`grep` and `replace` work on string values, not on entity fields.** Both walk
 each dashboard's JSON and match any string **equal to** the argument, wherever it
 sits — a card's `entity`, but equally a markdown card whose `content` is exactly
@@ -534,8 +552,12 @@ and exits 0.
 
 `dash replace` takes one dashboard (omit `url_path` for the default dashboard,
 which fails with `config_not_found` when the default is HA's auto-generated one),
-is dry-run until `--confirm`, and rewrites every matching value at once. To
-rename across config files *and* dashboards in a single pass, use `ref replace`.
+is dry-run until `--confirm`, and rewrites every matching value at once. Writes
+to a YAML-mode dashboard are refused up front — preview and `--confirm` alike —
+because HA's save API answers "Not supported" for them; the same applies to
+`dash save` and `dash delete` (a YAML dashboard is removed from
+configuration.yaml, not over the API). To rename across config files *and*
+dashboards in a single pass, use `ref replace`.
 
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
 
@@ -547,6 +569,7 @@ hactl ref validate                             # dangling references: pointers t
 hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
 hactl ref replace sensor.old sensor.new        # dry-run: rename everywhere
 hactl ref replace sensor.old sensor.new --confirm   # apply
+hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even when some dashboards can't be scanned/written
 ```
 
 Requires hactl-companion — it is what reads the config directory. `ref` is the
@@ -570,9 +593,18 @@ non-standard custom-card keys. `validate` reports; it never fixes.
 
 `replace` is dry-run until `--confirm`. It aborts before writing anything if the
 companion cannot be reached, because a rename that silently skips config files is
-the exact failure this command exists to prevent. References in YAML-mode
-dashboards are reported but not rewritten (hactl cannot write those). A confirmed
-run is idempotent, so re-running after a partial failure is safe.
+the exact failure this command exists to prevent. The **default dashboard is
+included** whenever it has a stored config (`lovelace/config` answers); an
+auto-generated default holds no config and therefore no references — that is a
+complete answer of zero hits, not a skip. Two situations make the rename
+**refuse with a non-zero exit** unless `--allow-partial` is given (mirroring
+`ref validate`'s asymmetric-failure design): a dashboard whose config could not
+be read at all (the scan would be silently partial), and references sitting in
+**YAML-mode dashboards** — HA's API cannot write those, so a confirmed rename
+would leave them dangling. With `--allow-partial`, YAML-mode hits are reported
+as `skipped: yaml-mode` and everything else is renamed. The refusal happens
+before anything is written anywhere. A confirmed run is idempotent, so
+re-running after a partial failure is safe.
 
 ### Logs & custom components
 

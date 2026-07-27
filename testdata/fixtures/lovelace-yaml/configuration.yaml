@@ -1,0 +1,14 @@
+# Temporary oracle-probe fixture: default lovelace dashboard in YAML mode.
+homeassistant:
+  name: Test Home
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+
+default_config:
+
+lovelace:
+  mode: yaml

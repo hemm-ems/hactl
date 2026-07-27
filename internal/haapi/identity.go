@@ -54,14 +54,20 @@ func (d *DeviceRegistryEntry) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "id", Value: &d.ID}}
 }
 
-// Identity reports the dashboard key and the path it is served under. Both are
-// mandatory in lovelace/dashboards/list and lovelace/dashboards/create; the
-// url_path is what every hactl dash command addresses a dashboard by.
+// Identity reports the path a dashboard is served under — the identifier every
+// hactl dash command addresses it by. The `id` is identity only for
+// storage-mode entries: a YAML-mode dashboard (a `lovelace: dashboards:` entry
+// in configuration.yaml, or the YAML-mode default itself, which HA lists under
+// url_path "lovelace") carries NO id on the wire at all — captured from HA
+// 2026.7.4 (internal/integration/lovelace_oracle_test.go). Requiring it
+// unconditionally made `dash ls` report UNPARSED on every instance with a
+// YAML dashboard.
 func (d *LovelaceDashboard) Identity() []degeneracy.Field {
-	return []degeneracy.Field{
-		{Name: "id", Value: &d.ID},
-		{Name: "url_path", Value: &d.URLPath},
+	fields := []degeneracy.Field{{Name: "url_path", Value: &d.URLPath}}
+	if d.Mode == "storage" {
+		fields = append(fields, degeneracy.Field{Name: "id", Value: &d.ID})
 	}
+	return fields
 }
 
 // Identity reports the resource key and the URL it points at — a resource whose
@@ -71,12 +77,6 @@ func (r *LovelaceResource) Identity() []degeneracy.Field {
 		{Name: "id", Value: &r.ID},
 		{Name: "url", Value: &r.URL},
 	}
-}
-
-// Identity reports the lovelace storage mode. lovelace/info always answers
-// "storage" or "yaml"; an empty mode means the answer did not decode.
-func (i *LovelaceInfo) Identity() []degeneracy.Field {
-	return []degeneracy.Field{{Name: "mode", Value: &i.Mode}}
 }
 
 // Identity reports the integration domain. `cc ls` and `cc show` address an

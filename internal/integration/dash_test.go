@@ -3,13 +3,10 @@
 package integration
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 func TestDashLs(t *testing.T) {
@@ -29,82 +26,90 @@ func TestDashLsJSON(t *testing.T) {
 	}
 }
 
-// TestDashShowDefault requires `dash show` to agree with HA about the default
-// dashboard, in whichever of the two states HA is in.
+// TestDashShowDefault drives `dash show` (no argument) through BOTH states of
+// the default dashboard, with the state set explicitly through HA's own
+// lovelace/config/save and lovelace/config/delete (lovelace_oracle_test.go).
 //
-// Home Assistant serves the default dashboard in "auto-generated" mode until
-// something stores a Lovelace config for it: `lovelace/config` then answers
-// with an error rather than a document. The old body — `out, err := …; _ = out;
-// _ = err` — accepted every outcome, which is precisely the wrong shape here,
-// because the failure worth catching is hactl printing a plausible *empty*
-// dashboard when HA has no config at all (TC-3).
-//
-// So the expected answer is read from HA first, and hactl is required to match
-// it: no stored config means hactl must refuse; a stored config means hactl
-// must render the views HA reported, by title and by path.
+// History, because this test inverted twice: the original body accepted every
+// outcome (`_ = out; _ = err`); its replacement read HA first and required
+// hactl to FAIL when no config is stored — which asserted defect D67 as
+// correct. D-3 decides the pole: the auto-generated state is an answer, not an
+// error — name the state, point to `dash ls`, and never fabricate a strategy
+// render. The old expectation being wrong is the finding.
 func TestDashShowDefault(t *testing.T) {
-	cfg := loadConfig(t)
-	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-	ctx := context.Background()
-	if err := ws.Connect(ctx); err != nil {
-		t.Fatalf("ws connect: %v", err)
-	}
-	defer func() { _ = ws.Close() }()
+	// --- auto-generated: an honest report, exit 0 ---
+	deleteDefaultDashboardConfig(t, ha)
+	out := runHactl(t, "dash", "show")
+	assertContains(t, out, "auto-generated")
+	assertContains(t, out, "dash ls")
 
-	// "" is what `dash show` with no argument passes for the default dashboard.
-	haConfig, haErr := ws.DashboardConfig(ctx, "")
-
-	out, err := runHactlErr(t, "dash", "show")
-
-	if haErr != nil {
-		if err == nil {
-			t.Fatalf("HA has no stored config for the default dashboard (%v), but `dash show` "+
-				"answered successfully:\n%s", haErr, out)
-		}
-		return
-	}
-
-	if err != nil {
-		t.Fatalf("HA returned a config for the default dashboard (%d views), but `dash show` failed: %v\noutput:\n%s",
-			len(haConfig.Views), err, out)
-	}
-	if len(haConfig.Views) == 0 {
-		assertContains(t, out, "no views")
-		return
-	}
-	for i, rawView := range haConfig.Views {
-		v := haapi.ParseViewSummary(rawView)
-		if v.Title == "" && v.Path == "" {
-			continue // nothing HA gave this view to identify it by
-		}
-		if v.Title != "" && !strings.Contains(out, v.Title) {
-			t.Errorf("dash show omitted view %d titled %q, which HA reports:\n%s", i, v.Title, out)
-		}
-		if v.Path != "" && !strings.Contains(out, v.Path) {
-			t.Errorf("dash show omitted view %d at path %q, which HA reports:\n%s", i, v.Path, out)
-		}
-	}
+	// --- stored: the views summary, matching what HA holds ---
+	storeDefaultDashboardConfig(t, ha, map[string]any{"views": []any{
+		map[string]any{"title": "OracleDefault", "path": "oracle-default",
+			"cards": []any{map[string]any{"type": "markdown", "content": "d3"}}},
+	}})
+	out = runHactl(t, "dash", "show")
+	assertContains(t, out, "OracleDefault")
+	assertContains(t, out, "oracle-default")
+	assertNotContains(t, out, "auto-generated")
 }
 
+// TestDashShowDefaultJSON pins the machine contract (H-10): a caller must be
+// able to tell the two states apart by looking at the object. The stored
+// answer is the config document; the auto-generated answer carries
+// "state": "auto-generated" and no views.
 func TestDashShowDefaultJSON(t *testing.T) {
-	out, err := runHactlErr(t, "dash", "show", "--json")
-	if err != nil {
-		t.Skipf("default dashboard has no config yet: %v", err)
+	deleteDefaultDashboardConfig(t, ha)
+	out := runHactl(t, "dash", "show", "--json")
+	var autoObj map[string]any
+	if err := json.Unmarshal([]byte(out), &autoObj); err != nil {
+		t.Fatalf("auto-generated --json did not parse: %v\n%s", err, out)
 	}
-	trimmed := strings.TrimSpace(out)
-	if trimmed != "" && !strings.HasPrefix(trimmed, "{") {
-		t.Errorf("dash show --json did not produce JSON: %s", out)
+	if autoObj["state"] != "auto-generated" {
+		t.Errorf("auto-generated --json state = %v, want auto-generated:\n%s", autoObj["state"], out)
+	}
+	if _, hasViews := autoObj["views"]; hasViews {
+		t.Errorf("auto-generated --json must not fabricate views:\n%s", out)
+	}
+
+	storeDefaultDashboardConfig(t, ha, map[string]any{"views": []any{
+		map[string]any{"title": "JsonDefault", "path": "json-default"},
+	}})
+	out = runHactl(t, "dash", "show", "--json")
+	var storedObj map[string]any
+	if err := json.Unmarshal([]byte(out), &storedObj); err != nil {
+		t.Fatalf("stored --json did not parse: %v\n%s", err, out)
+	}
+	if _, hasViews := storedObj["views"]; !hasViews {
+		t.Errorf("stored --json must carry the config document:\n%s", out)
+	}
+	if _, hasState := storedObj["state"]; hasState {
+		t.Errorf("stored --json must not carry the auto-generated discriminator:\n%s", out)
 	}
 }
 
+// TestDashShowDefaultRaw: --raw exists for round-trip editing, so for the
+// auto-generated default (no stored config to round-trip) it must refuse
+// rather than fabricate; with a stored config it emits that document.
 func TestDashShowDefaultRaw(t *testing.T) {
+	deleteDefaultDashboardConfig(t, ha)
 	out, err := runHactlErr(t, "dash", "show", "--raw")
-	if err != nil {
-		t.Skipf("default dashboard has no config yet: %v", err)
+	if err == nil {
+		t.Fatalf("--raw must refuse for the auto-generated default, got:\n%s", out)
 	}
-	if out != "" && !json.Valid([]byte(out)) {
+	if !strings.Contains(err.Error(), "auto-generated") {
+		t.Errorf("--raw refusal must name the state, got: %v", err)
+	}
+
+	storeDefaultDashboardConfig(t, ha, map[string]any{"views": []any{
+		map[string]any{"title": "RawDefault", "path": "raw-default"},
+	}})
+	out = runHactl(t, "dash", "show", "--raw", "--tokensmax=0")
+	rawJSON := stripTokenHeader(out)
+	if !json.Valid([]byte(rawJSON)) {
 		t.Errorf("dash show --raw did not produce valid JSON: %s", out)
 	}
+	assertContains(t, rawJSON, "raw-default")
 }
 
 func TestDashCreateDryRun(t *testing.T) {

@@ -527,11 +527,7 @@ func (ws *WSClient) DashboardConfig(ctx context.Context, urlPath string) (*Lovel
 	if err != nil {
 		return nil, err
 	}
-	var cfg LovelaceConfig
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing dashboard config: %w", err)
-	}
-	return &cfg, nil
+	return ParseLovelaceConfig(raw)
 }
 
 // DashboardConfigRaw returns the raw JSON config for a dashboard.
@@ -593,23 +589,6 @@ func (ws *WSClient) DashboardDelete(ctx context.Context, dashboardID string) err
 	params := map[string]any{"dashboard_id": dashboardID}
 	_, err := ws.sendCommand(ctx, "lovelace/dashboards/delete", params)
 	return err
-}
-
-// LovelaceInfo returns lovelace system information.
-// WS command: lovelace/info
-func (ws *WSClient) LovelaceInfo(ctx context.Context) (*LovelaceInfo, error) {
-	result, err := ws.sendCommand(ctx, "lovelace/info", nil)
-	if err != nil {
-		return nil, err
-	}
-	var info LovelaceInfo
-	if err := json.Unmarshal(result, &info); err != nil {
-		return nil, fmt.Errorf("parsing lovelace info: %w", err)
-	}
-	if err := degeneracy.Check("lovelace/info", &info); err != nil {
-		return nil, err
-	}
-	return &info, nil
 }
 
 // IntegrationManifest holds the subset of an integration manifest we care about.
