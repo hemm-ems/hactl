@@ -12,8 +12,32 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
+
+// parseRemoteAutomationConfig decodes the document
+// GET /api/config/automation/config/<id> returned. A document that decodes to
+// nothing — `{}`, `null` — is reported as UNPARSED rather than used (H-7):
+// HA validates every stored automation against a schema that requires triggers
+// and actions, so a real config is never empty, and an empty decode means the
+// endpoint's shape moved. The config decodes into a bare map, so no struct tag
+// can drift here; the whole document going empty is this seam's only degenerate
+// shape, and without the guard it renders as a fictitious full-file diff or as
+// a backup of nothing standing in for the user's only undo.
+func parseRemoteAutomationConfig(data []byte, automationID string) (map[string]any, error) {
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing remote config: %w", err)
+	}
+	if len(cfg) == 0 {
+		return nil, fmt.Errorf(
+			"GET /api/config/automation/config/%s returned %s data: the document decoded to nothing, "+
+				"which a real automation config never is (HA's schema requires triggers and actions): %w",
+			automationID, degeneracy.Marker, degeneracy.ErrDegenerate)
+	}
+	return cfg, nil
+}
 
 // Writer handles automation config writes with backup, validation, and rollback.
 type Writer struct {
@@ -67,9 +91,9 @@ func (w *Writer) Diff(ctx context.Context, automationID string, localPath string
 		return nil, fmt.Errorf("fetching remote config: %w", err)
 	}
 
-	var remoteConfig map[string]any
-	if err := json.Unmarshal(remoteData, &remoteConfig); err != nil {
-		return nil, fmt.Errorf("parsing remote config: %w", err)
+	remoteConfig, err := parseRemoteAutomationConfig(remoteData, automationID)
+	if err != nil {
+		return nil, err
 	}
 
 	localYAML, _ := yaml.Marshal(localConfig)
@@ -161,6 +185,14 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	var config map[string]any
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("parsing backup YAML: %w", err)
+	}
+	if len(config) == 0 {
+		// backup() can no longer write an empty file, so an empty decode here
+		// is a truncated or foreign file — restoring it would overwrite the
+		// live config with nothing, which is worse than any state it could fix.
+		return nil, fmt.Errorf(
+			"backup %s decoded to %s data: an automation config is never empty, refusing to restore it: %w",
+			backupFile, degeneracy.Marker, degeneracy.ErrDegenerate)
 	}
 
 	// Extract automation ID from filename if not provided
@@ -268,9 +300,9 @@ func (w *Writer) backup(ctx context.Context, automationID string) (string, error
 		return "", fmt.Errorf("fetching current config for backup: %w", err)
 	}
 
-	var remoteConfig map[string]any
-	if unmarshalErr := json.Unmarshal(remoteData, &remoteConfig); unmarshalErr != nil {
-		return "", fmt.Errorf("parsing remote config: %w", unmarshalErr)
+	remoteConfig, err := parseRemoteAutomationConfig(remoteData, automationID)
+	if err != nil {
+		return "", err
 	}
 
 	yamlData, err := yaml.Marshal(remoteConfig)

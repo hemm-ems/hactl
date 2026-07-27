@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
 
 // This file is the classification sweep the package documentation promises: it
@@ -22,15 +24,10 @@ import (
 // decode site therefore fails this test until the new path is classified, and
 // removing one fails it until the stale entry is deleted.
 
-// packagesWithWireStructs are the packages that decode Home Assistant or
-// companion payloads. internal/cache, internal/config and friends decode only
-// hactl's own on-disk files, whose shape hactl also writes.
-var packagesWithWireStructs = []string{
-	"internal/haapi",
-	"internal/companion",
-	"internal/cmd",
-	"internal/analyze",
-}
+// The package set this sweep quantifies over is degeneracy.WirePackages —
+// shared with surfaceaudit.DecodeSurface (H-7), which derives every decode
+// site *outside* it, so a package absent from the list surfaces there rather
+// than nowhere. See packages.go for the contract.
 
 // unidentifiedWireStructs is the other half of the H-14 classification: every
 // json-tagged struct that deliberately has no Identity, and the reason. A zero
@@ -247,7 +244,7 @@ func TestSweep_EveryWireStructIsClassified(t *testing.T) {
 	accountedFor := map[string]bool{}
 	var unclassified []string
 
-	for _, pkg := range packagesWithWireStructs {
+	for _, pkg := range degeneracy.WirePackages {
 		files := parsePackage(t, root, pkg)
 		identified := identityReceivers(files)
 
@@ -304,8 +301,7 @@ func TestSweep_EveryDecodeSiteIsChecked(t *testing.T) {
 	accountedFor := map[string]bool{}
 	var unchecked []string
 
-	pkgs := append([]string{}, packagesWithWireStructs...)
-	for _, pkg := range pkgs {
+	for _, pkg := range degeneracy.WirePackages {
 		files := parsePackage(t, root, pkg)
 		for path, f := range files {
 			for _, d := range f.Decls {

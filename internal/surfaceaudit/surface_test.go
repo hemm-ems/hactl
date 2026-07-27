@@ -138,6 +138,23 @@ func TestInvariantCitationsResolve(t *testing.T) {
 	}
 }
 
+// TestDecodeSurfaceIsClosed — every decode site the H-14 sweep cannot see is
+// dispositioned.
+//
+// H-7 states the law as a universal — a decode that yields nothing never
+// renders as success — and enforced it with three named tests on the trace
+// renderer. TestSweep_EveryDecodeSiteIsChecked derives every json.Unmarshal in
+// degeneracy.WirePackages; this gate derives everything that sweep cannot see
+// (yaml, decoder constructions, websocket ReadJSON, json decodes outside the
+// wire packages or in shapes the sweep cannot record). internal/writer sat in
+// the gap: it decoded the live automation config from HA for years, and an
+// empty decode rendered as a fictitious full-file diff and as a backup of
+// nothing standing in for the user's only undo.
+func TestDecodeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.DecodeSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestRetrySurfaceIsClosed — every non-idempotent request site declares whether
 // its retry policy can duplicate the request.
 //

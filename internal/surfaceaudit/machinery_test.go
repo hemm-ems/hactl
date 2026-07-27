@@ -177,6 +177,7 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		// The named site is the one the maprange surface exists for: the walk
 		// that rendered one arbitrary entry of a map for a whole release.
 		{"maprange", surfaceaudit.MapRangeSurface, "internal/cmd/wireguard_cmd.go:writeWireguardMonitor"},
+		{"decode", surfaceaudit.DecodeSurface, "internal/writer/writer.go:parseRemoteAutomationConfig"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := tc.derive(root)
@@ -247,5 +248,86 @@ func runThingByHand(w int) error {
 	}
 	if len(keys) != 1 || !strings.HasSuffix(keys[0], ":runThingByHand") {
 		t.Errorf("want exactly the hand-rolled preview flagged, got %v", keys)
+	}
+}
+
+// TestDecodeExtractorSeesEveryForm pins the decode surface's detections and —
+// just as load-bearing — its one exclusion, against a synthetic tree.
+//
+// Every form is a way a decode has entered this module or could enter it
+// without ever spelling `json.Unmarshal`: an aliased encoding/json import, a
+// yaml unmarshal, a decoder construction, gorilla's ReadJSON, and a dot import
+// that strips the qualifier. The exclusion boundary matters in both
+// directions: a plain `json.Unmarshal(b, &v)` inside a wire package belongs to
+// the H-14 sweep and must NOT be double-flagged here, while the same call with
+// a target the sweep cannot name (and no degeneracy.Check in the function) is
+// invisible to the sweep and MUST land here instead of nowhere.
+func TestDecodeExtractorSeesEveryForm(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, src string) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("internal/format/x.go", `package format
+
+import (
+	ej "encoding/json"
+	"gopkg.in/yaml.v3"
+)
+
+func aliased(b []byte) { var v map[string]any; _ = ej.Unmarshal(b, &v) }
+func viaYAML(b []byte) { var v map[string]any; _ = yaml.Unmarshal(b, &v) }
+func viaDecoder(r reader) { _ = ej.NewDecoder(r) }
+func viaWS(c conn) { var v map[string]any; _ = c.ReadJSON(&v) }
+`)
+	write("internal/cmd/x.go", `package cmd
+
+import (
+	"encoding/json"
+
+	"gopkg.in/yaml.v3"
+)
+
+func sweptJSON(b []byte) { var v map[string]any; _ = json.Unmarshal(b, &v) }
+func unsweepableTarget(b []byte) { _ = json.Unmarshal(b, mk()) }
+func yamlInWirePackage(b []byte) { var v map[string]any; _ = yaml.Unmarshal(b, &v) }
+`)
+	write("internal/other/dot.go", `package other
+
+import . "encoding/json"
+
+func viaDot(b []byte) { var v map[string]any; _ = Unmarshal(b, &v) }
+`)
+
+	s, err := surfaceaudit.DecodeSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	got := map[string]bool{}
+	for _, site := range s.Sites {
+		got[site.Key] = true
+	}
+	for _, want := range []string{
+		"internal/format/x.go:aliased",
+		"internal/format/x.go:viaYAML",
+		"internal/format/x.go:viaDecoder",
+		"internal/format/x.go:viaWS",
+		"internal/cmd/x.go:unsweepableTarget",
+		"internal/cmd/x.go:yamlInWirePackage",
+		"internal/other/dot.go:import encoding/json",
+	} {
+		if !got[want] {
+			t.Errorf("the decode extractor no longer finds %q — that form can now enter the module unexamined.\nfound: %v", want, got)
+		}
+	}
+	if got["internal/cmd/x.go:sweptJSON"] {
+		t.Error("a sweep-governed json.Unmarshal in a wire package was flagged here too — the surface would demand a second ledger entry for every site the H-14 sweep already derives")
 	}
 }

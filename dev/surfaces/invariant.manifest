@@ -13,7 +13,7 @@
 #
 # The ceiling is the number of laws still enforced by enumeration. It may fall
 # without ceremony and may only rise by editing this line on purpose.
-#ceiling 8
+#ceiling 7
 
 # --- proven: a gate derives the set ------------------------------------------
 H-2 = proven: TestConfirmSurfaceIsClosed
@@ -32,7 +32,7 @@ H-6 = exempt: a property of the backup naming scheme itself, which exists in exa
 
 # --- debt: stated as a universal, enforced by an enumeration ------------------
 H-1 = proven: TestRetrySurfaceIsClosed
-H-7 = debt: the law covers every decode that can yield nothing, and the cited tests name three of them
+H-7 = proven: TestDecodeSurfaceIsClosed
 H-8 = debt: twenty-six cited tests, all naming particular commands; nothing derives the set of commands that report an area
 H-9 = debt: the law covers every lookup key hactl uses, and the citations enumerate the ones that were wrong once
 H-10 = debt: the law covers every command carrying --json. The write half is now derived (TestPreviewSurfaceIsClosed walks every --confirm command); the read half is still an enumeration, and json_contract_test.go carries an 8-wide companionRequired skip list that is logged rather than asserted on — which is where helper show hid

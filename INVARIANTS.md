@@ -154,11 +154,38 @@ green. The marker is also scanned for by the integration harness itself, so
 every command a test runs is checked for it, including tests that assert
 nothing of their own.
 
+The law's set is derived, not enumerated. H-14's sweep derives every
+`json.Unmarshal` in `degeneracy.WirePackages` and forces each to call
+`degeneracy.Check` or carry a written reason; `surfaceaudit.DecodeSurface`
+derives every decode that sweep structurally cannot see — yaml unmarshals
+anywhere, decoder constructions, gorilla's `ReadJSON` (a json decode that
+never says json), dot imports of codec packages, and json decodes outside the
+wire packages or in shapes the sweep cannot record — and requires a
+disposition for each in `dev/surfaces/decode.manifest`. `internal/writer` sat
+in exactly that gap: it decoded the live automation config from HA into a bare
+map — no tag to drift, but the whole document can decode to nothing without an
+error — so an empty answer (`{}`, `null`) rendered as a fictitious full-file
+diff, was written out as a backup of nothing standing in for the user's only
+undo, and an empty backup file would restore an empty config over the live
+one. All three paths now refuse, carrying the marker and
+`degeneracy.ErrDegenerate`. What neither gate can see is a codec library the
+module has never imported — the same boundary the clock surface accepts for
+its layout tokens.
+
 - Enforced by: `internal/analyze/trace_unparsed_test.go`
   (`TestOverallResult_EmptyIsNotPass`, `TestCondense_EmptyDecodeIsUnknown`,
   `TestFormatCondensed_UnparsedNeverLooksLikePass`),
   `internal/integration/degeneracy_test.go` (`looksDegenerate`, wired into
-  `runHactl`/`runHactlDir`/`runHactlErr`/`runHactlDirErr`)
+  `runHactl`/`runHactlDir`/`runHactlErr`/`runHactlDirErr`),
+  `internal/writer/writer_test.go`
+  (`TestWriter_Diff_EmptyRemoteConfigIsUnparsed`,
+  `TestWriter_Backup_RefusesEmptyRemoteConfig`,
+  `TestWriter_Rollback_RefusesEmptyBackup`)
+- Quantified by: `internal/surfaceaudit/surface_test.go`
+  (`TestDecodeSurfaceIsClosed`, over `dev/surfaces/decode.manifest`, its
+  extractor pinned by `TestDecodeExtractorSeesEveryForm`) together with
+  `internal/degeneracy/sweep_test.go` (`TestSweep_EveryDecodeSiteIsChecked`) —
+  the set of decode sites is derived from the source, not listed here.
 
 ## H-8 — An entity's effective area includes the one it inherits from its device
 
