@@ -68,6 +68,8 @@ not an act at all. That asymmetry is the whole design.
 | `confirm` | the live cobra tree | a preview fails exactly where `--confirm` would (H-2) |
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
+| `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
+| `decode` | every decode site the H-14 json sweep cannot see — yaml, decoder constructions, websocket `ReadJSON`, json outside `degeneracy.WirePackages` | a decode that yields nothing never renders as success (H-7) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:
@@ -75,10 +77,12 @@ Two gates need no manifest, because their failures are never debt:
 - `TestInvariantCitationsResolve` — every test named in an "Enforced by:" list
   exists. A citation that does not resolve is a claim of proof that is false
   right now.
-- `TestFilterFlagsAgreeOnCase` — the filter flags of one command answer the same
-  question whatever case the caller typed. The rule is *parity*, not a pole,
-  deliberately: a gate demanding one pole would have been satisfied by the
-  commit that made `device ls --pattern` case-sensitive.
+- `TestFilterFlagsAgreeOnCase` — every filter flag answers the same question
+  whatever case the caller typed: case-insensitive, the pole D-2
+  (`docs/decisions.md`) decided. The gate asserted only *parity* while no pole
+  was decided — the honest gate then, but one a command whose filters are all
+  case-sensitive satisfies, which is where the commit that broke `device ls
+  --pattern` was headed. With the pole decided, the gate demands it.
 
 ## Adding a surface
 

@@ -13,12 +13,13 @@
 #
 # The ceiling is the number of laws still enforced by enumeration. It may fall
 # without ceremony and may only rise by editing this line on purpose.
-#ceiling 9
+#ceiling 7
 
 # --- proven: a gate derives the set ------------------------------------------
 H-2 = proven: TestConfirmSurfaceIsClosed
 H-13 = proven: TestSpecResponseFieldsAreDecoded
 H-14 = proven: TestLooksDegenerate_FlagsPoisonedDecode
+H-16 = proven: TestMapRangeSurfaceIsClosed
 H-17 = proven: TestTargetSurfaceIsClosed
 H-19 = proven: TestAssertionFloor
 H-20 = proven: TestClockSurfaceIsClosed
@@ -31,12 +32,11 @@ H-6 = exempt: a property of the backup naming scheme itself, which exists in exa
 
 # --- debt: stated as a universal, enforced by an enumeration ------------------
 H-1 = proven: TestRetrySurfaceIsClosed
-H-7 = debt: the law covers every decode that can yield nothing, and the cited tests name three of them
+H-7 = proven: TestDecodeSurfaceIsClosed
 H-8 = debt: twenty-six cited tests, all naming particular commands; nothing derives the set of commands that report an area
 H-9 = debt: the law covers every lookup key hactl uses, and the citations enumerate the ones that were wrong once
 H-10 = debt: the law covers every command carrying --json. The write half is now derived (TestPreviewSurfaceIsClosed walks every --confirm command); the read half is still an enumeration, and json_contract_test.go carries an 8-wide companionRequired skip list that is logged rather than asserted on — which is where helper show hid
 H-11 = debt: the law covers every count hactl prints, and the citations name the counts that were found wrong rather than the set of counts
 H-12 = debt: the law covers every write family, and the citations enumerate the families that had tests written for them
 H-15 = debt: the law covers every detector, and one test is cited
-H-16 = debt: the law covers every command that renders a list, which the cobra tree can produce; three commands are cited. The 28 map-ranges in the module were swept by hand on 2026-07-26 and one violation found (companion wireguard status); nothing re-runs that sweep
 H-18 = debt: reconciliation between two specific columns, stated as a rule about counts in general. The script family now shares the automation logbook path, so the two runs_24h columns agree; nothing derives the set of columns the rule covers

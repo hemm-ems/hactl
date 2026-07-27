@@ -83,8 +83,22 @@ var probes = map[string]filterProbe{
 		}
 		return out
 	},
-	"hactl auto ls/label":   parityLabelIDs,
-	"hactl script ls/label": parityLabelIDs,
+	"hactl auto ls/label": func(n string) []string {
+		rows := filterAutosByTag(parityAutoRows(), n)
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.id)
+		}
+		return out
+	},
+	"hactl script ls/label": func(n string) []string {
+		rows := filterScriptsByLabel(parityScriptRows(), n)
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.id)
+		}
+		return out
+	},
 	"hactl script ls/pattern": func(n string) []string {
 		rows := filterScriptsByPattern(parityScriptRows(), n)
 		out := make([]string, 0, len(rows))
@@ -114,11 +128,17 @@ func parityEntities() []entityState {
 }
 
 func parityAutoRows() []autoRow {
-	return []autoRow{{id: "Wozi_evening"}, {id: "kitchen_fan"}}
+	return []autoRow{
+		{id: "Wozi_evening", labels: "Wozi Lights"},
+		{id: "kitchen_fan", labels: "Kitchen"},
+	}
 }
 
 func parityScriptRows() []scriptRow {
-	return []scriptRow{{id: "Wozi_scene"}, {id: "kitchen_reset"}}
+	return []scriptRow{
+		{id: "Wozi_scene", labels: "Wozi Lights"},
+		{id: "kitchen_reset", labels: "Kitchen"},
+	}
 }
 
 func parityAreas() map[string]haapi.AreaEntry {
@@ -171,16 +191,6 @@ func entityIDs(states []entityState) []string {
 	return out
 }
 
-func parityLabelIDs(needle string) []string {
-	matched := matchingLabelIDs(parityLabels(), needle)
-	out := make([]string, 0, len(matched))
-	for id := range matched {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // ---------------------------------------------------------------------------
 // the gates
 // ---------------------------------------------------------------------------
@@ -209,70 +219,57 @@ func TestFilterSurfaceIsClosed(t *testing.T) {
 	walk(rootCmd)
 	sort.Strings(missing)
 	for _, k := range missing {
-		t.Errorf("filter %q has no parity probe — add one to `probes` in surface_filter_test.go, "+
-			"so its case behaviour is compared against its siblings", k)
+		t.Errorf("filter %q has no probe — add one to `probes` in surface_filter_test.go, "+
+			"so its case behaviour is held to the D-2 pole alongside its siblings", k)
 	}
 	if len(probes) == 0 {
-		t.Fatal("no probes are registered — the parity gate proves nothing")
+		t.Fatal("no probes are registered — the case gate proves nothing")
 	}
 }
 
-// TestFilterFlagsAgreeOnCase — the filter flags of one command answer the same
-// question whatever case the caller typed.
+// TestFilterFlagsAgreeOnCase — every filter flag, on every command, ignores
+// case. This is the pole D-2 decided (docs/decisions.md), not mere agreement.
 //
-// The rule is parity, not a particular pole, and that is deliberate. When two
-// sibling behaviours disagree, the tempting move is to harmonise them, and a
-// harmonisation is only as good as the sibling chosen as the model. Commit
-// 17039dd deleted `strings.ToLower` from `device ls --pattern` to match `ent ls
-// --pattern` — the sibling with no stake in the answer, since entity ids are
-// always lowercase and case cannot bite there — while the three filters beside
-// it in filterDevices kept case-insensitivity. A gate demanding one pole would
-// have been satisfied by that commit. A gate demanding agreement is not.
+// This gate used to assert parity: the filter flags of one command had to
+// agree with each other about case, whichever way. Parity was the honest gate
+// while no decision existed, but it is satisfied by a command whose filters
+// are all case-SENSITIVE — which is where commit 17039dd was headed when it
+// deleted `strings.ToLower` from `device ls --pattern` to "harmonise" with
+// `ent ls --pattern`, the sibling with no stake in the answer, since entity
+// ids are always lowercase and case cannot bite there. A parity gate accepts
+// that harmonisation finishing the job; this one refuses it at the first flag.
+//
+// The pole is case-insensitive because these flags match values a person read
+// off a screen, and Home Assistant stores names exactly as a human typed them
+// ("WoziSued", "Wozi Tv"). An empty listing reads as "no such thing" rather
+// than "not spelled the way I store it", and under the manual's
+// stop-at-the-first-miss rule that is a wrong answer, not a missing one.
 func TestFilterFlagsAgreeOnCase(t *testing.T) {
-	byCommand := map[string]map[string]bool{}
-	for key, probe := range probes {
-		cmdPath, flag, _ := strings.Cut(key, "/")
-		lower, upper, exact := probe(strings.ToLower(parityNeedle)), probe(strings.ToUpper(parityNeedle)), probe(parityNeedle)
+	if len(probes) == 0 {
+		t.Fatal("no probes are registered — the case gate proves nothing")
+	}
+	for _, key := range probeKeys() {
+		probe := probes[key]
+		exact := probe(parityNeedle)
 		if len(exact) == 0 {
 			t.Errorf("probe %q matches nothing even spelled exactly — its fixture no longer exercises the filter", key)
 			continue
 		}
-		insensitive := equalSets(lower, exact) && equalSets(upper, exact)
-		if byCommand[cmdPath] == nil {
-			byCommand[cmdPath] = map[string]bool{}
-		}
-		byCommand[cmdPath][flag] = insensitive
-		if !insensitive {
-			t.Logf("%s is case-SENSITIVE: %q→%v  %q→%v  %q→%v",
-				key, strings.ToLower(parityNeedle), lower, parityNeedle, exact, strings.ToUpper(parityNeedle), upper)
-		}
-	}
-
-	for _, cmdPath := range parityCommands(byCommand) {
-		var sensitive, insensitive []string
-		for flag, ins := range byCommand[cmdPath] {
-			if ins {
-				insensitive = append(insensitive, "--"+flag)
-			} else {
-				sensitive = append(sensitive, "--"+flag)
+		for _, needle := range []string{strings.ToLower(parityNeedle), strings.ToUpper(parityNeedle)} {
+			if got := probe(needle); !equalSets(got, exact) {
+				t.Errorf("%s is case-sensitive: %q→%v but %q→%v.\n"+
+					"    D-2 (docs/decisions.md): every filter flag ignores case. A caller who types a name\n"+
+					"    they read off the screen must get the same answer whatever case they typed;\n"+
+					"    do not harmonise a sibling toward case-sensitivity to fix this.",
+					key, needle, got, parityNeedle, exact)
 			}
 		}
-		if len(sensitive) == 0 || len(insensitive) == 0 {
-			continue
-		}
-		sort.Strings(sensitive)
-		sort.Strings(insensitive)
-		t.Errorf("`%s` disagrees with itself about case: %s ignore it, %s do not.\n"+
-			"    A caller who types a name they read off the screen gets an answer from one flag and an\n"+
-			"    empty listing from the other, and an empty listing reads as \"no such thing\" rather than\n"+
-			"    \"not spelled the way I store it\". Pick a pole for the whole command.",
-			cmdPath, strings.Join(insensitive, ", "), strings.Join(sensitive, ", "))
 	}
 }
 
-func parityCommands(m map[string]map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
+func probeKeys() []string {
+	out := make([]string, 0, len(probes))
+	for k := range probes {
 		out = append(out, k)
 	}
 	sort.Strings(out)

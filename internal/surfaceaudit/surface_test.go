@@ -138,6 +138,23 @@ func TestInvariantCitationsResolve(t *testing.T) {
 	}
 }
 
+// TestDecodeSurfaceIsClosed — every decode site the H-14 sweep cannot see is
+// dispositioned.
+//
+// H-7 states the law as a universal — a decode that yields nothing never
+// renders as success — and enforced it with three named tests on the trace
+// renderer. TestSweep_EveryDecodeSiteIsChecked derives every json.Unmarshal in
+// degeneracy.WirePackages; this gate derives everything that sweep cannot see
+// (yaml, decoder constructions, websocket ReadJSON, json decodes outside the
+// wire packages or in shapes the sweep cannot record). internal/writer sat in
+// the gap: it decoded the live automation config from HA for years, and an
+// empty decode rendered as a fictitious full-file diff and as a backup of
+// nothing standing in for the user's only undo.
+func TestDecodeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.DecodeSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestRetrySurfaceIsClosed — every non-idempotent request site declares whether
 // its retry policy can duplicate the request.
 //
@@ -153,5 +170,19 @@ func TestRetrySurfaceIsClosed(t *testing.T) {
 // its preview is machine-readable.
 func TestPreviewSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.PreviewSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
+// TestMapRangeSurfaceIsClosed — every range over a Go map in the module's
+// non-test sources declares whether its iteration order can reach rendered
+// output, and how that is prevented.
+//
+// H-16 states the rule as a universal and cited three commands. The other
+// map walks were swept by hand once (2026-07-26), the sweep found the
+// `companion wireguard status` defect, and nothing ever re-ran it — so the
+// 29th map-range would have arrived carrying the same risk with no gate in
+// its way. This is that re-run, standing.
+func TestMapRangeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.MapRangeSurface(repoRoot(t))
 	runGate(t, s, err)
 }

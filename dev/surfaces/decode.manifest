@@ -1,0 +1,47 @@
+# decode — a decode that yields nothing never renders as success (H-7).
+#
+# The surface is every decode site the H-14 sweep cannot see: yaml unmarshals
+# anywhere, decoder constructions, gorilla's ReadJSON, dot imports of codec
+# packages, and json.Unmarshal outside degeneracy.WirePackages (or inside them
+# in a shape the sweep cannot record). The json sites inside the wire packages
+# do not appear here — TestSweep_EveryDecodeSiteIsChecked derives each of those
+# and forces it to call degeneracy.Check or carry a written reason. Between the
+# two gates there is no third place for a decode call to sit.
+#
+# `exempt` here means the payload is not a wire answer: the user's own input
+# file, hactl's own state/cache artifact, a transport envelope whose result is
+# re-decoded at a sweep-governed site, or test-rig plumbing with no renderer
+# downstream. A wire document that can decode to nothing must be proven.
+#ceiling 0
+
+# --- wire documents: the H-7 class this surface exists for ---------------------
+internal/writer/writer.go:parseRemoteAutomationConfig = proven: TestWriter_Diff_EmptyRemoteConfigIsUnparsed
+internal/writer/writer.go:(*Writer).Rollback = proven: TestWriter_Rollback_RefusesEmptyBackup
+
+# --- the user's own input files: a parse failure aborts, empty is refused ------
+internal/cmd/auto.go:validateAutoCreateCandidate = exempt: parses the user's own local YAML create input; a parse failure aborts before any output, and content is judged by HA's validate_config
+internal/cmd/helper.go:helperCreateID = exempt: parses the user's own create input; empty input and anything but one top-level key are refused explicitly
+internal/cmd/script.go:normalizeScriptYAML = exempt: parses the user's own script YAML; an empty mapping is refused explicitly before any request is made
+internal/cmd/script.go:normalizeScriptCreateYAML = exempt: parses the user's own create input; refuses empty input and anything but one top-level key
+internal/cmd/tpl.go:classifyTemplate = exempt: parses the user's own template YAML; an empty document is refused explicitly ("template file is empty")
+internal/writer/writer.go:(*Writer).Diff = exempt: the yaml decode here parses the user's own local file; the remote document is decoded by parseRemoteAutomationConfig, proven above
+internal/writer/writer.go:(*Writer).Apply = exempt: parses the user's own local YAML input; the remote document its backup decodes goes through parseRemoteAutomationConfig, proven above
+
+# --- transport envelopes: checked explicitly, results re-decoded under the sweep
+internal/haapi/websocket.go:(*WSClient).TraceList = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal with degeneracy.Check
+internal/haapi/websocket.go:(*WSClient).TraceGet = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal site
+internal/haapi/websocket.go:(*WSClient).ValidateConfig = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal site
+internal/haapi/websocket.go:(*WSClient).SystemLogList = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal site
+internal/haapi/websocket.go:(*WSClient).sendCommand = exempt: reads the wsResponse envelope, whose success flag is checked; every caller re-decodes the raw result at a sweep-governed site
+internal/haapi/websocket.go:(*WSClient).connect = exempt: reads the auth handshake envelope and branches on its type field explicitly; anything but auth_ok fails the connect
+
+# --- hactl's own on-disk artifacts: hactl also writes them ---------------------
+internal/manual/state.go:loadSession = exempt: hactl's own session-state cache; a corrupt or empty decode deliberately falls back to a fresh state rather than rendering anything
+pkg/ids/ids.go:(*Registry).Load = exempt: hactl's own ids cache file, written by Save on the same type; a parse failure is returned and a missing file is a fresh registry
+
+# --- test-rig plumbing: no renderer downstream, a zero decode fails the tier ---
+internal/hatest/hatest.go:haCoreState = exempt: test rig boot probe; an empty state never satisfies the RUNNING wait, which times out loudly
+internal/hatest/hatest.go:createOwnerUser = exempt: test rig onboarding; an empty auth_code is refused explicitly with the body in the error
+internal/hatest/hatest.go:exchangeAuthCode = exempt: test rig auth plumbing; an empty token fails every subsequent authenticated call in the tier
+internal/hatest/hatest.go:createLongLivedToken = exempt: test rig websocket auth; the success flag is checked and an empty token fails every test that uses the instance
+internal/companiontest_discovery/fake_supervisor.go:(*fakeSupervisor).handleWS = exempt: the fake Supervisor decoding hactl's own outgoing frames; a bad frame fails the fake's protocol and the tier, nothing renders

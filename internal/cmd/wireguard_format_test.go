@@ -75,6 +75,44 @@ func TestWriteWireguardStatus_MonitorBackoff(t *testing.T) {
 	}
 }
 
+// TestWriteWireguardStatus_ResolvedRenderIsDeterministic — a monitor tracking
+// several hostnames renders their resolved addresses in hostname order,
+// byte-identically on every run.
+//
+// m.Resolved is a map, and this view once printed one arbitrary entry of it,
+// labelled "the most recent resolved address" — sixty runs against a
+// byte-identical companion response produced three different outputs (H-16,
+// the defect that put the map-range surface in dev/surfaces/). Forty renders
+// make an unsorted walk vanishingly unlikely to pass by luck.
+func TestWriteWireguardStatus_ResolvedRenderIsDeterministic(t *testing.T) {
+	reresolveAgo := 61
+	st := &companion.WireGuardStatusResponse{
+		Tunnel: "wg0",
+		State:  "active",
+		Monitor: &companion.WireGuardMonitor{
+			Running:   true,
+			Hostnames: []string{"a.example.org", "b.example.org", "c.example.org"},
+			Healthy:   true,
+			Resolved: map[string]string{
+				"c.example.org": "10.0.0.3",
+				"a.example.org": "10.0.0.1",
+				"b.example.org": "10.0.0.2",
+			},
+			LastReresolveSecsAgo: &reresolveAgo,
+		},
+	}
+
+	want := "last re-resolve  1m1s ago → 10.0.0.1 10.0.0.2 10.0.0.3"
+	for run := range 40 {
+		var buf bytes.Buffer
+		writeWireguardStatus(&buf, st)
+		if out := buf.String(); !strings.Contains(out, want) {
+			t.Fatalf("run %d: resolved addresses are not rendered in hostname order:\nwant %q\n--- got ---\n%s",
+				run, want, out)
+		}
+	}
+}
+
 func TestWriteWireguardStatus_NoMonitor(t *testing.T) {
 	st := &companion.WireGuardStatusResponse{Tunnel: "wg0", State: "active"}
 	var buf bytes.Buffer

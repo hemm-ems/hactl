@@ -534,7 +534,7 @@ func renderConfigShow(w io.Writer, r *configShowResult) error {
 	return nil
 }
 
-func sortedKeys(m map[string]any) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -816,11 +816,13 @@ func renderFlowResult(w io.Writer, data []byte) error {
 		_, _ = fmt.Fprintf(w, "title:   %s\n", flow.Title)
 	}
 
-	// Errors
+	// Errors, in field order. HA reports one message per failed field, and a
+	// step can fail several at once — ranging the map directly rendered them
+	// in an order that changed between two runs of the same command (H-16).
 	if len(flow.Errors) > 0 {
 		_, _ = fmt.Fprintf(w, "\nErrors:\n")
-		for field, msg := range flow.Errors {
-			_, _ = fmt.Fprintf(w, "  %s: %s\n", field, msg)
+		for _, field := range sortedKeys(flow.Errors) {
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", field, flow.Errors[field])
 		}
 	}
 

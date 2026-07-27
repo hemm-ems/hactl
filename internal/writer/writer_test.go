@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -794,5 +796,94 @@ func TestWriter_Rollback_ReportsAFailedReload(t *testing.T) {
 	}
 	if result.Reloaded {
 		t.Error("Reloaded is true although automation.reload answered 500 — the caller prints \"reload: ok\" off this field while HA is still running the previous config")
+	}
+}
+
+// The three tests below are H-7 at the writer's seam: GET
+// /api/config/automation/config/<id> and the backup file are the only wire/
+// artifact documents this package decodes, and both decode into a bare
+// map[string]any — no struct tag can drift, but the *document itself* can
+// decode to nothing (`{}`, `null`, an empty file) without an error. A real
+// automation config is never empty (HA's schema requires triggers and
+// actions), so an empty decode is a changed wire shape, and rendering it
+// would produce a fictitious full-file diff, a backup of nothing standing in
+// for the user's only undo, or a rollback that overwrites the live config
+// with an empty document.
+
+func TestWriter_Diff_EmptyRemoteConfigIsUnparsed(t *testing.T) {
+	for _, remote := range []string{`{}`, `null`} {
+		t.Run(remote, func(t *testing.T) {
+			srv := makeWriterServer(t, "test_auto", remote)
+			defer srv.Close()
+
+			localFile := filepath.Join(t.TempDir(), "test_auto.yaml")
+			if err := os.WriteFile(localFile, []byte("alias: Test\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := New(haapi.New(srv.URL, "tok"), nil, t.TempDir()).
+				Diff(context.Background(), "test_auto", localFile)
+			if err == nil {
+				t.Fatal("Diff rendered a diff against a remote config that decoded to nothing — every local line would show as an addition")
+			}
+			if !strings.Contains(err.Error(), degeneracy.Marker) {
+				t.Errorf("error %q does not carry the %s marker the harness scans for", err, degeneracy.Marker)
+			}
+			if !errors.Is(err, degeneracy.ErrDegenerate) {
+				t.Errorf("error is not identifiable with errors.Is(err, degeneracy.ErrDegenerate): %v", err)
+			}
+		})
+	}
+}
+
+func TestWriter_Backup_RefusesEmptyRemoteConfig(t *testing.T) {
+	srv := makeWriterServer(t, "my_auto", `null`)
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	w := &Writer{client: haapi.New(srv.URL, "tok"), backupDir: backupDir}
+
+	if _, err := w.backup(context.Background(), "my_auto"); err == nil {
+		t.Fatal("backup of a remote config that decoded to nothing succeeded — an empty file would stand in for the user's only undo")
+	} else if !strings.Contains(err.Error(), degeneracy.Marker) {
+		t.Errorf("error %q does not carry the %s marker", err, degeneracy.Marker)
+	}
+
+	entries, readErr := os.ReadDir(backupDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a backup file was written anyway: %v", entries)
+	}
+}
+
+func TestWriter_Rollback_RefusesEmptyBackup(t *testing.T) {
+	posted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/") {
+			posted = true
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
+	if err := os.WriteFile(backupFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := New(haapi.New(srv.URL, "tok"), nil, backupDir).
+		Rollback(context.Background(), "test_auto")
+	if err == nil {
+		t.Fatal("Rollback restored a backup that decoded to nothing — the live config would be overwritten with an empty document")
+	}
+	if !strings.Contains(err.Error(), degeneracy.Marker) {
+		t.Errorf("error %q does not carry the %s marker", err, degeneracy.Marker)
+	}
+	if posted {
+		t.Error("the empty config was POSTed to HA before the guard fired — the error alone does not prove the write was prevented")
 	}
 }
