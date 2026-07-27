@@ -75,10 +75,12 @@ Two gates need no manifest, because their failures are never debt:
 - `TestInvariantCitationsResolve` — every test named in an "Enforced by:" list
   exists. A citation that does not resolve is a claim of proof that is false
   right now.
-- `TestFilterFlagsAgreeOnCase` — the filter flags of one command answer the same
-  question whatever case the caller typed. The rule is *parity*, not a pole,
-  deliberately: a gate demanding one pole would have been satisfied by the
-  commit that made `device ls --pattern` case-sensitive.
+- `TestFilterFlagsAgreeOnCase` — every filter flag answers the same question
+  whatever case the caller typed: case-insensitive, the pole D-2
+  (`docs/decisions.md`) decided. The gate asserted only *parity* while no pole
+  was decided — the honest gate then, but one a command whose filters are all
+  case-sensitive satisfies, which is where the commit that broke `device ls
+  --pattern` was headed. With the pole decided, the gate demands it.
 
 ## Adding a surface
 

@@ -205,9 +205,11 @@ and fixed alongside it, in the same files:
   every `--label`-supporting command and `auto ls`/`script ls` (outside this
   fix's scope) already implement them that way.
 - `device ls --pattern` lowercased both sides before matching while
-  `ent ls --pattern` didn't, making `device ls` the sole case-insensitive
-  outlier among the commands docs/manual.md documents as case-sensitive
-  substring/glob. `deviceMatchesPattern` now matches case-sensitively too.
+  `ent ls --pattern` didn't — one command's filters disagreeing about case.
+  It was first harmonised toward case-sensitivity (the outlier deleted, not
+  the sibling fixed); D-2 (docs/decisions.md) has since decided the opposite
+  pole, so every filter flag folds case (`matchPattern`), and
+  `TestFilterFlagsAgreeOnCase` asserts that pole over every filter probe.
 - `ent show --json` encoded only the raw `/api/states` struct, omitting
   `name`/`unit`/`area`/`labels`/`changed_by` even though the human table
   right below it computes and prints all five; `--json` now carries the same
