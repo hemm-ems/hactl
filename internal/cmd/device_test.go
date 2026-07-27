@@ -78,21 +78,40 @@ func TestDeviceUserFacingName(t *testing.T) {
 	}
 }
 
-// TestDeviceMatchesPattern_CaseSensitive: device ls --pattern used to be the
-// sole case-INsensitive outlier among the --pattern-supporting commands
-// (ent ls --pattern is case-sensitive, and docs/manual.md documents
-// case-sensitive substring/glob everywhere --pattern appears).
-func TestDeviceMatchesPattern_CaseSensitive(t *testing.T) {
-	// Neither ID nor Name contains a lowercase "heat" substring, so a
-	// case-sensitive match must fail — only the earlier case-insensitive bug
-	// would make it pass.
+// TestDeviceMatchesPattern_IgnoresCase — INVERTED, and named for what it now
+// asserts.
+//
+// This test used to require `deviceMatchesPattern(d, "heat")` to be FALSE for a
+// device named "Heat Pump", on the reasoning that `device ls --pattern` was
+// "the sole case-INsensitive outlier" and should match `ent ls --pattern`. That
+// harmonised toward the sibling with no stake in the answer: entity ids are
+// always lowercase, so case cannot bite there, while device names are carried
+// exactly as a human typed them. The three filters beside --pattern in
+// filterDevices ignore case, so the command disagreed with itself, and
+// `--pattern wozi` answered "no devices" to a question with eight answers.
+//
+// The old expectation being wrong is the finding.
+func TestDeviceMatchesPattern_IgnoresCase(t *testing.T) {
 	d := haapi.DeviceRegistryEntry{ID: "dev1", Name: "Heat Pump"}
 
-	if !deviceMatchesPattern(d, "Heat") {
-		t.Errorf("deviceMatchesPattern(%+v, %q) = false, want true (exact case)", d, "Heat")
+	for _, pattern := range []string{"Heat", "heat", "HEAT", "hEaT"} {
+		if !deviceMatchesPattern(d, pattern) {
+			t.Errorf("deviceMatchesPattern(%+v, %q) = false, want true — case must not decide whether a device is findable", d, pattern)
+		}
 	}
-	if deviceMatchesPattern(d, "heat") {
-		t.Errorf("deviceMatchesPattern(%+v, %q) = true, want false (case must matter, like ent ls --pattern)", d, "heat")
+	if deviceMatchesPattern(d, "cool") {
+		t.Errorf("deviceMatchesPattern(%+v, \"cool\") = true, want false", d)
+	}
+}
+
+// TestDeviceMatchesPattern_UsesTheNameTheUserSees — `--name` has honoured
+// name_by_user since issue #72; a --pattern that matched the raw Name would be
+// the same defect one flag over.
+func TestDeviceMatchesPattern_UsesTheNameTheUserSees(t *testing.T) {
+	d := haapi.DeviceRegistryEntry{ID: "dev1", Name: "0x00158d0004d2b1", NameByUser: "Wozi Tv"}
+
+	if !deviceMatchesPattern(d, "wozi") {
+		t.Errorf("deviceMatchesPattern(%+v, \"wozi\") = false — the user-facing name is the one on screen", d)
 	}
 }
 

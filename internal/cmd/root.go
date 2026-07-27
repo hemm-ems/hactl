@@ -196,6 +196,14 @@ func Execute() error {
 	// manual → marker → result/error (the layout the tuning evals measured);
 	// injection happens on errors too — that's when the agent needs it most.
 	maybeInjectManual(executed, os.Args[1:])
+
+	// --stats is documented as printing "after any command", and used to be
+	// skipped on the error path — the run whose cost a caller most wants to
+	// know, because it is the one they are about to retry.
+	if flagStats {
+		writeStats(os.Stderr, int64(capBuf.Len()))
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// Name the instance the failing command was talking to — with
@@ -217,9 +225,6 @@ func Execute() error {
 		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
 
-	if flagStats {
-		writeStats(os.Stderr, int64(capBuf.Len()))
-	}
 	return nil
 }
 

@@ -1,0 +1,17 @@
+# target — an identifier that resolves to nothing ends the command, rather than
+# becoming a plan or an empty answer.
+#
+# The surface is derived by internal/surfaceaudit.TargetSurface: a command
+# entrypoint is a site when it writes its first byte of output before the
+# identifier it was handed has had a chance to fail it. Sites are keyed by the
+# entrypoint function. See dev/surfaces/README.md for the format.
+#
+# The ceiling is the number of sites known to be unproven. It may fall without
+# ceremony and may only rise by editing this line on purpose.
+#ceiling 0
+
+internal/cmd/cc.go:runCCShow = exempt: resolves by scanning the fetched component list and returns "custom component %q not found", which the analysis cannot see because the check is on a loop variable rather than a call result
+internal/cmd/dash.go:runDashGrep = exempt: the argument is a search string, not an identifier; "not referenced in any dashboard" is the correct answer for a value that appears nowhere
+internal/cmd/ref.go:runRefScan = exempt: the argument is a search value rather than an identifier, so there is nothing for it to resolve to
+
+internal/cmd/cache.go:runCacheRefresh = exempt: the category is an enum, not an identifier; an unrecognised value is now refused before any work, so there is no target left to resolve

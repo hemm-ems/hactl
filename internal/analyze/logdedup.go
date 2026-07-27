@@ -3,6 +3,7 @@ package analyze
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/hemm-ems/hactl/internal/clock"
 	"regexp"
 	"sort"
 	"strings"
@@ -194,30 +195,19 @@ func normalizeMessage(msg string) string {
 	return numberPattern.ReplaceAllString(msg, "<N>")
 }
 
-// FormatShortTimestamp formats a log timestamp to short form.
+// FormatShortTimestamp formats a log timestamp in the reader's zone.
+//
+// This was the fifth wall-clock renderer and the second one that did not
+// convert: it parsed RFC3339 (which carries an offset) and then formatted
+// without calling .Local(), and compared the parsed value's calendar day
+// against a local time.Now(). It is the pair of defects that was fixed in
+// cmd.formatShortTime, in a function nobody looked at, because the fix was
+// scoped to the renderer where the symptom had been seen.
 func FormatShortTimestamp(ts string) string {
 	if ts == "" {
 		return "-"
 	}
-	// Parse "2026-04-16 09:42:00.123" format
-	layouts := []string{
-		"2006-01-02 15:04:05.999999",
-		"2006-01-02 15:04:05",
-		time.RFC3339Nano,
-		time.RFC3339,
-	}
-	for _, layout := range layouts {
-		t, err := time.Parse(layout, ts)
-		if err != nil {
-			continue
-		}
-		now := time.Now()
-		if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
-			return t.Format("15:04")
-		}
-		return t.Format("01-02 15:04")
-	}
-	return ts
+	return clock.Short(ts)
 }
 
 // Log timestamps come in two shapes. HA's system_log entries and the REST

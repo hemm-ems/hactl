@@ -204,7 +204,15 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 	}
 	cutoff := time.Now().Add(-sinceDur)
 
-	rows := buildScriptRows(scripts, traces, cutoff)
+	// runs_24h comes from the logbook, not the trace table: HA bounds stored
+	// traces per item, so counting them undercounts a busy script. The
+	// automation column has done this since H-18; this one had not.
+	fires, fireErr := fetchFireCounts(ctx, client, sinceDur, "script")
+	if fireErr != nil {
+		slog.Warn("could not fetch logbook run counts; runs_24h will fall back to the (bounded) trace count", "error", fireErr)
+	}
+
+	rows := buildScriptRows(scripts, traces, cutoff, fires)
 
 	// Enrich with area/labels from registry
 	if rc != nil {
@@ -438,7 +446,7 @@ func fetchScriptTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceL
 	return result, nil
 }
 
-func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutoff time.Time) []scriptRow {
+func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutoff time.Time, fires fireCounts) []scriptRow {
 	rows := make([]scriptRow, 0, len(scripts))
 	for _, s := range scripts {
 		id := strings.TrimPrefix(s.EntityID, "script.")
@@ -449,22 +457,38 @@ func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutof
 		}
 
 		key := s.EntityID
+		var latestErr time.Time
+		tracedRuns := 0
 		if ts, ok := traces[key]; ok {
 			for _, tr := range ts {
 				t, err := time.Parse(time.RFC3339Nano, tr.Timestamp.Start)
 				if err != nil {
 					continue
 				}
-				if t.After(cutoff) {
-					row.runs++
-					if isTraceError(tr) {
-						row.errors++
-						if row.lastErr == "" {
-							row.lastErr = formatShortTime(tr.Timestamp.Start) + " " + shortenStep(tr.LastStep)
-						}
-					}
+				if !t.After(cutoff) {
+					continue
+				}
+				tracedRuns++
+				if !isTraceError(tr) {
+					continue
+				}
+				row.errors++
+				// "last" means most recent. HA does not guarantee trace order,
+				// so compare timestamps rather than keeping whichever arrived
+				// first — the rule auto.go has and this loop did not.
+				if row.lastErr == "" || t.After(latestErr) {
+					latestErr = t
+					row.lastErr = formatShortTime(tr.Timestamp.Start) + " " + shortenStep(tr.LastStep)
 				}
 			}
+		}
+
+		// The logbook is authoritative when it answered; the bounded trace
+		// count stands in only when it did not.
+		if n, ok := fires.runs(key); ok {
+			row.runs = n
+		} else {
+			row.runs = tracedRuns
 		}
 
 		rows = append(rows, row)
@@ -588,21 +612,29 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	if err != nil {
 		return err
 	}
+	// The verdict is carried, not printed, so the preview can render it as one
+	// field of a machine object instead of a prose line ahead of one.
+	var scriptValidation string
 	switch {
 	case validated:
-		_, _ = fmt.Fprintln(w, "\nvalidation: ok (HA validate_config)")
+		scriptValidation = "ok (HA validate_config)"
 	case !flagScriptConfirm:
-		_, _ = fmt.Fprintln(w, "\nvalidation: skipped (validate_config unavailable)")
+		scriptValidation = "skipped (validate_config unavailable)"
 	default:
 		return errors.New("script validation unavailable; refusing confirmed apply")
+	}
+	if flagScriptConfirm && !flagJSON {
+		_, _ = fmt.Fprintf(w, "\nvalidation: %s\n", scriptValidation)
 	}
 
 	if !flagScriptConfirm {
 		if _, dryErr := cc.WriteScriptDef(ctx, candidate.ID, candidate.Content, true); dryErr != nil {
 			return fmt.Errorf("dry-run script write check: %w", dryErr)
 		}
-		_, _ = fmt.Fprintf(w, "dry-run: no changes written to %s (use --confirm to apply)\n", candidate.ID)
-		return nil
+		return dryRun("apply script").
+			with("script", candidate.ID).
+			with("validation", scriptValidation).
+			render(w)
 	}
 
 	backupPath, err := backupScriptConfig(cfg.Dir, candidate.ID, remote.Content)
@@ -793,9 +825,11 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	if !flagScriptConfirm {
-		_, _ = fmt.Fprintf(w, "dry-run: would execute %s (via script.turn_on)\n", entityID)
-		_, _ = fmt.Fprintln(w, "use --confirm to run it")
-		return nil
+		return dryRun("execute "+entityID).
+			with("entity_id", entityID).
+			with("via", "script.turn_on").
+			withHint("use --confirm to run it").
+			render(w)
 	}
 
 	if err := client.CallService(ctx, "script", "turn_on", map[string]any{

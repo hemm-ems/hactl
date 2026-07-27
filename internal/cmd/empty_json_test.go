@@ -175,32 +175,60 @@ func TestEmptyResultJSON_Changes(t *testing.T) {
 	assertEmptyJSONArray(t, buf.String())
 }
 
-// TestEmptyResultJSON_EntRelated covers ent.go's two-message empty branch
-// (known vs. stale/deleted entity), which — unlike the other sites — calls
-// writeEmptyJSONArray directly instead of going through emitEmptyList.
-func TestEmptyResultJSON_EntRelated(t *testing.T) {
-	ts := startCmdServer(t, map[string]any{
-		"config/entity_registry/list": []any{},
-		"config/area_registry/list":   []any{},
-		"config/label_registry/list":  []any{},
-		"config/floor_registry/list":  []any{},
-	}, map[string]http.HandlerFunc{
-		"/api/states": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, "[]")
-		},
-	})
-	withFlagDir(t, ts.dir)
-	withFlagJSON(t, true)
-	old := flagEntStale
-	flagEntStale = false
-	defer func() { flagEntStale = old }()
-
-	var buf bytes.Buffer
-	if err := runEntRelated(context.Background(), &buf, "sensor.gone"); err != nil {
-		t.Fatalf("runEntRelated failed: %v", err)
+// TestEntRelatedJSON_DistinguishesGoneFromQuiet — INVERTED, and split in two.
+//
+// This test used to assert that `ent related sensor.gone --json` returns "[]"
+// for an entity that is in neither the registry nor the state machine. That is
+// the same document a live entity with no relations produces, so the two cases
+// were indistinguishable in the mode a machine reads — while text mode printed
+// "not in the registry (stale/renamed or deleted)", because the --json branch
+// returned before `known` was ever consulted. The comment three lines above
+// that branch names this exact indistinguishability as the thing the check
+// exists to prevent, and the manual tells callers "an empty answer means the
+// entity was quiet, never that it was mistyped".
+//
+// The old expectation being wrong is the finding.
+func TestEntRelatedJSON_DistinguishesGoneFromQuiet(t *testing.T) {
+	newRig := func(t *testing.T, states string) {
+		t.Helper()
+		ts := startCmdServer(t, map[string]any{
+			"config/entity_registry/list": []any{},
+			"config/area_registry/list":   []any{},
+			"config/label_registry/list":  []any{},
+			"config/floor_registry/list":  []any{},
+		}, map[string]http.HandlerFunc{
+			"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, states)
+			},
+		})
+		withFlagDir(t, ts.dir)
+		withFlagJSON(t, true)
+		old := flagEntStale
+		flagEntStale = false
+		t.Cleanup(func() { flagEntStale = old })
 	}
-	assertEmptyJSONArray(t, buf.String())
+
+	t.Run("an entity that does not exist is an error, not an empty answer", func(t *testing.T) {
+		newRig(t, "[]")
+		var buf bytes.Buffer
+		err := runEntRelated(context.Background(), &buf, "sensor.gone")
+		if err == nil {
+			t.Fatalf("a mistyped entity answered %q at exit 0 — the same document a live, unreferenced entity returns", buf.String())
+		}
+		if !strings.Contains(err.Error(), "--stale") {
+			t.Errorf("the error must name the documented way to ask about a gone entity, got: %v", err)
+		}
+	})
+
+	t.Run("a live entity with no relations still answers []", func(t *testing.T) {
+		newRig(t, `[{"entity_id":"sensor.quiet","state":"21"}]`)
+		var buf bytes.Buffer
+		if err := runEntRelated(context.Background(), &buf, "sensor.quiet"); err != nil {
+			t.Fatalf("a live entity with no relations is a fact, not an error: %v", err)
+		}
+		assertEmptyJSONArray(t, buf.String())
+	})
 }
 
 // --- Filtered-path empty results. These sites short-circuit on a filter that

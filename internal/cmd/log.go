@@ -88,17 +88,32 @@ func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	}
 
 	if flagLogUnique {
-		return renderDedupedLogs(w, entries)
+		return renderDedupedLogs(w, cfg, entries)
 	}
 
 	return renderLogEntries(w, cfg, entries)
 }
 
-func renderDedupedLogs(w io.Writer, entries []analyze.LogEntry) error {
+func renderDedupedLogs(w io.Writer, cfg *config.Config, entries []analyze.LogEntry) error {
 	deduped := analyze.DeduplicateLogs(entries)
 
+	// The deduped view mints the same log: ids the un-deduped one does.
+	//
+	// It emitted no id column at all, which broke the manual's first routing
+	// entry end to end: it prescribes `log --errors --warnings --unique` as the
+	// sweep and `log show <id>` as the drill-down, and the sweep produced
+	// nothing to drill into. A caller had to know to re-run without --unique,
+	// which the manual never says.
+	//
+	// The key is the first occurrence's, in the same "timestamp|component|
+	// message" format runLogShow parses, so an id from either view resolves.
+	reg := ids.NewRegistry(filepath.Join(cfg.Dir, "cache", "ids.json"))
+	if loadErr := reg.Load(); loadErr != nil {
+		slog.Warn("could not load ids registry", "error", loadErr)
+	}
+
 	tbl := &format.Table{
-		Headers: []string{"count", "level", "component", "first_seen", "last_seen", "message"},
+		Headers: []string{"id", "count", "level", "component", "first_seen", "last_seen", "message"},
 		Rows:    make([][]string, len(deduped)),
 	}
 	for i, d := range deduped {
@@ -107,6 +122,7 @@ func renderDedupedLogs(w io.Writer, entries []analyze.LogEntry) error {
 			msg = msg[:57] + "..."
 		}
 		tbl.Rows[i] = []string{
+			reg.GetOrCreate("log", d.FirstSeen+"|"+d.Component+"|"+d.Message),
 			strconv.Itoa(d.Count),
 			d.Level,
 			shortComponent(d.Component),
@@ -114,6 +130,10 @@ func renderDedupedLogs(w io.Writer, entries []analyze.LogEntry) error {
 			analyze.FormatShortTimestamp(d.LastSeen),
 			msg,
 		}
+	}
+
+	if saveErr := reg.Save(); saveErr != nil {
+		slog.Warn("could not save ids registry", "error", saveErr)
 	}
 
 	return tbl.Render(w, format.RenderOpts{

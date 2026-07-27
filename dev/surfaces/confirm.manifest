@@ -1,0 +1,56 @@
+# confirm — a preview fails exactly where --confirm would: the target resolves
+# and the input file parses before a plan is printed (INVARIANTS.md H-2).
+#
+# The surface is the live cobra tree: every command carrying a --confirm flag,
+# walked by TestConfirmSurfaceIsClosed. H-2 states the rule as a universal and
+# lists thirteen commands as its enforcement. The tree carries thirty-four.
+# Nothing connected the two numbers until this file existed, which is how
+# `auto apply` came to be neither proven nor knowingly excluded.
+#
+# `proven` is claimed only where a test asserts the *refusal* — an unresolvable
+# target or an unusable input ending the command. A test that only asserts the
+# preview does not write proves the other half of H-2, not this one.
+#
+# The ceiling is the number of sites known to be unproven. It may fall without
+# ceremony and may only rise by editing this line on purpose.
+#ceiling 11
+
+# --- proven: a named test asserts the preview refuses -----------------------
+hactl auto delete = proven: TestAutoDeleteDryRunRefusesUnresolvable
+hactl script delete = proven: TestScriptDeleteDryRunRefusesUnresolvable
+hactl tpl delete = proven: TestTplDeleteDryRunRefusesUnresolvable
+hactl helper delete = proven: TestHelperDeleteDryRunRefusesUnresolvable
+hactl area delete = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl floor delete = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl label delete = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl config delete = proven: TestConfigDeleteDryRunRefusesUnknownEntry
+hactl dash delete = proven: TestDashDeleteAgreesOnUnknownDashboard
+hactl script create = proven: TestCreateDryRunRejectsUnusableInput
+hactl helper create = proven: TestCreateDryRunRejectsUnusableInput
+hactl script apply = proven: TestE2EDryRunRejectsFabricatedTargetCLI
+hactl auto create = proven: TestAutoCreate_MalformedYAMLRefused_DryRun
+hactl script run = proven: TestRunScriptRun_NotFound
+hactl auto apply = proven: TestAutoApplyDryRunRefusesUnresolvableTarget
+hactl svc call = proven: TestSvcCallDryRunRefusesAServiceHADoesNotHave
+hactl dash create = proven: TestRunDashCreate_DryRunResolvesItsInput
+
+# --- exempt: nothing for the preview to resolve -----------------------------
+hactl area create = exempt: the argument is a name that does not exist yet, so there is no target to resolve; HA rejects a duplicate on the confirmed run
+hactl floor create = exempt: same shape as area create, the argument names something the command is about to bring into existence
+hactl label create = exempt: same shape as area create, the argument names something the command is about to bring into existence
+hactl companion wireguard config = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+hactl companion wireguard up = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+hactl companion wireguard down = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+
+# --- debt: the rule applies and nothing proves it ---------------------------
+hactl tpl create = debt: classifyTemplate hard-errors on unparseable YAML, a top-level list and an empty file before the plan (read 2026-07-26); a mapping with no recognised key still previews as an entity item and nothing asserts what --confirm does with it
+hactl auto rollback = debt: PlanRollback errors via findLatestBackup before the plan (read 2026-07-26); no test asserts it, and the raw "reading backup dir" message leaks when backups/ is absent
+hactl rollback = debt: same path as auto rollback and the same gap; no test asserts the refusal
+hactl config flow-start = debt: the dry run is proven to preview a domain that has a flow handler, but nothing asserts what it does with a domain that has none
+hactl config flow-step = debt: InspectFlow refuses an expired or never-started flow id before the plan (read 2026-07-26); no test asserts it
+hactl config options = debt: resolveConfigEntry errors on an unknown entry and on one with no options flow, both before the plan (read 2026-07-26); no test asserts it
+hactl dash save = debt: the JSON is validated and findDashboard resolves the url_path before the plan (read 2026-07-26), with a deliberate exception for the default empty path; no test asserts it
+hactl dash replace = debt: TestRunDashReplace_NotFound asserts the message for a value that is absent and exits zero; nothing asserts an unresolvable dashboard is refused
+hactl ent set-area = debt: the area and the registry entry are both resolved before the plan (read 2026-07-26); no test asserts it
+hactl ent set-label = debt: every label and the entity are resolved before the plan (read 2026-07-26); no test asserts it
+hactl ref replace = debt: nothing asserts what the preview reports when the value to replace appears nowhere, or when the replacement is malformed

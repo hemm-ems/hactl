@@ -24,6 +24,12 @@ func writeURLEnv(t *testing.T, dir, baseURL string) {
 func TestSvcCall_ReturnFlag(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// svc call resolves the service against the registry before acting, so
+		// the fake has to hold one (H-2: the preview fails where --confirm does).
+		if r.URL.Path == "/api/services" {
+			_, _ = fmt.Fprint(w, `[{"domain":"homeassistant","services":{"check_config":{}}}]`)
+			return
+		}
 		_, _ = fmt.Fprint(w, `[{"response":{"result":"valid"}}]`)
 	}))
 	defer srv.Close()
@@ -55,6 +61,10 @@ func TestSvcCall_ReturnFlag(t *testing.T) {
 func TestSvcCall_NoReturn(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/services" {
+			_, _ = fmt.Fprint(w, `[{"domain":"homeassistant","services":{"check_config":{}}}]`)
+			return
+		}
 		_, _ = fmt.Fprint(w, `[{}]`)
 	}))
 	defer srv.Close()

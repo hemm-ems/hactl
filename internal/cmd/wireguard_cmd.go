@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -118,12 +119,24 @@ func writeWireguardMonitor(w io.Writer, m *companion.WireGuardMonitor) {
 	}
 	_, _ = fmt.Fprintf(w, "  monitor  running  hostnames=%d\n", len(m.Hostnames))
 	if m.LastReresolveSecsAgo != nil {
-		// Show the most recent resolved address if we have one.
-		ip := ""
-		for _, v := range m.Resolved {
-			ip = v
-			break
+		// Every resolved endpoint, in a fixed order.
+		//
+		// This printed one arbitrary entry of a map, labelled "the most recent
+		// resolved address" — a value with no relationship to recency, chosen
+		// by Go's randomised map iteration. Sixty runs against a byte-identical
+		// companion response produced three different outputs, which is H-16
+		// ("an answer is a function of the instance, never of map iteration
+		// order") failing outright on a read command.
+		hosts := make([]string, 0, len(m.Resolved))
+		for h := range m.Resolved {
+			hosts = append(hosts, h)
 		}
+		sort.Strings(hosts)
+		resolved := make([]string, 0, len(hosts))
+		for _, h := range hosts {
+			resolved = append(resolved, m.Resolved[h])
+		}
+		ip := strings.Join(resolved, " ")
 		_, _ = fmt.Fprintf(w, "    last re-resolve  %s ago", fmtAge(*m.LastReresolveSecsAgo))
 		if ip != "" {
 			_, _ = fmt.Fprintf(w, " → %s", ip)
@@ -171,10 +184,11 @@ func runWireguardConfig(ctx context.Context, w io.Writer) error {
 	}
 	conf := string(raw)
 	if !flagWGConfirm {
-		_, _ = fmt.Fprintf(w, "would push %d-byte config to tunnel %s (%d lines)\n",
-			len(conf), flagWGTunnel, strings.Count(conf, "\n"))
-		_, _ = fmt.Fprintln(w, "dry-run: use --confirm to apply")
-		return nil
+		return dryRun("push config to tunnel "+flagWGTunnel).
+			with("tunnel", flagWGTunnel).
+			with("bytes", len(conf)).
+			with("lines", strings.Count(conf, "\n")).
+			render(w)
 	}
 	cc, err := connectCompanion(ctx)
 	if err != nil {
@@ -189,9 +203,7 @@ func runWireguardConfig(ctx context.Context, w io.Writer) error {
 
 func runWireguardUp(ctx context.Context, w io.Writer) error {
 	if !flagWGConfirm {
-		_, _ = fmt.Fprintf(w, "would start tunnel %s\n", flagWGTunnel)
-		_, _ = fmt.Fprintln(w, "dry-run: use --confirm to apply")
-		return nil
+		return dryRun("start tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).render(w)
 	}
 	cc, err := connectCompanion(ctx)
 	if err != nil {
@@ -206,9 +218,7 @@ func runWireguardUp(ctx context.Context, w io.Writer) error {
 
 func runWireguardDown(ctx context.Context, w io.Writer) error {
 	if !flagWGConfirm {
-		_, _ = fmt.Fprintf(w, "would stop tunnel %s\n", flagWGTunnel)
-		_, _ = fmt.Fprintln(w, "dry-run: use --confirm to apply")
-		return nil
+		return dryRun("stop tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).render(w)
 	}
 	cc, err := connectCompanion(ctx)
 	if err != nil {

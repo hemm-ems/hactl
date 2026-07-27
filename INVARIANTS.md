@@ -16,8 +16,22 @@ have acted, so only idempotent methods (GET/HEAD/PUT/DELETE/OPTIONS) retry —
 a create is never silently duplicated. A signed 401 (expired Ingress session)
 is safe to retry for any method: the server rejected before acting.
 
-- Enforced by: `internal/companion/client_retry_test.go`
-  (`shouldRetry` truth table, `TestPostNotRetriedOn5xx`, `TestGetRetriedOn5xx`)
+- Enforced by: `internal/httpretry/idempotent_test.go` (`TestShouldRetry` — the
+  policy truth table, one definition shared by every client),
+  `internal/haapi/retry_test.go` (`TestPostNotRetriedOn5xx`,
+  `TestNonIdempotentWritesAreIssuedOnce` over all seven POST sites,
+  `TestGetStillRetriedOn5xx` as the negative control),
+  `internal/companion/client_retry_test.go` (`shouldRetry` truth table
+  including the signed-401 case this client alone has).
+- Quantified by: `internal/surfaceaudit` (`TestRetrySurfaceIsClosed`) — the set
+  of non-idempotent call sites is derived from the source, not listed here.
+
+  This invariant was enforced against one of the two HTTP clients for months.
+  The rule was stated as a universal and the citation named
+  `internal/companion/client_retry_test.go`; `internal/haapi` had no method
+  check at all, so `svc call --confirm` could fire a service three times. The
+  predicate now lives in `internal/httpretry` and both clients import it, which
+  is why this list can be short again.
 
 ## H-2 — Mutating commands are dry-run by default
 
@@ -215,7 +229,8 @@ and fixed alongside it, in the same files:
   `TestRunEntShow_JSON_IncludesTableFields`,
   `TestRunEntHist_JSON_NoHeaderLine`, `TestRunEntAnomalies_JSON_NoHeaderLine`,
   `TestRunEntRelated_JSON_NoHeaderLine`),
-  `internal/cmd/device_test.go` (`TestDeviceMatchesPattern_CaseSensitive`,
+  `internal/cmd/device_test.go` (`TestDeviceMatchesPattern_IgnoresCase`,
+  `TestDeviceMatchesPattern_UsesTheNameTheUserSees`,
   `TestDeviceHasLabel_SubstringMatchesEnt`,
   `TestRegistryEntityAreaName_DeviceFallback`)
 

@@ -759,3 +759,40 @@ func TestWriter_Apply_BackupFailureAborts(t *testing.T) {
 		t.Error("Apply wrote the automation to HA even though the backup failed")
 	}
 }
+
+// TestWriter_Rollback_ReportsAFailedReload — the restored config being on disk
+// is not the same as Home Assistant running it.
+//
+// Rollback used to return Reloaded: true unconditionally, with the reload error
+// going only to a WARN, so `auto rollback --confirm` printed "reload: ok" while
+// HA kept running the broken configuration. Apply, in the same file, had always
+// reported the field correctly; nothing compared them.
+func TestWriter_Rollback_ReportsAFailedReload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/services/"):
+			http.Error(w, "reload blew up", http.StatusInternalServerError)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	backupDir := t.TempDir()
+	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
+	if err := os.WriteFile(backupFile, []byte("alias: Backup Version\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := New(haapi.New(srv.URL, "tok"), nil, backupDir).
+		Rollback(context.Background(), "test_auto")
+	if err != nil {
+		t.Fatalf("a failed reload must not fail the rollback itself: %v", err)
+	}
+	if result.Reloaded {
+		t.Error("Reloaded is true although automation.reload answered 500 — the caller prints \"reload: ok\" off this field while HA is still running the previous config")
+	}
+}

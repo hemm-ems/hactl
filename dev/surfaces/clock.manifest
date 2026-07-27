@@ -1,0 +1,21 @@
+# clock — every site that renders a wall clock a human reads must place it in
+# the reader's zone. Home Assistant reports timestamps in UTC.
+#
+# The surface is derived by internal/surfaceaudit.ClockSurface: any function
+# containing a Go clock layout, or cutting an ISO timestamp on "T".
+#
+# This surface used to hold five renderers in four packages that disagreed with
+# one another. It now holds three functions in internal/clock, because the fix
+# for the disagreement was to delete the other implementations rather than to
+# correct each of them — the shortest ledger is the one where the rule has only
+# one place left to be wrong.
+#
+# The ceiling is the number of sites known to be unproven. It may fall without
+# ceremony and may only rise by editing this line on purpose.
+#ceiling 0
+
+internal/clock/render.go:Short = proven: TestShortConvertsTheWireZone
+internal/clock/render.go:ShortSeconds = proven: TestNaiveWireValueKeepsItsDigits
+
+internal/cmd/log.go:systemLogToEntries = exempt: builds its value with time.Unix, which returns a Time already located in the reader's zone, so there is nothing to convert
+internal/cmd/companion_logs_cmd.go:writeCompanionLogs = exempt: same shape, time.Unix over the companion's epoch seconds is already local

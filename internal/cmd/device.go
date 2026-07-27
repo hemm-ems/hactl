@@ -257,11 +257,15 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 	return result
 }
 
-// deviceMatchesPattern matches case-sensitively, like ent ls --pattern and
-// docs/manual.md ("substring or glob"); device ls used to be the sole
-// case-insensitive outlier among the --pattern-supporting commands.
+// deviceMatchesPattern matches the device id or its user-facing name,
+// case-insensitively like every other filter on this command (matchPattern
+// handles the folding).
+//
+// The name checked is deviceUserFacingName, not the raw Name: `--name` has
+// honoured name_by_user since issue #72, and a --pattern that did not would be
+// the same defect one flag over.
 func deviceMatchesPattern(d haapi.DeviceRegistryEntry, pattern string) bool {
-	return matchPattern(d.ID, pattern) || matchPattern(d.Name, pattern)
+	return matchPattern(d.ID, pattern) || matchPattern(deviceUserFacingName(d), pattern)
 }
 
 // deviceHasLabel matches via the same matchingLabelIDs substring rule ent.go's

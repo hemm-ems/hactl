@@ -230,6 +230,20 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 
 	rows := buildReplaceRows(ctx, src.ws, cfgResp.Changes, plans, confirm)
 
+	// Under --json a preview and a completed rename used to return structurally
+	// identical documents, differing only in a `status` cell reading "pending"
+	// rather than "applied". A caller must be able to tell a plan from a result
+	// by looking at the object, not by remembering which flags it passed
+	// (H-2), so the preview renders as a plan whose details carry the rows.
+	if !confirm && flagJSON {
+		return dryRun(fmt.Sprintf("rename %q to %q", oldVal, newVal)).
+			with("from", oldVal).
+			with("to", newVal).
+			with("occurrences", total).
+			with("rows", rows).
+			render(w)
+	}
+
 	tbl := &format.Table{
 		Headers: []string{"source", "location", "path", "status"},
 		Rows:    rows,

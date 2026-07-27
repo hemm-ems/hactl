@@ -137,7 +137,10 @@ func runHealth(ctx context.Context, w io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(w, "location=%s  tz=%s\n", haCfg.LocationName, haCfg.TimeZone)
 	if haCfg.SafeMode {
-		_, _ = fmt.Fprintf(w, "⚠ SAFE MODE ACTIVE\n")
+		// No decoration (docs/manual.md "no emojis, no color"): this was the
+		// only glyph in the product, on its most-called command, in the one
+		// condition a caller most needs to match on reliably.
+		_, _ = fmt.Fprintf(w, "WARNING: SAFE MODE ACTIVE\n")
 	}
 
 	// Companion status line

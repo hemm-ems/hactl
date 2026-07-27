@@ -1175,34 +1175,52 @@ func TestRunDashSave_DryRun(t *testing.T) {
 
 // --- runDashCreate (dry-run, no WS needed) ---
 
-func TestRunDashCreate_DryRun(t *testing.T) {
-	envDir := t.TempDir()
-	envContent := "HA_URL=http://localhost:9999\nHA_TOKEN=tok\n"
-	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	withFlagDir(t, envDir)
+// TestRunDashCreate_DryRunResolvesItsInput — REWRITTEN. It used to point at a
+// dead port (localhost:9999) and assert the preview succeeded anyway, which
+// documented the defect as a feature: the plan was printed without reading
+// --url-path's own rule ("must contain a hyphen", HA's url_slug validator) and
+// without checking the path was free, so --confirm failed on input the preview
+// had called fine.
+func TestRunDashCreate_DryRunResolvesItsInput(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []map[string]any{
+			{"id": "taken1", "url_path": "taken-dash", "title": "Taken"},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
 
-	old := flagDashConfirm
-	flagDashConfirm = false
-	defer func() { flagDashConfirm = old }()
-	oldTitle := flagDashTitle
-	flagDashTitle = "Test Dashboard"
-	defer func() { flagDashTitle = oldTitle }()
-	oldURLPath := flagDashURLPath
-	flagDashURLPath = "test-dash"
-	defer func() { flagDashURLPath = oldURLPath }()
+	oldConfirm, oldTitle, oldPath := flagDashConfirm, flagDashTitle, flagDashURLPath
+	t.Cleanup(func() { flagDashConfirm, flagDashTitle, flagDashURLPath = oldConfirm, oldTitle, oldPath })
+	flagDashConfirm, flagDashTitle = false, "Test Dashboard"
 
-	var buf bytes.Buffer
-	if err := runDashCreate(context.Background(), &buf); err != nil {
-		t.Fatalf("runDashCreate dry-run failed: %v", err)
-	}
-	if !strings.Contains(buf.String(), "dry-run") {
-		t.Errorf("output = %q, want 'dry-run'", buf.String())
-	}
-	if !strings.Contains(buf.String(), "test-dash") {
-		t.Errorf("output missing url_path: %q", buf.String())
-	}
+	t.Run("a usable path previews", func(t *testing.T) {
+		flagDashURLPath = "test-dash"
+		var buf bytes.Buffer
+		if err := runDashCreate(context.Background(), &buf); err != nil {
+			t.Fatalf("runDashCreate dry-run failed: %v", err)
+		}
+		for _, want := range []string{"dry-run", "test-dash"} {
+			if !strings.Contains(buf.String(), want) {
+				t.Errorf("output missing %q: %q", want, buf.String())
+			}
+		}
+	})
+
+	t.Run("a path HA would reject is refused, not previewed", func(t *testing.T) {
+		flagDashURLPath = "nohyphen"
+		var buf bytes.Buffer
+		if err := runDashCreate(context.Background(), &buf); err == nil {
+			t.Errorf("previewed a url_path with no hyphen, which --confirm would fail on: %q", buf.String())
+		}
+	})
+
+	t.Run("a path already in use is refused", func(t *testing.T) {
+		flagDashURLPath = "taken-dash"
+		var buf bytes.Buffer
+		if err := runDashCreate(context.Background(), &buf); err == nil {
+			t.Errorf("previewed a create over an existing dashboard: %q", buf.String())
+		}
+	})
 }
 
 // --- runDashDelete (dry-run, no WS needed) ---
@@ -4952,11 +4970,11 @@ func TestRunLog_Unique(t *testing.T) {
 	if !strings.Contains(out, "slow response") {
 		t.Errorf("--unique dropped the record that occurred once:\n%s", out)
 	}
-	// The deduped table leads with a count column; the repeated record must
-	// carry 2 and the single one must carry 1.
+	// The deduped table leads with the log: id the manual's drill-down takes,
+	// then the count; the repeated record must carry 2 and the single one 1.
 	for _, want := range []struct{ count, message string }{{"2", "connection refused"}, {"1", "slow response"}} {
-		if !regexp.MustCompile(`(?m)^` + want.count + `\b.*` + want.message).MatchString(out) {
-			t.Errorf("--unique did not report %q with count %s:\n%s", want.message, want.count, out)
+		if !regexp.MustCompile(`(?m)^log:\S+\s+` + want.count + `\b.*` + want.message).MatchString(out) {
+			t.Errorf("--unique did not report %q with an id and count %s:\n%s", want.message, want.count, out)
 		}
 	}
 }
@@ -5203,8 +5221,8 @@ func TestRunCCLogs_Unique(t *testing.T) {
 	if got := strings.Count(out, "connection refused"); got != 1 {
 		t.Errorf("cc logs --unique rendered alpha's repeated record %d times, want 1:\n%s", got, out)
 	}
-	if !regexp.MustCompile(`(?m)^2\b.*connection refused`).MatchString(out) {
-		t.Errorf("cc logs --unique did not report the record as occurring twice:\n%s", out)
+	if !regexp.MustCompile(`(?m)^log:\S+\s+2\b.*connection refused`).MatchString(out) {
+		t.Errorf("cc logs --unique did not report the record with an id and a count of two:\n%s", out)
 	}
 }
 

@@ -102,6 +102,12 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 	_, _ = fmt.Fprintf(w, "from backup: %s\n", result.BackupPath)
 	if result.Reloaded {
 		_, _ = fmt.Fprintf(w, "reload:      ok\n")
+	} else {
+		// Silence used to be the failure mode twice over: the field was
+		// hardcoded true, and even had it been honest, an absent line reads as
+		// "ok" to anyone who has only ever seen the happy path. A rollback HA
+		// has not read is the state the operator most needs told.
+		_, _ = fmt.Fprintf(w, "warning: config restored but HA did not confirm reload — it is still running the previous configuration\n")
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -60,18 +61,33 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 		return fmt.Errorf("invalid --data JSON: %w", unmarshalErr)
 	}
 
-	if !flagSvcConfirm {
-		_, _ = fmt.Fprintf(w, "dry-run: no service was called\nwould call: %s.%s\ndata: %s\n", domain, service, jsonData)
-		_, _ = fmt.Fprintln(w, "re-run with --confirm after the user explicitly confirms this exact action")
-		return nil
-	}
-
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
+
+	// Resolve the target before printing a plan (H-2). A preview that only
+	// checked for a dot presented "would call: light.turn_onn" as a verified
+	// action; --confirm then failed with HA's 400. A probe that cannot reach
+	// HA warns rather than refuses — an unreachable instance is not evidence
+	// that the service is missing.
+	switch exists, probeErr := client.ServiceExists(ctx, domain, service); {
+	case probeErr != nil:
+		slog.Warn("could not check the service registry; the plan below is unverified", "error", probeErr)
+	case !exists:
+		return fmt.Errorf("service %s.%s is not registered in Home Assistant — check the domain and spelling (HA lists them under Developer Tools → Actions)", domain, service)
+	}
+
+	if !flagSvcConfirm {
+		return dryRun(fmt.Sprintf("call %s.%s", domain, service)).
+			with("domain", domain).
+			with("service", service).
+			with("data", string(jsonData)).
+			withHint("re-run with --confirm after the user explicitly confirms this exact action").
+			render(w)
+	}
 
 	if flagSvcReturn {
 		resp, err := client.CallServiceWithResponse(ctx, domain, service, data)
