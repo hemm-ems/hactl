@@ -1,0 +1,15 @@
+# Decisions
+
+Choices a test cannot express: canonical identifiers, defaults, naming. One
+row each, decided **before** code builds on them (see workspace `AGENTS.md`,
+"Spec before code"). A decided row records the decision and the law/test it
+materialized into; nothing here carries a count or a status narrative.
+
+| # | Question | Decision | Materialized as |
+|---|---|---|---|
+| D-1 | Canonical automation identifier — config `id`, alias, or `entity_id`? `--pattern` rejects the config id `auto show` prints (R2/T10). | OPEN — proposal: accept all three everywhere (H-17's pole); print config `id` as the canonical form | — |
+| D-2 | Filter case pole — all four `--pattern` flags are case-sensitive while every `--name`/`--area`/`--label` sibling is not. | OPEN — proposal: all filters case-insensitive; `TestFilterFlagsAgreeOnCase` then asserts the pole instead of parity | — |
+| D-3 | `dash show` default view (R17). | OPEN | — |
+| D-4 | Logbook actor field name — `changed_by` vs `who` (R20). | OPEN | — |
+| D-5 | `anom:` identifiers — give them a consumer or delete them (R19; deadcode gate holds the allowlist). | OPEN | — |
+| D-6 | `ref replace` and the default dashboard — skip silently (today) or refuse loudly (D71). | OPEN — proposal: refuse unless `--allow-partial`, mirroring `ref validate` | — |
