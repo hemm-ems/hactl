@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/config"
-	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -38,10 +37,26 @@ func init() {
 }
 
 // entWhoJSON is the structured shape emitted by `hactl ent who --json`.
+//
+// H-10 + D-4: `source` and `logbook_excluded` are the machine half of "every
+// answer names its source". A caller distinguishes three states by fields,
+// never by emptiness alone: events non-empty (the logbook answered), events
+// empty + logbook_excluded false (answered quiet — a verified zero), events
+// empty + logbook_excluded true (the logbook structurally cannot answer for
+// this entity; `changed_by` then carries the shared state-context fallback
+// for the most recent change, the same answer `ent show` gives).
 type entWhoJSON struct {
 	Events  []entWhoEventJSON   `json:"events"`
 	Summary []entWhoSummaryJSON `json:"summary"`
 	Window  entWhoWindowJSON    `json:"window"`
+	Source  string              `json:"source"`
+	// LogbookExcluded says HA's logbook excludes this entity (continuous
+	// sensor, or a never-logged domain) — the only case where Source is
+	// "state context".
+	LogbookExcluded bool `json:"logbook_excluded"`
+	// ChangedBy is the shared fallback answer for the most recent change,
+	// present only when LogbookExcluded (the events list can say nothing).
+	ChangedBy string `json:"changed_by,omitempty"`
 }
 
 type entWhoEventJSON struct {
@@ -82,34 +97,9 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 	start := now.Add(-sinceDur)
 
 	client := haapi.New(cfg.URL, cfg.Token)
-	data, err := client.GetLogbookFiltered(ctx,
-		start.Format(time.RFC3339),
-		now.Format(time.RFC3339),
-		entityID)
+	entries, err := fetchLogbookEntries(ctx, client, start, now, entityID)
 	if err != nil {
-		return fmt.Errorf("fetching logbook: %w", err)
-	}
-
-	var entries []logbookEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return fmt.Errorf("parsing logbook: %w", err)
-	}
-	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
 		return err
-	}
-
-	if len(entries) == 0 {
-		// The logbook is empty for a typo and for a quiet entity alike. Only
-		// one of those is an answer: a nonexistent entity_id must fail here,
-		// not report a verified negative. (`ent show` already 404s; this makes
-		// the family agree.)
-		if unknownErr := errUnknownEntity(ctx, client, entityID); unknownErr != nil {
-			return unknownErr
-		}
-		if !flagJSON {
-			_, _ = fmt.Fprintf(w, "no changes for %s in the last %s\n", entityID, flagSince)
-			return nil
-		}
 	}
 
 	// Pull users once for attribution. Graceful-degrades when not admin.
@@ -118,6 +108,55 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		users = loadUsers(ctx, ws)
 		_ = ws.Close()
+	}
+
+	if len(entries) == 0 {
+		// The logbook is empty for a typo, for a quiet entity, AND for an
+		// entity HA's logbook excludes (D70). Only the last two are answers,
+		// and they are different answers: a nonexistent entity_id must fail, a
+		// quiet covered entity is the logbook's verified zero, and an excluded
+		// entity gets the shared state-context fallback plus an explicit
+		// statement of the exclusion — never a bare "no changes" that
+		// contradicts `ent show`'s changed_by line for the same entity.
+		st, stErr := fetchEntityState(ctx, client, entityID)
+		if stErr != nil {
+			if unknownErr := errUnknownEntity(ctx, client, entityID); unknownErr != nil {
+				return unknownErr
+			}
+			return stErr
+		}
+		ans := resolveActor(nil, st, users)
+		window := entWhoWindowJSON{
+			Since: start.Format(time.RFC3339),
+			Until: now.Format(time.RFC3339),
+		}
+		if ans.LogbookExcluded {
+			if flagJSON {
+				return writeEntWhoJSON(w, entWhoJSON{
+					Events:          []entWhoEventJSON{},
+					Summary:         []entWhoSummaryJSON{},
+					Window:          window,
+					Source:          ans.Source,
+					LogbookExcluded: true,
+					ChangedBy:       ans.ChangedBy,
+				})
+			}
+			_, _ = fmt.Fprintf(w, "no logbook entries for %s: HA's logbook excludes it (%s)\n",
+				entityID, ans.ExclusionReason)
+			_, _ = fmt.Fprintf(w, "most recent change: %s\n", ans.Label())
+			return nil
+		}
+		if flagJSON {
+			return writeEntWhoJSON(w, entWhoJSON{
+				Events:  []entWhoEventJSON{},
+				Summary: []entWhoSummaryJSON{},
+				Window:  window,
+				Source:  actorSourceLogbook,
+			})
+		}
+		_, _ = fmt.Fprintf(w, "no changes for %s in the last %s (source: %s)\n",
+			entityID, flagSince, actorSourceLogbook)
+		return nil
 	}
 
 	// Resolve labels once and tally counts.
@@ -157,18 +196,20 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 				ContextSource:       e.ContextSource,
 			}
 		}
-		out := entWhoJSON{
+		return writeEntWhoJSON(w, entWhoJSON{
 			Events:  events,
 			Summary: summary,
 			Window: entWhoWindowJSON{
 				Since: start.Format(time.RFC3339),
 				Until: now.Format(time.RFC3339),
 			},
-		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+			Source: actorSourceLogbook,
+		})
 	}
+
+	// D-4: every answer names its source — this whole table and summary is the
+	// logbook's answer.
+	_, _ = fmt.Fprintf(w, "source: %s\n", actorSourceLogbook)
 
 	// Per-event table.
 	tbl := &format.Table{
@@ -201,4 +242,13 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 		sumTbl.Rows[i] = []string{s.Trigger, strconv.Itoa(s.Count)}
 	}
 	return sumTbl.Render(w, format.RenderOpts{Full: true, Compact: true})
+}
+
+// writeEntWhoJSON encodes the one `ent who --json` shape, every branch of the
+// command going through it so the source/exclusion fields cannot be forgotten
+// on one path (H-10).
+func writeEntWhoJSON(w io.Writer, out entWhoJSON) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }

@@ -249,21 +249,27 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 // computes — name, unit, area, labels, changed_by — not merely the raw state
 // struct. A --json consumer that had to re-derive area or attribution from
 // `attributes` would be reimplementing device-area inheritance (H-8) itself.
+// D-4: changed_by comes from the shared actor resolution, and the two fields
+// beside it name its source — `changed_by_source` ("logbook" | "state
+// context") and `logbook_excluded` (true when HA's logbook excludes this
+// entity, which is why the state-context fallback answered).
 func writeEntShowJSON(
 	w io.Writer,
 	entityID string,
 	ent entityState,
 	rc *registryContext,
-	users map[string]haapi.UserEntry,
+	ans actorAnswer,
 ) error {
 	result := map[string]any{
-		"entity_id":    ent.EntityID,
-		"state":        ent.State,
-		"attributes":   ent.Attributes,
-		"last_changed": ent.LastChanged,
-		"last_updated": ent.LastUpdated,
-		"context":      ent.Context,
-		"changed_by":   triggerLabel(logbookEntry{ContextUserID: ent.Context.UserID}, users),
+		"entity_id":         ent.EntityID,
+		"state":             ent.State,
+		"attributes":        ent.Attributes,
+		"last_changed":      ent.LastChanged,
+		"last_updated":      ent.LastUpdated,
+		"context":           ent.Context,
+		"changed_by":        ans.ChangedBy,
+		"changed_by_source": ans.Source,
+		"logbook_excluded":  ans.LogbookExcluded,
 	}
 	if friendly, ok := ent.Attributes["friendly_name"]; ok {
 		result["name"] = friendly
@@ -304,6 +310,27 @@ func fetchEntityState(ctx context.Context, client *haapi.Client, entityID string
 	return ent, nil
 }
 
+// changedByLogbookEntries fetches the logbook window `ent show`'s changed_by
+// resolution asks about: anchored just before the state's last_changed, so it
+// always contains the most recent change's entry whenever the logbook records
+// the entity at all. Every failure degrades to nil — the state-context
+// fallback — rather than failing the command: `ent show` must keep working on
+// an instance whose recorder or logbook is disabled, and its answer then
+// honestly names "state context" as its source.
+func changedByLogbookEntries(ctx context.Context, client *haapi.Client, ent entityState) []logbookEntry {
+	lastChanged, err := time.Parse(time.RFC3339, ent.LastChanged)
+	if err != nil {
+		return nil
+	}
+	entries, err := fetchLogbookEntries(ctx, client,
+		lastChanged.Add(-time.Minute), time.Now(), ent.EntityID)
+	if err != nil {
+		slog.Debug("logbook unavailable for changed_by; falling back to state context", "error", err)
+		return nil
+	}
+	return entries
+}
+
 func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
@@ -326,8 +353,13 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 		_ = ws.Close()
 	}
 
+	// D-4: changed_by comes from the shared actor resolution — the logbook's
+	// answer about the change this line describes when the logbook has one,
+	// the state's own context otherwise, either way naming its source.
+	ans := resolveActor(changedByLogbookEntries(ctx, client, ent), ent, users)
+
 	if flagJSON {
-		return writeEntShowJSON(w, entityID, ent, rc, users)
+		return writeEntShowJSON(w, entityID, ent, rc, ans)
 	}
 
 	_, _ = fmt.Fprintf(w, "entity:       %s\n", ent.EntityID)
@@ -339,8 +371,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	}
 	_, _ = fmt.Fprintf(w, "last_changed: %s\n", formatShortTime(ent.LastChanged))
 	_, _ = fmt.Fprintf(w, "last_updated: %s\n", formatShortTime(ent.LastUpdated))
-	_, _ = fmt.Fprintf(w, "changed_by:   %s\n",
-		triggerLabel(logbookEntry{ContextUserID: ent.Context.UserID}, users))
+	_, _ = fmt.Fprintf(w, "changed_by:   %s\n", ans.Label())
 
 	if friendly, ok := ent.Attributes["friendly_name"]; ok {
 		_, _ = fmt.Fprintf(w, "name:         %v\n", friendly)
