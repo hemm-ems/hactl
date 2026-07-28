@@ -524,6 +524,18 @@ the command's whole purpose. It now resolves against HA's `flow_handlers` list
   `internal/companiontest/write_config_test.go`
   (`TestE2EScriptWriteRoundTripCLI`, `TestE2ETplWriteRoundTripCLI`,
   `TestE2EHelperWriteRoundTripCLI`) — `make test-companion`
+- Quantified by: `internal/cmd/surface_writeback_test.go`
+  (`TestWriteBackSurfaceIsClosed`, `make test-surface`) — the set of write
+  commands is derived from the live cobra tree (every `--confirm` flag, the same
+  walk H-2's gate uses, because H-2 makes `--confirm` the definition of a
+  mutating command), and `dev/surfaces/writeback.manifest` dispositions every one
+  of them as proven by a read-back from HA, exempt because HA holds no record to
+  read, or recorded as debt. The citation list above is what this replaces — it
+  names the families somebody wrote a round-trip test for, which is where its
+  scope came from, so `dash save` could sit stubbable through a release and the
+  `area`/`floor`/`label` writes can still be checked by reading them back through
+  `hactl … ls` without leaving a trace anywhere. A write family added tomorrow is
+  now unclassified, and unclassified is red.
 
 ## H-13 — A contract is field-level: every decoded field is documented, and every documented field is decoded
 

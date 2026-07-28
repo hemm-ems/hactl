@@ -1,0 +1,101 @@
+# writeback — a write is proven by reading it back from Home Assistant
+# directly, never through hactl (INVARIANTS.md H-12).
+#
+# The surface is the live cobra tree: every command carrying a --confirm flag,
+# walked once for both this ledger and confirm.manifest and re-keyed by
+# TestWriteBackSurfaceIsClosed. H-2 makes --confirm the definition of a mutating
+# command, so both laws quantify over one set and it is derived once. H-12 states
+# its rule as "every write family" and enforces it by citing the families that
+# had a round-trip test written for them; the tree carried thirty-four commands
+# on the day this ledger was written, and the gate, not this sentence, counts.
+#
+# `proven` is claimed only where a named test drives the command with --confirm
+# and then reads the result out of Home Assistant itself — /api/states, the WS
+# entity/label/area registries, lovelace/config, the config-entry list, the
+# automation config API. Reading back through `hactl … ls`, `dash show --raw` or
+# `ref scan` proves hactl consistent with itself and is recorded as debt, which
+# is what the law's second paragraph demands.
+#
+# Blind spot, stated rather than assumed: a command that mutates HA *without* a
+# --confirm gate appears on neither this surface nor confirm's. It is an H-2
+# defect first, and nothing yet derives "every mutating command carries
+# --confirm".
+#
+# The ceiling is the number of write commands nothing reads back from HA. It may
+# fall without ceremony and may only rise by editing this line on purpose.
+#ceiling 10
+
+# --- proven: a named test writes with --confirm and reads HA back -------------
+#
+# auto apply / auto rollback: reads GetAutomationConfig from HA's REST API before
+# and after, asserts the trigger (a field the command never prints) as the
+# witness, and compares the whole canonicalised document after the rollback.
+hactl auto apply = proven: TestAutoApplyRollbackRoundTrip
+hactl auto rollback = proven: TestAutoApplyRollbackRoundTrip
+#
+# auto delete: reads HA's entity registry over WebSocket before and after the
+# delete and requires the entry to be gone — the ghost half H-12 names
+# explicitly. The removal of the definition from automations.yaml is read back
+# through the companion (TestE2EAutoDeleteByObjectIDCLI), not from HA, and this
+# family has no "dry run changed nothing" read-back; both remain to be closed.
+hactl auto delete = proven: TestE2EAutoDeleteByAliasCLI
+#
+# script create/apply/delete + tpl create/delete + helper create/delete: drive
+# the real binary and read HA's own /api/states for the entity, with `icon` /
+# `unit_of_measurement` as witnesses the CLI never prints; the delete half reads
+# the WS entity registry and requires no ghost. The stored document is compared
+# whole through the companion as a second, independent read.
+hactl script create = proven: TestE2EScriptWriteRoundTripCLI
+hactl script apply = proven: TestE2EScriptWriteRoundTripCLI
+hactl script delete = proven: TestE2EScriptWriteRoundTripCLI
+hactl tpl create = proven: TestE2ETplWriteRoundTripCLI
+hactl tpl delete = proven: TestE2ETplWriteRoundTripCLI
+hactl helper create = proven: TestE2EHelperWriteRoundTripCLI
+hactl helper delete = proven: TestE2EHelperWriteRoundTripCLI
+#
+# dash create/save/delete + replace: read the stored config straight from HA's
+# lovelace/config and the registration from lovelace/dashboards/list, compare the
+# whole document, and assert the dry run left it byte-identical. `icon` and
+# `mode` are witnesses the command never echoes.
+hactl dash create = proven: TestDashCreateSaveDeleteRoundTrip
+hactl dash save = proven: TestDashCreateSaveDeleteRoundTrip
+hactl dash delete = proven: TestDashCreateSaveDeleteRoundTrip
+hactl dash replace = proven: TestDashReplaceRoundTrip
+#
+# ent set-label / set-area: read the entity's registry entry over WS before and
+# after, and compare the whole entry with the changed field blanked, so a write
+# that also touched a field it was never asked to touch fails the witness.
+hactl ent set-label = proven: TestEntSetLabelRoundTrip
+hactl ent set-area = proven: TestEntSetAreaRoundTrip
+#
+# config flow-start/flow-step/delete: read HA's own config-entry list over REST
+# after each step, with the entry's title and state as witnesses. flow-start's
+# own write is a server-side flow, witnessed transitively — a stubbed
+# StartConfigFlowOnce hands out a flow id that flow-step cannot complete, so no
+# entry appears in HA's list.
+hactl config flow-start = proven: TestConfigFlowCreateDeleteRoundTrip
+hactl config flow-step = proven: TestConfigFlowCreateDeleteRoundTrip
+hactl config delete = proven: TestConfigFlowCreateDeleteRoundTrip
+#
+# config options: reads the new option value back out of a fresh HA options flow's
+# seeded form default, asserts the dry run changed nothing, and asserts the
+# restore.
+hactl config options = proven: TestConfigOptionsRoundTrip
+
+# --- exempt: HA holds no record to read back ---------------------------------
+hactl companion wireguard config = exempt: writes a .conf onto the add-on's /data through the companion; the tunnel is not HA state and HA's API holds no record of it to read back
+hactl companion wireguard up = exempt: starts an interface inside the add-on container; the only oracle is the companion's own wireguard status, and HA never learns of it
+hactl companion wireguard down = exempt: stops that interface; same absence of any HA-side record, so there is no HA read-back this rule could ask for
+hactl rollback = exempt: deprecated alias that dispatches to the same runRollback and the same --confirm flag variable as auto rollback, whose write TestAutoApplyRollbackRoundTrip reads back from HA; there is one write path, not two
+
+# --- debt: the rule applies and nothing reads HA back ------------------------
+hactl auto create = debt: TestE2EAutoCreateCLI asserts hactl's own "created automation" and the entity_id line it prints from the reload confirmation; nothing reads the new automation out of HA's states or its config API, and no witness field is checked
+hactl area create = debt: TestAreaCreateDelete verifies the write by reading it back through `hactl area ls` — hactl proving hactl — instead of HA's WS area registry, and asserts no field the command never prints
+hactl area delete = debt: same read-back-through-hactl gap: the delete is checked with `hactl area ls`, and HA's own area registry is never consulted for the absence
+hactl floor create = debt: TestFloorCreateDelete reads the result back through `hactl floor ls`; HA's WS floor registry, the only independent oracle, is never asked, and level/icon are unwitnessed
+hactl floor delete = debt: the delete asserts only hactl's "deleted floor" echo; nothing reads HA's floor registry to see whether the floor is really gone
+hactl label create = debt: TestLabelCreate reads it back through `hactl label ls`; TestWebSocketLabelCreateAndList does consult HA but drives the haapi client, not the CLI, so the command's own write is unproven
+hactl label delete = debt: the delete is verified with `hactl label ls` again, and no test reads HA's label registry back or checks that detached entities lost the label
+hactl svc call = debt: every svc call test asserts hactl's "called <service>" echo, which is printed the moment the call returns nil; nothing reads the effect (a state, a persistent notification) back out of HA
+hactl script run = debt: the run tests assert "executed script.<id>"; HA records last_triggered and the entities the sequence touches, and no test reads either back to prove the script really ran
+hactl ref replace = debt: TestE2ERefReplaceCLI confirms the moved literal with `ref scan`, the same path that wrote it; the rewritten automation is readable from HA's own config API and nothing reads it there
