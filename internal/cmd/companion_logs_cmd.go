@@ -24,8 +24,8 @@ var companionLogsCmd = &cobra.Command{
 	Long: "Fetch the companion add-on's own recent log records over the Ingress lifeline.\n\n" +
 		"Add-on logs never reach Home Assistant's core logger, so `hactl log` cannot\n" +
 		"show them. Use --component wireguard to focus on the WireGuard tunnel and its\n" +
-		"dyndns re-resolution monitor. --since and --top apply as the time window and\n" +
-		"max line count.",
+		"dyndns re-resolution monitor. --since applies as the time window; --top caps\n" +
+		"the printed line count, and never the --json payload.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCompanionLogs(cmd.Context(), cmd.OutOrStdout())
 	},
@@ -42,11 +42,23 @@ func runCompanionLogs(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// --top caps rows in TEXT output only (H-10). This is the one read command
+	// whose --top reaches its *source*: the companion applies `limit` server
+	// side, so forwarding it under --json returned a silently short answer that
+	// parsed perfectly — `--json --top 1` reported one of the buffer's records
+	// as if it were all of them. `hactl log` and `cc logs`, which cap only
+	// their tables, never had it; this is that fix's missing third site.
+	// Asserted by TestJSONContract (clause 2 counts elements at every depth,
+	// so the {"entries": [...]} wrapper no longer hides the truncation).
+	limit := flagTop
+	if flagJSON {
+		limit = 0 // no source-side cap: --json is the complete window
+	}
 	res, err := cc.Logs(ctx, companion.LogsParams{
 		Component: flagLogsComponent,
 		Level:     flagLogsLevel,
 		Since:     flagSince,
-		Limit:     flagTop,
+		Limit:     limit,
 	})
 	if err != nil {
 		return err

@@ -671,8 +671,9 @@ hactl companion logs --component wireguard --since 1h --level warning
 ```
 
 Companion logs come from an in-memory ring buffer on the add-on, fetched over the
-same Ingress lifeline as the other companion commands. `--since`/`--top` set the
-time window and max line count. Requires hactl-companion.
+same Ingress lifeline as the other companion commands. `--since` sets the time
+window; `--top` caps the printed line count only — with `--json` you always get
+the whole window. Requires hactl-companion.
 
 ### Cache & version
 
