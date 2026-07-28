@@ -338,7 +338,18 @@ not distinguishable, to the consumer, from truncation by `--top`. D-7 fixes the
 pole: an unreadable half makes `ref validate` refuse and certify nothing whenever
 the answer goes to a machine, and state its scope in the report body when it goes
 to a person; `--allow-partial` is the only way to obtain a partial answer, and
-passing it is the acknowledgement. Search commands (`ref scan`, `dash grep`)
+passing it is the acknowledgement.
+
+The rule is per *source*, and stating it in terms of dashboards is how it was
+first shipped one source short. `ref validate` reads four — the entity registry,
+live states, config files, every dashboard — and the registry degraded the live
+set at `slog.Warn` and reached no gate at all, so the fix for a silent dashboard
+left a silent registry directly beneath it. All four now run through one gate.
+The two directions differ and both are gated: an unread config file or dashboard
+hides references, risking a false clean bill; a degraded live entity set reports
+entities that exist as dangling, risking a false alarm. Live states keep the
+stricter posture of refusing in every mode, because the registry alone omits
+every state-only entity and is not a usable live set at all. Search commands (`ref scan`, `dash grep`)
 answer "where is X?" rather than "is the tree clean?", so they warn and still
 answer — and their `--json` shape does not change, because a scope note on stdout
 would break clause (1) for them.
