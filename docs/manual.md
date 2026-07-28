@@ -12,7 +12,8 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Daily report" / "Morning check" / "Status" | `health`, `issues`, `log --errors --warnings --unique`, `changes --since 24h` | Summarize per section |
 | "Which automation failed?" | `auto ls --failing`; if empty `log --errors --warnings --unique` | `trace show` only when a failure appears |
 | "Is <sensor> behaving normally?" | `ent anomalies <id>` | `ent hist <id>` if anomalies found |
-| "Which entities belong to <concept>?" | `device ls --name <shortest-term>`, `device show <closest match>` | Fallbacks: `label ls`, `ent ls --pattern '*<term>*'` |
+| "Why did X turn on?" / "What controls <entity>?" | `ent who <id>`, `ref scan <id>` | `who` = actor history; `scan` = config/dashboard references — inspect hits with `auto show` |
+| "Which entities belong to <concept>?" | `ent ls --pattern '*<term>*'` (ids), `device ls --name <term>`, or the name search under "Filtering & discovery" | `--pattern` matches ids, never display names |
 | "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
 | "List labels / areas / helpers / scripts" | exactly: `label ls` · `area ls` · `helper ls` · `script ls` | One call, answer. `helper` is not an entity domain — never `ent ls --domain helper` |
@@ -34,7 +35,7 @@ No other commands exist — never invent one. Flags unclear: `<command> --help`;
 
 hactl is a read-heavy CLI. Most commands query HA via REST/WebSocket, condense the result, and print compact text. One directory = one HA instance. All state lives in `.env` (credentials) + `cache/` (SQLite + JSONL).
 
-**Token budget:** Output is capped at 500 tokens by default (`--tokensmax=500`). Raise the cap (`--tokensmax=2000`) or remove it entirely (`--tokensmax=0`) when you need full output. Add `--tokens` to print a compact `[~N tok]` estimate, or `--stats` to see response size + estimated token count on stderr.
+**Token budget:** output is capped at 500 tokens by default — `--tokensmax=N` raises the cap, `0` removes it (details under Output conventions).
 
 ## Agent workflows
 
@@ -63,10 +64,11 @@ hactl ent ls --area <area> --domain sensor
 
 ### "Which entities belong to <concept>?" (find things by concept)
 ```
+hactl ent ls --pattern '*<term>*'
 hactl device ls --name <term>
-hactl device show <closest match>
+hactl tpl eval "{{ states | selectattr('name','search','(?i)<term>') | map(attribute='entity_id') | list }}"
 ```
-Search with the shortest distinctive substring — `heat`, not `heat pump`; device and entity names are often localized or vendor-specific. When a listing returns near-miss candidates, inspect the closest match with `device show` before asking the user. If devices yield nothing, fall back to `hactl label ls`, then `hactl ent ls --pattern '*<term>*'`.
+Pick the query that matches the kind of term you hold: `ent ls --pattern` matches entity_ids only, `device ls --name` matches device display names, and the template resolves entity **display names** — the only query that finds `light.ap_gast_v2_led` when the user says "AP6 Flur LED". Search with the shortest distinctive substring — `heat`, not `heat pump`; names are often localized or vendor-specific. Inspect near-miss candidates (`device show`, `ent show`) before asking the user. `label ls` / `area ls` cover concepts that are organized rather than named.
 
 ### "Deploy an automation change"
 ```
@@ -180,16 +182,14 @@ hactl trace show trc:a7                   # condensed trace (trigger → conditi
 hactl trace show trc:a7 --full            # raw trace JSON
 ```
 
-`runs_24h` counts **runs**, not triggers: a trigger whose conditions blocked it never
-entered the actions and is not a run, so it does not count here — it appears in
-`auto show`'s trace table as a row with `result: failed_conditions`. An errored run is
-still a run and is counted, with the failure reported in `errors`. The two commands
-therefore reconcile: `runs_24h` equals the trace rows `auto show` does *not* mark
-`failed_conditions` (exactly, whenever HA still stores the automation's whole history —
-it keeps the last 5 per automation by default, while `runs_24h` comes from the logbook,
-which is not capped). `script ls`'s `runs_24h` is a plain count of invocations: a script
-has no gate between being started and being traced, because its conditions are steps
-inside a sequence that is already executing.
+`runs_24h` counts **runs**, not triggers: a trigger blocked by its conditions never
+entered the actions and does not count — it appears in `auto show`'s trace table as
+`result: failed_conditions`. An errored run still counts, with the failure reported in
+`errors`. The two reconcile — `runs_24h` equals the trace rows *not* marked
+`failed_conditions` — whenever HA still holds the window's history (it keeps the last 5
+traces per automation; `runs_24h` comes from the uncapped logbook). `script ls`'s
+`runs_24h` is a plain invocation count: script conditions are steps inside an
+already-running sequence, so nothing gates a start from being counted.
 
 **Automation identifiers:** every command that takes an automation — `auto
 show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
@@ -287,13 +287,13 @@ cases are indistinguishable from a typo. An entity that was deleted but still
 has recorder history reports that history as before. `--resample` must be a
 positive duration; `0m` and negative values are refused rather than ignored.
 
-`ent show`'s `changed_by:` line and `ent who` answer the same question — who or what changed this entity — through **one shared resolution**: the logbook's answer when the logbook has one, the state's own `context` otherwise, and every answer names its source (`source: logbook` or `source: state context`). The two sources are not equal: the logbook knows the proximate cause (`Automation: <alias>`, `Script: <id>`, `Device: <name>`), while the state context carries only the propagated user id, so a state-context answer can name the human who started a causal chain but never the automation that acted. Both commands classify labels identically: `User <name>`, `Automation: <alias>`, `Script: <id>`, `Device: <name>`, or `Home Assistant` when nothing more specific is on the record.
+`ent show`'s `changed_by:` line and `ent who` answer the same question — who or what changed this entity — through **one shared resolution**: the logbook's answer when it has one, the state's own `context` otherwise, and every answer names its source (`source: logbook` | `source: state context`). The sources are not equal: the logbook knows the proximate cause (`Automation: <alias>`, `Script: <id>`, `Device: <name>`, `User <name>`), while the state context carries only the propagated user id — it can name the human who started a causal chain but never the automation that acted.
 
-**The divergence rule — logbook-excluded entities.** HA's logbook permanently excludes some entities: "continuous" sensors — any sensor with a `unit_of_measurement`, a `state_class`, or a numeric `device_class` — and the `counter`, `image`, and `proximity` domains. For those the logbook answers `[]` forever even though the entity genuinely changes, which used to make `ent show` report a real recent change while `ent who` said "no changes" for the same entity — each faithful to its own source. Both commands now say what happened instead of silently disagreeing: `ent show` renders `changed_by: <actor> (source: state context; excluded from logbook — <reason>)`, and `ent who` states `HA's logbook excludes it (<reason>)` followed by the same state-context fallback for the most recent change. An excluded entity is **not** a quiet one: `no changes for <id> in the last 24h (source: logbook)` is the logbook's verified zero for an entity it covers.
+**Logbook-excluded entities.** HA's logbook permanently excludes "continuous" sensors — any `unit_of_measurement`, `state_class`, or numeric `device_class` — and the `counter`, `image`, and `proximity` domains: for those it answers `[]` forever even though the entity changes. Both commands say so instead of silently disagreeing: `ent show` renders `changed_by: <actor> (source: state context; excluded from logbook — <reason>)`, and `ent who` states the exclusion and gives the same state-context fallback. An excluded entity is **not** a quiet one: `no changes for <id> in the last 24h (source: logbook)` is a verified zero for an entity the logbook covers.
 
-`ent who` aggregates per-event attribution over `--since` with a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window, source, logbook_excluded}`: `source` is `"logbook"` or `"state context"`, `logbook_excluded` distinguishes an excluded entity from a quiet one by fields rather than by emptiness, and for an excluded entity a top-level `changed_by` carries the shared fallback answer. `ent show --json` carries the same contract in `changed_by`, `changed_by_source`, and `logbook_excluded`. Resolving user UUIDs to names requires an admin long-lived access token; with a non-admin token the user list call is admin-denied and the output falls back to raw UUIDs while automation/script/device attribution continues to work.
+`ent who` aggregates per-event attribution over `--since` with a counts summary (`Jan: 12, Automation 'Sunset lights': 5, ...`). `--json` returns `{events, summary, window, source, logbook_excluded}` — the flag distinguishes an excluded entity from a quiet one by fields, not emptiness, and an excluded entity carries a top-level `changed_by` fallback; `ent show --json` mirrors this in `changed_by`, `changed_by_source`, `logbook_excluded`. Resolving user UUIDs to names needs an admin token; without one raw UUIDs appear while automation/script/device attribution keeps working. The `changes` command's `who` column is the same per-event label as a raw logbook feed, so excluded entities never appear there either.
 
-The `changes` command also carries a `who` column with the same per-event label; it is a raw logbook feed, so logbook-excluded entities never appear in it either.
+`ent who` answers who *changed* an entity; to find what is *wired to* change it, run `ref scan <entity_id>` — every automation, script, and dashboard referencing it — then inspect each hit with `auto show` (enabled? recent traces?). Note that listings print entity_ids without display names, and a display name can share no token with its id (`light.ap_gast_v2_led` ↔ "AP6 Flur LED"): `ent show` prints the name, and the name search under "Filtering & discovery" resolves name → entity_id.
 
 ### Devices
 
@@ -438,6 +438,16 @@ hactl svc call light.turn_on -d @payload.json --confirm
 
 Templates evaluated server-side by HA's Jinja engine — semantically correct, including `states()` and custom filters.
 
+`tpl eval` is also the discovery escape hatch — set questions in one call instead of a listing sweep:
+
+```bash
+hactl tpl eval "{{ states | selectattr('name','search','(?i)<term>') | map(attribute='entity_id') | list }}"
+hactl tpl eval '{{ area_entities("living_room") | list }}'
+hactl tpl eval '{{ label_entities("energy") | list }}'
+```
+
+`area_entities`, `device_entities`, `label_entities`, and `integration_entities` resolve membership; `states | selectattr(...)` filters on any attribute (display name, device_class, …) and is the only way to search entities by display name.
+
 `svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
 
 ### Config entries & flows
@@ -574,98 +584,58 @@ hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even 
 ```
 
 Requires hactl-companion — it is what reads the config directory. `ref` is the
-whole-instance version of `dash grep`/`dash replace`: it covers YAML config
-files (following `!include`) **and** every dashboard in one pass.
-
-`scan` reports `source` (`config` | `dashboard`), `location` (file name or
-dashboard) and `path` (`[1].trigger[0].entity_id`). Same whole-value matching as
-`dash grep`.
+whole-instance version of `dash grep`/`dash replace`: YAML config files
+(following `!include`) **and** every dashboard in one pass. Same whole-value
+matching as `dash grep` — `scan` finds references to an exact id, not free-text
+terms (term/name discovery is the name search under "Filtering & discovery") —
+and reports `source` (`config` | `dashboard`), `location` (file name or
+dashboard), and `path` (`[1].trigger[0].entity_id`).
 
 `validate` is the one to reach for after deleting or renaming an entity: it
-sweeps for entity references that no longer resolve. The live set is the union of
-the entity registry and current states, so state-only entities (`sun.sun`,
-`zone.home`, `weather.*`, template sensors) are not falsely flagged. It is
-deliberately conservative — only values in known entity-holding positions are
-checked (`entity_id`/`entity` in config; `entity`/`entities`/`badges`/
-`camera_image` in dashboards), so `light.turn_on` is never mistaken for an
-entity. Two blind spots are the accepted price of zero false positives:
-**entities inside templates** (`{{ states('sensor.x') }}`) and entities under
-non-standard custom-card keys. `validate` reports; it never fixes.
+sweeps every entity reference and reports the ones that no longer resolve. The
+live set is the union of the entity registry and current states, so state-only
+entities (`sun.sun`, `zone.home`, `weather.*`, template sensors) are not falsely
+flagged. Deliberately conservative — only values in known entity-holding
+positions are checked (`entity_id`/`entity` in config;
+`entity`/`entities`/`badges`/`camera_image` in dashboards), so `light.turn_on`
+is never mistaken for an entity. Two blind spots are the accepted price of zero
+false positives: **entities inside templates** (`{{ states('sensor.x') }}`) and
+entities under non-standard custom-card keys. `validate` reports; it never
+fixes — rename with `ref replace`.
 
-**A partial sweep never passes as a clean tree.** `validate` reads four sources —
-the **entity registry** and **live states** (whose union is the live set), the
-**config files** (via the companion), and **every dashboard** — and any of them
-can be unavailable. What happens then depends on who is reading the answer:
-
-- **Plain text, no `--exit-code`:** it answers, and the report body states its
-  scope — one `partial sweep: …` line per source it could not read, naming the
-  reason (`partial sweep: 2 of 3 dashboard(s) scanned; 1 could not be read`,
-  each skipped dashboard listed). A partial answer is still useful to a person
-  who can see it is partial.
-- **`--exit-code` or `--json`:** it **refuses** with a non-zero exit and
-  certifies nothing. `--exit-code` makes the answer a CI verdict and `--json`
-  makes it a document a program parses; in both cases a warning on stderr is
-  invisible, so certifying a tree that was only partly read would be a vacuous
-  gate — exactly what this command exists not to be.
-- **`--allow-partial`:** proceed over whatever could be read, in any mode. The
-  scope is stated in the report (in plain text) or on stderr (under `--json`,
-  whose shape is a contract), and `--exit-code` then gates on what was read.
-
-**One source is stricter than the other three, and that asymmetry is
-deliberate.** If **live states** cannot be read, `validate` refuses in *every*
-mode — plain text included — unless `--allow-partial` is given. The entity
-registry alone is not a usable live set: it holds no state-only entity
-(`sun.sun`, `zone.home`, `weather.*`, template sensors), so every reference to
-one would be reported as dangling and the answer would be mostly noise. The
-other three sources degrade the answer without destroying it, so plain text
-answers and only the machine-facing modes refuse. A missing **entity registry**,
-for example, costs the live set its disabled and currently-unloaded entities, so
-references to those are reported dangling when they are not.
-
-The two kinds of source fail in opposite directions, which is worth knowing when
-you read a partial report. An unread **config file or dashboard** means
-references there were never checked — the risk is a **false negative**, a
-dangling reference that goes unreported. A degraded **live set** (missing
-registry or missing states) means live entities are missing from the set the
-references are checked against — the risk is a **false positive**, a live entity
-reported as dangling. Both are gated the same way for the same reason: the
-machine consuming the answer cannot see the stderr warning that says it is
-degraded.
-
-An **auto-generated default dashboard is not a partial sweep**: HA holds no
-config for it, so it has no references to miss — zero there is the complete
-truth, and `--exit-code` stays green on a fresh instance.
+**A partial sweep never passes as a clean tree.** `validate` reads four sources
+— entity registry, live states, config files, dashboards — and states its scope
+when one is unreadable: in plain text it still answers, with one `partial
+sweep: …` line per unread source; under `--exit-code` or `--json` it **refuses**
+with a non-zero exit, because those modes feed a CI gate or a parser that cannot
+see a stderr warning, and certifying a half-read tree would make the gate
+vacuous. `--allow-partial` proceeds over whatever could be read, in any mode,
+scope stated. One source is stricter: missing **live states** refuse in every
+mode (the registry alone holds no state-only entities — most reports would be
+false positives); an unread config file or dashboard risks the opposite, false
+negatives — references that were never checked. An **auto-generated default
+dashboard is not a partial sweep**: HA holds no config for it, so zero
+references there is the complete truth, and `--exit-code` stays green on a
+fresh instance.
 
 **A missing companion is not a degraded source, and `--allow-partial` does not
-cover it.** The companion is the *transport* the config half is read over, and
-every `ref` command connects to it before it reads anything at all — so if
-discovery fails, the command aborts in every mode, `--allow-partial` included,
-with `companion discovery: companion not found (HA does not expose the
-Supervisor WS proxy)`. On an installation without the add-on (HA Container, HA
-Core) `ref validate` therefore does not run at all, and there is no
-dashboard-only mode to fall back to. `dash grep` still works there — it goes
-over the WebSocket API alone — but, as the next paragraph says, it answers a
-different question.
+cover it** — the companion is the transport for the config half, so every `ref`
+command aborts in every mode when its discovery fails. Without the add-on (HA
+Container, HA Core) `ref` does not run at all; `dash grep` still works over the
+WebSocket API alone, but it answers "where is this value?", not "is the tree
+clean?" — like `ref scan`, it prints the hits it found with exit 0 and warns on
+stderr about unreadable dashboards.
 
-`ref scan` and `dash grep` behave differently on purpose: they answer "where is
-this value?", not "is the tree clean?", so an unreadable dashboard is reported as
-a warning on stderr and the hits they did find are still printed with exit 0 and
-an unchanged `--json` shape.
-
-`replace` is dry-run until `--confirm`. It aborts before writing anything if the
-companion cannot be reached, because a rename that silently skips config files is
+`replace` is dry-run until `--confirm` and aborts before writing anything if
+the companion cannot be reached — a rename that silently skips config files is
 the exact failure this command exists to prevent. The **default dashboard is
-included** whenever it has a stored config (`lovelace/config` answers); an
-auto-generated default holds no config and therefore no references — that is a
-complete answer of zero hits, not a skip. Two situations make the rename
-**refuse with a non-zero exit** unless `--allow-partial` is given (mirroring
-`ref validate`'s asymmetric-failure design): a dashboard whose config could not
-be read at all (the scan would be silently partial), and references sitting in
-**YAML-mode dashboards** — HA's API cannot write those, so a confirmed rename
-would leave them dangling. With `--allow-partial`, YAML-mode hits are reported
-as `skipped: yaml-mode` and everything else is renamed. The refusal happens
-before anything is written anywhere. A confirmed run is idempotent, so
-re-running after a partial failure is safe.
+included** whenever it has a stored config. Two situations refuse with a
+non-zero exit, before any write, unless `--allow-partial` is given: a dashboard
+whose config could not be read (the scan would be silently partial), and
+references in **YAML-mode dashboards**, which HA's API cannot write — under
+`--allow-partial` those are reported `skipped: yaml-mode` and everything else
+is renamed. A confirmed run is idempotent, so re-running after a partial
+failure is safe.
 
 ### Logs & custom components
 
@@ -744,43 +714,38 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 
 > **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area), confirm it exists (the matching registry `ls`) before reporting a negative — that one call is exempt from stop-at-first-miss.
 
-Four commands take `--pattern` (glob or substring, case-insensitive, on the id or user-facing name):
+Four commands take `--pattern` (glob or substring, case-insensitive), and it matches **identifiers, not display names**:
 
 ```bash
-hactl auto ls --pattern victron           # substring, anywhere in the id
-hactl auto ls --pattern 'victron_*'       # glob
-hactl device ls --pattern wozi            # matches the device named "Wozi Tv"
-hactl ent ls --pattern 'sensor.wp_*'
+hactl auto ls --pattern victron           # matches object id, entity_id, config id, alias
+hactl script ls --pattern kino            # matches the script id
+hactl ent ls --pattern 'sensor.wp_*'      # matches the entity_id (automations: also config id + alias)
+hactl device ls --pattern wozi            # devices are the exception: id OR name ("Wozi Tv")
 ```
 
-`*`/`?` → glob, otherwise substring; either way case is ignored. `auto ls` and
-`ent ls` also match the config `id:` that `auto show` prints.
+`*`/`?` → glob, otherwise substring. An entity's display name can share no
+token with its entity_id (`light.ap_gast_v2_led` ↔ "AP6 Flur LED") and listings
+print no name column, so a name the user quotes needs a server-side name
+search:
 
-`ent ls` also accepts three additional independent filters — combine freely:
+```bash
+hactl tpl eval "{{ states | selectattr('name','search','(?i)<term>') | map(attribute='entity_id') | list }}"
+hactl device ls --name <term>             # display-name filter, devices only
+```
+
+These are the only search flags — `ent ls` has no `--name`, nothing has
+`--search`; unknown flags fail without a suggestion. `ent ls` stacks
+`--domain`, `--area`, `--label`; `auto ls` and `script ls` take `--label` and
+`--failing` (recent trace errors):
 
 ```bash
 hactl ent ls --domain binary_sensor --area garage
-hactl ent ls --label energy --pattern 'sensor.*'
+hactl auto ls --label victron --failing
 ```
 
-`auto ls` and `script ls` support `--label` to filter by label name (uses HA entity registry labels),
-and `--failing` to show only items with recent errors:
-
-```bash
-hactl auto ls --label victron             # automations with label "victron"
-hactl auto ls --failing                   # automations with recent trace errors
-hactl script ls --label energy            # scripts with label "energy"
-hactl script ls --failing                 # scripts with recent trace errors
-```
-
-For broader entity discovery when you have an entity but want context:
-
-```bash
-hactl ent related sensor.wp_vl            # spiders automations, device siblings, area neighbors
-```
-
-`--restored` filters both `ent ls` and `auto ls` down to ghost entities — see
-below.
+With an entity in hand, `hactl ent related <id>` spiders its automations,
+device siblings, and area neighbors. `--restored` filters `ent ls`/`auto ls`
+down to ghost entities — see the "Ghost entities" how-to.
 
 ### Ghost entities (`--restored`)
 
@@ -804,12 +769,11 @@ hactl auto ls --restored                       # same, automation-scoped table
 
 ## Output conventions
 
-- **Token estimate:** Add `--tokens` to print a compact `[~N tok]` estimate (`stderr` in JSON mode).
-- **Token cap:** Output is truncated at `--tokensmax` tokens (default 500). A command-specific hint is appended when truncation occurs (e.g. `log` suggests `--component`, `ent ls` suggests `--domain`). Use `--tokensmax=0` to disable; prefer filters over raising the cap.
+- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a command-specific hint on truncation (`log` suggests `--component`, `ent ls` suggests `--domain`); prefer filters over raising the cap. `--tokens` prints a `[~N tok]` estimate (stderr in JSON mode).
 - **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
 - **Stable IDs:** `trc:a7` (`auto`/`script show`) and `log:f2` (`log` incl. `--unique`, `cc logs`) — persistent in `cache/ids.json` until `cache clear`. `ent anomalies` mints none.
 - **Timestamps:** short form in your local zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so the short string survives and numbers come back as strings (`"runs_24h": "0"`).
-- **No decoration:** no emojis, no color. `--color` is accepted and does nothing.
+- **No decoration:** no emojis, no color.
 - **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`). Dry-run previews return `{"dry_run":true,"action","details","hint"}`.
 - **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A family's **first `--confirm`** is refused non-interactively (how-to on stderr, exit 1): dry-run first, then repeat.
 - **`--stats`:** raw response size + estimated token count on stderr, after any command including a failing one.
@@ -823,7 +787,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
 | `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
 | `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
-| `--full` | off | Raw/verbose: all attributes for `ent show`, raw JSON for `trace show`. **On tables it lifts the `--top` cap** — prefer `--top N`, or risk `--tokensmax` byte-truncating the table |
+| `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **On tables it lifts the `--top` cap** — prefer `--top N`, or `--tokensmax` byte-truncates the table |
 | `--json` | off | JSON output |
 | `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |
@@ -856,6 +820,7 @@ No global config, no profiles. Directory = instance.
 Parts of this manual may already have reached you automatically: when both stdout and stderr are captured (agent/shell-tool usage), hactl delivers the manual progressively on stderr — the core (routing table, conventions, flags) with the first command of a session, each family's how-to with the first command of that family, ending with a `=== RESULT of hactl … ===` marker before the real output. Sessions are per instance, keyed by `HACTL_SESSION` (default: a shared key with a 30-minute idle timeout).
 
 - `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
+- `off` also disables the first-`--confirm` guard (the refusal of a family's first write before its how-to arrived) — it is meant for scripts and pipelines that pre-load this manual another way, not a token-saving knob for interactive agents
 - `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand
 - Humans at a terminal never see it; stdout (incl. `--json`) stays untouched; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
 
