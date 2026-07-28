@@ -66,6 +66,7 @@ not an act at all. That asymmetry is the whole design.
 | manifest | derived from | rule |
 |---|---|---|
 | `confirm` | the live cobra tree | a preview fails exactly where `--confirm` would (H-2) |
+| `writeback` | the same cobra walk, re-keyed | a write is proven by reading it back from Home Assistant directly, never through hactl (H-12) |
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
 | `autoref` | `internal/cmd` entrypoints taking an automation reference | the reference reaches `resolveAutomation`, so every command accepts every identifier form the family prints (D-1, H-17) |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |

@@ -71,7 +71,26 @@ var refValidateCmd = &cobra.Command{
 		"names like `light.turn_on` are never mistaken for entities. Two blind spots are the accepted " +
 		"trade for zero false positives: entities embedded in templates (`{{ states('sensor.x') }}`) and " +
 		"entities under non-standard custom-card keys are not detected. validate reports; it does not fix " +
-		"— rename each dangling id with `hactl ref replace <old> <new>`.",
+		"— rename each dangling id with `hactl ref replace <old> <new>`.\n\n" +
+		"validate reads four sources: the entity registry and live states (whose union is the live set), " +
+		"the config files, and every dashboard. Any source it could not read makes the answer partial, " +
+		"and the answer says so: in plain text the report body names each unread source, why, and how " +
+		"many dashboards of how many were swept. Under --exit-code or --json — where the answer is a CI " +
+		"verdict or a parsed document and a warning on stderr is invisible — a partial sweep instead " +
+		"REFUSES with a non-zero exit and certifies nothing, unless --allow-partial is given.\n\n" +
+		"Live states are the one source that is stricter than that, and deliberately so: without them " +
+		"the registry alone omits every state-only entity and would report all of them as dangling, " +
+		"which is not a usable answer to hand anyone. So an unreadable /api/states refuses in EVERY " +
+		"mode, plain text included, unless --allow-partial. The other three degrade the answer without " +
+		"destroying it — a missing registry, for instance, costs the live set its disabled and " +
+		"currently-unloaded entities, so references to those are reported dangling when they are not. " +
+		"An auto-generated default dashboard is not a partial sweep at all: HA holds no config for it, " +
+		"so it has no references to miss.\n\n" +
+		"A companion that cannot be discovered is NOT one of those four sources degrading, and " +
+		"--allow-partial does not cover it. The companion is the transport the config half is read " +
+		"over, and validate connects to it before it reads anything at all, so a discovery failure " +
+		"aborts the command in every mode — on an install without the add-on (HA Container, HA Core) " +
+		"validate does not run.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runRefValidate(cmd.Context(), cmd.OutOrStdout())
@@ -85,8 +104,13 @@ func init() {
 			"(references in those dashboards are left unchanged)")
 	refValidateCmd.Flags().BoolVar(&flagRefExitCode, "exit-code", false, "exit 1 if any dangling reference is found (for CI/pre-commit gating)")
 	refValidateCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
-		"validate even when live states are unavailable and only the entity registry can be read "+
-			"(higher false-positive risk: state-only entities are omitted from the registry)")
+		"answer from what could be read when a source of the sweep is unavailable — the entity registry, "+
+			"live states, config files, or a dashboard whose config cannot be fetched (without it, "+
+			"--exit-code and --json refuse rather than certify a partial sweep, and unreadable live "+
+			"states refuse in every mode, because the registry alone would report every state-only "+
+			"entity as dangling). Does not cover a companion that cannot be discovered: that is the "+
+			"transport the config half is read over, not a source that degrades, so validate aborts "+
+			"before it reads anything, in every mode")
 	refCmd.AddCommand(refScanCmd, refReplaceCmd, refValidateCmd)
 	rootCmd.AddCommand(refCmd)
 }
@@ -157,7 +181,12 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	if err != nil {
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
-	for _, h := range scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target) {
+	// `ref scan` answers "where is X?", so an unreadable dashboard is reported
+	// and the answer still stands (D-7). It never fails and never changes the
+	// --json shape — only `ref validate` claims the tree is clean.
+	hits, scope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
+	warnPartialDashboardScan(scope)
+	for _, h := range hits {
 		rows = append(rows, refRow{"dashboard", h.dashboard, h.path})
 	}
 
@@ -201,20 +230,20 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	if err != nil {
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
-	plans, unscanned := planDashboardReplacements(ctx, src.ws, dashboards, oldVal, newVal)
+	plans, scope := planDashboardReplacements(ctx, src.ws, dashboards, oldVal, newVal)
 
 	// A dashboard that could not be scanned means the rename cannot claim to
 	// cover every reference — a silent skip here is exactly the failure this
 	// command exists to prevent (mirrors `ref validate`'s asymmetric-failure
 	// design: partial is refused unless explicitly allowed).
-	if len(unscanned) > 0 && !flagRefAllowPartial {
-		return fmt.Errorf("%d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
+	if scope.partial() && !flagRefAllowPartial {
+		return fmt.Errorf("%d of %d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
 			"every reference; nothing was renamed. Re-run with --allow-partial to rename in what could be read",
-			len(unscanned), strings.Join(unscanned, "; "))
+			len(scope.unscanned), scope.total(), strings.Join(scope.unscanned, "; "))
 	}
-	if len(unscanned) > 0 {
+	if scope.partial() {
 		slog.Warn("renaming with a partial dashboard scan (--allow-partial); references in unscanned dashboards are left unchanged",
-			"unscanned", unscanned)
+			"scanned", scope.scanned, "of", scope.total(), "unscanned", scope.unscanned)
 	}
 
 	// References found in YAML-mode dashboards cannot be rewritten over the
@@ -328,55 +357,40 @@ func yamlHitsError(n int, labels []string, oldVal string) error {
 }
 
 // planDashboardReplacements computes the pending rewrite for every dashboard,
-// recording which are writable.
+// recording which are writable, and returns the scope the walk covered.
 //
-// The default dashboard is classified by attempting `lovelace/config` (D-6):
-// a stored config joins the plan as writable; the auto-generated state holds
-// no config and therefore no references — a complete answer of zero hits, not
-// a failure; any other failure means the scan is partial and is returned in
-// unscanned for the caller to surface. A listed dashboard that cannot be
-// fetched is partial the same way. A YAML-mode default appears in the listed
-// set itself (url_path "lovelace", see dashboardScanTargets) with
-// mode "yaml", so it is scanned once and never writable.
-func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard, oldVal, newVal string) (plans []dashReplacePlan, unscanned []string) {
+// It reads dashboards through the one shared walk (walkDashboardConfigs), so
+// the default dashboard is classified rather than fetched blindly (D-6): a
+// stored config joins the plan as writable; the auto-generated state holds no
+// config and therefore no references — a complete answer of zero hits, not a
+// failure; any other failure, on the default or on a listed dashboard, lands in
+// the scope's unscanned list for the caller to surface. A YAML-mode default
+// appears in the listed set itself (url_path "lovelace", see
+// dashboardScanTargets) with mode "yaml", so it is scanned once and never
+// writable.
+//
+// Only the stored default can reach the visitor under the "" pseudo-target, so
+// the empty url_path is exactly the writable-default case.
+func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard, oldVal, newVal string) (plans []dashReplacePlan, scope dashboardScanScope) {
 	modeByPath := make(map[string]string, len(dashboards))
 	for _, d := range dashboards {
 		modeByPath[d.URLPath] = d.Mode
 	}
 
-	for _, t := range dashboardScanTargets(dashboards) {
-		writable := modeByPath[t.urlPath] == "storage"
-		if t.urlPath == "" {
-			state, _, classifyErr := classifyDefaultDashboard(ctx, ws)
-			switch state {
-			case defaultDashAutoGenerated:
-				// Nothing stored, so nothing to scan or rewrite: zero hits
-				// here is the whole truth about this dashboard.
-				continue
-			case defaultDashUnclassifiable:
-				unscanned = append(unscanned, fmt.Sprintf("%s: %v", t.label, classifyErr))
-				continue
-			case defaultDashStored:
-				writable = true
-			}
-		}
-		result, changed, replErr := dashReplaceOne(ctx, ws, t.urlPath, oldVal, newVal)
-		if replErr != nil {
-			unscanned = append(unscanned, fmt.Sprintf("%s: %v", t.label, replErr))
-			continue
-		}
+	scope = walkDashboardConfigs(ctx, ws, dashboardScanTargets(dashboards), func(t dashScanTarget, root any) {
+		result, changed := jsonwalk.Replace(root, oldVal, newVal)
 		if len(changed) == 0 {
-			continue
+			return
 		}
 		plans = append(plans, dashReplacePlan{
 			label:    t.label,
 			urlPath:  t.urlPath,
 			result:   result,
 			changed:  changed,
-			writable: writable,
+			writable: t.urlPath == "" || modeByPath[t.urlPath] == "storage",
 		})
-	}
-	return plans, unscanned
+	})
+	return plans, scope
 }
 
 // buildReplaceRows renders the merged config+dashboard change rows, applying the
@@ -470,18 +484,110 @@ func (e *danglingRefsError) Error() string {
 }
 func (e *danglingRefsError) ExitCode() int { return 1 }
 
-// configScanGateError decides whether a failed config-file scan must fail the
-// command. Interactively a partial validate (dashboards only) still has value,
-// so the failure is a warning. But under --exit-code (CI/pre-commit gating) a
-// silently-skipped config half makes the gate vacuous — a companion outage would
-// let dangling config references pass green — so it is fatal unless the caller
-// opts into a partial gate with --allow-partial (mirroring the live-set flag).
-func configScanGateError(entErr error, exitCode, allowPartial bool) error {
-	if entErr == nil || !exitCode || allowPartial {
+// validateAnswersAMachine reports whether this `ref validate` invocation is
+// answering a machine rather than a person. --exit-code makes the answer a CI
+// verdict; --json makes it a parsed document (H-10). In both cases a warning on
+// stderr is invisible to the consumer, so a silently-partial sweep reads as a
+// clean tree — which is the whole of D-7.
+func validateAnswersAMachine() bool { return flagRefExitCode || flagJSON }
+
+// validateScanGateError decides whether a source of the sweep that could not be
+// read must fail the command. Interactively a partial validate still has value
+// and the missing source is stated in the report, so the failure is not fatal.
+// But when the answer goes to a machine (validateAnswersAMachine) a
+// silently-skipped source makes the certificate vacuous — a companion outage, an
+// unreadable dashboard or an entity registry that would not list would each let
+// the verdict drift with nothing on stdout to say so — so it is fatal unless the
+// caller opts into a partial answer with --allow-partial (the same flag the
+// live-set halves take). half names what could not be read: "the entity
+// registry", "config files", "1 of 2 dashboard(s)".
+//
+// THREE of the sweep's four sources take this gate: the entity registry, the
+// config files, and the dashboards. Live states do not, and that is deliberate,
+// not an oversight to harmonise away. They refuse unconditionally from their own
+// branch in liveEntitySet, before any of this runs, so a states failure only ever
+// reaches here-and-beyond because --allow-partial was given — which this gate
+// would wave through anyway. Folding them in would mean an "always refuses"
+// posture flag plus a second message body, because the thing that has to be
+// explained is different in kind: not "a piece of the tree went unread" (this
+// function's sentence) but "the live set that is left is unusable, and every
+// state-only entity in the tree would be reported dangling". Two messages behind
+// one boolean is not one gate shape; it is two gates sharing a name.
+//
+// What IS universal — the rule a source added later must satisfy, and the one
+// the registry broke — is one line down: every source is recorded in
+// validateScope, so it reaches the reader through reportValidateScanScope. The
+// registry sat outside both, warning to a channel no machine reads. Take this
+// gate too, unless the source is unusable-in-kind the way live states are; if it
+// is, refuse where you read it and say why there, as liveEntitySet does.
+func validateScanGateError(half string, cause error, answersAMachine, allowPartial bool) error {
+	if cause == nil || !answersAMachine || allowPartial {
 		return nil
 	}
-	return fmt.Errorf("config files could not be scanned, so --exit-code cannot certify they are free of "+
-		"dangling references: %w; re-run with --allow-partial to gate on dashboards alone", entErr)
+	return fmt.Errorf("%s could not be read, so this run cannot certify anything is free of dangling "+
+		"references and nothing was certified: %w; re-run with --allow-partial to validate against what "+
+		"could be read", half, cause)
+}
+
+// validateScope is what one `ref validate` sweep actually covered: which halves
+// of the live entity set could be read, whether the config half could be read at
+// all, and which dashboards could. EVERY source the sweep reads is carried here
+// and reported by the same code, because they are the same law — a half nobody
+// could read makes the whole answer partial, whichever half it was.
+//
+// The registry was the half that proved the point: it degraded the live set at
+// slog.Warn and reached neither the gate nor the report, so `--json --exit-code`
+// certified a tree against an entity set it knew was incomplete.
+type validateScope struct {
+	registryErr error // non-nil when the entity registry could not be listed
+	statesErr   error // non-nil when /api/states could not be read (only reachable with --allow-partial)
+	configErr   error // non-nil when the companion could not scan config files
+	dash        dashboardScanScope
+}
+
+func (s validateScope) partial() bool {
+	return s.registryErr != nil || s.statesErr != nil || s.configErr != nil || s.dash.partial()
+}
+
+// reportValidateScanScope states a partial sweep where the caller will actually
+// see it: in the report body. A skip that only reaches slog is invisible in the
+// answer, which is how a partial validate could read as a clean tree (D-7).
+//
+// Under --json the scope goes to slog instead, because the document's shape is
+// a machine contract (H-10) — and a machine can only reach a partial answer by
+// passing --allow-partial, which is itself the acknowledgement.
+func reportValidateScanScope(w io.Writer, scope validateScope) {
+	if !scope.partial() {
+		return
+	}
+	if flagJSON {
+		slog.Warn("partial sweep (--allow-partial): references in what could not be read are unknown",
+			"registry_error", scope.registryErr, "states_error", scope.statesErr,
+			"config_error", scope.configErr, "dashboards_scanned", scope.dash.scanned,
+			"dashboards_total", scope.dash.total(), "dashboards_unscanned", scope.dash.unscanned)
+		return
+	}
+	if scope.registryErr != nil {
+		_, _ = fmt.Fprintf(w, "partial sweep: the entity registry could not be listed, so the live set is "+
+			"missing every disabled or currently-unloaded entity and references to those are reported "+
+			"dangling when they are not:\n  %v\n", scope.registryErr)
+	}
+	if scope.statesErr != nil {
+		_, _ = fmt.Fprintf(w, "partial sweep: live states could not be read, so the live set is missing every "+
+			"state-only entity (sun.sun, zone.home, weather.*, template sensors) and references to those "+
+			"are reported dangling when they are not:\n  %v\n", scope.statesErr)
+	}
+	if scope.configErr != nil {
+		_, _ = fmt.Fprintf(w, "partial sweep: config files could not be scanned, so references in them "+
+			"are unknown:\n  %v\n", scope.configErr)
+	}
+	if scope.dash.partial() {
+		_, _ = fmt.Fprintf(w, "partial sweep: %d of %d dashboard(s) scanned; %d could not be read, "+
+			"so references in them are unknown:\n", scope.dash.scanned, scope.dash.total(), len(scope.dash.unscanned))
+		for _, u := range scope.dash.unscanned {
+			_, _ = fmt.Fprintf(w, "  %s\n", u)
+		}
+	}
 }
 
 func runRefValidate(ctx context.Context, w io.Writer) error {
@@ -491,19 +597,32 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 	}
 	defer src.close()
 
-	live, err := liveEntitySet(ctx, src)
+	var refs []danglingRef
+	var scope validateScope
+	answersAMachine := validateAnswersAMachine()
+
+	// The live entity set (registry ∪ states). A states failure has already
+	// refused inside liveEntitySet unless --allow-partial; a registry failure
+	// leaves a live set that is short every disabled or unloaded entity, which is
+	// the same kind of partial as an unread dashboard and takes the same gate —
+	// otherwise a machine consumer receives a degraded verdict with nothing on
+	// stdout to tell it so (D-7, H-10).
+	live, err := liveEntitySet(ctx, src, &scope)
 	if err != nil {
 		return err
 	}
-
-	var refs []danglingRef
+	if gateErr := validateScanGateError("the entity registry", scope.registryErr,
+		answersAMachine, flagRefAllowPartial); gateErr != nil {
+		return gateErr
+	}
 
 	// Config files (companion). A companion failure is a warning, not fatal —
 	// a partial validate over dashboards alone still has value.
 	if resp, entErr := src.cc.RefEntities(ctx); entErr != nil {
-		if gateErr := configScanGateError(entErr, flagRefExitCode, flagRefAllowPartial); gateErr != nil {
+		if gateErr := validateScanGateError("config files", entErr, answersAMachine, flagRefAllowPartial); gateErr != nil {
 			return gateErr
 		}
+		scope.configErr = entErr
 		slog.Warn("companion config entity scan failed; config files were not validated", "error", entErr)
 	} else {
 		for _, e := range resp.Entities {
@@ -513,12 +632,22 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 		}
 	}
 
-	// Dashboards (WS).
+	// Dashboards (WS). A dashboard hactl could not read holds unknown
+	// references, so certifying the tree over what was readable is exactly the
+	// vacuous gate this command exists to be (D-7): refuse before printing
+	// anything, so nothing is certified.
 	dashboards, err := src.ws.DashboardList(ctx)
 	if err != nil {
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
-	refs = append(refs, collectDashboardEntityRefs(ctx, src.ws, dashboardScanTargets(dashboards))...)
+	dashRefs, dashScope := collectDashboardEntityRefs(ctx, src.ws, dashboardScanTargets(dashboards))
+	if gateErr := validateScanGateError(
+		fmt.Sprintf("%d of %d dashboard(s)", len(dashScope.unscanned), dashScope.total()),
+		dashScope.reason(), answersAMachine, flagRefAllowPartial); gateErr != nil {
+		return gateErr
+	}
+	scope.dash = dashScope
+	refs = append(refs, dashRefs...)
 
 	var dangling []danglingRef
 	for _, r := range refs {
@@ -527,6 +656,10 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 		}
 	}
 	dangling = dedupeSortRefs(dangling)
+
+	// The scope prefixes the findings: whatever follows — a table or a clean
+	// bill of health — is only as complete as this line says it is.
+	reportValidateScanScope(w, scope)
 
 	if len(dangling) == 0 {
 		if flagJSON {
@@ -557,11 +690,27 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 // liveEntitySet builds the set of entity_ids that currently exist, as the union
 // of the entity registry (catches disabled and currently-unloaded entities) and
 // /api/states (catches state-only entities with no registry entry — sun.sun,
-// zone.home, weather.*, template sensors). The two half-failures are NOT
-// symmetric: states alone is a near-complete live set, but the registry alone
-// omits every state-only entity and would flag them all as dangling — so a
-// registry-only fallback is refused unless --allow-partial is set.
-func liveEntitySet(ctx context.Context, src *refSources) (map[string]bool, error) {
+// zone.home, weather.*, template sensors).
+//
+// Either half that could not be read is recorded in scope, so it reaches the
+// report body and the shared machine gate like every other source of the sweep.
+// Leaving the registry failure at slog.Warn was the third half D-7 missed: a
+// warning is invisible to a machine consumer, so `--json`/`--exit-code` returned
+// a clean verdict computed from an entity set hactl knew was incomplete.
+//
+// The two half-failures are NOT symmetric, and their postures differ to match.
+// A missing registry degrades toward FALSE POSITIVES that are still recognisable
+// as such — a reference to a disabled or unloaded entity is reported dangling —
+// so it takes the shared gate: fatal only when the answer goes to a machine. A
+// missing states half is worse in kind: the registry alone omits every
+// state-only entity and would flag them all, which is not a usable live set at
+// all, so it refuses in EVERY mode, plain text included, unless --allow-partial.
+//
+// That unconditional refusal below is the sweep's ONE source that does not go
+// through validateScanGateError — deliberately, for the reason set out in that
+// function's note. What both halves do share is scope: whichever one degraded is
+// recorded there, so it reaches the reader.
+func liveEntitySet(ctx context.Context, src *refSources, scope *validateScope) (map[string]bool, error) {
 	live := make(map[string]bool)
 
 	reg, regErr := src.ws.EntityRegistryList(ctx)
@@ -589,8 +738,10 @@ func liveEntitySet(ctx context.Context, src *refSources) (map[string]bool, error
 				"entities (sun.sun, zone.home, weather.*, template sensors) and would report them all as "+
 				"dangling. Re-run with --allow-partial to validate against the registry anyway", statesErr)
 		}
+		scope.statesErr = statesErr
 		slog.Warn("validating against the entity registry only; state-only entities may be falsely reported as dangling", "error", statesErr)
 	case regErr != nil:
+		scope.registryErr = regErr
 		slog.Warn("entity registry unavailable; validating against live states only", "error", regErr)
 	}
 	return live, nil
@@ -617,21 +768,14 @@ func fetchStateEntityIDs(ctx context.Context, rest *haapi.Client) ([]string, err
 }
 
 // collectDashboardEntityRefs walks each dashboard for entity_id-shaped string
-// leaves in a known entity position (per dashEntityKeys). Unlike scanDashboards
-// it matches by shape+position rather than an exact target. Dashboards that
-// cannot be fetched or parsed are skipped rather than aborting the sweep.
-func collectDashboardEntityRefs(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget) []danglingRef {
+// leaves in a known entity position (per dashEntityKeys), returning the
+// references found plus the scope the walk covered. Unlike scanDashboards it
+// matches by shape+position rather than an exact target; both go through the one
+// shared walk, so a dashboard that could not be read is named rather than
+// silently dropped (D-7).
+func collectDashboardEntityRefs(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget) ([]danglingRef, dashboardScanScope) {
 	var refs []danglingRef
-	for _, t := range targets {
-		raw, rawErr := ws.DashboardConfigRaw(ctx, t.urlPath)
-		if rawErr != nil {
-			slog.Debug("could not fetch dashboard config", "dashboard", t.label, "error", rawErr)
-			continue
-		}
-		var root any
-		if json.Unmarshal(raw, &root) != nil {
-			continue
-		}
+	scope := walkDashboardConfigs(ctx, ws, targets, func(t dashScanTarget, root any) {
 		jsonwalk.Walk(root, func(p jsonwalk.Path, v any) {
 			s, ok := v.(string)
 			if !ok || !isEntityIDShaped(s) || !dashEntityKeys[p.TerminalKey()] {
@@ -639,8 +783,8 @@ func collectDashboardEntityRefs(ctx context.Context, ws *haapi.WSClient, targets
 			}
 			refs = append(refs, danglingRef{"dashboard", t.label, p.String(), s})
 		})
-	}
-	return refs
+	})
+	return refs, scope
 }
 
 // dedupeSortRefs removes exact duplicate rows and sorts deterministically.

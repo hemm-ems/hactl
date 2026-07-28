@@ -73,7 +73,7 @@ jobs:
   test-integration:
     name: Integration Tests (HA ${{ matrix.ha-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +174,7 @@ jobs:
   test-companion:
     name: Companion Tests (companion ${{ matrix.companion }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -239,7 +239,7 @@ jobs:
   test-discovery:
     name: Discovery Tests (companion ${{ matrix.companion }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

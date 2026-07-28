@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -115,37 +116,19 @@ var actionOnly = map[string]bool{
 	"cache clear":   true,
 }
 
-// companionRequired lists full command paths that need a working companion
-// connection (internal/companion.Discover, then the companion's own HTTP
-// routes) just to run at all — not merely to produce a richer answer, but to
-// avoid a hard connection error (confirmed by reading each: helper ls/show
-// call connectCompanion directly; config files does too; ref scan/validate
-// call connectRefSources, which returns an error the moment companion
-// discovery fails; companion status/logs and companion wireguard status are
-// companion commands by definition).
-//
-// startCmdServer (ws_cmd_test.go) mocks only the core HA HTTP+WS surface, not
-// the companion side-car; standing up a second, companion-shaped mock server
-// is out of proportion for this sweep. This is the "cannot be exercised
-// without a live HA[-equivalent stand-in]" skip list the task brief allows
-// for — kept to exactly the commands that need it, and printed by
-// TestJSONContract so the gap is visible rather than silent.
-//
-// Commands that merely USE the companion but degrade gracefully when it is
-// unavailable (`ent related`, `health`) are NOT on this list — they are
-// exercised for real, companion-less, exactly as a real offline-companion
-// instance would.
-var companionRequired = map[string]bool{
-	"helper ls":                  true,
-	"helper show":                true,
-	"config files":               true,
-	"ref scan":                   true,
-	"ref validate":               true,
-	"companion status":           true,
-	"companion logs":             true,
-	"companion wireguard status": true,
-}
-
+// There is deliberately no "needs a companion" category. The eight commands
+// that need one to run at all (helper ls/show and config files call
+// connectCompanion; ref scan/validate call connectRefSources; companion
+// status/logs and companion wireguard status are companion commands by
+// definition) used to sit in a `companionRequired` map that this test PRINTED
+// and never asserted on, justified by "startCmdServer mocks only the core HA
+// HTTP+WS surface". That justification was already false when it was written —
+// this package stands up a companion-shaped httptest server in cat_test.go,
+// helper_test.go, ref_test.go, script_test.go, auto_create_validation_test.go
+// and more — and the cost of the excuse was `helper show` shipping a --json
+// flag it never read. buildContractFixture now stands up
+// startContractCompanion (json_contract_companion_test.go) alongside the fake
+// HA, so those eight are asserted like every other read command.
 type contractCategory int
 
 const (
@@ -154,7 +137,6 @@ const (
 	catMeta
 	catVerbatim
 	catActionOnly
-	catCompanionRequired
 )
 
 func classifyCommand(leaf *cobra.Command, path string) contractCategory {
@@ -167,8 +149,6 @@ func classifyCommand(leaf *cobra.Command, path string) contractCategory {
 		return catVerbatim
 	case actionOnly[path]:
 		return catActionOnly
-	case companionRequired[path]:
-		return catCompanionRequired
 	default:
 		return catEnforced
 	}
@@ -180,14 +160,16 @@ func classifyCommand(leaf *cobra.Command, path string) contractCategory {
 type contractFixture struct {
 	dir       string
 	logShowID string
+	companion *contractCompanion
 }
 
 // buildContractFixture stands up ONE shared fake HA (startCmdServer) with
 // enough data — states, registries, dashboards, logbook, history, config
-// entries, a flow, an issue, and a trace — to exercise every enforced
-// command in one pass. Commands are read-only here (mutating ones are
-// excluded before we ever get this far), so sharing one server/dir across
-// all of them is safe.
+// entries, a flow, an issue, and a trace — PLUS one companion-shaped stub
+// (startContractCompanion), wired into the same temp dir's .env via
+// COMPANION_URL, to exercise every enforced command in one pass. Commands are
+// read-only here (mutating ones are excluded before we ever get this far), so
+// sharing one server/dir across all of them is safe.
 func buildContractFixture(t *testing.T) *contractFixture {
 	t.Helper()
 
@@ -351,6 +333,22 @@ func buildContractFixture(t *testing.T) *contractFixture {
 
 	ts := startCmdServer(t, wsResponses, httpHandlers)
 
+	// The companion side-car. COMPANION_URL is appended to the .env
+	// startCmdServer already wrote, which is the first branch of
+	// companion.Discover — so discovery needs no Supervisor WS proxy in the
+	// fake HA (the same shortcut cat_test.go, ref_test.go and helper_test.go
+	// take).
+	cs := startContractCompanion(t)
+	envPath := filepath.Join(ts.dir, ".env")
+	env, err := os.ReadFile(envPath) //nolint:gosec // path from t.TempDir(), not user input
+	if err != nil {
+		t.Fatalf("reading fixture .env: %v", err)
+	}
+	env = fmt.Appendf(env, "COMPANION_URL=%s\nCOMPANION_TOKEN=test-token\n", cs.srv.URL)
+	if err := os.WriteFile(envPath, env, 0o600); err != nil { //nolint:gosec // fixture dir from t.TempDir(), not user input
+		t.Fatalf("wiring COMPANION_URL into fixture .env: %v", err)
+	}
+
 	// `log show <id>` resolves a previously-registered `log:` short id from
 	// the local ids registry — it never re-fetches logs — so seed one here
 	// the way `hactl log` itself would have.
@@ -360,7 +358,7 @@ func buildContractFixture(t *testing.T) *contractFixture {
 		t.Fatalf("seeding ids registry: %v", err)
 	}
 
-	return &contractFixture{dir: ts.dir, logShowID: logShowID}
+	return &contractFixture{dir: ts.dir, logShowID: logShowID, companion: cs}
 }
 
 // contractPosArgs maps a full command path (minus "hactl ") to the
@@ -403,6 +401,18 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"dash resources":      nil,
 		"dash grep":           {"light.kitchen"},
 		"log show":            {f.logShowID},
+
+		// The eight the deleted companionRequired list used to skip. They are
+		// ordinary rows here — the only thing that made them special was the
+		// fixture's missing companion, which startContractCompanion supplies.
+		"helper ls":                  nil,
+		"helper show":                {"guest_mode"},
+		"config files":               nil,
+		"ref scan":                   {"light.kitchen"},
+		"ref validate":               nil,
+		"companion status":           nil,
+		"companion logs":             nil,
+		"companion wireguard status": nil,
 	}
 }
 
@@ -424,7 +434,7 @@ func TestJSONContract(t *testing.T) {
 	leaves := leafCommands(rootCmd)
 	sort.Slice(leaves, func(i, j int) bool { return leaves[i].CommandPath() < leaves[j].CommandPath() })
 
-	var tested, skippedCompanion, excludedAction []string
+	var tested, excludedAction []string
 
 	for _, leaf := range leaves {
 		args := cmdArgsOf(leaf)
@@ -440,15 +450,12 @@ func TestJSONContract(t *testing.T) {
 		case catActionOnly:
 			excludedAction = append(excludedAction, path)
 			continue
-		case catCompanionRequired:
-			skippedCompanion = append(skippedCompanion, path)
-			continue
 		}
 
 		extra, ok := posArgs[path]
 		if !ok {
 			t.Errorf("H-10 sweep: leaf command %q has no fixture registered in contractPosArgs — "+
-				"either add one, or classify it (mutating/meta/verbatim/actionOnly/companionRequired) "+
+				"either add one, or classify it (mutating/meta/verbatim/actionOnly) "+
 				"so the gap is not silent", path)
 			continue
 		}
@@ -459,23 +466,21 @@ func TestJSONContract(t *testing.T) {
 		})
 	}
 
-	sort.Strings(skippedCompanion)
+	// Not a log line: an unstubbed companion route means a swept command ran
+	// degraded, which is the shape of the gap the deleted skip list was.
+	fixture.companion.assertRoutesComplete(t)
+
 	sort.Strings(excludedAction)
 	t.Logf("H-10 sweep: asserted the --json contract on %d read command(s): %s",
 		len(tested), strings.Join(tested, ", "))
 	t.Logf("H-10 sweep: excluded %d local-action command(s) (no structured payload by design): %s",
 		len(excludedAction), strings.Join(excludedAction, ", "))
-	t.Logf("H-10 sweep: SKIPPED %d command(s) — require a working companion connection "+
-		"(internal/companion.Discover + the companion's own HTTP routes); startCmdServer mocks only "+
-		"the core HA HTTP+WS surface, and standing up a second companion-shaped mock is out of "+
-		"proportion for this sweep: %s", len(skippedCompanion), strings.Join(skippedCompanion, ", "))
 }
 
 // assertJSONContract runs cmdArgs+extra with --json and --top 1 against the
-// shared fixture at dir, and checks the three H-10 properties: (1) strict
-// JSON, (3) no leading human header line, and — only when the output is
-// array-shaped, see below — (2) a second run with --top 1000 reports the
-// same element count.
+// shared fixture at dir, and checks all three H-10 properties: (1) strict
+// JSON, (3) no leading human header line, and (2) a second run with --top 1000
+// contains the same number of array elements, at every depth.
 func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 	t.Helper()
 
@@ -508,33 +513,64 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 		t.Fatalf("--json output does not start with JSON (a human header line precedes it):\n%s", small)
 	}
 
-	// (2) --top must not change the number of elements in JSON output
-	// (defeats defect A generically). This only means something for
-	// array-shaped output — a single-object result (script show, version,
-	// health, cc show, ...) has no "elements" for --top to truncate, and
-	// some object-shaped commands legitimately report live, --top-unrelated
-	// state (e.g. `cache status`'s on-disk db sizes, which grow simply from
-	// being opened) that a byte/deep-equality check across two separate
-	// process runs would flag as spuriously "changed". So: skip the second
-	// call entirely unless the first result is a JSON array.
-	smallArr, ok := parsedSmall.([]any)
-	if !ok {
-		return
-	}
-
+	// (2) --top must not remove a single element from JSON output (defeats
+	// defect A generically).
+	//
+	// Elements are counted at EVERY depth, not just the top level. The
+	// top-level-array-only version of this check was vacuous for an
+	// object-shaped answer that WRAPS a list, and `companion logs` was exactly
+	// that: its payload is {"entries": [...]} and its --top reached the
+	// companion as a source-side `limit`, so `--json --top 1` returned one
+	// record of the buffer as a perfectly-parseable complete answer. Counting
+	// is also why this can run against every command rather than only the
+	// array-shaped ones: a count is structural, so unlike a byte- or
+	// deep-equality comparison it does not trip over object-shaped commands
+	// that legitimately report live, --top-unrelated state (`cache status`
+	// reports on-disk db sizes, which grow simply from being opened).
+	//
+	// That immunity covers varying SCALARS only, not a varying array LENGTH:
+	// the two runs are two separate processes, so a command whose payload is a
+	// time-bucketed window straddling a boundary, or whose first run causes a
+	// side effect the second one reads, would legitimately return a different
+	// number of elements and fail here through no fault of --top. No command on
+	// this sweep does that today; one that did would need an exemption stated
+	// here, not a weaker count.
 	large := run(1000)
 	var parsedLarge any
 	if err := json.Unmarshal([]byte(large), &parsedLarge); err != nil {
 		t.Fatalf("--json output (--top 1000) does not parse as JSON: %v\noutput:\n%s", err, large)
 	}
-	largeArr, ok := parsedLarge.([]any)
-	if !ok {
-		t.Fatalf("--json output shape changed between --top values: --top 1 was an array, --top 1000 was not\n--top 1:\n%s\n--top 1000:\n%s",
-			small, large)
+	_, smallIsArr := parsedSmall.([]any)
+	_, largeIsArr := parsedLarge.([]any)
+	if smallIsArr != largeIsArr {
+		t.Fatalf("--json output shape changed between --top values: --top 1 array=%v, --top 1000 array=%v\n--top 1:\n%s\n--top 1000:\n%s",
+			smallIsArr, largeIsArr, small, large)
 	}
-	if len(smallArr) != len(largeArr) {
+	if got, want := countJSONElements(parsedSmall), countJSONElements(parsedLarge); got != want {
 		t.Fatalf("--top changed the number of JSON elements (defect A): --top 1 -> %d element(s), --top 1000 -> %d element(s)\n--top 1:\n%s\n--top 1000:\n%s",
-			len(smallArr), len(largeArr), small, large)
+			got, want, small, large)
+	}
+}
+
+// countJSONElements returns the total number of array elements in a decoded
+// JSON value, at every depth — the quantity H-10's clause (2) says --top may
+// never change.
+func countJSONElements(v any) int {
+	switch t := v.(type) {
+	case []any:
+		n := len(t)
+		for _, e := range t {
+			n += countJSONElements(e)
+		}
+		return n
+	case map[string]any:
+		n := 0
+		for _, e := range t {
+			n += countJSONElements(e)
+		}
+		return n
+	default:
+		return 0
 	}
 }
 

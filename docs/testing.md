@@ -22,6 +22,20 @@ Each layer has its own `make` target, and each layer is also enforced independen
 
 A layer only gates what its tests actually assert, which is a separate question from how many there are — see [Writing a Test That Actually Gates Something](#writing-a-test-that-actually-gates-something).
 
+### This document states no test counts
+
+It used to state four, and all four had drifted — in both directions, twice. Correcting them turned out to be the harder half of the problem: three plausible ways of counting by hand gave three different answers, because each silently answers a different question. Grepping the files that carry `//go:build integration` misses a tagged file that lives outside `internal/integration/`; counting the directory instead includes its `TestMain`, which is not a test, and its untagged files, which are not in the tier. There was no stale number to simply refresh — there was no agreed number to refresh it to.
+
+The counts are therefore derived on demand rather than written down:
+
+```bash
+make testcount
+```
+
+It prints one `<tier> <count>` line per tier — `unit`, `integration`, `companion`, `discovery` — so the output reads the same to a person and to a script, and it needs no Docker. The numbers come from the same scan the assertion floor uses (see [Honest Gaps](#honest-gaps)), which counts exactly the functions `go test` would run and nothing else. `dev/testcount.sh` explains why that scan is the oracle, and why `go test -tags=<tier> -list` — the obvious candidate, since it reports what would run — is not one.
+
+Wherever this document would otherwise have quoted a number about itself, it names the gate that derives it instead. A number nobody can regenerate is indistinguishable from a number nobody has checked.
+
 ---
 
 ## Layer 1: Unit Tests
@@ -44,8 +58,6 @@ What the unit tests cover:
 - **`internal/haapi/`** — The low-level HA HTTP client: authentication headers, retry logic, and WebSocket connection handling. These tests use a small in-process HTTP server to simulate HA responses, which is the appropriate level of isolation for protocol-level concerns.
 - **`internal/cmd/`** — Command-level utility functions: `parseSince()` for relative time expressions, entity pattern matching, domain filtering, token budget policy, and a few others. The command tests also verify that `hactl --help` produces output and that `hactl version` includes the expected string.
 - **`internal/writer/`** — YAML diff generation, automation file detection, and backup file naming. The writer is used by the write-path commands (`auto apply`, `rollback`), and it is important that diffs are correct before anything is written to disk.
-
-Roughly 850 unit test functions exist across these packages. That number drifts as the code evolves; treat it as an order of magnitude, and remember that the count says nothing about what any of them assert.
 
 ---
 
@@ -80,13 +92,17 @@ Write-path tests (those that actually modify HA configuration) are isolated in `
 
 ### Fixtures
 
-Fixtures are directories in `testdata/fixtures/` that are mounted as the HA config directory when a container starts. There are three of them:
+Fixtures are directories in `testdata/fixtures/` that are mounted as the HA config directory when a container starts. That directory is the list — a test selects one with `hatest.WithFixture("<name>")` — and each one below exists for a reason worth knowing:
 
-**`basic/`** is the default. It contains a minimal `configuration.yaml` that enables the standard integrations (recorder, REST API, automation engine) and an `automations.yaml` with three simple automations. Most integration tests run against this fixture.
+**`basic/`** is the default. It contains a minimal `configuration.yaml` that enables the standard integrations (recorder, REST API, automation engine) and an `automations.yaml` with a few simple automations. Most integration tests run against this fixture.
 
 **`faulty/`** exists specifically for testing error handling. Its `automations.yaml` contains a Jinja template that references a non-existent sensor, a disabled automation, and one working automation for comparison. Tests using the faulty fixture call `getFaultyHA(t)` to get a lazily-initialized container for that fixture — it is only started if a faulty test actually runs.
 
-**`realistic/`** is modelled after a real HA installation. It includes template sensors, input helpers, a configured `system_log`, and 11 diverse automations (door lights, climate schedules, humidity-based ventilation, morning and night routines, a power spike alert, guest and vacation mode automations, and one deliberately disabled legacy automation). Before the realistic tests run, entity history is seeded by calling HA's service API directly — this allows the `ent hist` and `ent anomalies` commands to be tested against data that has meaningful variance.
+**`realistic/`** is modelled after a real HA installation. It includes template sensors, input helpers, a configured `system_log`, and a spread of diverse automations (door lights, climate schedules, humidity-based ventilation, morning and night routines, a power spike alert, guest and vacation mode automations, and one deliberately disabled legacy automation). Before the realistic tests run, entity history is seeded by calling HA's service API directly — this allows the `ent hist` and `ent anomalies` commands to be tested against data that has meaningful variance.
+
+**`oracle/`** exists for invariant H-8, distinguishability: every identifier that *can* differ *does* differ, and every automation is reachable by a real state trigger, so it actually produces traces. The older fixtures already had divergent automation ids, but nothing ever fired them, so the divergence was inert and a real defect — traces keyed by `object_id` instead of the config id — stayed invisible through the entire integration tier. It also enables `demo:`, which is the only supported way to get real *devices*: HA has no "create device" command, and an entity's effective area falls back to its device's area, so that path cannot be tested without them.
+
+**`lovelace-yaml/`** pins the default dashboard to YAML mode (`lovelace: {mode: yaml}` plus a `ui-lovelace.yaml`). It is an oracle fixture: `lovelace_oracle_test.go` asks a live HA how a YAML-mode default actually answers — retrievable, not writable, and listed under the reserved slug `lovelace` — rather than letting hactl assume. That assumption is where a real defect came from, so the fixture exists to keep the answer coming from HA on every image the tier runs.
 
 ### Golden files
 
@@ -130,10 +146,10 @@ Almost every hactl command has a corresponding integration test file:
 | Error paths | `error_test.go` | Invalid input, missing resources |
 | Faulty fixture | `faulty_test.go` | Error handling with broken templates and disabled automations |
 | Realistic fixture | `realistic_test.go` | Real-world config, WebSocket logs, seeded history |
-| HA API contract | `contract_test.go` | Schema compliance for 8 HA REST/WebSocket endpoints |
+| HA API contract | `contract_test.go` | Field-level schema compliance for the HA REST and WebSocket endpoints hactl decodes |
 | Golden snapshots | `golden_capture_test.go` | Output format stability |
 
-Roughly 235 integration test functions cover these areas.
+The table is a map of where to look, not a census: `internal/integration/` holds more files than it lists, including the oracle suites described under [Fixtures](#fixtures). `make testcount` reports the tier's size.
 
 ### Contract tests
 
@@ -145,11 +161,11 @@ The tests in `contract_test.go` verify that the HA API behaves the way hactl exp
 
 The companion is an optional sidecar service that gives hactl direct filesystem access to the HA configuration directory, which is needed for write-path operations when hactl is not running on the same host as HA. The companion tests verify that this service works correctly and securely.
 
-Because the companion needs to run alongside HA on a shared volume, these tests use Docker Compose rather than testcontainers. The compose file starts HA stable and the companion image together, mounts a shared `ha-config` volume, seeds it with YAML files, and then runs 36 tests:
+Because the companion needs to run alongside HA on a shared volume, these tests use Docker Compose rather than testcontainers. The compose file starts HA stable and the companion image together, mounts a shared `ha-config` volume, seeds it with YAML files, and then runs the tier, which covers:
 
 - **CRUD operations**: writing, reading, and listing config files through the companion API
 - **Security**: attempts to read files outside the config directory (path traversal) and requests for sensitive files (secrets, tokens) are verified to fail
-- **OpenAPI contract**: three tests that validate the companion's API responses against its published OpenAPI schema
+- **OpenAPI contract**: validation of the companion's API responses against its published OpenAPI schema, including a check that the spec and the client's endpoint set have not drifted apart
 
 To run:
 
@@ -188,7 +204,7 @@ make test-int-discovery
 # equivalent: go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
 ```
 
-The harness boots in roughly 15 seconds (mostly the one-time Companion image build), then runs its nine tests in under three.
+The harness boots in roughly 15 seconds (mostly the one-time Companion image build), then runs its tests in under three.
 
 ---
 
@@ -196,9 +212,11 @@ The harness boots in roughly 15 seconds (mostly the one-time Companion image bui
 
 This section exists because of a specific failure. `hactl trace show` rendered
 every automation run — including failures — as a bare `  .    PASS` with no
-steps, against real Home Assistant, for months. During that time the suite had
-over a thousand unit tests and more than two hundred integration tests, and all
-of them were green. A separate audit then found that the entire automation write
+steps, against real Home Assistant, for months. During that time the unit and
+integration tiers were both already large — larger than most people would guess
+from the size of the tool — and every test in both was green. (No count here on
+purpose: `dev/testcount.sh` prints today's, and a number frozen into this
+sentence would be one more hand-written count with nothing to keep it true.) A separate audit then found that the entire automation write
 path could be replaced with a no-op and both tiers would still pass.
 
 Neither was a gap in *how much* was tested. Both were failures in *what the tests
@@ -348,8 +366,9 @@ product does not have.
 ## Running Tests Locally
 
 **The Docker roundtrip is mandatory.** `make gates` is the only definition of
-done: it runs lint, the unit tier, and all three Docker tiers, and refuses to
-start when Docker is not running rather than silently narrowing what was
+done: it runs lint in every build configuration, the reachability, assertion-floor
+and surface-closure gates, the unit tier, and all three Docker tiers, and refuses
+to start when Docker is not running rather than silently narrowing what was
 verified. `make test` is the unit tier alone and is never acceptance — it starts
 no Home Assistant, so it cannot see a wrong lookup key or a missing registry
 fallback. Install the pre-push hook with `make hooks`.
@@ -384,11 +403,13 @@ docker info
 
 The test suite only works as a quality gate if it runs automatically on every change. hactl uses GitHub Actions for this. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and runs on every push to `main` and every pull request targeting `main`.
 
-The pipeline has five jobs, all running in parallel:
+The jobs run in parallel; `ci.yml` is the list of them, and each corresponds to a `make` target a developer runs locally:
 
-**Lint** runs `golangci-lint` with a strict configuration (version 2 format). It checks for error handling issues, code style, security-sensitive patterns (`gosec`), and several other linters. A linting failure blocks merge.
+**Lint** runs `golangci-lint` with a strict configuration (version 2 format), once per build configuration — untagged and then each of the three test tags — so that no file behind a build tag is invisible to the linters. It checks for error handling issues, code style, security-sensitive patterns (`gosec`), and several other linters. A linting failure blocks merge.
 
-**Unit Tests** runs `make test` on a fresh checkout. This is fast and provides immediate feedback on basic correctness.
+**Reachability** runs `make deadcode`. It fails when a function is unreachable from the `hactl` binary and not on the recorded allowlist — see [Delete code the binary cannot reach](#delete-code-the-binary-cannot-reach).
+
+**Unit Tests** runs `make test-assert-floor` as its own step and then `make test`, followed by the coverage threshold check. The assertion floor gets its own step because it judges the tagged Docker tiers too, from source, so it is worth its own red X rather than being buried in the unit tier's output. The surface closure gates are ordinary packages, so `make test` reaches them here; `make test-surface` differs only in printing each ledger.
 
 **Integration Tests** is where most of the work happens. It runs `make test-int` three times, in parallel, against three different versions of Home Assistant:
 
@@ -400,9 +421,13 @@ The `stable` and `prev` runs are required: a failure in either one blocks the pu
 
 **Vulnerability Check** runs `govulncheck` against the Go module graph. It checks known CVEs in the Go vulnerability database. A vulnerability finding in a direct dependency blocks merge.
 
-**Companion Tests** runs `make test-companion`. Same rules as unit tests — failure blocks merge.
+**Companion Tests** runs `make test-companion` twice: once against the companion version the vendored OpenAPI spec pins, and once against the companion's `main`. The pinned leg is required; the `main` leg is advisory, for the same reason the HA `dev` leg is — it gives advance notice of an unreleased sidecar without making every PR depend on it.
 
-Beyond `ci.yml`, there are two further automated checks:
+**Discovery Tests** runs `make test-int-discovery` on the same two-leg matrix, with the same required/advisory split.
+
+**All Gates Green** is an aggregating job that runs after the others and fails unless every required one succeeded. It exists so that "the Docker tiers were skipped" cannot look like a green run: a single required check on the branch protection rule cannot be satisfied by a subset.
+
+The repository has further automation outside `ci.yml`:
 
 **CodeQL** (`.github/workflows/codeql.yml`) runs a static security analysis on every push and pull request, and also on a weekly schedule. It looks for classes of bugs — SQL injection patterns, improper input handling, and similar — that static type checking does not catch. Findings appear as code scanning alerts in the repository.
 
@@ -467,21 +492,29 @@ No test suite is complete, and this one is no exception. The following areas are
 
 **Systematic `--dry-run` coverage**: The `auto apply --dry-run` path is tested, but not every write-path command has an explicit test that verifies the dry-run flag prevents any mutation.
 
-**Assertion strength, measured**: an audit in July 2026 found 31 of the integration tests contained no positive assertion at all — the strongest example being a test whose entire body was `out := runHactl(...)` followed by `_ = out`. Those have not all been rewritten yet. Test *counts* in this document are therefore an upper bound on what is actually gated, and a poor proxy for it.
+**Assertion strength**: an audit in July 2026 found integration tests that contained no positive assertion at all — the strongest example being a test whose entire body was `out := runHactl(...)` followed by `_ = out`. It ran a real command against a real Home Assistant and threw the answer away.
+
+That is now a gate rather than a finding, so this document does not quote how many such tests remain — the gate does, and it holds the number at zero. `make test-assert-floor` (invariant H-19, `internal/testaudit`) parses every test function in the repository from disk, including the build-tag-gated Docker tiers, and fails any whose body cannot reach a `t.Error`/`t.Fatal` guarded by something other than an error check. `if err != nil { t.Fatalf(...) }` does not count: every command that runs at all passes it. Neither does a `t.Skip`. A test that genuinely has nothing to observe must say so in its doc comment as `//test:no-assert <reason>`; the reason is mandatory, it is printed, and the directive itself fails the gate once the test starts asserting, so an exemption cannot outlive its cause. Run the target with `-v` for the per-tier tally.
+
+What the floor does not measure is assertion *strength* — one `assertContains` on a header row passes it. A test count therefore remains an upper bound on what is gated, and a poor proxy for it, which is the other half of why this document states none.
 
 **Script write path**: closed. `auto apply`/`rollback` (H-4), the dashboard and entity-registry families, and now the companion-backed families — `script create|apply|delete`, `tpl create|delete`, `helper create|delete` — all have round-trip gates that read back from HA (`internal/companiontest/write_config_test.go`, `make test-companion`). Deleting the backup, or the write, or the ghost cleanup from any of them fails a named test.
 
 Closing it turned up three defects the client-level tests could not see, because they drove the companion's API and read back through the companion: `script delete`/`tpl delete` left the entity registered as an `unavailable` ghost (`auto delete` had always cleaned it up), and `tpl create`/`script create` discarded HA's reload confirmation, so both reported success for a definition HA might never have read. The rig had the same blind spot: HA's onboarding config !include's automations, scripts and scenes and nothing else, so the seeded `template.yaml` was never loaded at all.
 
-**Dry-run previews resolve their target**: fixed. Thirteen write commands accepted a fabricated id and printed a confident "would do X" plan at exit 0, and `script create`/`helper create` never read the file they were about to send. Every preview now resolves first and fails where `--confirm` would (H-2). `--json` on a preview is no longer a no-op either: previews share one shape that renders as text or as an object stating `"dry_run": true`.
+**Dry-run previews resolve their target**: fixed. Write commands accepted a fabricated id and printed a confident "would do X" plan at exit 0, and `script create`/`helper create` never read the file they were about to send. Every preview now resolves first and fails where `--confirm` would (H-2). `--json` on a preview is no longer a no-op either: previews share one shape that renders as text or as an object stating `"dry_run": true`.
+
+The scope of that fix was originally a hand-written list of the affected commands, and the list missed one: `auto apply`, whose preview prints `dry-run: no changes written` rather than the `dry-run: would …` the list had been grepped for. Which commands are affected is now derived instead of listed — `make test-surface` enumerates every `--confirm`-gated entrypoint and fails any that assembles a preview some way other than through the one renderer that consults `--json` (`dev/surfaces/preview.manifest`, ceiling 0).
 
 Seven unit tests and one integration test asserted the old behaviour as correct and were inverted; `TestDashDeleteAgreesOnUnknownDashboard` replaces a pair that documented the disagreement without naming it — one asserted the confirmed run fails on an unknown dashboard, its neighbour asserted the dry run succeeds for the same argument.
 
 **The timeseries cache is write-only**: `hactl ent hist` writes samples on every call and nothing ever reads them back — `TSStore.GetSamples`, `LatestSample` and `ClearEntity` have no production callers. `cache clear` and `cache status` now cover the file, but the read path it exists to serve does not exist.
 
-**`ref replace` and the default dashboard**: `ref replace` reports `skipped: not storage-mode` for the default dashboard in every case, because it gates on a `lovelace/info` field HA does not emit. The correct gate is an open design question — HA exposes no read-only call that reports the default dashboard's config mode — so the current behaviour asserts a fact hactl never established. Tracked, not fixed.
+**`ref replace` and the default dashboard**: fixed. `ref replace` used to report `skipped: not storage-mode` for the default dashboard in every case, because it gated on a `lovelace/info` field HA does not emit — a check that could only ever say "skip", on the one dashboard most instances actually use. HA exposes no read-only call reporting the default's config mode, so the gate was replaced by the only call that answers the question: attempting `lovelace/config` and classifying the three outcomes (a document, `config_not_found`, or anything else). That classification is oracled against a live HA in both states (`internal/integration/lovelace_oracle_test.go`), and the vacuous check is deleted rather than corrected (D-6).
 
-**Wire-shape coverage**: hactl decodes roughly 28 WebSocket commands and 15 REST endpoints from Home Assistant. The `contract_test.go` cases used to be *proxies* — they asserted a command succeeded, not that the payload had the expected shape, and a mismatched shape decodes to a zero value rather than an error, so a proxy could not detect one. Two of them named an endpoint they never called (`TestContract_AutomationConfigAPI` ran `auto ls`; `TestContract_WebSocket_TraceList` ran `auto ls --json`), and two asserted nothing at all. Those now call the endpoint they name and assert the decoded fields against HA's own answer, and the field shapes behind the previously unguarded surfaces — `trace/get` internals (a real errored run must decode to a fail outcome, a finished run to pass), `/api/logbook` context attribution fields, and the `/api/diagnostics/config_entry/{id}` envelope — are pinned too. The remaining gap is the HA surfaces no contract or oracle test drives at all. On the companion seam the field-level contract is now complete and enforced in both directions (invariant H-13, `internal/companion/contract_conformance_test.go`); H-7 still backstops the trace decode with the UNPARSED poison.
+A dashboard hactl could not read is now the same kind of event everywhere it can happen. `ref validate` used to drop such a dashboard at `slog.Debug` and still exit 0, so `--exit-code` — a CI gate whose whole job is to certify a tree — could pass green over a dashboard nobody read. Both commands now go through one dashboard walk that returns what it could not scan, and refuse rather than certify a partial sweep whenever the answer is consumed as a verdict (`--exit-code`) or by a machine (`--json`), unless `--allow-partial` is passed (D-7). An auto-generated default holds no config and so contributes a complete zero, not a partial. The search commands (`ref scan`, `dash grep`) answer a different question and still answer it, but say out loud what they could not read.
+
+**Wire-shape coverage**: the `contract_test.go` cases used to be *proxies* — they asserted a command succeeded, not that the payload had the expected shape, and a mismatched shape decodes to a zero value rather than an error, so a proxy could not detect one. Two of them named an endpoint they never called (`TestContract_AutomationConfigAPI` ran `auto ls`; `TestContract_WebSocket_TraceList` ran `auto ls --json`), and two asserted nothing at all. Those now call the endpoint they name and assert the decoded fields against HA's own answer, and the field shapes behind the previously unguarded surfaces — `trace/get` internals (a real errored run must decode to a fail outcome, a finished run to pass), `/api/logbook` context attribution fields, and the `/api/diagnostics/config_entry/{id}` envelope — are pinned too. The remaining gap is the HA surfaces no contract or oracle test drives at all. How large that surface is, this document does not say — two gates derive it and share one list of packages so that nothing can sit between them. H-14's sweep takes every `json.Unmarshal` inside `degeneracy.WirePackages` and forces each site to call `degeneracy.Check` or carry a written reason; the decode surface takes every decode the sweep cannot see — yaml unmarshals, decoder constructions, WebSocket `ReadJSON`, and any json decode outside those packages — and requires each to be dispositioned as proven, exempt or debt in `dev/surfaces/decode.manifest`. There is no third place for a decode to sit, so a new one fails a gate the day it appears rather than needing to be noticed and added to a tally here. On the companion seam the field-level contract is now complete and enforced in both directions (invariant H-13, `internal/companion/contract_conformance_test.go`); H-7 still backstops the trace decode with the UNPARSED poison.
 
 ---
 
@@ -495,6 +528,9 @@ docker info                          # Docker must be running
 make test                            # Unit tests only (~5s, no Docker)
 make test-int                        # Full suite (~2 min, Docker required)
 make test-companion                  # Companion tests (~5 min, Docker required)
+
+# How many tests each tier has (derived, no Docker)
+make testcount
 
 # Golden file maintenance
 HACTL_UPDATE_GOLDEN=1 make test-int  # Regenerate golden snapshots

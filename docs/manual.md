@@ -567,6 +567,7 @@ dashboards in a single pass, use `ref replace`.
 hactl ref scan sensor.wp_vl                    # every reference, config files + dashboards
 hactl ref validate                             # dangling references: pointers to entities that are gone
 hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
+hactl ref validate --exit-code --allow-partial  # gate on what could be read when a half is unavailable
 hactl ref replace sensor.old sensor.new        # dry-run: rename everywhere
 hactl ref replace sensor.old sensor.new --confirm   # apply
 hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even when some dashboards can't be scanned/written
@@ -590,6 +591,66 @@ checked (`entity_id`/`entity` in config; `entity`/`entities`/`badges`/
 entity. Two blind spots are the accepted price of zero false positives:
 **entities inside templates** (`{{ states('sensor.x') }}`) and entities under
 non-standard custom-card keys. `validate` reports; it never fixes.
+
+**A partial sweep never passes as a clean tree.** `validate` reads four sources —
+the **entity registry** and **live states** (whose union is the live set), the
+**config files** (via the companion), and **every dashboard** — and any of them
+can be unavailable. What happens then depends on who is reading the answer:
+
+- **Plain text, no `--exit-code`:** it answers, and the report body states its
+  scope — one `partial sweep: …` line per source it could not read, naming the
+  reason (`partial sweep: 2 of 3 dashboard(s) scanned; 1 could not be read`,
+  each skipped dashboard listed). A partial answer is still useful to a person
+  who can see it is partial.
+- **`--exit-code` or `--json`:** it **refuses** with a non-zero exit and
+  certifies nothing. `--exit-code` makes the answer a CI verdict and `--json`
+  makes it a document a program parses; in both cases a warning on stderr is
+  invisible, so certifying a tree that was only partly read would be a vacuous
+  gate — exactly what this command exists not to be.
+- **`--allow-partial`:** proceed over whatever could be read, in any mode. The
+  scope is stated in the report (in plain text) or on stderr (under `--json`,
+  whose shape is a contract), and `--exit-code` then gates on what was read.
+
+**One source is stricter than the other three, and that asymmetry is
+deliberate.** If **live states** cannot be read, `validate` refuses in *every*
+mode — plain text included — unless `--allow-partial` is given. The entity
+registry alone is not a usable live set: it holds no state-only entity
+(`sun.sun`, `zone.home`, `weather.*`, template sensors), so every reference to
+one would be reported as dangling and the answer would be mostly noise. The
+other three sources degrade the answer without destroying it, so plain text
+answers and only the machine-facing modes refuse. A missing **entity registry**,
+for example, costs the live set its disabled and currently-unloaded entities, so
+references to those are reported dangling when they are not.
+
+The two kinds of source fail in opposite directions, which is worth knowing when
+you read a partial report. An unread **config file or dashboard** means
+references there were never checked — the risk is a **false negative**, a
+dangling reference that goes unreported. A degraded **live set** (missing
+registry or missing states) means live entities are missing from the set the
+references are checked against — the risk is a **false positive**, a live entity
+reported as dangling. Both are gated the same way for the same reason: the
+machine consuming the answer cannot see the stderr warning that says it is
+degraded.
+
+An **auto-generated default dashboard is not a partial sweep**: HA holds no
+config for it, so it has no references to miss — zero there is the complete
+truth, and `--exit-code` stays green on a fresh instance.
+
+**A missing companion is not a degraded source, and `--allow-partial` does not
+cover it.** The companion is the *transport* the config half is read over, and
+every `ref` command connects to it before it reads anything at all — so if
+discovery fails, the command aborts in every mode, `--allow-partial` included,
+with `companion discovery: companion not found (HA does not expose the
+Supervisor WS proxy)`. On an installation without the add-on (HA Container, HA
+Core) `ref validate` therefore does not run at all, and there is no
+dashboard-only mode to fall back to. `dash grep` still works there — it goes
+over the WebSocket API alone — but, as the next paragraph says, it answers a
+different question.
+
+`ref scan` and `dash grep` behave differently on purpose: they answer "where is
+this value?", not "is the tree clean?", so an unreadable dashboard is reported as
+a warning on stderr and the hits they did find are still printed with exit 0 and
+an unchanged `--json` shape.
 
 `replace` is dry-run until `--confirm`. It aborts before writing anything if the
 companion cannot be reached, because a rename that silently skips config files is
@@ -642,8 +703,9 @@ hactl companion logs --component wireguard --since 1h --level warning
 ```
 
 Companion logs come from an in-memory ring buffer on the add-on, fetched over the
-same Ingress lifeline as the other companion commands. `--since`/`--top` set the
-time window and max line count. Requires hactl-companion.
+same Ingress lifeline as the other companion commands. `--since` sets the time
+window; `--top` caps the printed line count only — with `--json` you always get
+the whole window. Requires hactl-companion.
 
 ### Cache & version
 

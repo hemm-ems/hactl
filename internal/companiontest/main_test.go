@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/companiontestutil"
+	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 const (
@@ -77,16 +79,13 @@ func runTestMain(m *testing.M) int {
 	// long-lived token (there's no real Supervisor in this stack), and that
 	// token only exists after onboarding, so HA must come up first.
 	if err := composeUpServices(rootCtx, "homeassistant"); err != nil {
-		slog.Error("companion-test: compose up homeassistant failed", "error", err)
-		return 1
+		return setupFailed(rootCtx, "compose up homeassistant failed", err)
 	}
 
 	var err error
 	haURL, err = getMappedURL(rootCtx, "homeassistant", "8123")
 	if err != nil {
-		slog.Error("companion-test: get HA port", "error", err)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "get HA port", err)
 	}
 
 	slog.Info("companion-test: HA URL", "ha", haURL)
@@ -95,19 +94,14 @@ func runTestMain(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if readyErr := waitForURL(ctx, haURL+"/api/onboarding"); readyErr != nil {
-		slog.Error("companion-test: HA not ready", "error", readyErr)
-		dumpComposeLogs(rootCtx, "homeassistant")
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "HA not ready", readyErr)
 	}
 	slog.Info("companion-test: HA ready")
 
 	// Onboard HA
 	var onboardErr error
 	if haToken, onboardErr = completeOnboarding(ctx, haURL); onboardErr != nil {
-		slog.Error("companion-test: onboarding failed", "error", onboardErr)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "onboarding failed", onboardErr)
 	}
 	companionToken = haToken
 	slog.Info("companion-test: onboarding complete")
@@ -115,23 +109,17 @@ func runTestMain(m *testing.M) int {
 	// Start companion with the real HA token as SUPERVISOR_TOKEN.
 	envFile, envErr := writeSupervisorTokenEnvFile(companionToken)
 	if envErr != nil {
-		slog.Error("companion-test: writing supervisor token env file failed", "error", envErr)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "writing supervisor token env file failed", envErr)
 	}
 	defer os.Remove(envFile) //nolint:errcheck // best-effort cleanup of a temp file
 
 	if upErr := composeUpCompanionWithEnv(rootCtx, envFile); upErr != nil {
-		slog.Error("companion-test: compose up companion failed", "error", upErr)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "compose up companion failed", upErr)
 	}
 
 	compURL, err = getMappedURL(rootCtx, "companion", "9100")
 	if err != nil {
-		slog.Error("companion-test: get companion port", "error", err)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "get companion port", err)
 	}
 
 	slog.Info("companion-test: companion URL", "companion", compURL)
@@ -154,10 +142,7 @@ func runTestMain(m *testing.M) int {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel2()
 	if compReadyErr := waitForURL(ctx2, compURL+"/v1/health"); compReadyErr != nil {
-		slog.Error("companion-test: companion not ready", "error", compReadyErr)
-		dumpComposeLogs(rootCtx, "companion")
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "companion not ready", compReadyErr)
 	}
 	slog.Info("companion-test: companion ready")
 
@@ -171,9 +156,7 @@ func runTestMain(m *testing.M) int {
 	var buildErr error
 	hactlBin, buildErr = buildHactl(rootCtx)
 	if buildErr != nil {
-		slog.Error("companion-test: failed to build hactl binary", "error", buildErr)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "failed to build hactl binary", buildErr)
 	}
 	slog.Info("companion-test: hactl binary built", "path", hactlBin)
 
@@ -181,29 +164,52 @@ func runTestMain(m *testing.M) int {
 	var instErr error
 	instanceDir, instErr = createE2EInstanceDir(haURL, haToken, compURL, companionToken)
 	if instErr != nil {
-		slog.Error("companion-test: failed to create E2E instance dir", "error", instErr)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "failed to create E2E instance dir", instErr)
 	}
 	slog.Info("companion-test: E2E instance dir created", "path", instanceDir)
 
 	// Seed config files for CRUD tests
 	if err := seedConfigFiles(); err != nil {
-		slog.Error("companion-test: seeding config files failed", "error", err)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "seeding config files failed", err)
 	}
 	slog.Info("companion-test: config files seeded")
 
+	// This seeding is a starting point, not a guarantee: it writes
+	// .storage/core.{config_entries,entity_registry,device_registry} into an
+	// already-running HA, which holds those registries in memory and rewrites
+	// the files from memory on its own delayed save. Measured on 2026-07-28
+	// against HA stable in this very stack: creating one input_boolean helper
+	// rewrote core.entity_registry 10.44s later, the fixture's four entity rows
+	// were gone (23614 → 19144 bytes), and the companion answered
+	// `GET /v1/related/entity` with `404 Entity not found:
+	// sensor.hactl_related_source`. So every test that depends on the fixture
+	// must re-establish it for itself — see requireRelatedFixture in
+	// e2e_test.go — and this call only makes the fixture present for the tests
+	// that happen to run before the first flush.
 	if err := companiontestutil.SeedRelatedFixture(rootCtx, filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
-		slog.Error("companion-test: seeding related fixture failed", "error", err)
-		composeDown(rootCtx)
-		return 1
+		return setupFailed(rootCtx, "seeding related fixture failed", err)
 	}
 	slog.Info("companion-test: related fixture seeded")
 
 	// Run tests
 	code := m.Run()
+
+	// A failing test body is the case that most needs the containers' own
+	// account of what happened, and it was the only case that had none:
+	// dumpComposeLogs was wired into the setup-failure paths above, while the
+	// `composeDown -v` below runs unconditionally and deletes both containers.
+	// Two CI round trips were spent on this tier in two days reasoning about
+	// failures whose evidence had already been destroyed — a `tpl create` that
+	// reported "HA did not confirm reload" with no record of what HA answered,
+	// and an `ent related` whose fixture had been rewritten under it.
+	//
+	// This cannot mask the real failure: `code` is already decided, both dumps
+	// swallow their own errors, and nothing below inspects them.
+	if code != 0 {
+		slog.Error("companion-test: tests failed — dumping container logs before teardown", "code", code)
+		dumpComposeLogs(rootCtx, "homeassistant", failureLogTail)
+		dumpComposeLogs(rootCtx, "companion", failureLogTail)
+	}
 
 	// Tear down
 	if instanceDir != "" {
@@ -270,18 +276,90 @@ func writeSupervisorTokenEnvFile(token string) (string, error) {
 	return f.Name(), nil
 }
 
-// dumpComposeLogs prints a service's container logs. Every caller is on a
-// setup-failure path that is about to run `composeDown -v`, which deletes the
-// only record of what went wrong: without this, a readiness timeout reports the
-// URL it gave up on and nothing about the process that never answered. Failures
-// here are ignored on purpose — this runs while the tier is already failing and
-// must not replace the real error with its own.
-func dumpComposeLogs(ctx context.Context, service string) {
+// setupLogTail / failureLogTail — how many container log lines each caller of
+// dumpComposeLogs asks for. A setup failure happens while HA is still booting,
+// so the interesting lines are the last ones; a test-body failure happens
+// minutes later, with a whole suite's worth of HA chatter in between, so it gets
+// a longer tail. Both are bounded: an unbounded dump of HA's log is megabytes of
+// recorder noise that buries the twenty lines that matter.
+const (
+	setupLogTail   = 200
+	failureLogTail = 400
+)
+
+// setupFailed reports a setup failure with both containers' logs, then tears the
+// stack down. Every failure in runTestMain goes through it, because the two that
+// used to dump logs were not the two that needed them: the seedConfigFiles path
+// below can fail because HA never set an integration up, and it reported that
+// with the containers already deleted. `docker compose logs` for a service that
+// was never created prints nothing, which is the right answer for the early
+// failures.
+func setupFailed(ctx context.Context, what string, err error) int {
+	slog.Error("companion-test: "+what, "error", err)
+	dumpComposeLogs(ctx, "homeassistant", setupLogTail)
+	dumpComposeLogs(ctx, "companion", setupLogTail)
+	composeDown(ctx)
+	return 1
+}
+
+// composeLogs returns the tail of a service's container logs as a string, so a
+// failing assertion can quote them inline (see containerDiagnostics) rather than
+// only stream them past the test output. Errors are folded into the returned
+// text: this is called while something is already failing and must never
+// replace the real finding with its own.
+func composeLogs(ctx context.Context, service string, tail int) string {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), //nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
+		"logs", "--no-color", "--tail="+strconv.Itoa(tail), service)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("<could not read %s logs: %v>\n%s", service, err, out)
+	}
+	return string(out)
+}
+
+// dumpComposeLogs prints a service's container logs. Every caller is about to
+// run `composeDown -v`, which deletes the only record of what went wrong:
+// without this, a readiness timeout reports the URL it gave up on and nothing
+// about the process that never answered. Failures here are ignored on purpose —
+// this runs while the tier is already failing and must not replace the real
+// error with its own.
+func dumpComposeLogs(ctx context.Context, service string, tail int) {
 	slog.Error("companion-test: dumping container logs before teardown", "service", service)
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", filepath.Join(composeDir, "docker-compose.yaml"), "logs", "--no-color", "--tail=200", service) //nolint:gosec // G204: fixed docker CLI, arguments are test-owned paths and service names
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	_, _ = fmt.Fprintln(os.Stderr, composeLogs(ctx, service, tail))
+}
+
+// containerDiagnostics renders what both containers were doing, for a test-body
+// failure to carry inline. The companion's `call_service` logs HA's HTTP status
+// and body and then returns a bare bool, so when a write reports "HA did not
+// confirm reload" the reason exists in exactly two places — HA's log and the
+// companion's — and in neither of the strings the test can see. Quoting them at
+// the failure means the next occurrence explains itself instead of costing
+// another CI round trip.
+func containerDiagnostics(ctx context.Context) string {
+	var b strings.Builder
+	for _, service := range []string{"homeassistant", "companion"} {
+		log := composeLogs(ctx, service, failureLogTail)
+		_, _ = fmt.Fprintf(&b, "\n--- %s: ERROR/WARNING lines in the last %d ---\n%s", service, failureLogTail, severeLines(log))
+		_, _ = fmt.Fprintf(&b, "\n--- %s: last %d log lines ---\n%s", service, failureLogTail, log)
+	}
+	return b.String()
+}
+
+// severeLines extracts the ERROR/WARNING lines from a container log. HA reports
+// a rejected service call as one ERROR line inside hundreds of recorder and
+// state-machine lines, so the filtered view is what makes the dump readable —
+// the full tail is printed alongside it, never instead of it.
+func severeLines(log string) string {
+	var kept []string
+	for line := range strings.SplitSeq(log, "\n") {
+		if strings.Contains(line, "ERROR") || strings.Contains(line, "WARNING") {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) == 0 {
+		return "(none)\n"
+	}
+	return strings.Join(kept, "\n") + "\n"
 }
 
 func composeDown(ctx context.Context) {
@@ -367,17 +445,138 @@ func seedConfigFiles() error {
 		}
 	}
 	newConfig += "\n"
-	if newConfig == rawConfig.Content {
-		return nil
-	}
-	if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
-		return fmt.Errorf("wiring includes into configuration.yaml: %w", err)
+	configRewritten := newConfig != rawConfig.Content
+	if configRewritten {
+		if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
+			return fmt.Errorf("wiring includes into configuration.yaml: %w", err)
+		}
 	}
 
 	// A new top-level key is a new integration, and no reload service sets one
 	// up — `template.reload` does not even exist until the template integration
 	// has been set up once. Only a restart makes HA read the file.
-	return restartHA()
+	//
+	// Two conditions, either of which restarts, because neither alone is safe.
+	// The early `return nil` that used to sit here restarted only when this run
+	// edited configuration.yaml, and so skipped the restart whenever the file
+	// already carried both !includes — the state of any /config a previous run
+	// left behind (`docker compose down` without `-v`, or a stack left up for
+	// manual poking). Nothing would then have set the template integration up,
+	// so `template.reload` would not exist, every `tpl create` in the tier would
+	// report "HA did not confirm reload", and the CLI's warning would blame a
+	// missing `template: !include template.yaml` that is demonstrably present.
+	// hactl-companion records the same trap from the other side in
+	// tests/integration/test_live.py.
+	//
+	// Gating on the services alone closes that hole and opens the mirror one:
+	// `script.reload` and `automation.reload` exist on a bare HA regardless of
+	// anything this file does, so a future seeded domain whose reload service is
+	// already registered for some other reason would get a fresh `!include` here
+	// and no restart, and HA would never read the file it points at. Passing
+	// configRewritten through keeps the old condition as well as the new one.
+	return ensureReloadServices(configRewritten)
+}
+
+// reloadServicesNeeded are the `<domain>.reload` services this tier's write
+// tests depend on: the companion answers every create/apply/delete with
+// `reloaded`, and it obtains that by calling `<domain>.reload` over HA's REST
+// API. `template` and `input_boolean` are wired by seedConfigFiles above;
+// `automation` and `script` come from HA's own default configuration. All four
+// are listed because a missing one is invisible until a test 100 lines away
+// fails for a reason that names the wrong cause.
+var reloadServicesNeeded = []string{"template", "input_boolean", "script", "automation"}
+
+// ensureReloadServices makes HA's service registry a checked precondition of the
+// tier instead of a hope. A reload service that does not exist is a 400 "Service
+// not found" inside the companion, which reaches the CLI as a bare
+// `reloaded: false` — the reason discarded on the way — so without this the
+// tier's own setup can hand every write test a misleading failure.
+//
+// configRewritten is seedConfigFiles' answer to "did this run just change
+// configuration.yaml?". True forces the restart regardless of the registry: a
+// file HA has not re-read since it was written is not made readable by a reload
+// service that happened to be there already. See the note at the call site.
+func ensureReloadServices(configRewritten bool) error {
+	ctx := context.Background()
+
+	// One look before restarting: on a /config that already has the integrations
+	// set up, and that this run did not touch, there is nothing to do — and a
+	// restart is 5-10s of the tier's budget.
+	if !configRewritten {
+		if missing, err := missingReloadServices(ctx); err == nil && len(missing) == 0 {
+			slog.Info("companion-test: reload services already registered; no restart needed", "services", reloadServicesNeeded)
+			return nil
+		}
+	}
+
+	if err := restartHA(); err != nil {
+		return err
+	}
+
+	// Polled, not sampled once: waitForCoreRunning returns when HA reports
+	// RUNNING, and HA reaches RUNNING while integrations that are slow to set up
+	// are still setting up. The elapsed time is logged on success because it is
+	// the near-miss detector — if a run ever needs 80 of these 90 seconds, the
+	// next change to this tier should know that before it trips.
+	//
+	// Failing here cannot create a failure mode the tier did not already have:
+	// with `template.reload` absent, every `tpl create` reports "HA did not
+	// confirm reload" and the tpl round trip fails anyway. This only decides
+	// whether that is reported once, at setup, naming the actual cause — with
+	// both containers' logs attached by setupFailed — or four tests later
+	// blaming an !include that is present.
+	start := time.Now()
+	missing, err := waitForReloadServices(ctx, reloadServicesWait)
+	if err != nil {
+		return fmt.Errorf("reading HA's service registry after restart: %w", err)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("HA registered no %v reload service(s) in the %s after the restart that wired their !includes; "+
+			"every create in those families would report \"HA did not confirm reload\" and blame a missing !include that is present "+
+			"(HA's log is above; observed once out of 15 local runs, under saturated CPU)", missing, reloadServicesWait)
+	}
+	slog.Info("companion-test: reload services registered", "services", reloadServicesNeeded, "after", time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// reloadServicesWait is how long HA gets, after it reports RUNNING, to finish
+// registering the reload services. Chosen against the tier's own budget: the
+// `go test -timeout` is 300s and a healthy run of this tier is ~55s, so a
+// setup that burns this whole window still fails inside the budget with logs
+// attached rather than being cut off mid-dump.
+const reloadServicesWait = 90 * time.Second
+
+// waitForReloadServices polls until every service in reloadServicesNeeded is
+// registered, returning the ones still missing when the deadline passes.
+func waitForReloadServices(ctx context.Context, within time.Duration) ([]string, error) {
+	deadline := time.Now().Add(within)
+	for {
+		missing, err := missingReloadServices(ctx)
+		if err == nil && len(missing) == 0 {
+			return nil, nil
+		}
+		if time.Now().After(deadline) {
+			return missing, err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// missingReloadServices reports which of reloadServicesNeeded HA does not have a
+// `.reload` service for.
+func missingReloadServices(ctx context.Context) ([]string, error) {
+	client := haapi.New(haURL, haToken)
+	var missing []string
+	for _, domain := range reloadServicesNeeded {
+		exists, err := client.ServiceExists(ctx, domain, "reload")
+		if err != nil {
+			return nil, fmt.Errorf("checking %s.reload: %w", domain, err)
+		}
+		if !exists {
+			missing = append(missing, domain+".reload")
+		}
+	}
+	return missing, nil
 }
 
 // restartHA restarts Home Assistant through its own `homeassistant.restart`

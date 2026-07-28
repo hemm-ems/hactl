@@ -271,9 +271,12 @@ func runHelperShow(ctx context.Context, w io.Writer, helperID string) error {
 	// --json used to be a byte-for-byte no-op here: the flag was never read and
 	// the text form came back, exit 0, so a caller that standardised on --json
 	// got a hard parse error from a command every one of whose siblings returns
-	// an object. It survived because `helper show` sits on json_contract_test's
-	// companionRequired skip list, which is logged and not asserted on. Its
-	// verbatim sibling is `helper cat`; this command is not verbatim.
+	// an object. It survived because `helper show` sat on json_contract_test's
+	// `companionRequired` list, which the sweep printed instead of asserting
+	// on. That list is gone: the sweep's fixture now stands up a companion stub
+	// (json_contract_companion_test.go), so TestJSONContract asserts this
+	// branch. Its verbatim sibling is `helper cat`; this command is not
+	// verbatim.
 	if flagJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")

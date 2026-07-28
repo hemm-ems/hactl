@@ -14,7 +14,7 @@ VENDORED_SPEC  := testdata/companion-v1.yaml
 
 .PHONY: build lint check-markers deadcode tools test test-assert-floor test-surface surfaces \
         test-int test-companion test-int-discovery test-matrix gates require-docker \
-        hooks hooks-check clean sync-spec check-spec-drift
+        testcount hooks hooks-check clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -131,7 +131,16 @@ test-surface:
 # surfaces — print every ledger without judging it, for deciding what to work on.
 surfaces:
 	@go test ./internal/surfaceaudit/... -count=1 -v -run 'IsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
-	@go test ./internal/cmd/ -count=1 -v -run 'ConfirmSurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+	@go test ./internal/cmd/ -count=1 -v -run 'SurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+
+# testcount — the per-tier test counts, derived (TC-7). docs/testing.md states no
+# count of its own; it points here, because the four it used to state had all
+# drifted and three different hand-counting methods disagreed about the right
+# correction. Prints `<tier> <count>` per line. See dev/testcount.sh for why the
+# assertion-floor gate is the oracle and `go test -tags=<tier> -list` is not.
+# Needs no Docker and no HA.
+testcount:
+	@./dev/testcount.sh
 
 # ---------------------------------------------------------------------------
 # gates — the ONLY definition of "done".
@@ -197,14 +206,25 @@ hooks-check:
 	  echo "pre-push: MISSING at $$path/pre-push — run 'make hooks'"; exit 1; \
 	fi
 
+# The -timeout on every Docker tier bounds a HANG, not a slow machine. Each tier
+# boots real Home Assistant containers sequentially — the integration tier alone
+# starts seven, across two HA versions and five fixtures — so its wall-clock is
+# dominated by image pulls and HA's own start-up, neither of which this project
+# controls. 300s used to sit ~10% above the observed run and duly failed on a
+# slow CI runner with every test passing: the log read `PASS` and then `SIGQUIT`,
+# a green suite reported as a red build. That is the same defect as the
+# ceilings removed from TestE2EEntRelatedCompanionGraphCLI — a number small
+# enough to detect load is a number that fails on someone else's load.
+# The job-level `timeout-minutes: 10` in ci.yml is the real backstop for a wedged
+# tier; these numbers exist so a genuinely hung test dumps its goroutines first.
 test-int:
-	go test ./... -tags=integration -count=1 -timeout 300s
+	go test ./... -tags=integration -count=1 -timeout 900s
 
 test-companion:
-	go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...
+	go test -tags=companion -v -count=1 -timeout 900s ./internal/companiontest/...
 
 test-int-discovery:
-	go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
+	go test -tags=companion_discovery -v -count=1 -timeout 900s ./internal/companiontest_discovery/...
 
 test-matrix:
 	@echo "Run via CI (see .github/workflows/ci.yml)"
