@@ -9,11 +9,51 @@
 # had a round-trip test written for them; the tree carried thirty-four commands
 # on the day this ledger was written, and the gate, not this sentence, counts.
 #
-# `proven` is claimed only where a named test meets H-12 whole: it drives the
-# command with --confirm, reads the result out of Home Assistant itself —
-# /api/states, the WS entity/label/area registries, lovelace/config, the
-# config-entry list, the automation config API — compares the whole document, and
-# asserts at least one field the command never prints as an independent witness.
+# `proven` is claimed only where a named test meets H-12 whole. Four clauses:
+#
+#   1. it drives the command with --confirm;
+#   2. it reads the result out of Home Assistant itself — /api/states, the WS
+#      entity/label/area registries, lovelace/config, the config-entry list, the
+#      automation config API — and not back through hactl;
+#   3. it compares the whole document, so a write that dropped or added a key it
+#      was never asked to touch fails;
+#   4. it asserts at least one field the command never prints, as an independent
+#      witness that the document reached HA whole and not merely in name.
+#
+# Clauses 3 and 4 are stated for a write that leaves a document behind. A DELETE
+# leaves none: there is nothing to compare and no field to witness. They are not
+# waived for deletes — read literally that would condemn every delete in the
+# ledger, and this file would be inconsistent with itself. They land on the only
+# document a delete has, the one that must survive it:
+#
+#   3'. THE DRY RUN CHANGED NOTHING, checked independently. The command is run
+#       once without --confirm and the target must still be there afterwards —
+#       still listed, still stateful, still itself. This is the delete's
+#       whole-document compare: the document held to being unchanged is the one
+#       still standing.
+#   4'. THE ABSENCE IS COMPLETE, AND NOTHING ELSE WENT WITH IT. After --confirm,
+#       HA is read for the absence, and for an entity-producing family that means
+#       both halves — no registry entry AND no state (assertNoGhost, retried),
+#       because HA leaves a `restored` ghost behind and a gone-from-the-file check
+#       would pass straight over one. Where the definition shares a file with a
+#       seeded neighbour, the neighbour is read back too. That is a delete's
+#       independent witness: "a field the command never prints" has no
+#       delete-shaped analogue, but "a thing the command was never asked to touch"
+#       does.
+#
+# This is what separates the five deletes claimed `proven` here — dash, config,
+# script, tpl, helper — from `hactl auto delete`, which is debt, and it is worth
+# spelling out because clauses 3 and 4 read literally do not separate them at all.
+# All five run the dry run first and read the target back to prove it was inert
+# (from HA for four of them; through the companion, off the config file, for `tpl
+# delete`, whose definition HA exposes no API for). All five read HA for the
+# absence, the three entity-producing ones through assertNoGhost. The two that
+# share a YAML file with a seeded neighbour, `script delete` and `tpl delete`,
+# assert that neighbour still parses and still holds its own document.
+# TestE2EAutoDeleteByAliasCLI does none of it: it seeds, deletes with --confirm,
+# and polls the entity registry for the absence. That is clause 2 and nothing
+# else.
+#
 # Reading back through `hactl … ls`, `dash show --raw` or `ref scan` proves hactl
 # consistent with itself and is recorded as debt, which is what the law's second
 # paragraph demands. So is reading HA for one clause and stopping there: a
@@ -29,10 +69,13 @@
 # fall without ceremony and may only rise by editing this line on purpose.
 #
 # Raised 10 -> 11 on purpose: `hactl auto delete` was claimed `proven` on a test
-# that clears this file's stated bar (it does read HA) but meets almost none of
-# H-12's actual law. A `proven` that does not mean "the law is met" turns the
-# ledger into decoration, which is the failure mode the ledger exists to prevent,
-# so the entry moved to debt and the ceiling moved with it.
+# that reads HA — clause 2 — and does nothing else H-12 asks of a delete: no
+# inert dry run, no complete absence, no untouched neighbour. A `proven` that does
+# not mean "the law is met" turns the ledger into decoration, which is the failure
+# mode the ledger exists to prevent, so the entry moved to debt and the ceiling
+# moved with it. The bar above was sharpened in the same pass, because as first
+# written it condemned the other five deletes alongside it and named no
+# discriminator; the demotion is right, the reasoning it shipped with was not.
 #ceiling 11
 
 # --- proven: a named test writes with --confirm and reads HA back -------------
