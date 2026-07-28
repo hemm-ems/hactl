@@ -488,11 +488,123 @@ func TestRunRefValidate_RegistryOnlyRefusedWithoutAllowPartial(t *testing.T) {
 		t.Fatalf("expected allow-partial refusal, got %v", err)
 	}
 
-	// With --allow-partial it proceeds against the registry alone.
+	// With --allow-partial it proceeds against the registry alone — and says so
+	// in the report body, like every other source of the sweep. A degraded live
+	// set the reader cannot see is the same defect whichever half went missing.
 	withRefFlag(t, &flagRefAllowPartial)
 	buf.Reset()
 	if err := runRefValidate(context.Background(), &buf); err != nil {
 		t.Fatalf("with --allow-partial: %v", err)
+	}
+	for _, want := range []string{"partial sweep", "live states"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("the report body must state the missing live-states half (%q)\n%s", want, buf.String())
+		}
+	}
+}
+
+// unreadableRegistryValidateServer stands up a fake HA that answers /api/states
+// normally but fails config/entity_registry/list. Every other source of the
+// sweep is readable, so the registry is the only thing making the answer
+// partial. The companion reports one dangling config reference, so a run that
+// proceeds has something to print.
+func unreadableRegistryValidateServer(t *testing.T) {
+	t.Helper()
+	companionSrv := refEntitiesServer(t, `{"entities":[
+		{"location":"automations.yaml","path":"[0].trigger[0].entity_id","key":"entity_id","matched_value":"sensor.gone"}
+	]}`)
+	t.Cleanup(companionSrv.Close)
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list":    []any{},
+		"lovelace/config":             map[string]any{"views": []any{}},
+		"config/entity_registry/list": wsErrorResponse{Code: "error", Message: "registry boom"},
+	}, statesHandler(`[{"entity_id":"sensor.real","state":"21.5"}]`))
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+}
+
+// TestRunRefValidate_UnreadableRegistryRefusesUnlessAllowPartial is D-7's rule on
+// the source it missed. The entity registry is the third thing `ref validate`
+// reads, and a registry that will not list (a transient WS failure, a token whose
+// permissions differ for that call) left the live set short every disabled and
+// currently-unloaded entity — announced only at slog.Warn, which a machine
+// consumer cannot see. So `--exit-code`/`--json` received a verdict computed from
+// an entity set hactl knew was incomplete, and nothing on stdout said so.
+//
+// The degradation runs toward false positives rather than false negatives, which
+// makes the verdict wrong rather than falsely green — but wrong silently is still
+// what the gate exists to prevent, so the posture is the shared one.
+func TestRunRefValidate_UnreadableRegistryRefusesUnlessAllowPartial(t *testing.T) {
+	tests := []struct {
+		name        string
+		flags       []*bool
+		wantRefusal bool
+		// wantBody are strings the report body must carry when the run proceeds.
+		wantBody []string
+		// notInBody must be absent from the report body.
+		notInBody []string
+		// wantWarn requires the scope on stderr instead of in the body, which is
+		// where it has to go when the body's shape is a machine contract.
+		wantWarn bool
+	}{
+		{
+			name:        "exit_code_refuses",
+			flags:       []*bool{&flagRefExitCode},
+			wantRefusal: true,
+		},
+		{
+			name:        "json_refuses",
+			flags:       []*bool{&flagJSON},
+			wantRefusal: true,
+		},
+		{
+			name:  "exit_code_with_allow_partial_proceeds",
+			flags: []*bool{&flagRefExitCode, &flagRefAllowPartial},
+			// The mirror-image trap: an acknowledged partial must still be a
+			// usable answer, so the dangling reference is reported, not withheld.
+			wantBody: []string{"partial sweep", "entity registry", "sensor.gone"},
+		},
+		{
+			name:  "json_with_allow_partial_proceeds",
+			flags: []*bool{&flagJSON, &flagRefAllowPartial},
+			// --json is a machine contract: the scope goes to stderr so the
+			// document's shape does not change (H-10).
+			wantBody:  []string{"sensor.gone"},
+			notInBody: []string{"partial sweep"},
+			wantWarn:  true,
+		},
+		{
+			name:  "plain_text_answers_and_states_the_scope_in_the_body",
+			flags: nil,
+			// No --exit-code and no --json: a person can see the scope line, so
+			// the run answers rather than refusing — the registry half is not
+			// the stricter live-states half.
+			wantBody: []string{"partial sweep", "entity registry", "registry boom", "sensor.gone"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			unreadableRegistryValidateServer(t)
+			for _, f := range tc.flags {
+				withRefFlag(t, f)
+			}
+			logBuf := captureDefaultLogger(t)
+
+			var buf bytes.Buffer
+			err := runRefValidate(context.Background(), &buf)
+
+			if tc.wantRefusal {
+				assertPartialSweepRefused(t, err, buf.String(),
+					"--allow-partial", "the entity registry", "registry boom")
+				return
+			}
+			assertValidateProceeded(t, err, buf.String(), tc.wantBody, tc.notInBody)
+			if tc.wantWarn {
+				assertPartialSweepWarning(t, logBuf.String())
+			}
+		})
 	}
 }
 
@@ -575,8 +687,9 @@ func unscannableValidateServer(t *testing.T, lovelace any) {
 // assertPartialSweepRefused requires a partial sweep to end the command outright
 // — non-zero, naming what it could not read and the escape hatch, with nothing
 // written to the report, because a refusal that still prints a table has
-// certified something.
-func assertPartialSweepRefused(t *testing.T, err error, out string) {
+// certified something. wantIn are the substrings the refusal must name, so every
+// source of the sweep is held to one assertion shape rather than one per source.
+func assertPartialSweepRefused(t *testing.T, err error, out string, wantIn ...string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected a refusal, got nil (output: %q)", out)
@@ -585,7 +698,7 @@ func assertPartialSweepRefused(t *testing.T, err error, out string) {
 	if errors.As(err, &ec) {
 		t.Fatalf("a partial sweep must refuse outright, not certify with a dangling-ref verdict: %v", err)
 	}
-	for _, want := range []string{"--allow-partial", "(default)", "dashboard(s)"} {
+	for _, want := range wantIn {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal missing %q: %v", want, err)
 		}
@@ -681,7 +794,7 @@ func TestRunRefValidate_UnscannableDashboardRefusesUnlessAllowPartial(t *testing
 			err := runRefValidate(context.Background(), &buf)
 
 			if tc.wantRefusal {
-				assertPartialSweepRefused(t, err, buf.String())
+				assertPartialSweepRefused(t, err, buf.String(), "--allow-partial", "(default)", "dashboard(s)")
 				return
 			}
 			assertValidateProceeded(t, err, buf.String(), tc.wantBody, tc.notInBody)
