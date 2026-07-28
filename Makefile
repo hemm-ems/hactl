@@ -206,14 +206,25 @@ hooks-check:
 	  echo "pre-push: MISSING at $$path/pre-push — run 'make hooks'"; exit 1; \
 	fi
 
+# The -timeout on every Docker tier bounds a HANG, not a slow machine. Each tier
+# boots real Home Assistant containers sequentially — the integration tier alone
+# starts seven, across two HA versions and five fixtures — so its wall-clock is
+# dominated by image pulls and HA's own start-up, neither of which this project
+# controls. 300s used to sit ~10% above the observed run and duly failed on a
+# slow CI runner with every test passing: the log read `PASS` and then `SIGQUIT`,
+# a green suite reported as a red build. That is the same defect as the
+# ceilings removed from TestE2EEntRelatedCompanionGraphCLI — a number small
+# enough to detect load is a number that fails on someone else's load.
+# The job-level `timeout-minutes: 10` in ci.yml is the real backstop for a wedged
+# tier; these numbers exist so a genuinely hung test dumps its goroutines first.
 test-int:
-	go test ./... -tags=integration -count=1 -timeout 300s
+	go test ./... -tags=integration -count=1 -timeout 900s
 
 test-companion:
-	go test -tags=companion -v -count=1 -timeout 300s ./internal/companiontest/...
+	go test -tags=companion -v -count=1 -timeout 900s ./internal/companiontest/...
 
 test-int-discovery:
-	go test -tags=companion_discovery -v -count=1 -timeout 300s ./internal/companiontest_discovery/...
+	go test -tags=companion_discovery -v -count=1 -timeout 900s ./internal/companiontest_discovery/...
 
 test-matrix:
 	@echo "Run via CI (see .github/workflows/ci.yml)"
