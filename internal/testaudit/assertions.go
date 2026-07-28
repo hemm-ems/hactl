@@ -37,8 +37,11 @@
 // assertion helper from an invocation helper: `runHactl` returns the output it
 // captured, so its internal `t.Fatalf(… failed …)` and its degeneracy scan are
 // ambient — they apply identically to every test in the tier and therefore
-// distinguish none of them. Descending into it would mark all 273 integration
-// tests as asserting and the gate would prove nothing.
+// distinguish none of them. Descending into it would mark every integration
+// test as asserting and the gate would prove nothing. (This comment used to
+// state that tier's size as a number, which drifted stale; the tier tally this
+// package already computes is the one place that count lives — `make
+// testcount`, TC-7.)
 //
 // # What it deliberately does not catch
 //

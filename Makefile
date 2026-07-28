@@ -131,7 +131,7 @@ test-surface:
 # surfaces — print every ledger without judging it, for deciding what to work on.
 surfaces:
 	@go test ./internal/surfaceaudit/... -count=1 -v -run 'IsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
-	@go test ./internal/cmd/ -count=1 -v -run 'ConfirmSurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+	@go test ./internal/cmd/ -count=1 -v -run 'SurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
 
 # testcount — the per-tier test counts, derived (TC-7). docs/testing.md states no
 # count of its own; it points here, because the four it used to state had all
