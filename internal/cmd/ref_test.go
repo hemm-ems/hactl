@@ -608,6 +608,131 @@ func TestRunRefValidate_UnreadableRegistryRefusesUnlessAllowPartial(t *testing.T
 	}
 }
 
+// unreadableConfigValidateServer stands up a fake HA where every source of the
+// sweep reads except the config half: the companion rejects
+// GET /v1/ref/entities with a 403, so hactl can see the live set and the
+// dashboards and knows nothing at all about the YAML tree. 403 rather than 500
+// on purpose — it is a real failure (the token this instance was configured with
+// is not the one the companion is running with) and it does not go through
+// doWithRetry's 5xx backoff, so the table below costs one round trip per case.
+//
+// The default dashboard holds one dangling reference, so a run that proceeds has
+// something to print — and, more to the point, a run that forgets to record the
+// missing config half has a clean-looking table to print it under.
+func unreadableConfigValidateServer(t *testing.T) {
+	t.Helper()
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ref/entities" {
+			t.Errorf("unexpected companion path: %s", r.URL.Path)
+		}
+		http.Error(w, "companion token rejected", http.StatusForbidden)
+	}))
+	t.Cleanup(companionSrv.Close)
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list":    []any{},
+		"lovelace/config":             dashboardConfigWith("sensor.dash_gone"),
+		"config/entity_registry/list": []any{map[string]any{"entity_id": "sensor.real"}},
+	}, statesHandler(`[{"entity_id":"sensor.real","state":"21.5"}]`))
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+}
+
+// TestRunRefValidate_UnreadableConfigHalfRefusesUnlessAllowPartial is D-7's rule
+// on the config half, driven through runRefValidate the way the other three
+// sources are.
+//
+// It exists because the config half was the one source whose coverage stopped at
+// the gate function: TestValidateScanGateError hands validateScanGateError the
+// string "config files" by hand and asserts what it returns, which proves the
+// function and nothing about the command. Deleting `scope.configErr = entErr`
+// from runRefValidate left the whole internal/cmd package green — an unreadable
+// companion then printed a report with no scope line above it, which is the
+// exact shape of the defect D-7 was opened for, one source over. Mutation-checked
+// on 2026-07-28: with that assignment removed, plain_text and
+// json_with_allow_partial fail here.
+//
+// The two halves the table separates: the refusal (does the gate get called at
+// all, with the right half name and cause?) is decided before the recording, so
+// the refusing rows pass either way — only the proceeding rows watch the
+// recording, and they are the reason this test is not redundant with the gate's
+// own unit test.
+func TestRunRefValidate_UnreadableConfigHalfRefusesUnlessAllowPartial(t *testing.T) {
+	tests := []struct {
+		name        string
+		flags       []*bool
+		wantRefusal bool
+		// wantBody are strings the report body must carry when the run proceeds.
+		wantBody []string
+		// notInBody must be absent from the report body.
+		notInBody []string
+		// wantWarn requires the scope on stderr instead of in the body, which is
+		// where it has to go when the body's shape is a machine contract.
+		wantWarn bool
+	}{
+		{
+			name:        "exit_code_refuses",
+			flags:       []*bool{&flagRefExitCode},
+			wantRefusal: true,
+		},
+		{
+			name:        "json_refuses",
+			flags:       []*bool{&flagJSON},
+			wantRefusal: true,
+		},
+		{
+			name:  "exit_code_with_allow_partial_proceeds",
+			flags: []*bool{&flagRefExitCode, &flagRefAllowPartial},
+			// An acknowledged partial is still an answer: the dashboard reference
+			// hactl *could* check is reported, under a line saying what it could not.
+			wantBody: []string{"partial sweep", "config files could not be scanned", "sensor.dash_gone"},
+		},
+		{
+			name:  "json_with_allow_partial_proceeds",
+			flags: []*bool{&flagJSON, &flagRefAllowPartial},
+			// --json is a machine contract: the scope goes to stderr so the
+			// document's shape does not change (H-10).
+			wantBody:  []string{"sensor.dash_gone"},
+			notInBody: []string{"partial sweep"},
+			wantWarn:  true,
+		},
+		{
+			name:  "plain_text_answers_and_states_the_scope_in_the_body",
+			flags: nil,
+			// No --exit-code and no --json: a person can see the scope line, so the
+			// run answers rather than refusing — and the line names the cause, not
+			// just the fact.
+			wantBody: []string{
+				"partial sweep", "config files could not be scanned",
+				"companion token rejected", "sensor.dash_gone",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			unreadableConfigValidateServer(t)
+			for _, f := range tc.flags {
+				withRefFlag(t, f)
+			}
+			logBuf := captureDefaultLogger(t)
+
+			var buf bytes.Buffer
+			err := runRefValidate(context.Background(), &buf)
+
+			if tc.wantRefusal {
+				assertPartialSweepRefused(t, err, buf.String(),
+					"--allow-partial", "config files", "companion token rejected")
+				return
+			}
+			assertValidateProceeded(t, err, buf.String(), tc.wantBody, tc.notInBody)
+			if tc.wantWarn {
+				assertPartialSweepWarning(t, logBuf.String())
+			}
+		})
+	}
+}
+
 func TestRunRefValidate_ExitCodeFlagReturnsNonZero(t *testing.T) {
 	companionSrv := refEntitiesServer(t, `{"entities":[
 		{"location":"automations.yaml","path":"[0].trigger[0].entity_id","key":"entity_id","matched_value":"sensor.gone"}
