@@ -13,6 +13,13 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
+// TestRelatedEntityThroughDiscoveredIngress reads the same related-graph fixture
+// the companion tier reads, and deliberately does NOT re-establish it the way
+// internal/companiontest's requireRelatedFixture has to. The fixture is only
+// unstable where Home Assistant can rewrite the .storage files it lives in, and
+// this stack's docker-compose.yaml has no homeassistant service: the companion is
+// the only writer of /config here, so what TestMain seeded stays seeded. If a HA
+// container is ever added to this tier, this test needs that guard too.
 func TestRelatedEntityThroughDiscoveredIngress(t *testing.T) {
 	fakeSup.SetRequireSession(true)
 	defer fakeSup.SetRequireSession(false)

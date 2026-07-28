@@ -78,6 +78,136 @@ func runHactlE2EStreams(t *testing.T, args ...string) (string, string, error) {
 // sample of an ordering that nothing downstream re-canonicalises.
 const entRelatedRepeats = 3
 
+// The three numbers requireRelatedFixture runs on.
+//
+// relatedFixtureSettle is the one with content: Home Assistant persists its
+// registries through a *delayed* save, so re-seeding the fixture is only safe
+// once no such save is still pending — a save scheduled before we wrote the
+// files fires after we wrote them and overwrites us. Measured in this stack on
+// 2026-07-28: core.entity_registry was rewritten 10.44s after the mutation that
+// scheduled it. 12s is that number plus margin, and it is sufficient rather than
+// arbitrary: any save pending when we seeded has fired by the time the settle
+// window closes, and this test performs no registry mutation of its own to
+// schedule another. It is not a performance assertion — nothing here fails for
+// being slow.
+//
+// relatedFixtureDeadline bounds the whole loop so a permanently broken fixture
+// reports that instead of hanging until the tier's `go test -timeout`.
+const (
+	relatedFixturePoll     = 500 * time.Millisecond
+	relatedFixtureSettle   = 12 * time.Second
+	relatedFixtureDeadline = 90 * time.Second
+)
+
+// requireRelatedFixture re-establishes the related-graph fixture and does not
+// return until the companion actually reports it — the precondition every
+// assertion in TestE2EEntRelatedCompanionGraphCLI depends on, and the one CI
+// destroyed twice in two days.
+//
+// The mechanism, measured rather than reasoned about (2026-07-28, HA stable, in
+// this stack): companiontestutil.SeedRelatedFixture writes
+// .storage/core.{config_entries,entity_registry,device_registry} by `docker
+// compose exec` into an already-running HA. HA holds those registries in memory,
+// never read our rows, and rewrites each file from memory on its own delayed
+// save. Creating a single input_boolean helper — which is what the four
+// TestCreateAndGet* tests that run before this one each do — rewrote
+// core.entity_registry 10.44s later; the fixture's four entity rows were gone
+// (23614 → 19144 bytes) and the companion then answered `404 Entity not found:
+// sensor.hactl_related_source`.
+//
+// The CI failure of hactl PR #99 (run 30292682992) is the same mechanism one
+// file over, and it reproduces byte for byte: drop only the fixture's entries
+// from .storage/core.config_entries, leaving core.entity_registry and the
+// configuration.yaml block alone, and `ent related` prints exactly what CI
+// printed — "not in the registry (stale/renamed or deleted); 1 dangling
+// reference(s) still point here" over a single `yaml-reference` row. It reads as
+// a content mismatch and is not one: the `config-entry-reference` row needs the
+// fixture in core.config_entries, the `yaml-reference` row needs only the
+// entity registry and configuration.yaml, and HA rewrites the former without
+// ever touching the latter. Both rows are therefore checked below before this
+// test is allowed to assert anything.
+//
+// Also measured, on this tier as it runs today: a flush lands 8.8s (±0.02s over
+// four runs) after this test starts. The old test won that race by finishing in
+// under a second; CI, on other hardware, lost it.
+//
+// Seeding is idempotent (merge_storage_list replaces entries by id), so the
+// repair is simply to write the fixture again and confirm it took. Deliberately
+// NOT pre-boot seeding: probed on 2026-07-28, HA does not start with the fixture
+// on disk — device_registry._async_load reads `device["config_entries_subentries"]`,
+// the fixture's device rows have no such key, and HA dies with
+// `KeyError: 'config_entries_subentries'`, exit code 100, restarted by s6 into
+// the same crash until the 3-minute wait gives up. A fixture that can stop HA
+// from booting is worse than one that has to be re-applied.
+func requireRelatedFixture(t *testing.T) {
+	t.Helper()
+	ctx := t.Context()
+
+	seeds := 0
+	seed := func() {
+		seeds++
+		if err := companiontestutil.SeedRelatedFixture(ctx, filepath.Join(composeDir, "docker-compose.yaml"), "companion"); err != nil {
+			t.Fatalf("re-seeding the related fixture: %v", err)
+		}
+	}
+
+	seed()
+	deadline := time.Now().Add(relatedFixtureDeadline)
+	var intactSince time.Time
+	for {
+		intact, observed := relatedFixtureIntact(ctx)
+		switch {
+		case !intact:
+			if !intactSince.IsZero() {
+				t.Logf("HA's registry flush clobbered the seeded fixture %s into the settle window; re-seeding (%s)",
+					time.Since(intactSince).Round(time.Millisecond), observed)
+			}
+			intactSince = time.Time{}
+			seed()
+		case intactSince.IsZero():
+			intactSince = time.Now()
+		case time.Since(intactSince) >= relatedFixtureSettle:
+			t.Logf("related fixture intact for %s after %d seeding(s): %s", relatedFixtureSettle, seeds, observed)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the seeded fixture was clobbered by HA's registry flush and never stayed put: "+
+				"gave up after %s and %d seeding(s), needing %s of stability.\n"+
+				"This is not a content mismatch — the companion's answer is derived from "+
+				".storage files that HA rewrites from memory (see this helper's comment).\n"+
+				"last observation: %s", relatedFixtureDeadline, seeds, relatedFixtureSettle, observed)
+		}
+		time.Sleep(relatedFixturePoll)
+	}
+}
+
+// relatedFixtureIntact asks the companion whether both fixture-derived relations
+// are visible right now, and returns what it saw either way. The two rows are
+// the two halves that fail independently: `config-entry-reference` needs the
+// fixture's rows in core.config_entries *and* core.entity_registry, while
+// `yaml-reference` needs the entity registry rows plus the block in
+// configuration.yaml. A clobbered entity registry makes the companion 404 the
+// source entity outright, so an error here is a fixture state, not a transport
+// failure to report separately.
+func relatedFixtureIntact(ctx context.Context) (bool, string) {
+	res, err := testClient.RelatedEntity(ctx, companiontestutil.RelatedSourceEntityID, false)
+	if err != nil {
+		return false, fmt.Sprintf("companion GET /v1/related/entity: %v", err)
+	}
+	var haveConfigEntry, haveYAML bool
+	for _, entry := range res.Related {
+		switch {
+		case entry.EntityID == companiontestutil.RelatedGeneratedEntityID && entry.Relationship == "config-entry-reference":
+			haveConfigEntry = true
+		case entry.EntityID == companiontestutil.RelatedYAMLPeerEntityID && entry.Relationship == "yaml-reference":
+			haveYAML = true
+		}
+	}
+	return haveConfigEntry && haveYAML,
+		fmt.Sprintf("companion reports %d row(s) for %s (config-entry-reference=%v yaml-reference=%v): %+v",
+			len(res.Related), companiontestutil.RelatedSourceEntityID, haveConfigEntry, haveYAML, res.Related)
+}
+
 // TestE2EEntRelatedCompanionGraphCLI drives `ent related` through the real
 // companion several times and requires the same answer every time.
 //
@@ -98,15 +228,24 @@ const entRelatedRepeats = 3
 // nothing else in the suite watching for it.
 //
 // Scope, measured rather than assumed: `sensor.hactl_related_source` is absent
-// from both HA's entity registry and its state machine (the fixture's seeded
-// .storage entries do not survive HA's loader), so this command renders the
-// "not in the registry ... dangling reference(s)" branch and the graph consists
-// of the companion's two rows alone. The three registry-walk sources contribute
-// nothing at this tier, which means this test pins the companion half's order
-// and the renderer, not the map-iteration half. Recorded in
+// from both HA's entity registry and its state machine, so this command renders
+// the "not in the registry ... dangling reference(s)" branch and the graph
+// consists of the companion's two rows alone. The three registry-walk sources
+// contribute nothing at this tier, which means this test pins the companion
+// half's order and the renderer, not the map-iteration half. Recorded in
 // audits-2026-07-25/t9-t14-t21-t19-report.md; the fixture is worth repairing so
 // the other half gets covered, but that is a change to what this tier asserts,
 // not to what it forbids.
+//
+// Why HA does not know the fixture entities — the older note here said "the
+// fixture's seeded .storage entries do not survive HA's loader", which is not
+// what happens (TC-10: the doc is corrected where it is found wrong). HA's
+// loader never sees them: the fixture is written into a running HA, after the
+// last restart this tier performs, and HA reads .storage only at start-up. What
+// it does instead is rewrite those files from memory on a delayed save, which is
+// the flake requireRelatedFixture exists to repair — mechanism and measurements
+// are documented there. Handing the fixture to HA's loader was probed and is
+// worse, not better: HA crashes on boot with the fixture on disk.
 //
 // The comparison is over stdout alone, deliberately. hactl logs through a slog
 // text handler that stamps every line with `time=`, and two paths in this
@@ -118,6 +257,10 @@ const entRelatedRepeats = 3
 // structurally: every invocation runs under the test's context, so a command
 // that hangs dies at the test deadline rather than at a number someone guessed.
 func TestE2EEntRelatedCompanionGraphCLI(t *testing.T) {
+	// The fixture this test reads is on disk, and HA rewrites the files it lives
+	// in. Establish it here rather than trusting TestMain's copy from minutes ago.
+	requireRelatedFixture(t)
+
 	var first string
 	for i := range entRelatedRepeats {
 		start := time.Now()

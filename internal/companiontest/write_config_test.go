@@ -5,9 +5,11 @@ package companiontest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +61,13 @@ func haStateOf(t *testing.T, entityID string) (state string, attrs map[string]an
 	return st.State, st.Attributes, true
 }
 
+// How long waitForHAState is willing to wait, spelled out so its failure can
+// quote it. 10s of polling, unchanged from when these were literals.
+const (
+	waitForHAStatePolls = 40
+	waitForHAStateEvery = 250 * time.Millisecond
+)
+
 // waitForHAState polls until HA reports the entity (or stops reporting it).
 // Config writes reach HA through a reload the CLI has already waited on, but
 // entity registration is a further async hop inside HA.
@@ -67,18 +76,93 @@ func haStateOf(t *testing.T, entityID string) (state string, attrs map[string]an
 // wait-for-absence mode that was never implemented or exercised.
 func waitForHAState(t *testing.T, entityID string) (string, map[string]any) {
 	t.Helper()
+	start := time.Now()
 	var state string
 	var attrs map[string]any
-	for range 40 {
+	for range waitForHAStatePolls {
 		var ok bool
 		state, attrs, ok = haStateOf(t, entityID)
 		if ok {
 			return state, attrs
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(waitForHAStateEvery)
 	}
-	t.Fatalf("HA never reported %s", entityID)
+	// The message used to be "HA never reported X" and nothing else. That is the
+	// line hactl PR #99 hit in CI, and it could not distinguish the two cases
+	// that matter: HA loaded the file and named the entity something else, or HA
+	// never loaded the file at all. Both are answered by what HA *does* report,
+	// so that is what this prints — along with how long it actually waited,
+	// because a reader cannot otherwise tell 10s of polling from a single try.
+	// (haStateOf fails the test itself on any answer other than 200 or 404, so
+	// reaching here means HA answered 404 to every poll.)
+	t.Fatalf("HA never reported %s: 404 on all %d polls over %s.\n%s",
+		entityID, waitForHAStatePolls, time.Since(start).Round(time.Millisecond), haDomainStates(t, entityID))
 	return "", nil
+}
+
+// haDomainStates renders what HA does report in the entity's own domain, for a
+// waitForHAState timeout to carry. `sensor.h12_tpl_state_sensor` missing while
+// HA has other template sensors means the document landed under a different id;
+// missing while HA has no template sensor at all means template.yaml was never
+// read. The bare timeout message could tell neither.
+func haDomainStates(t *testing.T, entityID string) string {
+	t.Helper()
+	domain, _, _ := strings.Cut(entityID, ".")
+	raw, err := haapi.New(haURL, haToken).GetStates(context.Background())
+	if err != nil {
+		return fmt.Sprintf("GET /api/states failed as well: %v\n", err)
+	}
+	var states []struct {
+		EntityID string `json:"entity_id"`
+		State    string `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &states); err != nil {
+		return fmt.Sprintf("GET /api/states returned %d bytes that do not decode: %v\n", len(raw), err)
+	}
+	inDomain := make([]string, 0, len(states))
+	for _, s := range states {
+		if strings.HasPrefix(s.EntityID, domain+".") {
+			inDomain = append(inDomain, s.EntityID+"="+s.State)
+		}
+	}
+	return fmt.Sprintf("GET /api/states: %d entities, %d in the %q domain: %v\n",
+		len(states), len(inDomain), domain, inDomain)
+}
+
+// assertHAConfirmedReload fails when a create printed the CLI's "HA did not
+// confirm reload" warning — and attaches, at the moment of the failure, the
+// three things that can distinguish its causes: whether HA has the reload
+// service at all, and both containers' logs.
+//
+// That attachment is the whole point. The warning is the end of what hactl
+// knows: the companion's core_api.call_service logs HA's HTTP status and body
+// and then returns a bare bool, so `reloaded: false` reaches the CLI with the
+// reason already discarded. When this fired in CI (hactl PR #99, run
+// 30292682992) the test reported the warning text, `waitForHAState` reported the
+// entity that never appeared, and the containers that knew why had been deleted
+// by the tier's teardown before anyone could ask.
+//
+// reloadDomain is named per call site because the CLI's warning names the wrong
+// suspect when the service is absent: it asks whether `template: !include
+// template.yaml` is in configuration.yaml, which this tier's setup guarantees,
+// while `template.reload` only exists once the template integration has been set
+// up (see ensureReloadServices). Reporting the service's presence here separates
+// "HA refused the call" from "there was no call to refuse".
+func assertHAConfirmedReload(t *testing.T, step, reloadDomain, out string) {
+	t.Helper()
+	if !strings.Contains(out, "warning:") {
+		return
+	}
+	ctx := context.Background()
+	service := reloadDomain + ".reload"
+	var registered string
+	if exists, err := haapi.New(haURL, haToken).ServiceExists(ctx, reloadDomain, "reload"); err != nil {
+		registered = fmt.Sprintf("could not check (%v)", err)
+	} else {
+		registered = strconv.FormatBool(exists)
+	}
+	t.Errorf("HA confirmed nothing after %s:\n%s\nHA has %s registered: %s\n%s",
+		step, out, service, registered, containerDiagnostics(ctx))
 }
 
 // registryHas reports whether HA's entity registry still holds entityID.
@@ -211,9 +295,7 @@ func TestE2EScriptWriteRoundTripCLI(t *testing.T) {
 	}
 	// The companion reports whether HA reloaded, and hactl used to drop that
 	// on the floor: a definition HA never read still printed "created script".
-	if strings.Contains(out, "warning:") {
-		t.Errorf("HA confirmed nothing after create:\n%s", out)
-	}
+	assertHAConfirmedReload(t, "script create", "script", out)
 	_, attrs := waitForHAState(t, entityID)
 	if got := attrString(t, entityID, attrs, "friendly_name"); got != "H12 Script Round Trip" {
 		t.Errorf("HA friendly_name = %q, want %q", got, "H12 Script Round Trip")
@@ -372,9 +454,7 @@ func TestE2ETplWriteRoundTripCLI(t *testing.T) {
 	}
 	// Same as scripts: without the reload confirmation this command reported
 	// success for a template.yaml no `template:` key ever !include'd.
-	if strings.Contains(out, "warning:") {
-		t.Errorf("HA confirmed nothing after create:\n%s", out)
-	}
+	assertHAConfirmedReload(t, "tpl create", "template", out)
 	state, attrs := waitForHAState(t, stateEntity)
 	if state != "42" {
 		t.Errorf("HA state = %q, want 42 (the template was not evaluated)", state)

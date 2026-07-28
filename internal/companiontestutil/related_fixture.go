@@ -24,6 +24,42 @@ const (
 
 // SeedRelatedFixture writes deterministic related-graph fixture data into the
 // Docker Compose service's mounted /config directory.
+//
+// It is idempotent — merge_storage_list below replaces entries by id and
+// merge_configuration_yaml replaces a marked block — and callers are expected to
+// use that, because in any stack that also runs Home Assistant the fixture does
+// not stay written.
+//
+// Why: this writes .storage/core.{config_entries,entity_registry,device_registry}
+// underneath a *running* HA. HA holds those registries in memory, never read
+// these rows, and rewrites each file from memory on its own delayed save — so
+// the next HA-side registry change silently reverts the fixture. Measured in
+// internal/companiontest on 2026-07-28 (HA stable): creating one input_boolean
+// helper rewrote core.entity_registry 10.44s later, the four fixture entity rows
+// were gone (23614 → 19144 bytes), and the companion answered
+// `GET /v1/related/entity` with `404 Entity not found:
+// sensor.hactl_related_source`. Two CI round trips on hactl PR #99 went to the
+// same mechanism one file over: core.config_entries lost the fixture entries
+// while the configuration.yaml block — which HA never rewrites — survived, so
+// `ent related` returned a half graph and the failure read as a content
+// mismatch.
+//
+// The consequence for callers: seeding once during setup is not a precondition
+// any later test can rely on. A test that asserts on the fixture must re-seed
+// and confirm the companion reports it first — see requireRelatedFixture in
+// internal/companiontest/e2e_test.go. The discovery tier
+// (internal/companiontest_discovery) is exempt because its Compose stack has no
+// homeassistant service at all: nothing there ever rewrites /config.
+//
+// The obvious-looking alternative — hand these rows to HA's own loader by
+// seeding before it boots — was probed on 2026-07-28 and is worse. With the
+// fixture on disk, HA does not start at all: device_registry._async_load reads
+// `device["config_entries_subentries"]`, the rows below have no such key, and HA
+// dies with `KeyError: 'config_entries_subentries'` and exit code 100, restarted
+// by s6 into the same crash. Making the fixture loader-complete means tracking
+// three registries' storage schemas across every HA version in the CI matrix,
+// and getting it wrong takes the whole tier down instead of one assertion. Any
+// key added below is therefore a key HA must never be allowed to read.
 func SeedRelatedFixture(ctx context.Context, composeFile, service string) error {
 	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "exec", "-T", service, "python3", "-c", relatedFixtureScript) //nolint:gosec // test harness command
 	cmd.Stdout = os.Stdout

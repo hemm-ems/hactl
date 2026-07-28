@@ -87,6 +87,17 @@ func runTestMain(m *testing.M) int {
 
 	code := m.Run()
 
+	// Same reasoning as the companion tier (internal/companiontest/main_test.go):
+	// dumpComposeLogs was wired only into the setup-failure paths above, while
+	// the composeDown below runs unconditionally — so a failing test body took
+	// the container that could explain it down with it. `code` is already
+	// decided here and dumpComposeLogs swallows its own errors, so this cannot
+	// mask the real failure.
+	if code != 0 {
+		slog.Error("discovery-test: tests failed — dumping container logs before teardown", "code", code)
+		dumpComposeLogs(rootCtx, "companion")
+	}
+
 	if shutdownErr := fakeSup.Shutdown(); shutdownErr != nil {
 		slog.Warn("discovery-test: fake supervisor shutdown", "error", shutdownErr)
 	}
