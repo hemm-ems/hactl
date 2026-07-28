@@ -12,10 +12,15 @@
 # Output is one `<tier> <count>` line per tier on stdout, nothing else, so it
 # reads the same to a person and to a pipeline:
 #
-#     unit 1003
-#     integration 284
-#     companion 42
-#     discovery 8
+#     unit <n>
+#     integration <n>
+#     companion <n>
+#     discovery <n>
+#
+# The shape is the example; the numbers are deliberately not written down here.
+# A sample count in a comment is a hand-written count with a comment's immunity
+# from every gate — which is exactly what this script exists to abolish, and it
+# had already drifted once.
 #
 # Diagnostics go to stderr. Needs no Docker and no Home Assistant.
 #
@@ -64,7 +69,7 @@ if ! tally="$(go test ./internal/testaudit/ -count=1 -run TestAssertionFloor -v 
   exit 1
 fi
 
-# tier=unit        tests=1003 asserting=1003 exempt=0  missing=0
+# tier=unit        tests=<n> asserting=<n> exempt=<n>  missing=<n>
 counts="$(printf '%s\n' "$tally" |
   sed -nE 's/.*tier=([a-z_]+)[[:space:]]+tests=([0-9]+).*/\1 \2/p')"
 

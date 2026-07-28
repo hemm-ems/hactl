@@ -212,9 +212,11 @@ The harness boots in roughly 15 seconds (mostly the one-time Companion image bui
 
 This section exists because of a specific failure. `hactl trace show` rendered
 every automation run — including failures — as a bare `  .    PASS` with no
-steps, against real Home Assistant, for months. During that time the suite had
-over a thousand unit tests and more than two hundred integration tests, and all
-of them were green. A separate audit then found that the entire automation write
+steps, against real Home Assistant, for months. During that time the unit and
+integration tiers were both already large — larger than most people would guess
+from the size of the tool — and every test in both was green. (No count here on
+purpose: `dev/testcount.sh` prints today's, and a number frozen into this
+sentence would be one more hand-written count with nothing to keep it true.) A separate audit then found that the entire automation write
 path could be replaced with a no-op and both tiers would still pass.
 
 Neither was a gap in *how much* was tested. Both were failures in *what the tests

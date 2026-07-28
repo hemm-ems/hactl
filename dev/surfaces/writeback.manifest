@@ -9,12 +9,16 @@
 # had a round-trip test written for them; the tree carried thirty-four commands
 # on the day this ledger was written, and the gate, not this sentence, counts.
 #
-# `proven` is claimed only where a named test drives the command with --confirm
-# and then reads the result out of Home Assistant itself — /api/states, the WS
-# entity/label/area registries, lovelace/config, the config-entry list, the
-# automation config API. Reading back through `hactl … ls`, `dash show --raw` or
-# `ref scan` proves hactl consistent with itself and is recorded as debt, which
-# is what the law's second paragraph demands.
+# `proven` is claimed only where a named test meets H-12 whole: it drives the
+# command with --confirm, reads the result out of Home Assistant itself —
+# /api/states, the WS entity/label/area registries, lovelace/config, the
+# config-entry list, the automation config API — compares the whole document, and
+# asserts at least one field the command never prints as an independent witness.
+# Reading back through `hactl … ls`, `dash show --raw` or `ref scan` proves hactl
+# consistent with itself and is recorded as debt, which is what the law's second
+# paragraph demands. So is reading HA for one clause and stopping there: a
+# `proven` that means "cleared the easiest clause" makes the ledger decoration,
+# and a ledger nobody can trust is worse than no ledger.
 #
 # Blind spot, stated rather than assumed: a command that mutates HA *without* a
 # --confirm gate appears on neither this surface nor confirm's. It is an H-2
@@ -23,7 +27,13 @@
 #
 # The ceiling is the number of write commands nothing reads back from HA. It may
 # fall without ceremony and may only rise by editing this line on purpose.
-#ceiling 10
+#
+# Raised 10 -> 11 on purpose: `hactl auto delete` was claimed `proven` on a test
+# that clears this file's stated bar (it does read HA) but meets almost none of
+# H-12's actual law. A `proven` that does not mean "the law is met" turns the
+# ledger into decoration, which is the failure mode the ledger exists to prevent,
+# so the entry moved to debt and the ceiling moved with it.
+#ceiling 11
 
 # --- proven: a named test writes with --confirm and reads HA back -------------
 #
@@ -32,13 +42,6 @@
 # witness, and compares the whole canonicalised document after the rollback.
 hactl auto apply = proven: TestAutoApplyRollbackRoundTrip
 hactl auto rollback = proven: TestAutoApplyRollbackRoundTrip
-#
-# auto delete: reads HA's entity registry over WebSocket before and after the
-# delete and requires the entry to be gone — the ghost half H-12 names
-# explicitly. The removal of the definition from automations.yaml is read back
-# through the companion (TestE2EAutoDeleteByObjectIDCLI), not from HA, and this
-# family has no "dry run changed nothing" read-back; both remain to be closed.
-hactl auto delete = proven: TestE2EAutoDeleteByAliasCLI
 #
 # script create/apply/delete + tpl create/delete + helper create/delete: drive
 # the real binary and read HA's own /api/states for the entity, with `icon` /
@@ -88,8 +91,9 @@ hactl companion wireguard up = exempt: starts an interface inside the add-on con
 hactl companion wireguard down = exempt: stops that interface; same absence of any HA-side record, so there is no HA read-back this rule could ask for
 hactl rollback = exempt: deprecated alias that dispatches to the same runRollback and the same --confirm flag variable as auto rollback, whose write TestAutoApplyRollbackRoundTrip reads back from HA; there is one write path, not two
 
-# --- debt: the rule applies and nothing reads HA back ------------------------
+# --- debt: the rule applies and the read-back does not meet it ---------------
 hactl auto create = debt: TestE2EAutoCreateCLI asserts hactl's own "created automation" and the entity_id line it prints from the reload confirmation; nothing reads the new automation out of HA's states or its config API, and no witness field is checked
+hactl auto delete = debt: TestE2EAutoDeleteByAliasCLI does read HA's entity registry over WebSocket and requires the entry to be gone, so it clears the "read HA, not hactl" bar — but that is one clause of H-12 and it meets no other: no whole-document compare, no assertion on a field the command never prints, no "the dry run changed nothing" read-back, and the write's actual target, the removal of the definition from automations.yaml, is read back through the companion (TestE2EAutoDeleteByObjectIDCLI) rather than from HA's own automation config API
 hactl area create = debt: TestAreaCreateDelete verifies the write by reading it back through `hactl area ls` — hactl proving hactl — instead of HA's WS area registry, and asserts no field the command never prints
 hactl area delete = debt: same read-back-through-hactl gap: the delete is checked with `hactl area ls`, and HA's own area registry is never consulted for the absence
 hactl floor create = debt: TestFloorCreateDelete reads the result back through `hactl floor ls`; HA's WS floor registry, the only independent oracle, is never asked, and level/icon are unwitnessed

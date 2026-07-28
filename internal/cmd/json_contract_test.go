@@ -527,6 +527,14 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 	// deep-equality comparison it does not trip over object-shaped commands
 	// that legitimately report live, --top-unrelated state (`cache status`
 	// reports on-disk db sizes, which grow simply from being opened).
+	//
+	// That immunity covers varying SCALARS only, not a varying array LENGTH:
+	// the two runs are two separate processes, so a command whose payload is a
+	// time-bucketed window straddling a boundary, or whose first run causes a
+	// side effect the second one reads, would legitimately return a different
+	// number of elements and fail here through no fault of --top. No command on
+	// this sweep does that today; one that did would need an exemption stated
+	// here, not a weaker count.
 	large := run(1000)
 	var parsedLarge any
 	if err := json.Unmarshal([]byte(large), &parsedLarge); err != nil {
