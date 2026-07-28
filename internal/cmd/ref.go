@@ -495,9 +495,24 @@ func validateAnswersAMachine() bool { return flagRefExitCode || flagJSON }
 // live-set halves take). half names what could not be read: "the entity
 // registry", "config files", "1 of 2 dashboard(s)".
 //
-// This is the ONLY gate shape in this command. Every source added later goes
-// through it rather than growing a second one — the registry spent D-7 outside
-// it, warning to a channel no machine reads.
+// THREE of the sweep's four sources take this gate: the entity registry, the
+// config files, and the dashboards. Live states do not, and that is deliberate,
+// not an oversight to harmonise away. They refuse unconditionally from their own
+// branch in liveEntitySet, before any of this runs, so a states failure only ever
+// reaches here-and-beyond because --allow-partial was given — which this gate
+// would wave through anyway. Folding them in would mean an "always refuses"
+// posture flag plus a second message body, because the thing that has to be
+// explained is different in kind: not "a piece of the tree went unread" (this
+// function's sentence) but "the live set that is left is unusable, and every
+// state-only entity in the tree would be reported dangling". Two messages behind
+// one boolean is not one gate shape; it is two gates sharing a name.
+//
+// What IS universal — the rule a source added later must satisfy, and the one
+// the registry broke — is one line down: every source is recorded in
+// validateScope, so it reaches the reader through reportValidateScanScope. The
+// registry sat outside both, warning to a channel no machine reads. Take this
+// gate too, unless the source is unusable-in-kind the way live states are; if it
+// is, refuse where you read it and say why there, as liveEntitySet does.
 func validateScanGateError(half string, cause error, answersAMachine, allowPartial bool) error {
 	if cause == nil || !answersAMachine || allowPartial {
 		return nil
@@ -683,6 +698,11 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 // missing states half is worse in kind: the registry alone omits every
 // state-only entity and would flag them all, which is not a usable live set at
 // all, so it refuses in EVERY mode, plain text included, unless --allow-partial.
+//
+// That unconditional refusal below is the sweep's ONE source that does not go
+// through validateScanGateError — deliberately, for the reason set out in that
+// function's note. What both halves do share is scope: whichever one degraded is
+// recorded there, so it reaches the reader.
 func liveEntitySet(ctx context.Context, src *refSources, scope *validateScope) (map[string]bool, error) {
 	live := make(map[string]bool)
 

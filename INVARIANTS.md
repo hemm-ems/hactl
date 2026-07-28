@@ -344,12 +344,23 @@ The rule is per *source*, and stating it in terms of dashboards is how it was
 first shipped one source short. `ref validate` reads four — the entity registry,
 live states, config files, every dashboard — and the registry degraded the live
 set at `slog.Warn` and reached no gate at all, so the fix for a silent dashboard
-left a silent registry directly beneath it. All four now run through one gate.
-The two directions differ and both are gated: an unread config file or dashboard
-hides references, risking a false clean bill; a degraded live entity set reports
-entities that exist as dangling, risking a false alarm. Live states keep the
-stricter posture of refusing in every mode, because the registry alone omits
-every state-only entity and is not a usable live set at all. Search commands (`ref scan`, `dash grep`)
+left a silent registry directly beneath it. What is now true of all four is that
+each is recorded in one place, `validateScope`, and reaches the reader through
+one function, `reportValidateScanScope`: that is the universal, and it is the one
+the registry broke. The refusal on top of it is **three plus one**, deliberately.
+Three sources — registry, config files, dashboards — share
+`validateScanGateError`, which refuses only when `--exit-code` or `--json` makes
+the answer unreadable by a human. Live states do not go through it: they refuse
+unconditionally, in plain text too, from their own branch in `liveEntitySet`,
+because the registry alone omits every state-only entity and is not a usable live
+set at all — so the sentence that has to be printed is a different sentence, not
+the shared one behind a posture flag. The two directions differ and both are
+covered: an unread config file or dashboard hides references, risking a false
+clean bill; a degraded live entity set reports entities that exist as dangling,
+risking a false alarm. **A source added later joins `validateScope` — that part
+is not optional — and takes `validateScanGateError` unless it is unusable in kind
+the way live states are, in which case it refuses where it is read and says why
+there.** Search commands (`ref scan`, `dash grep`)
 answer "where is X?" rather than "is the tree clean?", so they warn and still
 answer — and their `--json` shape does not change, because a scope note on stdout
 would break clause (1) for them.
