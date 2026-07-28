@@ -445,7 +445,8 @@ func seedConfigFiles() error {
 		}
 	}
 	newConfig += "\n"
-	if newConfig != rawConfig.Content {
+	configRewritten := newConfig != rawConfig.Content
+	if configRewritten {
 		if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
 			return fmt.Errorf("wiring includes into configuration.yaml: %w", err)
 		}
@@ -455,17 +456,25 @@ func seedConfigFiles() error {
 	// up — `template.reload` does not even exist until the template integration
 	// has been set up once. Only a restart makes HA read the file.
 	//
-	// Gated on the services, not on whether this run happened to edit the file:
-	// the early `return nil` that used to sit here skipped the restart whenever
-	// configuration.yaml already carried both !includes, which is the state of
-	// any /config a previous run left behind (`docker compose down` without
-	// `-v`, or a stack left up for manual poking). Nothing would then have set
-	// the template integration up, so `template.reload` would not exist, every
-	// `tpl create` in the tier would report "HA did not confirm reload", and the
-	// CLI's warning would blame a missing `template: !include template.yaml`
-	// that is demonstrably present. hactl-companion records the same trap from
-	// the other side in tests/integration/test_live.py.
-	return ensureReloadServices()
+	// Two conditions, either of which restarts, because neither alone is safe.
+	// The early `return nil` that used to sit here restarted only when this run
+	// edited configuration.yaml, and so skipped the restart whenever the file
+	// already carried both !includes — the state of any /config a previous run
+	// left behind (`docker compose down` without `-v`, or a stack left up for
+	// manual poking). Nothing would then have set the template integration up,
+	// so `template.reload` would not exist, every `tpl create` in the tier would
+	// report "HA did not confirm reload", and the CLI's warning would blame a
+	// missing `template: !include template.yaml` that is demonstrably present.
+	// hactl-companion records the same trap from the other side in
+	// tests/integration/test_live.py.
+	//
+	// Gating on the services alone closes that hole and opens the mirror one:
+	// `script.reload` and `automation.reload` exist on a bare HA regardless of
+	// anything this file does, so a future seeded domain whose reload service is
+	// already registered for some other reason would get a fresh `!include` here
+	// and no restart, and HA would never read the file it points at. Passing
+	// configRewritten through keeps the old condition as well as the new one.
+	return ensureReloadServices(configRewritten)
 }
 
 // reloadServicesNeeded are the `<domain>.reload` services this tier's write
@@ -482,14 +491,22 @@ var reloadServicesNeeded = []string{"template", "input_boolean", "script", "auto
 // not found" inside the companion, which reaches the CLI as a bare
 // `reloaded: false` — the reason discarded on the way — so without this the
 // tier's own setup can hand every write test a misleading failure.
-func ensureReloadServices() error {
+//
+// configRewritten is seedConfigFiles' answer to "did this run just change
+// configuration.yaml?". True forces the restart regardless of the registry: a
+// file HA has not re-read since it was written is not made readable by a reload
+// service that happened to be there already. See the note at the call site.
+func ensureReloadServices(configRewritten bool) error {
 	ctx := context.Background()
 
 	// One look before restarting: on a /config that already has the integrations
-	// set up there is nothing to do, and a restart is 5-10s of the tier's budget.
-	if missing, err := missingReloadServices(ctx); err == nil && len(missing) == 0 {
-		slog.Info("companion-test: reload services already registered; no restart needed", "services", reloadServicesNeeded)
-		return nil
+	// set up, and that this run did not touch, there is nothing to do — and a
+	// restart is 5-10s of the tier's budget.
+	if !configRewritten {
+		if missing, err := missingReloadServices(ctx); err == nil && len(missing) == 0 {
+			slog.Info("companion-test: reload services already registered; no restart needed", "services", reloadServicesNeeded)
+			return nil
+		}
 	}
 
 	if err := restartHA(); err != nil {
