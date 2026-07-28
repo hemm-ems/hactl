@@ -85,11 +85,16 @@ const entRelatedRepeats = 3
 // once no such save is still pending — a save scheduled before we wrote the
 // files fires after we wrote them and overwrites us. Measured in this stack on
 // 2026-07-28: core.entity_registry was rewritten 10.44s after the mutation that
-// scheduled it. 12s is that number plus margin, and it is sufficient rather than
-// arbitrary: any save pending when we seeded has fired by the time the settle
-// window closes, and this test performs no registry mutation of its own to
-// schedule another. It is not a performance assertion — nothing here fails for
-// being slow.
+// scheduled it. 12s is that number plus margin. It is not a performance
+// assertion — nothing here fails for being slow.
+//
+// What 12s is NOT: a bound derived from anything HA documents. It is one
+// measurement on one machine, and a saturated runner could push the same save
+// past it. Rather than inflate the constant — a bigger guess is still a guess,
+// and it costs every run — TestE2EEntRelatedCompanionGraphCLI re-reads the
+// fixture once when its runs are done, so a save that lands inside the test is
+// reported as that instead of as a content mismatch. Raise this number if that
+// check ever fires; the check is what tells you it should be raised.
 //
 // relatedFixtureDeadline bounds the whole loop so a permanently broken fixture
 // reports that instead of hanging until the tier's `go test -timeout`.
@@ -171,11 +176,26 @@ func requireRelatedFixture(t *testing.T) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the seeded fixture was clobbered by HA's registry flush and never stayed put: "+
-				"gave up after %s and %d seeding(s), needing %s of stability.\n"+
-				"This is not a content mismatch — the companion's answer is derived from "+
-				".storage files that HA rewrites from memory (see this helper's comment).\n"+
-				"last observation: %s", relatedFixtureDeadline, seeds, relatedFixtureSettle, observed)
+			// Two different faults end up here, and this guard cannot tell them
+			// apart on its own — so it must not decide. Naming only the flush
+			// forecloses the other explanation for whoever reads the CI mail,
+			// which is the same failure as a wrong error message anywhere else.
+			t.Fatalf("the related fixture never held still: gave up after %s and %d seeding(s), "+
+				"needing %s of uninterrupted stability.\n"+
+				"TWO causes reach this line. The observations below tell them apart:\n"+
+				"  (a) HA's delayed registry save keeps rewriting the .storage files from memory and "+
+				"clobbering the seed — the mechanism this helper's comment documents. A \"clobbered the "+
+				"seeded fixture ... into the settle window\" line appears above and the seed count is "+
+				"small (one per clobber): the fixture WAS visible, repeatedly, and kept going away.\n"+
+				"  (b) the companion regressed and no longer emits one of the two rows. No clobber line "+
+				"appears above and the seed count is roughly %s/%s — one per poll, because the fixture "+
+				"was never intact even once. The last observation is then stable rather than flapping: "+
+				"the source entity resolves and the SAME half is missing (config-entry-reference or "+
+				"yaml-reference, below).\n"+
+				"Either way this is not a content mismatch in `ent related` — nothing it asserts has run yet.\n"+
+				"last observation: %s",
+				relatedFixtureDeadline, seeds, relatedFixtureSettle,
+				relatedFixtureDeadline, relatedFixturePoll, observed)
 		}
 		time.Sleep(relatedFixturePoll)
 	}
@@ -206,6 +226,20 @@ func relatedFixtureIntact(ctx context.Context) (bool, string) {
 	return haveConfigEntry && haveYAML,
 		fmt.Sprintf("companion reports %d row(s) for %s (config-entry-reference=%v yaml-reference=%v): %+v",
 			len(res.Related), companiontestutil.RelatedSourceEntityID, haveConfigEntry, haveYAML, res.Related)
+}
+
+// relatedFixtureVerdict re-reads the fixture and says, in one clause, whether a
+// disagreement between two `ent related` runs can be blamed on the fixture
+// disappearing between them. Without it the message names the wrong subject: two
+// runs differing because the second read a fixture the first still had is not a
+// determinism defect in `ent related`, and it looks exactly like one.
+func relatedFixtureVerdict(ctx context.Context) string {
+	intact, observed := relatedFixtureIntact(ctx)
+	if intact {
+		return "the fixture is still intact, so this is a real disagreement between two runs, not a mid-test registry flush"
+	}
+	return "AND THE FIXTURE IS GONE: HA's registry save landed between these runs, so the disagreement is that, " +
+		"not `ent related` (see requireRelatedFixture). Observation now: " + observed
 }
 
 // TestE2EEntRelatedCompanionGraphCLI drives `ent related` through the real
@@ -286,9 +320,26 @@ func TestE2EEntRelatedCompanionGraphCLI(t *testing.T) {
 			continue
 		}
 		if stdout != first {
-			t.Fatalf("ent related is not deterministic: run %d disagreed with run 1\nrun 1:\n%s\nrun %d:\n%s\nstderr of run %d:\n%s",
-				i+1, first, i+1, stdout, i+1, stderr)
+			t.Fatalf("ent related is not deterministic: run %d disagreed with run 1 — %s\nrun 1:\n%s\nrun %d:\n%s\nstderr of run %d:\n%s",
+				i+1, relatedFixtureVerdict(t.Context()), first, i+1, stdout, i+1, stderr)
 		}
+	}
+
+	// The fixture is re-read once here, after the runs that depend on it.
+	// requireRelatedFixture waited out the save that was pending when it seeded,
+	// and this test schedules no registry mutation of its own — but
+	// relatedFixtureSettle is one measured flush (10.44s) plus margin, not a
+	// documented HA guarantee, so a saturated runner could still push a save past
+	// the window. If it lands mid-test the runs above disagree, or the reverse
+	// lookup below stops resolving, and both read as a content mismatch in a
+	// command that is behaving correctly. One companion request turns that case
+	// into what it is. Raising the constant would not: a bigger number is still a
+	// guess, and it costs every run.
+	if intact, observed := relatedFixtureIntact(t.Context()); !intact {
+		t.Fatalf("the related fixture went away mid-test, after %d identical run(s) of `ent related`: "+
+			"HA's delayed registry save landed inside the test rather than before it, so anything that "+
+			"failed above is that, not `ent related`. Raise relatedFixtureSettle (currently %s) if this "+
+			"recurs.\nlast observation: %s", entRelatedRepeats, relatedFixtureSettle, observed)
 	}
 
 	reverseOut, err := runHactlE2E(t, "ent", "related", companiontestutil.RelatedGeneratedEntityID)
