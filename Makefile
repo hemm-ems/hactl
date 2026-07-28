@@ -14,7 +14,7 @@ VENDORED_SPEC  := testdata/companion-v1.yaml
 
 .PHONY: build lint check-markers deadcode tools test test-assert-floor test-surface surfaces \
         test-int test-companion test-int-discovery test-matrix gates require-docker \
-        hooks hooks-check clean sync-spec check-spec-drift
+        testcount hooks hooks-check clean sync-spec check-spec-drift
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o hactl ./cmd/hactl
@@ -132,6 +132,15 @@ test-surface:
 surfaces:
 	@go test ./internal/surfaceaudit/... -count=1 -v -run 'IsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
 	@go test ./internal/cmd/ -count=1 -v -run 'ConfirmSurfaceIsClosed' 2>&1 | grep -vE '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)' || true
+
+# testcount — the per-tier test counts, derived (TC-7). docs/testing.md states no
+# count of its own; it points here, because the four it used to state had all
+# drifted and three different hand-counting methods disagreed about the right
+# correction. Prints `<tier> <count>` per line. See dev/testcount.sh for why the
+# assertion-floor gate is the oracle and `go test -tags=<tier> -list` is not.
+# Needs no Docker and no HA.
+testcount:
+	@./dev/testcount.sh
 
 # ---------------------------------------------------------------------------
 # gates — the ONLY definition of "done".
