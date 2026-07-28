@@ -85,7 +85,12 @@ var refValidateCmd = &cobra.Command{
 		"destroying it — a missing registry, for instance, costs the live set its disabled and " +
 		"currently-unloaded entities, so references to those are reported dangling when they are not. " +
 		"An auto-generated default dashboard is not a partial sweep at all: HA holds no config for it, " +
-		"so it has no references to miss.",
+		"so it has no references to miss.\n\n" +
+		"A companion that cannot be discovered is NOT one of those four sources degrading, and " +
+		"--allow-partial does not cover it. The companion is the transport the config half is read " +
+		"over, and validate connects to it before it reads anything at all, so a discovery failure " +
+		"aborts the command in every mode — on an install without the add-on (HA Container, HA Core) " +
+		"validate does not run.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runRefValidate(cmd.Context(), cmd.OutOrStdout())
@@ -103,7 +108,9 @@ func init() {
 			"live states, config files, or a dashboard whose config cannot be fetched (without it, "+
 			"--exit-code and --json refuse rather than certify a partial sweep, and unreadable live "+
 			"states refuse in every mode, because the registry alone would report every state-only "+
-			"entity as dangling)")
+			"entity as dangling). Does not cover a companion that cannot be discovered: that is the "+
+			"transport the config half is read over, not a source that degrades, so validate aborts "+
+			"before it reads anything, in every mode")
 	refCmd.AddCommand(refScanCmd, refReplaceCmd, refValidateCmd)
 	rootCmd.AddCommand(refCmd)
 }

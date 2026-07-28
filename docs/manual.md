@@ -636,6 +636,17 @@ An **auto-generated default dashboard is not a partial sweep**: HA holds no
 config for it, so it has no references to miss — zero there is the complete
 truth, and `--exit-code` stays green on a fresh instance.
 
+**A missing companion is not a degraded source, and `--allow-partial` does not
+cover it.** The companion is the *transport* the config half is read over, and
+every `ref` command connects to it before it reads anything at all — so if
+discovery fails, the command aborts in every mode, `--allow-partial` included,
+with `companion discovery: companion not found (HA does not expose the
+Supervisor WS proxy)`. On an installation without the add-on (HA Container, HA
+Core) `ref validate` therefore does not run at all, and there is no
+dashboard-only mode to fall back to. `dash grep` still works there — it goes
+over the WebSocket API alone — but, as the next paragraph says, it answers a
+different question.
+
 `ref scan` and `dash grep` behave differently on purpose: they answer "where is
 this value?", not "is the tree clean?", so an unreadable dashboard is reported as
 a warning on stderr and the hits they did find are still printed with exit 0 and
