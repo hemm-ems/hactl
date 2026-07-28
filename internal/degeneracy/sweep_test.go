@@ -124,13 +124,13 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/cmd/flow.go:optionsFlowCurrentValues:field": "skips any field whose name did not decode",
 
 	// Raw JSON walked structurally or re-encoded, never rendered as a record.
-	"internal/cmd/dash.go:scanDashboards:root":            "walked by jsonwalk, not rendered",
-	"internal/cmd/dash.go:dashReplaceOne:root":            "walked by jsonwalk, not rendered",
-	"internal/cmd/dash.go:runDashShow:v":                  "raw config decoded into any for YAML re-encoding",
-	"internal/cmd/dash.go:runDashShow:buf":                "raw config round-trip for re-indenting",
-	"internal/cmd/ref.go:collectDashboardEntityRefs:root": "walked by jsonwalk, not rendered",
-	"internal/cmd/trace.go:runTraceShow:pretty":           "re-indents the raw trace for display",
-	"internal/cmd/trace.go:runTraceShow:raw":              "analyze.FormatCondensed spells its own UNPARSED (H-7)",
+	"internal/cmd/dash.go:walkDashboardConfigs:root": "walked by jsonwalk, not rendered; the one " +
+		"dashboard walk every scan goes through",
+	"internal/cmd/dash.go:dashReplaceOne:root": "walked by jsonwalk, not rendered",
+	"internal/cmd/dash.go:runDashShow:v":       "raw config decoded into any for YAML re-encoding",
+	"internal/cmd/dash.go:runDashShow:buf":     "raw config round-trip for re-indenting",
+	"internal/cmd/trace.go:runTraceShow:pretty": "re-indents the raw trace for display",
+	"internal/cmd/trace.go:runTraceShow:raw":    "analyze.FormatCondensed spells its own UNPARSED (H-7)",
 
 	// internal/analyze: the trace path keeps the H-7 defense it already has —
 	// FormatCondensed renders UNPARSED for a run that decoded to nothing, and

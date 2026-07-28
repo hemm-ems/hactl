@@ -523,23 +523,272 @@ func TestRunRefValidate_ExitCodeFlagReturnsNonZero(t *testing.T) {
 	}
 }
 
-func TestConfigScanGateError(t *testing.T) {
+func TestValidateScanGateError(t *testing.T) {
 	boom := errors.New("companion unreachable")
 
 	// No error from the scan -> never a gate error.
-	if got := configScanGateError(nil, true, false); got != nil {
+	if got := validateScanGateError("config files", nil, true, false); got != nil {
 		t.Errorf("nil scan error should not gate, got %v", got)
 	}
-	// Interactive (no --exit-code): a scan failure is only a warning, not fatal.
-	if got := configScanGateError(boom, false, false); got != nil {
-		t.Errorf("without --exit-code the scan failure must not be fatal, got %v", got)
+	// Interactive (neither --exit-code nor --json): a scan failure is reported in
+	// the body, not fatal.
+	if got := validateScanGateError("config files", boom, false, false); got != nil {
+		t.Errorf("an interactive scan failure must not be fatal, got %v", got)
 	}
-	// --exit-code without --allow-partial: a scan failure must fail the gate.
-	if got := configScanGateError(boom, true, false); got == nil {
-		t.Error("--exit-code with a failed config scan must return an error (vacuous gate)")
+	// Answering a machine, without --allow-partial: a scan failure must refuse.
+	got := validateScanGateError("config files", boom, true, false)
+	if got == nil {
+		t.Fatal("a machine-gated run with a failed scan must return an error (vacuous gate)")
 	}
-	// --exit-code with --allow-partial: explicitly opted into a partial gate.
-	if got := configScanGateError(boom, true, true); got != nil {
-		t.Errorf("--allow-partial should permit a partial gate, got %v", got)
+	for _, want := range []string{"config files", "--allow-partial", "nothing was certified"} {
+		if !strings.Contains(got.Error(), want) {
+			t.Errorf("refusal missing %q: %v", want, got)
+		}
 	}
+	// Machine-gated with --allow-partial: explicitly opted into a partial answer.
+	if got := validateScanGateError("config files", boom, true, true); got != nil {
+		t.Errorf("--allow-partial should permit a partial answer, got %v", got)
+	}
+}
+
+// unscannableValidateServer stands up a fake HA whose only dashboard is the
+// default and whose lovelace/config fails with something other than
+// config_not_found — hactl cannot know what that dashboard references, so the
+// sweep is partial. The companion reports one dangling config reference, so a
+// run that proceeds has something to print.
+func unscannableValidateServer(t *testing.T, lovelace any) {
+	t.Helper()
+	companionSrv := refEntitiesServer(t, `{"entities":[
+		{"location":"automations.yaml","path":"[0].trigger[0].entity_id","key":"entity_id","matched_value":"sensor.gone"}
+	]}`)
+	t.Cleanup(companionSrv.Close)
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list":    []any{},
+		"lovelace/config":             lovelace,
+		"config/entity_registry/list": []any{map[string]any{"entity_id": "sensor.real"}},
+	}, statesHandler(`[{"entity_id":"sensor.real","state":"21.5"}]`))
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+}
+
+// assertPartialSweepRefused requires a partial sweep to end the command outright
+// — non-zero, naming what it could not read and the escape hatch, with nothing
+// written to the report, because a refusal that still prints a table has
+// certified something.
+func assertPartialSweepRefused(t *testing.T, err error, out string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected a refusal, got nil (output: %q)", out)
+	}
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		t.Fatalf("a partial sweep must refuse outright, not certify with a dangling-ref verdict: %v", err)
+	}
+	for _, want := range []string{"--allow-partial", "(default)", "dashboard(s)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q: %v", want, err)
+		}
+	}
+	if out != "" {
+		t.Errorf("nothing may be certified before the refusal, got output:\n%s", out)
+	}
+}
+
+// assertValidateProceeded requires the run to have answered (the --exit-code
+// dangling-reference verdict is still an answer) and the report body to state
+// the scope the caller can see.
+func assertValidateProceeded(t *testing.T, err error, out string, wantBody, notInBody []string) {
+	t.Helper()
+	var ec interface{ ExitCode() int }
+	if err != nil && !errors.As(err, &ec) {
+		t.Fatalf("the run must proceed, got: %v", err)
+	}
+	for _, want := range wantBody {
+		if !strings.Contains(out, want) {
+			t.Errorf("report body missing %q\n%s", want, out)
+		}
+	}
+	for _, notWant := range notInBody {
+		if strings.Contains(out, notWant) {
+			t.Errorf("report body must not contain %q\n%s", notWant, out)
+		}
+	}
+}
+
+// TestRunRefValidate_UnscannableDashboardRefusesUnlessAllowPartial is D-7: the
+// tool whose entire job is to be a CI gate must not certify a tree it could only
+// partly read. The refusal is gated by machine-readability — --exit-code makes
+// the answer a verdict, --json makes it a document (H-10), and a stderr warning
+// is invisible to both.
+func TestRunRefValidate_UnscannableDashboardRefusesUnlessAllowPartial(t *testing.T) {
+	unreadable := wsErrorResponse{Code: "error", Message: "boom"}
+
+	tests := []struct {
+		name        string
+		flags       []*bool
+		wantRefusal bool
+		// wantBody are strings the report body must carry when the run proceeds.
+		wantBody []string
+		// notInBody must be absent from the report body.
+		notInBody []string
+		// wantWarn requires the scope on stderr instead of in the body, which is
+		// where it has to go when the body's shape is a machine contract.
+		wantWarn bool
+	}{
+		{
+			name:        "exit_code_refuses",
+			flags:       []*bool{&flagRefExitCode},
+			wantRefusal: true,
+		},
+		{
+			name:        "json_refuses",
+			flags:       []*bool{&flagJSON},
+			wantRefusal: true,
+		},
+		{
+			name:     "exit_code_with_allow_partial_proceeds",
+			flags:    []*bool{&flagRefExitCode, &flagRefAllowPartial},
+			wantBody: []string{"partial sweep", "0 of 1 dashboard(s) scanned", "sensor.gone"},
+		},
+		{
+			name:     "json_with_allow_partial_proceeds",
+			flags:    []*bool{&flagJSON, &flagRefAllowPartial},
+			wantBody: []string{"sensor.gone"},
+			// --json is a machine contract: the scope goes to stderr so the
+			// document's shape does not change (H-10).
+			notInBody: []string{"partial sweep"},
+			wantWarn:  true,
+		},
+		{
+			name:  "plain_text_reports_the_partial_scope_in_the_body",
+			flags: nil,
+			wantBody: []string{
+				"partial sweep", "0 of 1 dashboard(s) scanned", "(default)", "boom", "sensor.gone",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			unscannableValidateServer(t, unreadable)
+			for _, f := range tc.flags {
+				withRefFlag(t, f)
+			}
+			logBuf := captureDefaultLogger(t)
+
+			var buf bytes.Buffer
+			err := runRefValidate(context.Background(), &buf)
+
+			if tc.wantRefusal {
+				assertPartialSweepRefused(t, err, buf.String())
+				return
+			}
+			assertValidateProceeded(t, err, buf.String(), tc.wantBody, tc.notInBody)
+			if tc.wantWarn {
+				assertPartialSweepWarning(t, logBuf.String())
+			}
+		})
+	}
+}
+
+// assertPartialSweepWarning requires a WARN line stating the sweep was partial.
+// It is the --json path's only channel for the scope, so it must be at a level
+// the caller sees; captureDefaultLogger listens at Info, so a Debug fails this.
+func assertPartialSweepWarning(t *testing.T, log string) {
+	t.Helper()
+	for line := range strings.SplitSeq(strings.TrimSpace(log), "\n") {
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "partial sweep") {
+			return
+		}
+	}
+	t.Errorf("no WARN line reporting a partial sweep; log was:\n%s", log)
+}
+
+// TestRunRefValidate_AutoGeneratedDefaultIsNotAPartialSweep is D-7 point 3: the
+// auto-generated default holds no config, so zero references there is the whole
+// truth about it. Classifying it as unscannable would make `ref validate
+// --exit-code` refuse on every fresh Home Assistant.
+func TestRunRefValidate_AutoGeneratedDefaultIsNotAPartialSweep(t *testing.T) {
+	autoGenerated := wsErrorResponse{Code: "config_not_found", Message: "No config found."}
+
+	for _, tc := range []struct {
+		name  string
+		flags []*bool
+	}{
+		{name: "exit_code", flags: []*bool{&flagRefExitCode}},
+		{name: "json", flags: []*bool{&flagJSON}},
+		{name: "plain_text", flags: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unscannableValidateServer(t, autoGenerated)
+			for _, f := range tc.flags {
+				withRefFlag(t, f)
+			}
+
+			var buf bytes.Buffer
+			err := runRefValidate(context.Background(), &buf)
+
+			// The only error allowed here is the dangling-reference verdict
+			// itself (sensor.gone is genuinely dangling under --exit-code).
+			var ec interface{ ExitCode() int }
+			if err != nil && !errors.As(err, &ec) {
+				t.Fatalf("an auto-generated default must not make the sweep partial: %v", err)
+			}
+			out := buf.String()
+			if !strings.Contains(out, "sensor.gone") {
+				t.Errorf("the dangling config reference must still be reported\n%s", out)
+			}
+			if strings.Contains(out, "partial") {
+				t.Errorf("an auto-generated default is a complete answer of zero, not a partial sweep\n%s", out)
+			}
+		})
+	}
+}
+
+// TestRunRefScan_UnscannableDashboardStillAnswers is D-7 point 5: a search tool
+// answers "where is X?", so a dashboard it could not read is reported at WARN —
+// visible at the level users actually run at, never slog.Debug — but is never
+// fatal and never changes the stdout/--json shape.
+func TestRunRefScan_UnscannableDashboardStillAnswers(t *testing.T) {
+	companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"target":"sensor.old","hits":[{"location":"automations.yaml","path":"[0].trigger[0].entity_id","matched_value":"sensor.old"}]}`)
+	}))
+	defer companionSrv.Close()
+
+	ts := startCmdServer(t, map[string]any{
+		"lovelace/dashboards/list": []any{},
+		"lovelace/config":          wsErrorResponse{Code: "error", Message: "boom"},
+	}, nil)
+	writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+	withFlagDir(t, ts.dir)
+	logBuf := captureDefaultLogger(t)
+
+	var buf bytes.Buffer
+	if err := runRefScan(context.Background(), &buf, "sensor.old"); err != nil {
+		t.Fatalf("a search command must not fail on an unreadable dashboard: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "automations.yaml") {
+		t.Errorf("the config hit must still be reported\n%s", out)
+	}
+	// The skip is a slog.Warn on stderr, never a row or a prose line on stdout.
+	if strings.Contains(out, "partial") || strings.Contains(out, "boom") {
+		t.Errorf("ref scan must not change its stdout shape for a skipped dashboard\n%s", out)
+	}
+	assertPartialScanWarning(t, logBuf.String())
+}
+
+// assertPartialScanWarning requires a WARN line saying the dashboard answer is
+// partial. captureDefaultLogger listens at Info, so a slog.Debug — what both
+// walks used to emit (D-7) — is invisible here and fails this.
+func assertPartialScanWarning(t *testing.T, log string) {
+	t.Helper()
+	for line := range strings.SplitSeq(strings.TrimSpace(log), "\n") {
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "answer is partial") {
+			return
+		}
+	}
+	t.Errorf("no WARN line reporting a partial dashboard answer; log was:\n%s", log)
 }

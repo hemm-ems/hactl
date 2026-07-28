@@ -567,6 +567,7 @@ dashboards in a single pass, use `ref replace`.
 hactl ref scan sensor.wp_vl                    # every reference, config files + dashboards
 hactl ref validate                             # dangling references: pointers to entities that are gone
 hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
+hactl ref validate --exit-code --allow-partial  # gate on what could be read when a half is unavailable
 hactl ref replace sensor.old sensor.new        # dry-run: rename everywhere
 hactl ref replace sensor.old sensor.new --confirm   # apply
 hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even when some dashboards can't be scanned/written
@@ -590,6 +591,34 @@ checked (`entity_id`/`entity` in config; `entity`/`entities`/`badges`/
 entity. Two blind spots are the accepted price of zero false positives:
 **entities inside templates** (`{{ states('sensor.x') }}`) and entities under
 non-standard custom-card keys. `validate` reports; it never fixes.
+
+**A partial sweep never passes as a clean tree.** `validate` reads three things —
+live entities, config files (via the companion), and every dashboard — and any of
+them can be unavailable. What happens then depends on who is reading the answer:
+
+- **Plain text, no `--exit-code`:** it answers, and the report body states its
+  scope — `partial sweep: 2 of 3 dashboard(s) scanned; 1 could not be read`,
+  naming each skipped dashboard and why, and the same for config files. A
+  partial answer is still useful to a person who can see it is partial.
+- **`--exit-code` or `--json`:** it **refuses** with a non-zero exit and
+  certifies nothing. `--exit-code` makes the answer a CI verdict and `--json`
+  makes it a document a program parses; in both cases a warning on stderr is
+  invisible, so certifying a tree that was only partly read would be a vacuous
+  gate — exactly what this command exists not to be.
+- **`--allow-partial`:** proceed over whatever could be read, in any mode. The
+  scope is stated in the report (in plain text) or on stderr (under `--json`,
+  whose shape is a contract), and `--exit-code` then gates on what was read.
+  This is the same flag that permits validating against the entity registry
+  alone when live states are unavailable.
+
+An **auto-generated default dashboard is not a partial sweep**: HA holds no
+config for it, so it has no references to miss — zero there is the complete
+truth, and `--exit-code` stays green on a fresh instance.
+
+`ref scan` and `dash grep` behave differently on purpose: they answer "where is
+this value?", not "is the tree clean?", so an unreadable dashboard is reported as
+a warning on stderr and the hits they did find are still printed with exit 0 and
+an unchanged `--json` shape.
 
 `replace` is dry-run until `--confirm`. It aborts before writing anything if the
 companion cannot be reached, because a rename that silently skips config files is
