@@ -3,6 +3,7 @@ package surfaceaudit_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,20 +165,32 @@ func TestManifestRejectsADuplicateKey(t *testing.T) {
 // An extractor that has stopped matching passes its gate forever while proving
 // nothing, which is the failure mode a closure gate is most exposed to: it
 // looks green precisely because it sees nothing.
+//
+// An extractor whose surface has several independently derived legs names one
+// site per leg. A single canonical key would leave the other legs free to stop
+// matching in silence, which is the same blind spot one level up.
 func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 	root := repoRoot(t)
 	for _, tc := range []struct {
-		name    string
-		derive  func(string) (surfaceaudit.Surface, error)
-		wantKey string
+		name     string
+		derive   func(string) (surfaceaudit.Surface, error)
+		wantKeys []string
 	}{
-		{"clock", surfaceaudit.ClockSurface, "internal/clock/render.go:Short"},
-		{"target", surfaceaudit.TargetSurface, "internal/cmd/cc.go:runCCShow"},
-		{"invariant", surfaceaudit.InvariantSurface, "H-17"},
+		{"clock", surfaceaudit.ClockSurface, []string{"internal/clock/render.go:Short"}},
+		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/cc.go:runCCShow"}},
+		{"invariant", surfaceaudit.InvariantSurface, []string{"H-17"}},
 		// The named site is the one the maprange surface exists for: the walk
 		// that rendered one arbitrary entry of a map for a whole release.
-		{"maprange", surfaceaudit.MapRangeSurface, "internal/cmd/wireguard_cmd.go:writeWireguardMonitor"},
-		{"decode", surfaceaudit.DecodeSurface, "internal/writer/writer.go:parseRemoteAutomationConfig"},
+		{"maprange", surfaceaudit.MapRangeSurface, []string{"internal/cmd/wireguard_cmd.go:writeWireguardMonitor"}},
+		{"decode", surfaceaudit.DecodeSurface, []string{"internal/writer/writer.go:parseRemoteAutomationConfig"}},
+		// One key per leg: the schema, the whole-payload read, and the join.
+		// fetchAutomations is the site H-21 was written for — the listing that
+		// died on an entity it does not list.
+		{"domaindecode", surfaceaudit.DomainDecodeSurface, []string{
+			"internal/cmd/auto.go:automationEntity.attributes cmd.automationAttributes",
+			"internal/cmd/ent.go:runEntLs",
+			"internal/cmd/auto.go:fetchAutomations",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := tc.derive(root)
@@ -188,15 +201,11 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 			for _, site := range s.Sites {
 				keys = append(keys, site.Key)
 			}
-			found := false
-			for _, k := range keys {
-				if k == tc.wantKey {
-					found = true
+			for _, want := range tc.wantKeys {
+				if !slices.Contains(keys, want) {
+					t.Errorf("the %s extractor no longer finds %q — it has stopped matching the code it audits.\nfound: %v",
+						tc.name, want, keys)
 				}
-			}
-			if !found {
-				t.Errorf("the %s extractor no longer finds %q — it has stopped matching the code it audits.\nfound: %v",
-					tc.name, tc.wantKey, keys)
 			}
 		})
 	}

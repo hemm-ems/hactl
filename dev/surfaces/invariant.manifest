@@ -27,6 +27,7 @@ H-16 = proven: TestMapRangeSurfaceIsClosed
 H-17 = proven: TestTargetSurfaceIsClosed
 H-19 = proven: TestAssertionFloor
 H-20 = proven: TestClockSurfaceIsClosed
+H-21 = proven: TestDomainDecodeSurfaceIsClosed
 
 # --- exempt: the law is about one site, so there is no set to quantify over ---
 H-3 = exempt: there is exactly one vendored spec file, and make check-spec-drift diffs the whole of it byte for byte

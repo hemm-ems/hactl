@@ -113,6 +113,10 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/cmd/svc.go:runSvcCall:data":                    "decodes the user's own --data argument",
 	"internal/cmd/flow.go:diagnosticsConfigData:envelope":    "raw diagnostics passthrough, with an explicit fallback",
 	"internal/cmd/flow.go:runConfigFlowStep:rawData":         "decodes the user's own --data argument",
+	"internal/cmd/states.go:decodeStateAttributes:attrs": "decodes ONE entity's attributes into " +
+		"automationAttributes/scriptAttributes, both of which are legitimately empty on a restored " +
+		"ghost (see unidentifiedWireStructs); the record's identity lives on the statesEnvelope " +
+		"around it, and fetchDomainStates checks every envelope in the payload (H-21)",
 
 	// Explicitly guarded: the function checks the field it needs is non-empty.
 	"internal/haapi/websocket.go:IngressSession:resp": "errors explicitly on an empty session token",

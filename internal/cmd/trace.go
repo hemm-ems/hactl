@@ -63,7 +63,11 @@ func runTraceShow(ctx context.Context, w io.Writer, traceID string) error {
 	// Translate object id -> config id before asking HA. Scripts have no such
 	// split and are left untouched.
 	if domain == "automation" {
-		if resolved, ok := automationConfigIDFor(ctx, cfg, itemID); ok {
+		resolved, ok, resolveErr := automationConfigIDFor(ctx, cfg, itemID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if ok {
 			itemID = resolved
 		}
 	}
@@ -109,7 +113,11 @@ func runTraceShow(ctx context.Context, w io.Writer, traceID string) error {
 	// command must not display an identifier it cannot itself consume, so
 	// translate to the entity_id for display when one exists.
 	if domain == "automation" {
-		if entityID, ok := automationEntityIDFor(ctx, cfg, itemID); ok {
+		entityID, ok, resolveErr := automationEntityIDFor(ctx, cfg, itemID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if ok {
 			condensed.AutoID = entityID
 		}
 	}
@@ -149,27 +157,38 @@ func resolveTraceID(reg *ids.Registry, traceID string) (domain, itemID, runID st
 
 // automationConfigIDFor maps an automation reference (object id, entity_id,
 // config id or alias) to the config id HA files its traces under. Returns
-// (ref, false) when no live automation matches — a genuinely unknown reference
-// is passed through unchanged so HA's own error surfaces rather than a
-// silently-rewritten lookup.
-func automationConfigIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool) {
+// (ref, false, nil) when no live automation matches — a genuinely unknown
+// reference is passed through unchanged so HA's own error surfaces rather than
+// a silently-rewritten lookup.
+//
+// A states fetch that FAILED is returned as an error instead (H-7, SPEC §2a).
+// Passing the reference through then would send HA an object id it does not
+// file traces under, and HA's "no such trace" would read as a caller typo about
+// an instance hactl never managed to read.
+func automationConfigIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool, error) {
 	client := haapi.New(cfg.URL, cfg.Token)
-	a, ok := resolveAutomation(ctx, client, ref)
-	if !ok || a.Attributes.ID == "" {
-		return ref, false
+	a, ok, err := resolveAutomation(ctx, client, ref)
+	if err != nil {
+		return "", false, err
 	}
-	return a.Attributes.ID, true
+	if !ok || a.Attributes.ID == "" {
+		return ref, false, nil
+	}
+	return a.Attributes.ID, true, nil
 }
 
 // automationEntityIDFor is automationConfigIDFor's inverse: it maps the config
 // id HA files traces under back to the entity_id every other command speaks.
-func automationEntityIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool) {
+func automationEntityIDFor(ctx context.Context, cfg *config.Config, ref string) (string, bool, error) {
 	client := haapi.New(cfg.URL, cfg.Token)
-	a, ok := resolveAutomation(ctx, client, ref)
-	if !ok || a.EntityID == "" {
-		return ref, false
+	a, ok, err := resolveAutomation(ctx, client, ref)
+	if err != nil {
+		return "", false, err
 	}
-	return a.EntityID, true
+	if !ok || a.EntityID == "" {
+		return ref, false, nil
+	}
+	return a.EntityID, true, nil
 }
 
 func parseTraceKey(key string) (string, string, string, error) {

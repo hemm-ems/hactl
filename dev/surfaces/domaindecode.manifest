@@ -1,0 +1,65 @@
+# domaindecode — a domain-specific attribute schema is applied only to the
+# entities the command renders: the set a listing decodes is a subset of the set
+# it lists (INVARIANTS.md H-21).
+#
+# The surface is derived by internal/surfaceaudit.DomainDecodeSurface with
+# go/types, across every build-tag configuration the sources declare. The rule
+# is a conjunction — a domain schema meets an unfiltered payload — so all three
+# of its legs are derived, and none of them can appear silently:
+#
+#   * the schemas: every struct declaring a `json:"attributes"` field whose type
+#     is not a map. A map attribute bag holds whatever the instance sent and
+#     describes no domain, so no entity of any domain can fail it; anything else
+#     is a schema somebody wrote for one domain.
+#   * the payloads: every function that reads the whole /api/states document.
+#   * the joins: every function that hands a pointer to a domain attribute
+#     schema into a call — the shape of a decode target — and every function
+#     that both names a schema in its own signature and unmarshals wire bytes.
+#
+# A function on two legs is one line: the disposition is a judgment about that
+# function and is made once.
+#
+# What the ledger carries and no AST can: whether the set a site decodes really
+# is the set it renders. `auto show` decodes one record from
+# /api/states/<entity_id>, address-scoped to its own domain, so its decoded set
+# and its rendered set are the same single entity — indistinguishable by parser
+# from `fetchAutomations` reading the whole instance. `exempt` here means one of
+# exactly two things, both structural: the payload is a single record the
+# command addressed by id, or the decode target is a map/raw bag with no opinion
+# about any domain's attribute types.
+#
+# SPEC-states-domain-decode.md §2 built this census by hand and called it
+# "exactly two sites — not a guess, a derived count". It was neither. The
+# derivation finds sixteen, and three of them (`auto show`, `script show`,
+# `script apply`) are domain-typed decodes of a states payload that the fix
+# never touched — safe, but only because the address carries the domain, which
+# is a reason somebody had to write down rather than a fact anyone had checked.
+#
+# The ceiling is zero and there is no debt: every site is either proven by the
+# H-21 tests or exempt for a structural reason. It may only rise by editing this
+# line on purpose.
+#ceiling 0
+
+# --- the domain schemas themselves --------------------------------------------
+internal/cmd/auto.go:automationEntity.attributes cmd.automationAttributes = proven: TestAutoLsIgnoresAttributesOfEntitiesItDiscards
+internal/cmd/script.go:scriptEntity.attributes cmd.scriptAttributes = proven: TestScriptLsIgnoresAttributesOfEntitiesItDiscards
+internal/cmd/states.go:statesEnvelope.attributes json.RawMessage = exempt: raw bytes are the absence of a schema, not a schema — this is the envelope every domain listing routes the whole payload through, and it has no opinion about any domain's attribute types
+
+# --- filter-then-decode: the listings the ordering fix reordered ---------------
+internal/cmd/auto.go:fetchAutomations = proven: TestAutoLsIgnoresAttributesOfEntitiesItDiscards
+internal/cmd/script.go:fetchScripts = proven: TestScriptLsIgnoresAttributesOfEntitiesItDiscards
+internal/cmd/states.go:fetchDomainStates = proven: TestStatesWithoutEntityIDStillPoisonsTheListing
+internal/cmd/states.go:decodeStateAttributes = proven: TestStatesDecodeErrorNamesTheEntityAndKey
+
+# --- single-record reads: the address already carries the domain ---------------
+internal/cmd/auto.go:runAutoShow = exempt: decodes one record from /api/states/<entity_id>, and every path into that id prefixes "automation." — the decoded set is the one entity rendered, so the subset holds with nothing to filter
+internal/cmd/script.go:runScriptShow = exempt: decodes one record from /api/states/<entity_id>, and the id is prefixed "script." when it is not already — the decoded set is the one entity rendered
+internal/cmd/script.go:runScriptApply = exempt: best-effort echo of the one script it just wrote, read from /api/states/script.<id> — the decoded set is that entity and nothing else
+
+# --- whole-payload reads that impose no domain schema --------------------------
+internal/cmd/ent.go:runEntLs = proven: TestEntListingsStillSeeTheColliderIsTheControl
+internal/cmd/ent.go:runEntRelated = exempt: decodes the whole payload into entityState, whose attributes are map[string]any, and reads only entity_id and state off it — no domain's schema is imposed on anything
+internal/cmd/cc.go:runCCShow = exempt: decodes the whole payload into entityState, whose attributes are map[string]any, and keeps only the entity_ids of the component's own domain
+internal/cmd/cc.go:enrichVersionsFromUpdateEntities = exempt: decodes the whole payload into entityState and reads installed_version out of the map with a type assertion, so a foreign type is a missed enrichment rather than a failed command
+internal/cmd/helper.go:fetchStorageHelpers = exempt: decodes the whole payload into entityState, whose attributes are map[string]any; the helper rows are built from entity_id and state alone
+internal/cmd/ref.go:fetchStateEntityIDs = exempt: decodes the whole payload into entityState and returns entity_ids only, so no attribute of any entity is ever typed

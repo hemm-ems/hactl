@@ -72,6 +72,7 @@ not an act at all. That asymmetry is the whole design.
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
 | `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
 | `decode` | every decode site the H-14 json sweep cannot see — yaml, decoder constructions, websocket `ReadJSON`, json outside `degeneracy.WirePackages` | a decode that yields nothing never renders as success (H-7) |
+| `domaindecode` | the three legs of the rule, from the typed source: every non-map `json:"attributes"` schema, every read of the whole `/api/states` document, every join between them | a domain-specific attribute schema is applied only to the entities the command renders (H-21) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

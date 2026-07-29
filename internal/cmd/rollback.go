@@ -77,8 +77,15 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 	// exists (D-1, H-17). A reference matching no live automation passes
 	// through unchanged: a deleted automation still has its backup under its
 	// config id, and that is the one identifier left for it.
+	// A states fetch that failed is not "no live automation matches": it would
+	// leave the reference unresolved and answer "no backup found" for an
+	// automation whose backup exists (H-7, SPEC §2a).
 	if automationID != "" {
-		automationID = resolveAutomationConfigID(ctx, client, automationID)
+		resolved, resolveErr := resolveAutomationConfigID(ctx, client, automationID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		automationID = resolved
 	}
 
 	if !flagRollbackConfirm {

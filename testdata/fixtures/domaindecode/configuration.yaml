@@ -1,0 +1,81 @@
+# domaindecode fixture — the oracle rig for H-21 (a listing decodes only the
+# entities it lists).
+#
+# Purpose: put automation.*, script.* and a NON-automation, NON-script entity
+# that carries the automation/script attribute keys at *different JSON types*
+# into ONE /api/states response, so a test can ask HA whether that is possible
+# at all rather than assuming it.
+#
+# `sensor.hactl_synthetic_collider` is SYNTHETIC and named so it cannot be
+# mistaken for an observation. The entity that broke `auto ls` on the reporting
+# instance (HA 2026.7.4, `current: -1.7525`) is UNKNOWN — that instance is a
+# third party's and this project cannot reach it. This fixture therefore does
+# not claim to reproduce it. It covers a deliberate SUPERSET: one discarded
+# entity carrying *every* key in automationAttributes/scriptAttributes at a
+# colliding type, which is strictly stronger than whatever single key the real
+# culprit carries.
+#
+# `template:` is used because it is the one first-party integration that lets a
+# config author choose an attribute's key AND its JSON type. That the values
+# survive as native JSON types (a float stays a float, a bool stays a bool) is
+# itself a wire fact the oracle asserts rather than assumes.
+#
+# `demo:` is here for the census half: it is the broadest first-party entity
+# set HA can be made to produce without external hardware, across ~20 domains.
+# It is a LOWER BOUND on what HA can emit, never a census of it.
+
+homeassistant:
+  name: Domain Decode Oracle
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+demo:
+
+logger:
+  default: warning
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+
+input_boolean:
+  collider_gate:
+    name: Collider Gate
+
+template:
+  # The synthetic collider. Every key here is a key automationAttributes or
+  # scriptAttributes decodes, and every value is a JSON type the Go field
+  # cannot hold.
+  - sensor:
+      - name: Hactl Synthetic Collider
+        unique_id: hactl_synthetic_collider
+        state: "ok"
+        attributes:
+          # automationAttributes.Current / scriptAttributes.Current are `int`.
+          # -1.7525 is the value from the live report; the entity carrying it
+          # there is unknown and is NOT claimed to be this one.
+          current: "{{ -1.7525 }}"
+          # .ID, .Mode, .FriendlyName, .LastTriggered are `string`.
+          id: "{{ 4711 }}"
+          mode: "{{ 2.5 }}"
+          friendly_name: "{{ 9.75 }}"
+          last_triggered: "{{ 1753800000 }}"
+          # .Restored is `bool`.
+          restored: "{{ 'not-a-bool' }}"
+
+  # A second collider in a different domain, so "collision" is not an artefact
+  # of one domain. binary_sensor is a different platform with a different state
+  # writer.
+  - binary_sensor:
+      - name: Hactl Synthetic Collider Two
+        unique_id: hactl_synthetic_collider_two
+        state: "off"
+        attributes:
+          current: "{{ 12345678901234567890 }}"
+          mode: "{{ ['a', 'b'] }}"

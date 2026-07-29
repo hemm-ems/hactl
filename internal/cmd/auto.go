@@ -133,17 +133,20 @@ func init() {
 // holding a full entity_id or the alias (#70). Resolve any of those forms to
 // the config id via /api/states before asking the companion; a reference
 // that matches no live automation is passed through as-is so a genuinely
-// unknown id still 404s with the companion's own message.
+// unknown id still 404s with the companion's own message. A states fetch that
+// FAILS ends the command instead (H-7): forwarding the reference unresolved
+// turns "hactl could not read the instance" into the companion's "automation
+// not found".
 func runAutoCat(ctx context.Context, w io.Writer, automationID string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
 	}
 
-	configID := automationID
 	restClient := haapi.New(cfg.URL, cfg.Token)
-	if a, ok := resolveAutomation(ctx, restClient, automationID); ok && a.Attributes.ID != "" {
-		configID = a.Attributes.ID
+	configID, err := resolveAutomationConfigID(ctx, restClient, automationID)
+	if err != nil {
+		return err
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -339,9 +342,18 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 	// `show` used to require (#70). Try every interchangeable form first;
 	// fall back to the old bare-prefix guess so a genuinely unknown
 	// reference still 404s usefully instead of silently swallowing the typo.
+	//
+	// The fallback is for "the instance answered and holds no such automation"
+	// ONLY. A states fetch that failed ends the command here (H-7): guessing
+	// "automation." + id after an unreadable /api/states produces a 404 that
+	// reads as a caller typo about an instance hactl never read.
 	entityID := autoID
 	var resolvedAuto automationEntity
-	if a, ok := resolveAutomation(ctx, client, autoID); ok {
+	a, ok, resolveErr := resolveAutomation(ctx, client, autoID)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	if ok {
 		resolvedAuto = a
 		entityID = a.EntityID
 	} else if !strings.HasPrefix(entityID, "automation.") {
@@ -492,25 +504,27 @@ func writeAutoJSON(w io.Writer, res autoShowResult) error {
 	return enc.Encode(res)
 }
 
+// fetchAutomations lists the live automations from /api/states.
+//
+// INVARIANT H-21: the payload is filtered to `automation.` BEFORE anything is
+// decoded into automationAttributes. This listing used to decode every entity
+// in the instance into its own schema and filter afterwards, so a `sensor.*`
+// carrying a fractional `current` — an attribute key that is not domain-scoped
+// and not type-stable across domains — failed the whole command. See
+// internal/cmd/states.go.
 func fetchAutomations(ctx context.Context, client *haapi.Client) ([]automationEntity, error) {
-	data, err := client.GetStates(ctx)
+	states, err := fetchDomainStates(ctx, client, "automation.")
 	if err != nil {
-		return nil, fmt.Errorf("fetching states: %w", err)
-	}
-
-	var allStates []automationEntity
-	if err := json.Unmarshal(data, &allStates); err != nil {
-		return nil, fmt.Errorf("parsing states: %w", err)
-	}
-	if err := degeneracy.Check("/api/states", &allStates); err != nil {
 		return nil, err
 	}
 
-	autos := make([]automationEntity, 0, len(allStates))
-	for _, s := range allStates {
-		if strings.HasPrefix(s.EntityID, "automation.") {
-			autos = append(autos, s)
+	autos := make([]automationEntity, 0, len(states))
+	for _, s := range states {
+		a := automationEntity{EntityID: s.EntityID, State: s.State}
+		if decErr := decodeStateAttributes(s, &a.Attributes); decErr != nil {
+			return nil, fmt.Errorf("parsing states: %w", decErr)
 		}
+		autos = append(autos, a)
 	}
 	return autos, nil
 }
@@ -913,7 +927,10 @@ func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 	backupDir := filepath.Join(cfg.Dir, "backups")
 	wr := writer.New(client, nil, backupDir)
 
-	configID := resolveAutomationConfigID(ctx, client, autoID)
+	configID, err := resolveAutomationConfigID(ctx, client, autoID)
+	if err != nil {
+		return err
+	}
 
 	diff, err := wr.Diff(ctx, configID, flagAutoFile)
 	if err != nil {
@@ -955,7 +972,10 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 
 	wr := writer.New(client, wsClient, backupDir)
 
-	configID := resolveAutomationConfigID(ctx, client, autoID)
+	configID, err := resolveAutomationConfigID(ctx, client, autoID)
+	if err != nil {
+		return err
+	}
 
 	// The diff is also the resolution step, and its failure must end the
 	// command before anything is printed.
@@ -1139,23 +1159,37 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 // entity_id from alias (not the config id), so a caller working from
 // `hactl auto` output may only have the display identifier — which could be
 // the alias itself (HA exposes it as attributes.friendly_name verbatim), the
-// config id (`cat`/`diff`/`apply`), or the entity object id (`ls`). Returns
-// (automationEntity{}, false) if no live automation matches or the states
-// fetch fails.
-func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (automationEntity, bool) {
+// config id (`cat`/`diff`/`apply`), or the entity object id (`ls`).
+//
+// The three-valued answer is load-bearing (INVARIANT H-7, SPEC §2a). "No live
+// automation matches" is (false, nil); "hactl could not read the instance" is a
+// non-nil error, never a bare false. This function used to discard the fetch
+// error and return false for both, so on an instance whose /api/states could
+// not be read EVERY automation reference resolved as unknown with no error
+// shown anywhere: `auto show` fell back to its "automation." + id guess and
+// 404'd as if the caller had typed a bad name, `auto delete` forwarded the raw
+// object id to the companion (the H-17 failure its own comment documents),
+// `auto cat`/`diff`/`apply`/`rollback` silently skipped the config-id path, and
+// `trace show` passed the reference through unrewritten so HA's own error read
+// as a caller typo. An unavailable source rendering as a confident negative
+// answer is precisely what H-7 forbids, so every caller must let this error out.
+//
+// The H-21 ordering fix does not make this unnecessary: the fetch can still
+// fail on network, on auth, or on a genuinely degenerate payload.
+func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (automationEntity, bool, error) {
 	autos, err := fetchAutomations(ctx, client)
 	if err != nil {
-		return automationEntity{}, false
+		return automationEntity{}, false, err
 	}
 	for _, a := range autos {
 		if a.EntityID == ref ||
 			a.Attributes.ID == ref ||
 			a.Attributes.FriendlyName == ref ||
 			strings.TrimPrefix(a.EntityID, "automation.") == ref {
-			return a, true
+			return a, true, nil
 		}
 	}
-	return automationEntity{}, false
+	return automationEntity{}, false, nil
 }
 
 // resolveAutomationConfigID turns any identifier hactl prints for an automation
@@ -1174,11 +1208,20 @@ func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (a
 // automations.yaml but not loaded has a config id and no live entity, and the
 // Config API is the authority on whether it exists. The caller's job is to let
 // that fetch's error escape — which is the other half of this fix.
-func resolveAutomationConfigID(ctx context.Context, client *haapi.Client, ref string) string {
-	if a, ok := resolveAutomation(ctx, client, ref); ok && a.Attributes.ID != "" {
-		return a.Attributes.ID
+//
+// A states fetch that FAILED is a different thing entirely and is returned as
+// an error, not passed through: the reference would then be forwarded unresolved
+// and 404 as "no such automation", which is a statement about the automation
+// made on evidence hactl never obtained (H-7, SPEC §2a).
+func resolveAutomationConfigID(ctx context.Context, client *haapi.Client, ref string) (string, error) {
+	a, ok, err := resolveAutomation(ctx, client, ref)
+	if err != nil {
+		return "", err
 	}
-	return ref
+	if ok && a.Attributes.ID != "" {
+		return a.Attributes.ID, nil
+	}
+	return ref, nil
 }
 
 // automationTraceKey returns the key HA files this automation's traces under.
@@ -1210,8 +1253,15 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 		return err
 	}
 
+	// A failed states fetch ends the command. Continuing would set
+	// hadLiveEntity false on no evidence, forward the raw reference to the
+	// companion, and report its 404 as "automation not found" — a confident
+	// negative about an instance hactl could not read (H-7, SPEC §2a).
 	restClient := haapi.New(cfg.URL, cfg.Token)
-	liveAuto, hadLiveEntity := resolveAutomation(ctx, restClient, autoID)
+	liveAuto, hadLiveEntity, err := resolveAutomation(ctx, restClient, autoID)
+	if err != nil {
+		return err
+	}
 	liveEntityID := liveAuto.EntityID
 
 	// The identifier handed to the companion is the config id whenever one is

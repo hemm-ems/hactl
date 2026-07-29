@@ -409,25 +409,23 @@ func renderScriptShowJSON(ctx context.Context, w io.Writer, cfg *config.Config, 
 	return enc.Encode(result)
 }
 
+// fetchScripts lists the live scripts from /api/states.
+//
+// INVARIANT H-21, the same as fetchAutomations: filter to `script.` first, and
+// decode only the survivors into scriptAttributes. See internal/cmd/states.go.
 func fetchScripts(ctx context.Context, client *haapi.Client) ([]scriptEntity, error) {
-	data, err := client.GetStates(ctx)
+	states, err := fetchDomainStates(ctx, client, "script.")
 	if err != nil {
-		return nil, fmt.Errorf("fetching states: %w", err)
-	}
-
-	var allStates []scriptEntity
-	if err := json.Unmarshal(data, &allStates); err != nil {
-		return nil, fmt.Errorf("parsing states: %w", err)
-	}
-	if err := degeneracy.Check("/api/states", &allStates); err != nil {
 		return nil, err
 	}
 
-	scripts := make([]scriptEntity, 0, len(allStates))
-	for _, s := range allStates {
-		if strings.HasPrefix(s.EntityID, "script.") {
-			scripts = append(scripts, s)
+	scripts := make([]scriptEntity, 0, len(states))
+	for _, s := range states {
+		sc := scriptEntity{EntityID: s.EntityID, State: s.State}
+		if decErr := decodeStateAttributes(s, &sc.Attributes); decErr != nil {
+			return nil, fmt.Errorf("parsing states: %w", decErr)
 		}
+		scripts = append(scripts, sc)
 	}
 	return scripts, nil
 }

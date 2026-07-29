@@ -1,0 +1,49 @@
+# Automations for the domaindecode oracle.
+#
+# collider_parallel exists to drive the `current` attribute ABOVE zero. Marker 3
+# asks whether HA guarantees that attribute integral, and a field that is only
+# ever observed at 0 answers nothing: 0 is the one value whose JSON form cannot
+# distinguish an int producer from a float one. `mode: parallel` + a long delay
+# lets the test hold two runs open at once and read `current` at 2.
+#
+# The other two are deliberately inert (an event type HA never emits), so the
+# listing has automations whose `current` stays 0.
+
+- id: collider_parallel
+  alias: Collider Parallel
+  description: Held open by the oracle so `current` can be observed above zero
+  trigger:
+    - platform: event
+      event_type: hactl_collider_fire
+  condition: []
+  action:
+    - delay:
+        seconds: 600
+  mode: parallel
+  max: 10
+
+- id: collider_inert_a
+  alias: Collider Inert A
+  description: Never runs; `current` stays 0
+  trigger:
+    - platform: event
+      event_type: hactl_collider_never_fires
+  condition: []
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.collider_gate
+  mode: single
+
+- id: collider_inert_b
+  alias: Collider Inert B
+  description: Never runs; `current` stays 0
+  trigger:
+    - platform: event
+      event_type: hactl_collider_never_fires
+  condition: []
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.collider_gate
+  mode: single

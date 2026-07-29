@@ -1,0 +1,20 @@
+# Scripts for the domaindecode oracle. See automations.yaml for why one of them
+# is parallel with a long delay.
+
+collider_parallel_script:
+  alias: Collider Parallel Script
+  description: Held open by the oracle so `current` can be observed above zero
+  sequence:
+    - delay:
+        seconds: 600
+  mode: parallel
+  max: 10
+
+collider_inert_script:
+  alias: Collider Inert Script
+  description: Never called; `current` stays 0
+  sequence:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.collider_gate
+  mode: single
