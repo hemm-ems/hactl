@@ -42,6 +42,8 @@ type helperRow struct {
 }
 
 var flagHelperDomain string
+var flagHelperPattern string
+var flagHelperName string
 var flagHelperFile string
 var flagHelperConfirm bool
 
@@ -108,6 +110,8 @@ var helperDeleteCmd = &cobra.Command{
 
 func init() {
 	helperLsCmd.Flags().StringVar(&flagHelperDomain, "domain", "", "filter by domain (e.g. input_boolean)")
+	helperLsCmd.Flags().StringVar(&flagHelperPattern, "pattern", "", "filter by helper id (substring or glob)")
+	helperLsCmd.Flags().StringVar(&flagHelperName, "name", "", "filter by display name substring")
 	helperCreateCmd.Flags().StringVarP(&flagHelperFile, "file", "f", "", "YAML file for the new helper")
 	helperCreateCmd.Flags().BoolVar(&flagHelperConfirm, "confirm", false, "actually create (default is dry-run)")
 	helperDeleteCmd.Flags().BoolVar(&flagHelperConfirm, "confirm", false, "actually delete (default is dry-run)")
@@ -164,6 +168,12 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 
 	if flagHelperDomain != "" {
 		rows = filterHelperRowsByDomain(rows, flagHelperDomain)
+	}
+	if flagHelperPattern != "" {
+		rows = filterHelperRowsByPattern(rows, flagHelperPattern)
+	}
+	if flagHelperName != "" {
+		rows = filterHelperRowsByName(rows, flagHelperName)
 	}
 
 	if len(rows) == 0 {
@@ -251,6 +261,33 @@ func filterHelperRowsByDomain(rows []helperRow, domain string) []helperRow {
 	out := make([]helperRow, 0, len(rows))
 	for _, r := range rows {
 		if r.Domain == domain {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterHelperRowsByPattern keeps rows whose id matches the glob/substring
+// pattern, case-insensitively via the shared matchPattern (D-2). The id is
+// the identifier hactl resolves for a helper — the YAML slug for
+// companion-managed rows, the full entity_id for storage rows — and per D-1
+// --pattern matches identifiers only; display names are --name's job.
+func filterHelperRowsByPattern(rows []helperRow, pattern string) []helperRow {
+	out := make([]helperRow, 0, len(rows))
+	for _, r := range rows {
+		if matchPattern(r.ID, pattern) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterHelperRowsByName keeps rows whose display name contains the needle,
+// case-insensitively like every sibling name filter (D-2, cf. device ls).
+func filterHelperRowsByName(rows []helperRow, name string) []helperRow {
+	out := make([]helperRow, 0, len(rows))
+	for _, r := range rows {
+		if containsFold(r.Name, name) {
 			out = append(out, r)
 		}
 	}

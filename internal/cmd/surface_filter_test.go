@@ -107,6 +107,12 @@ var probes = map[string]filterProbe{
 		}
 		return out
 	},
+	"hactl helper ls/pattern": func(n string) []string {
+		return helperRowIDs(filterHelperRowsByPattern(parityHelperRows(), n))
+	},
+	"hactl helper ls/name": func(n string) []string {
+		return helperRowIDs(filterHelperRowsByName(parityHelperRows(), n))
+	},
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +145,24 @@ func parityScriptRows() []scriptRow {
 		{id: "Wozi_scene", labels: "Wozi Lights"},
 		{id: "kitchen_reset", labels: "Kitchen"},
 	}
+}
+
+// parityHelperRows mixes the two id shapes helper ls prints: a storage row's
+// full entity_id and a yaml row's bare slug — mixed-case in ID and Name so the
+// case gate proves something.
+func parityHelperRows() []helperRow {
+	return []helperRow{
+		{ID: "input_boolean.Wozi_mode", Name: "Wozi Mode", Domain: "input_boolean", Source: "storage"},
+		{ID: "kitchen_timer", Name: "Kitchen Timer", Domain: "timer", Source: "yaml"},
+	}
+}
+
+func helperRowIDs(rows []helperRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.ID)
+	}
+	return out
 }
 
 func parityAreas() map[string]haapi.AreaEntry {
