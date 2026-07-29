@@ -400,6 +400,8 @@ block removes the whole block, so no orphan trigger is left behind.
 ```bash
 hactl helper ls                                      # list all helpers
 hactl helper ls --domain input_boolean               # filter by domain
+hactl helper ls --pattern guest                      # filter by helper id (glob/substring)
+hactl helper ls --name "Guest Mode"                  # filter by display name (substring)
 hactl helper show guest_mode                         # id + domain header, then the YAML definition
 hactl helper cat guest_mode                          # the same YAML with no header (pipe-friendly)
 hactl helper create input_boolean -f toggle.yaml             # dry-run
@@ -721,23 +723,23 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 
 > **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area), confirm it exists (the matching registry `ls`) before reporting a negative — that one call is exempt from stop-at-first-miss.
 
-Four commands take `--pattern` (glob or substring, case-insensitive), and it matches **identifiers, not display names**:
+Five commands take `--pattern` (glob or substring, case-insensitive), and it matches **identifiers, not display names**:
 
 ```bash
-hactl auto ls --pattern victron           # matches object id, entity_id, config id, alias
-hactl script ls --pattern kino            # matches the script id
-hactl ent ls --pattern 'sensor.wp_*'      # matches the entity_id (automations: also config id + alias)
-hactl device ls --pattern wozi            # devices are the exception: id OR name ("Wozi Tv")
+hactl auto ls --pattern victron           # object id, entity_id, config id, alias
+hactl script ls --pattern kino            # script id
+hactl ent ls --pattern 'sensor.wp_*'      # entity_id (automations: also config id + alias)
+hactl helper ls --pattern guest           # helper id
+hactl device ls --pattern wozi            # exception: id OR name ("Wozi Tv")
 ```
 
 `*`/`?` → glob, otherwise substring. An entity's display name can share no
 token with its entity_id (`light.ap_gast_v2_led` ↔ "AP6 Flur LED") and listings
-print no name column, so a name the user quotes needs a server-side name
-search:
+print no name column, so quoted names need the server-side name search:
 
 ```bash
 hactl tpl eval "{{ states | selectattr('name','search','(?i)<term>') | map(attribute='entity_id') | list }}"
-hactl device ls --name <term>             # display-name filter, devices only
+hactl device ls --name <term>             # display-name filter (devices, helpers)
 ```
 
 These are the only search flags — `ent ls` has no `--name`, nothing has

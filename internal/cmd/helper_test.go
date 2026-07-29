@@ -239,6 +239,51 @@ func TestRunHelperLs_JSON_Empty_HAUnreachable(t *testing.T) {
 	assertEmptyJSONArray(t, buf.String())
 }
 
+// TestRunHelperLs_PatternAndNameFilters — --pattern narrows by id across BOTH
+// sources (a yaml row's bare slug and a storage row's entity_id), and --name
+// narrows by display name; per D-1 --pattern never matches a display name.
+func TestRunHelperLs_PatternAndNameFilters(t *testing.T) {
+	companionBody := `{"helpers":[{"id":"guest_mode","name":"Guest Mode","domain":"input_boolean"}]}`
+	statesBody := `[{"entity_id":"input_number.guest_limit","state":"3","attributes":{"friendly_name":"Besucherlimit"}},
+		{"entity_id":"timer.pizza","state":"idle","attributes":{"friendly_name":"Pizza Timer"}}]`
+
+	run := func(set func()) string {
+		t.Helper()
+		dir := helperEnv(t, helperCompanionHandler(companionBody), helperStatesHandler(statesBody))
+		withFlagDir(t, dir)
+		oldP, oldN := flagHelperPattern, flagHelperName
+		flagHelperPattern, flagHelperName = "", ""
+		defer func() { flagHelperPattern, flagHelperName = oldP, oldN }()
+		set()
+		var buf bytes.Buffer
+		if err := runHelperLs(context.Background(), &buf); err != nil {
+			t.Fatalf("runHelperLs: %v", err)
+		}
+		return buf.String()
+	}
+
+	out := run(func() { flagHelperPattern = "guest" })
+	for _, want := range []string{"guest_mode", "guest_limit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--pattern guest: output missing %q: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "pizza") {
+		t.Errorf("--pattern guest: pizza row survived: %q", out)
+	}
+
+	// D-1: a display name is not an identifier, so --pattern must not match it.
+	out = run(func() { flagHelperPattern = "Besucherlimit" })
+	if !strings.Contains(out, "no helpers") {
+		t.Errorf("--pattern on a display name must match nothing, got: %q", out)
+	}
+
+	out = run(func() { flagHelperName = "besucher" })
+	if !strings.Contains(out, "guest_limit") || strings.Contains(out, "guest_mode") {
+		t.Errorf("--name besucher: want only the Besucherlimit row, got: %q", out)
+	}
+}
+
 func TestFilterHelperRowsByDomain(t *testing.T) {
 	rows := []helperRow{
 		{ID: "guest_mode", Domain: "input_boolean", Source: "yaml"},
