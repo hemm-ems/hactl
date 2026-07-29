@@ -364,7 +364,7 @@ func TestEmptyResultJSON_RefReplace(t *testing.T) {
 	withRefConfirm(t, false)
 
 	var buf bytes.Buffer
-	if err := runRefReplace(context.Background(), &buf, "sensor.old", "sensor.new"); err != nil {
+	if err := refReplaceWithOptions(context.Background(), &buf, "sensor.old", "sensor.new", flagRefConfirm, flagRefAllowPartial); err != nil {
 		t.Fatalf("runRefReplace failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())

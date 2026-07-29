@@ -367,6 +367,147 @@ func assertEntRelatedOutput(t *testing.T, out string, wants ...string) {
 // default !include graph) via `auto create`, then scan for it, dry-run a rename
 // (must not change the file), apply it, and confirm the literal moved. This is
 // the class of boundary a mocked companion can't prove.
+// registryEntryE2E reads one entity's registry entry straight from HA over WS
+// — the H-12 read-back path, never through hactl.
+func registryEntryE2E(ctx context.Context, entityID string) (haapi.EntityRegistryEntry, bool, error) {
+	ws := haapi.NewWSClient(haURL, haToken)
+	if err := ws.Connect(ctx); err != nil {
+		return haapi.EntityRegistryEntry{}, false, fmt.Errorf("connecting to HA: %w", err)
+	}
+	defer ws.Close() //nolint:errcheck // best-effort close in test helper
+	entries, err := ws.EntityRegistryList(ctx)
+	if err != nil {
+		return haapi.EntityRegistryEntry{}, false, fmt.Errorf("listing entity registry: %w", err)
+	}
+	for _, e := range entries {
+		if e.EntityID == entityID {
+			return e, true, nil
+		}
+	}
+	return haapi.EntityRegistryEntry{}, false, nil
+}
+
+// TestE2EEntRenameCLI — H-12 for `ent rename` (writeback.manifest row): both
+// writes are read back from their own oracles, the registry half from HA's WS
+// entity registry (old id absent, new id present, unique_id as the witness
+// the command never prints), the reference half from HA's automation config
+// REST API. The dry run is proven inert on both halves first.
+func TestE2EEntRenameCLI(t *testing.T) {
+	// The two ids must not be substrings of each other: the read-back below
+	// asserts oldID is GONE via strings.Contains, and a prefix-shaped new id
+	// (…_probe -> …_probe_v2) would report the old id as still present — the
+	// same whole-value-vs-substring trap D-10 documents for dash grep.
+	const (
+		oldID  = "input_boolean.rename_e2e_probe"
+		newID  = "input_boolean.rename_e2e_moved"
+		autoID = "rename_e2e_auto"
+	)
+	ctx := context.Background()
+
+	// Seed a registry entity: a helper created through the CLI.
+	helperFile, err := os.CreateTemp(t.TempDir(), "rename-e2e-*.yaml")
+	if err != nil {
+		t.Fatalf("creating helper YAML: %v", err)
+	}
+	if _, werr := helperFile.WriteString("rename_e2e_probe:\n  name: Rename E2E Probe\n  icon: mdi:rename-box\n"); werr != nil {
+		t.Fatalf("writing helper YAML: %v", werr)
+	}
+	_ = helperFile.Close()
+	if out, execErr := runHactlE2E(t, "helper", "create", "input_boolean", "-f", helperFile.Name(), "--confirm"); execErr != nil {
+		t.Fatalf("hactl helper create failed (exit: %v):\n%s", execErr, out)
+	}
+	// LIFO: delete runs last, after the rename-back below restored the id the
+	// helper's YAML slug still points at.
+	t.Cleanup(func() { _, _ = runHactlE2E(t, "helper", "delete", "rename_e2e_probe", "--confirm") })
+	t.Cleanup(func() {
+		ws := haapi.NewWSClient(haURL, haToken)
+		if cerr := ws.Connect(ctx); cerr == nil {
+			_ = ws.EntityRegistryUpdate(ctx, newID, map[string]any{"new_entity_id": oldID})
+			_ = ws.Close()
+		}
+	})
+
+	// Seed an automation referencing it.
+	autoContent := fmt.Sprintf(`id: %s
+alias: Rename E2E Auto
+mode: single
+trigger:
+  - platform: state
+    entity_id: %s
+condition: []
+action:
+  - delay: "00:00:01"
+`, autoID, oldID)
+	autoFile, err := os.CreateTemp(t.TempDir(), "rename-e2e-auto-*.yaml")
+	if err != nil {
+		t.Fatalf("creating automation YAML: %v", err)
+	}
+	if _, werr := autoFile.WriteString(autoContent); werr != nil {
+		t.Fatalf("writing automation YAML: %v", werr)
+	}
+	_ = autoFile.Close()
+	if out, execErr := runHactlE2E(t, "auto", "create", "--confirm", "-f", autoFile.Name()); execErr != nil {
+		t.Fatalf("hactl auto create failed (exit: %v):\n%s", execErr, out)
+	}
+	t.Cleanup(func() { _, _ = runHactlE2E(t, "auto", "delete", autoID, "--confirm") })
+
+	before, found, err := registryEntryE2E(ctx, oldID)
+	if err != nil || !found {
+		t.Fatalf("seeded helper %s has no registry entry (err=%v)", oldID, err)
+	}
+
+	// --- dry run: previews both halves, changes neither (H-12 clause 3') ---
+	out, execErr := runHactlE2E(t, "ent", "rename", oldID, newID)
+	if execErr != nil {
+		t.Fatalf("hactl ent rename (dry-run) failed (exit: %v):\n%s", execErr, out)
+	}
+	for _, want := range []string{"dry-run: would rename entity", "references:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, out)
+		}
+	}
+	if _, still, _ := registryEntryE2E(ctx, oldID); !still {
+		t.Fatal("dry-run renamed the registry entry")
+	}
+	if scanOut, scanErr := runHactlE2E(t, "ref", "scan", oldID); scanErr != nil {
+		t.Fatalf("ref scan after dry-run failed (exit: %v):\n%s", scanErr, scanOut)
+	} else if !strings.Contains(scanOut, "automations.yaml") {
+		t.Fatalf("dry-run must not rewrite references:\n%s", scanOut)
+	}
+
+	// --- confirmed run: registry first, then the reference pass (D-11) ---
+	out, execErr = runHactlE2E(t, "ent", "rename", oldID, newID, "--confirm")
+	if execErr != nil {
+		t.Fatalf("hactl ent rename --confirm failed (exit: %v):\n%s", execErr, out)
+	}
+	if !strings.Contains(out, "renamed registry entry") || !strings.Contains(out, "renamed") {
+		t.Fatalf("confirm output missing the two halves:\n%s", out)
+	}
+
+	// Registry half, read from HA: new id present with the old unique_id as
+	// the never-printed witness; old id gone.
+	after, found, err := registryEntryE2E(ctx, newID)
+	if err != nil || !found {
+		t.Fatalf("renamed entity %s not in HA's registry (err=%v)", newID, err)
+	}
+	if after.UniqueID != before.UniqueID {
+		t.Errorf("unique_id changed across the rename: %q -> %q (witness)", before.UniqueID, after.UniqueID)
+	}
+	if _, still, _ := registryEntryE2E(ctx, oldID); still {
+		t.Errorf("old id %s still has a registry entry after the rename", oldID)
+	}
+
+	// Reference half, read from HA's own automation config API.
+	rest := haapi.New(haURL, haToken)
+	cfg, err := rest.GetAutomationConfig(ctx, autoID)
+	if err != nil {
+		t.Fatalf("reading automation config from HA: %v", err)
+	}
+	if !strings.Contains(string(cfg), newID) || strings.Contains(string(cfg), oldID) {
+		t.Errorf("automation config from HA still references the old id:\n%s", string(cfg))
+	}
+}
+
 func TestE2ERefReplaceCLI(t *testing.T) {
 	const (
 		stale = "binary_sensor.ref_e2e_stale"

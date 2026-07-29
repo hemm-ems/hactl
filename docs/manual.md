@@ -271,7 +271,19 @@ hactl ent hist sensor.wp_vl --attr brightness  # track attribute instead of stat
 hactl ent anomalies sensor.wp_vl          # gaps (>1h), stuck (>2h/24h), spikes (z>3)
 hactl ent related sensor.wp_vl            # related automations, device siblings, every entity in the same area
 hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + counts summary
+hactl ent rename sensor.old sensor.new            # dry-run: registry rename + reference count
+hactl ent rename sensor.old sensor.new --confirm  # rename + rewrite every reference (needs companion)
 ```
+
+`ent rename` is the one-command form of "rename the entity, then `ref replace`
+its references": the registry entry is renamed first (the authoritative
+object), then every literal reference in config files and dashboards is
+rewritten in the same pass. Only registry entities can be renamed. If the
+rewrite half fails after the registry half succeeded, the error names the
+completed half and the idempotent remediation (`ref replace <old> <new>
+--confirm`). Requires hactl-companion; `--allow-partial` mirrors `ref
+replace`. Under `--json`, the dry run is one plan object; a confirmed run
+returns the reference report (registry success is the exit code).
 
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration, one row per **state run** — consecutive records reporting the same state are one row lasting until the state actually changes, and an `unavailable` gap splits the run rather than being spanned. Anomaly detection runs client-side on cached history.
 
@@ -626,6 +638,10 @@ id inside a config-file template string (`{{ states('sensor.wp_vl') }}`) while
 never finding one inside a dashboard's. Reports `source` (`config` |
 `dashboard`), `location` (file name or dashboard), and `path`
 (`[1].trigger[0].entity_id`).
+
+To rename a **live** entity and its references in one step, use `ent rename`
+(registry rename + this replace pass); `ref replace` alone is the tool when
+only the references must move — e.g. onto an already-existing entity.
 
 `validate` is the one to reach for after deleting or renaming an entity: it
 sweeps every entity reference and reports the ones that no longer resolve. The
