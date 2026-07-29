@@ -323,6 +323,7 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			},
 		},
 		"lovelace/resources": []map[string]any{{"id": "1", "type": "module", "url": "/local/custom.js"}},
+		"energy/get_prefs":   energyPrefsFixture,
 		// cc ls/show discover components from loaded integration manifests
 		// (WS manifest/list); a matching update.* entity only ENRICHES an
 		// already-confirmed domain's version, it never adds one on its own.
@@ -385,6 +386,7 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"ent anomalies":       {"light.kitchen"},
 		"ent related":         {"light.kitchen"},
 		"ent who":             {"light.kitchen"},
+		"energy show":         nil,
 		"floor ls":            nil,
 		"health":              nil,
 		"config entries":      nil,

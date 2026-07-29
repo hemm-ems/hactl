@@ -76,6 +76,12 @@ var unidentifiedWireStructs = map[string]string{
 	"AutomationDefinition": "an automation with no `id:` is legal HA and the companion reports " +
 		"it as an empty id (routes/automations.py)",
 
+	"energySourceRow": "hactl's own --json output shape for `energy show`",
+	"EnergyPreferences": "a configured-but-empty energy dashboard is a real answer (both lists " +
+		"legitimately empty); the source/flow/device elements carry the identity, and the " +
+		"unconfigured case never reaches the decode — HA answers a WS error (\"No prefs\", " +
+		"oracle-probed), which EnergyGetPrefs surfaces before anything renders",
+
 	// ---- list wrappers: an empty list is the answer, the elements carry identity ----
 	"AutomationsResponse": "empty list is a legitimate answer; AutomationDefinition elements are checked",
 	"ScriptsResponse":     "empty list is a legitimate answer; ScriptDefinition elements are checked",

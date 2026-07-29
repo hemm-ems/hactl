@@ -462,6 +462,21 @@ hactl tpl eval '{{ label_entities("energy") | list }}'
 
 `svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
 
+### Energy
+
+```bash
+hactl energy show                         # what the Energy dashboard measures: sources + tracked devices
+hactl energy show --json                  # same, as {configured, sources[], device_consumption[]}
+```
+
+One row per statistic feeding the dashboard (`type` grid/solar/battery/gas/water,
+`direction`, `statistic`), plus the individually tracked devices — the joins to
+run before touching anything (`ent show <statistic>` answers who owns it). An
+instance whose Energy dashboard was never set up says exactly that (`--json`:
+`{"configured": false}`) — HA answers an error for missing preferences, so an
+empty dashboard and a missing one are never conflated. Read-only; there is no
+write half and no raw WS passthrough (D-12).
+
 ### Config entries & flows
 
 ```bash
