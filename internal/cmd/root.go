@@ -301,6 +301,8 @@ func resetSubcommandFlags() {
 	flagDeviceName = ""
 	flagDeviceArea = ""
 	flagDeviceLabel = ""
+	flagHelperPattern = ""
+	flagHelperName = ""
 	flagCCLogsUnique = false
 	flagSvcData = "{}"
 	flagSvcReturn = false
