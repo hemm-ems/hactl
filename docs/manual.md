@@ -303,9 +303,19 @@ hactl device ls --pattern '*heat*'        # glob/substring on device ID or name
 hactl device ls --area basement           # filter by area name or ID
 hactl device ls --label heat_pump         # filter by label name or ID
 hactl device show summt_heizung           # device profile + registered entities
+hactl device set-area summt_heizung basement            # dry-run (device by ID or name)
+hactl device set-area summt_heizung basement --confirm  # place the device in the area
+hactl device set-label summt_heizung heat_pump --confirm # add label(s) to the device
 ```
 
-LLM workflow for area assignment: discover the device with `device ls`, inspect its entities with `device show`, preview one entity update with `ent set-area <entity_id> <area>`, then repeat the exact command with `--confirm` only after the user confirms the entity and target area.
+Placing the **device** in a room is the normal HA pattern: a device's area is
+inherited by every one of its entities that has no own `area_id` (H-8), so one
+`device set-area` moves all of them at once — `ent set-area` is the per-entity
+exception for overrides. `set-label` merges into the device's existing labels.
+Both are dry-run by default; the preview resolves the device (ID or name) and
+the area/label, so a typo is an error, not a plan.
+
+LLM workflow for area assignment: discover the device with `device ls`, inspect its entities with `device show`, preview `device set-area <device> <area>`, then repeat the exact command with `--confirm` only after the user confirms the device and target area. Use `ent set-area` only when a single entity must differ from its device.
 
 ### Registry: labels, areas, floors
 

@@ -23,10 +23,35 @@ var (
 	flagDeviceLabel   string
 )
 
+var flagDeviceConfirm bool
+
 var deviceCmd = &cobra.Command{
 	Use:   "device",
-	Short: "Browse and inspect devices",
-	Long:  "List and inspect Home Assistant devices and their entity registry entries.",
+	Short: "Browse, inspect, and place devices",
+	Long:  "List and inspect Home Assistant devices, and assign their area or labels.",
+}
+
+var deviceSetAreaCmd = &cobra.Command{
+	Use:   "set-area <device> <area>",
+	Short: "Place a device in an area (dry-run by default)",
+	Long: "Assign a device to an area; the device may be given by ID or name, the area by name or ID. " +
+		"Every entity of the device without its own area_id inherits the device's area (H-8), so this " +
+		"is the one-command way to move a whole device. Use --confirm to apply.",
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+	},
+}
+
+var deviceSetLabelCmd = &cobra.Command{
+	Use:   "set-label <device> <label>...",
+	Short: "Add label(s) to a device (dry-run by default)",
+	Long: "Merge one or more labels (by name or ID) into a device's labels; the device may be given " +
+		"by ID or name. Use --confirm to apply.",
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runDeviceSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
+	},
 }
 
 var deviceLsCmd = &cobra.Command{
@@ -53,8 +78,147 @@ func init() {
 	deviceLsCmd.Flags().StringVar(&flagDeviceName, "name", "", "filter by device name substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceArea, "area", "", "filter by area/room name or ID substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceLabel, "label", "", "filter by label name or ID substring")
-	deviceCmd.AddCommand(deviceLsCmd, deviceShowCmd)
+	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the area (default is dry-run)")
+	deviceSetLabelCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the labels (default is dry-run)")
+	deviceCmd.AddCommand(deviceLsCmd, deviceShowCmd, deviceSetAreaCmd, deviceSetLabelCmd)
 	rootCmd.AddCommand(deviceCmd)
+}
+
+// runDeviceSetArea mirrors runEntSetArea one registry over: resolve the area
+// and the device before planning anything, so the dry run fails exactly where
+// --confirm would (H-2). The write is DeviceRegistryUpdate — per its doc
+// comment the only way to place an existing device into an area.
+func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) error {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if connErr := ws.Connect(ctx); connErr != nil {
+		return fmt.Errorf("connecting to HA: %w", connErr)
+	}
+	defer func() { _ = ws.Close() }()
+
+	areas, err := ws.AreaRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching areas: %w", err)
+	}
+	areaEntry, ok := resolveAreaEntry(areas, area)
+	if !ok {
+		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+	}
+
+	devices, err := ws.DeviceRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching device registry: %w", err)
+	}
+	// H-17: device ls/show print the ID and the name — both resolve here.
+	device, err := resolveDevice(devices, deviceRef)
+	if err != nil {
+		return err
+	}
+
+	if !flagDeviceConfirm {
+		return dryRunDeviceSetAreaSummary(device, areaEntry, areas).render(w)
+	}
+
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
+		return fmt.Errorf("updating device area: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", device.ID, areaEntry.AreaID)
+	return nil
+}
+
+func dryRunDeviceSetAreaSummary(device haapi.DeviceRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) *dryRunPlan {
+	currentArea := device.AreaID
+	for _, a := range areas {
+		if a.AreaID == device.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+	return dryRun("set device area").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", fmt.Sprintf("%s (%s)", area.Name, area.AreaID)).
+		withHint("use --confirm to apply (entities without an own area_id inherit the device's area)")
+}
+
+// runDeviceSetLabel mirrors runEntSetLabel: labels resolve by name or ID and
+// merge into the device's existing set, deduplicated.
+func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, labels []string) error {
+	cfg, err := config.Load(flagDir)
+	if err != nil {
+		return err
+	}
+
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if connErr := ws.Connect(ctx); connErr != nil {
+		return fmt.Errorf("connecting to HA: %w", connErr)
+	}
+	defer func() { _ = ws.Close() }()
+
+	existingLabels, err := ws.LabelRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching labels: %w", err)
+	}
+	labelIDs := make(map[string]string, len(existingLabels))
+	for _, l := range existingLabels {
+		labelIDs[strings.ToLower(l.Name)] = l.LabelID
+		labelIDs[l.LabelID] = l.LabelID
+	}
+	resolved := make([]string, 0, len(labels))
+	for _, lbl := range labels {
+		id, ok := labelIDs[strings.ToLower(lbl)]
+		if !ok {
+			return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", lbl)
+		}
+		resolved = append(resolved, id)
+	}
+
+	devices, err := ws.DeviceRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching device registry: %w", err)
+	}
+	device, err := resolveDevice(devices, deviceRef)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[string]bool, len(device.Labels)+len(resolved))
+	merged := make([]string, 0, len(device.Labels)+len(resolved))
+	for _, l := range device.Labels {
+		if !seen[l] {
+			seen[l] = true
+			merged = append(merged, l)
+		}
+	}
+	for _, l := range resolved {
+		if !seen[l] {
+			seen[l] = true
+			merged = append(merged, l)
+		}
+	}
+
+	if !flagDeviceConfirm {
+		// Slices, not their %v rendering, so --json carries real arrays.
+		return dryRun("set device labels").
+			with("device_id", device.ID).
+			withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+			with("current_labels", nonNil(device.Labels)).
+			with("new_labels", nonNil(merged)).
+			render(w)
+	}
+
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": merged}); err != nil {
+		return fmt.Errorf("updating device labels: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", device.ID, merged)
+	return nil
 }
 
 type deviceRegistryContext struct {

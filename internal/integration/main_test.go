@@ -40,5 +40,8 @@ func TestMain(m *testing.M) {
 	if domainDecodeHA != nil {
 		domainDecodeHA.Stop()
 	}
+	if deviceWriteHA != nil {
+		deviceWriteHA.Stop()
+	}
 	os.Exit(exitCode)
 }

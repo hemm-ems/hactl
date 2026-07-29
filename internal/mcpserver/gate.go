@@ -115,6 +115,8 @@ var writeCommands = map[string]bool{
 	"hactl dash save":                  true,
 	"hactl ent set-area":               true,
 	"hactl ent set-label":              true,
+	"hactl device set-area":            true,
+	"hactl device set-label":           true,
 	"hactl floor create":               true,
 	"hactl floor delete":               true,
 	"hactl helper create":              true,
