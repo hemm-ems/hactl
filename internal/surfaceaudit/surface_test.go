@@ -155,6 +155,27 @@ func TestDecodeSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestDomainDecodeSurfaceIsClosed — every place a domain-specific attribute
+// schema can meet a Home Assistant states payload is dispositioned.
+//
+// H-21 states the law as a universal: the set of entities whose attributes a
+// command decodes into a domain-specific schema is a subset of the set it
+// renders. `auto ls` and `script ls` decoded all of /api/states into their own
+// attribute struct and filtered afterwards, and both died on a live instance
+// over an entity neither of them lists. Neither H-7 nor the H-14 sweep governs
+// that: both are about decodes that silently yield nothing, and this one fails
+// loudly on data it should never have read.
+//
+// The rule is a conjunction — a domain schema applied to an unfiltered payload
+// — so the gate derives all three legs: the attribute schemas, the functions
+// that read the whole document, and the functions where a schema meets a
+// record. The spec's own census said "exactly two sites — not a guess, a
+// derived count"; it was neither, which is what this derives instead.
+func TestDomainDecodeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.DomainDecodeSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestRetrySurfaceIsClosed — every non-idempotent request site declares whether
 // its retry policy can duplicate the request.
 //

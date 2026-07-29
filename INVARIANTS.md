@@ -1103,7 +1103,11 @@ five sites — an unavailable source rendering as a confident negative answer �
 and the ordering fix does not retire it, because the fetch can still fail on
 network, on auth, or on a genuinely degenerate payload.
 
-- Enforced by: `internal/cmd/states_domain_decode_test.go`
+- Enforced by: `internal/surfaceaudit/surface_test.go`
+  (`TestDomainDecodeSurfaceIsClosed` — derives every place a domain-specific
+  attribute schema can meet a states payload, so a new schema, a new
+  whole-payload read, or a new join must be dispositioned before it merges),
+  `internal/cmd/states_domain_decode_test.go`
   (`TestAutoLsIgnoresAttributesOfEntitiesItDiscards`,
   `TestScriptLsIgnoresAttributesOfEntitiesItDiscards` — a discarded entity
   carrying every key of the command's own attribute struct at a colliding type;
@@ -1130,10 +1134,22 @@ network, on auth, or on a genuinely degenerate payload.
 - Tier: `make test` for the ordering, the error naming and the resolver;
   `make test-int` for the real-wire half and the oracles.
 
-The set this law quantifies over is derivable and must be derived: every struct
-with a `json:"attributes"` field whose type is not `map[string]any`, and every
-decode of a whole states payload into it. Until the `domaindecode` surface
-carries that derivation, this section's citations are an enumeration — which is
-what `dev/surfaces/invariant.manifest` records, and the reason a long
-"Enforced by:" list is evidence of a scope built by hand rather than of a rule
-that closes.
+The set this law quantifies over is derivable and **is** derived, by
+`TestDomainDecodeSurfaceIsClosed` over `dev/surfaces/domaindecode.manifest`. The
+rule is a conjunction — a domain-specific schema meets an unfiltered payload —
+so the surface derives all three of its legs and none can appear silently: the
+schemas (every struct declaring a `json:"attributes"` field whose type is not a
+map), the payloads (every function that reads the whole `/api/states`
+document), and the joins (every function that hands a pointer to a domain
+attribute schema into a call, or that names one in its signature and unmarshals
+wire bytes). A newly added domain-typed attribute struct is unclassified on the
+day it appears.
+
+The derivation immediately contradicted the count this law was written with.
+`SPEC-states-domain-decode.md` §2 called the class "exactly two sites — not a
+guess, a derived count"; it was neither. Sixteen sites carry the rule, and three
+of them — `auto show`, `script show`, `script apply` — are domain-typed decodes
+of a states payload that the ordering fix never touched. They are safe, but only
+because each addresses `/api/states/<entity_id>` inside its own domain, so the
+set decoded is the single entity rendered. That is a reason somebody had to
+write down; before the surface existed, nobody had checked it.
