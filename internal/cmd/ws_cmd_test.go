@@ -3291,8 +3291,16 @@ func TestRunDashGrep_NoReferences(t *testing.T) {
 	if err := runDashGrep(context.Background(), &buf, "light.gone"); err != nil {
 		t.Fatalf("runDashGrep failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "not referenced") {
-		t.Errorf("expected 'not referenced', got: %q", buf.String())
+	// D-10: the miss names its matching contract and routes term discovery —
+	// a bare "not referenced" reads as a verified negative for substring
+	// intents the whole-value walk never tested.
+	for _, want := range []string{
+		"not referenced as a whole value",
+		"hactl ent ls --pattern '*light.gone*'",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("miss output missing %q, got: %q", want, buf.String())
+		}
 	}
 }
 
