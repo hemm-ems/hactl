@@ -17,7 +17,11 @@ type EntityRegistryEntry struct {
 	Icon       string            `json:"icon"`
 	Platform   string            `json:"platform"`
 	DeviceID   string            `json:"device_id"`
-	AreaID     string            `json:"area_id"`
+	// ConfigEntryID names the config entry that owns this entity — empty for
+	// YAML-configured platforms. Carried by config/entity_registry/list;
+	// TestOracleEntityRegistryListCarriesIdentityFields is the wire proof.
+	ConfigEntryID string `json:"config_entry_id"`
+	AreaID        string `json:"area_id"`
 	DisabledBy string            `json:"disabled_by"`
 	HiddenBy   string            `json:"hidden_by"`
 	OrigName   string            `json:"original_name"`

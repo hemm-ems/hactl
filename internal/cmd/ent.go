@@ -284,6 +284,21 @@ func writeEntShowJSON(
 		if labelNames := rc.labelNames(entityID); labelNames != "" {
 			result["labels"] = labelNames
 		}
+		// Ownership: which integration/config entry this entity belongs to —
+		// the join a caller otherwise has to leave hactl for (issue #110).
+		// Omit-when-empty like area/labels: a YAML-configured platform has no
+		// config entry, a state-only entity has no registry entry at all.
+		if entry, ok := rc.entityByID[entityID]; ok {
+			if entry.Platform != "" {
+				result["platform"] = entry.Platform
+			}
+			if entry.UniqueID != "" {
+				result["unique_id"] = entry.UniqueID
+			}
+			if entry.ConfigEntryID != "" {
+				result["config_entry_id"] = entry.ConfigEntryID
+			}
+		}
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -329,6 +344,35 @@ func changedByLogbookEntries(ctx context.Context, client *haapi.Client, ent enti
 		return nil
 	}
 	return entries
+}
+
+// writeEntShowRegistryLines prints the registry-derived lines of the text
+// view — area, labels, and ownership (platform / unique_id / config_entry_id).
+// H-10 both directions: the same information writeEntShowJSON carries. Every
+// line is omit-when-empty; a state-only entity has no registry entry at all.
+func writeEntShowRegistryLines(w io.Writer, rc *registryContext, entityID string) {
+	if rc == nil {
+		return
+	}
+	if areaName := rc.areaName(entityID); areaName != "" {
+		_, _ = fmt.Fprintf(w, "area:         %s\n", areaName)
+	}
+	if labelNames := rc.labelNames(entityID); labelNames != "" {
+		_, _ = fmt.Fprintf(w, "labels:       %s\n", labelNames)
+	}
+	entry, ok := rc.entityByID[entityID]
+	if !ok {
+		return
+	}
+	if entry.Platform != "" {
+		_, _ = fmt.Fprintf(w, "platform:     %s\n", entry.Platform)
+	}
+	if entry.UniqueID != "" {
+		_, _ = fmt.Fprintf(w, "unique_id:    %s\n", entry.UniqueID)
+	}
+	if entry.ConfigEntryID != "" {
+		_, _ = fmt.Fprintf(w, "config_entry_id: %s\n", entry.ConfigEntryID)
+	}
 }
 
 func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
@@ -382,14 +426,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	if dc, ok := ent.Attributes["device_class"]; ok {
 		_, _ = fmt.Fprintf(w, "device_class: %v\n", dc)
 	}
-	if rc != nil {
-		if areaName := rc.areaName(entityID); areaName != "" {
-			_, _ = fmt.Fprintf(w, "area:         %s\n", areaName)
-		}
-		if labelNames := rc.labelNames(entityID); labelNames != "" {
-			_, _ = fmt.Fprintf(w, "labels:       %s\n", labelNames)
-		}
-	}
+	writeEntShowRegistryLines(w, rc, entityID)
 
 	if flagFull {
 		// Show all remaining attributes. "restored" is already surfaced above.
