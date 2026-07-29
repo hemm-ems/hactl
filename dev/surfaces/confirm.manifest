@@ -33,6 +33,8 @@ hactl script run = proven: TestRunScriptRun_NotFound
 hactl auto apply = proven: TestAutoApplyDryRunRefusesUnresolvableTarget
 hactl svc call = proven: TestSvcCallDryRunRefusesAServiceHADoesNotHave
 hactl dash create = proven: TestRunDashCreate_DryRunResolvesItsInput
+hactl device set-area = proven: TestDeviceSetAreaDryRunRefusesUnresolvable
+hactl device set-label = proven: TestDeviceSetLabelDryRunRefusesUnresolvable
 
 # --- exempt: nothing for the preview to resolve -----------------------------
 hactl area create = exempt: the argument is a name that does not exist yet, so there is no target to resolve; HA rejects a duplicate on the confirmed run

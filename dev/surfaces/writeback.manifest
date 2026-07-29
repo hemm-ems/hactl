@@ -114,6 +114,14 @@ hactl dash replace = proven: TestDashReplaceRoundTrip
 hactl ent set-label = proven: TestEntSetLabelRoundTrip
 hactl ent set-area = proven: TestEntSetAreaRoundTrip
 #
+# device set-area / set-label: same shape one registry over — read the device's
+# registry entry over WS before and after, whole-entry compare with the changed
+# field blanked (manufacturer/model/sw_version as never-printed witnesses),
+# dry-run-changed-nothing checked independently, and HA's own area_entities
+# asked whether the device's entities inherited the area (H-8).
+hactl device set-area = proven: TestDeviceSetAreaLabelRoundTrip
+hactl device set-label = proven: TestDeviceSetAreaLabelRoundTrip
+#
 # config flow-start/flow-step/delete: read HA's own config-entry list over REST
 # after each step, with the entry's title and state as witnesses. flow-start's
 # own write is a server-side flow, witnessed transitively — a stubbed
