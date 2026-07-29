@@ -122,6 +122,13 @@ hactl ent set-area = proven: TestEntSetAreaRoundTrip
 hactl device set-area = proven: TestDeviceSetAreaLabelRoundTrip
 hactl device set-label = proven: TestDeviceSetAreaLabelRoundTrip
 #
+# ent rename (two writes, both read back from their own oracles): the registry
+# half from HA's WS entity registry (new id present with the old unique_id as
+# witness, old id absent), the reference half from HA's automation config API
+# — never through hactl. Dry-run-changed-nothing checked on both halves.
+# Runs in make test-companion: the reference half needs the companion.
+hactl ent rename = proven: TestE2EEntRenameCLI
+#
 # config flow-start/flow-step/delete: read HA's own config-entry list over REST
 # after each step, with the entry's title and state as witnesses. flow-start's
 # own write is a server-side flow, witnessed transitively — a stubbed

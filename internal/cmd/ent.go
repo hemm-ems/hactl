@@ -121,8 +121,12 @@ func init() {
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
 	entSetLabelCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set labels (default is dry-run)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
+	entRenameCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually rename and rewrite references (default is dry-run)")
+	entRenameCmd.Flags().BoolVar(&flagEntRenameAllowPartial, "allow-partial", false,
+		"rename even when some dashboards cannot be scanned or written "+
+			"(references in those dashboards are left unchanged; same posture as ref replace)")
 	entRelatedCmd.Flags().BoolVar(&flagEntStale, "stale", false, "if the entity is gone, list where it is still referenced in config")
-	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd)
+	entCmd.AddCommand(entLsCmd, entShowCmd, entHistCmd, entAnomaliesCmd, entRelatedCmd, entSetLabelCmd, entSetAreaCmd, entRenameCmd)
 	rootCmd.AddCommand(entCmd)
 }
 
@@ -1275,6 +1279,116 @@ func filterEntitiesByLabel(states []entityState, rc *registryContext, label stri
 		}
 	}
 	return result
+}
+
+var flagEntRenameAllowPartial bool
+
+var entRenameCmd = &cobra.Command{
+	Use:   "rename <old_entity_id> <new_entity_id>",
+	Short: "Rename an entity and rewrite every reference (dry-run by default)",
+	Long: "Rename a registry entity (config/entity_registry/update with new_entity_id), then rewrite " +
+		"every literal reference across YAML config files and dashboards — the ref replace pass — in " +
+		"one command (D-11: registry first, it is the authoritative object). Dry-run by default: the " +
+		"preview resolves the old id against the registry, pre-checks the new id for collisions, and " +
+		"counts the references a confirmed run would rewrite. Requires hactl-companion (it rewrites " +
+		"the config half). A dashboard that cannot be scanned refuses the run unless --allow-partial.",
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runEntRename(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+	},
+}
+
+// runEntRename composes the two halves of a rename per D-11: registry rename
+// first (a failure there leaves every reference untouched), reference rewrite
+// second (a failure there names the completed half and the idempotent
+// remediation, never a silent rollback).
+func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
+	// Shape refusals before any connection (H-2: the preview fails exactly
+	// where --confirm would, and HA refuses a malformed id at confirm time).
+	domain := parseEntityDomain(newID)
+	if domain == "" || domain == newID || strings.HasSuffix(newID, ".") {
+		return fmt.Errorf("new entity_id %q is not of the form <domain>.<object_id>", newID)
+	}
+	if newID == oldID {
+		return errors.New("old and new entity_id are identical — nothing to rename")
+	}
+
+	// The companion is the transport for the reference half; without it this
+	// command does not run at all (same posture as ref replace).
+	src, err := connectRefSources(ctx)
+	if err != nil {
+		return err
+	}
+	defer src.close()
+
+	entries, err := src.ws.EntityRegistryList(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching entity registry: %w", err)
+	}
+	entry, ok := findEntityRegistryEntry(entries, oldID)
+	if !ok {
+		return fmt.Errorf("entity %q not found in the registry — only registry entities can be renamed; "+
+			"a state-only entity has no registry entry (use 'ent ls' to see entities, 'ent show' for detail)", oldID)
+	}
+	// Collision pre-check; HA also refuses on a race ("Entity with this ID is
+	// already registered", oracle-verified), so this is the friendlier first
+	// line of the same defense, not the only one.
+	if _, exists := findEntityRegistryEntry(entries, newID); exists {
+		return fmt.Errorf("entity %q already exists — renaming onto it would collide (HA refuses this too)", newID)
+	}
+
+	// Both paths scan first: the preview reports the reference count, and the
+	// confirmed run must refuse a partial dashboard scan BEFORE the registry
+	// write, or the refusal would arrive with the rename already done.
+	refs, scope, err := countRenameReferences(ctx, src, oldID)
+	if err != nil {
+		return err
+	}
+	if scope.partial() && !flagEntRenameAllowPartial {
+		return fmt.Errorf("%d of %d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
+			"every reference; nothing was renamed. Re-run with --allow-partial to proceed over what could be read",
+			len(scope.unscanned), scope.total(), strings.Join(scope.unscanned, "; "))
+	}
+
+	if !flagEntConfirm {
+		return dryRun("rename entity").
+			with("entity_id", oldID).
+			with("new_entity_id", newID).
+			withIf(entry.Platform != "", "platform", entry.Platform).
+			with("references", refs).
+			withHint("use --confirm to rename the registry entry and rewrite every reference "+
+				"(reference detail: hactl ref scan "+oldID+")").
+			render(w)
+	}
+
+	if err := src.ws.EntityRegistryUpdate(ctx, oldID, map[string]any{"new_entity_id": newID}); err != nil {
+		return fmt.Errorf("renaming registry entry: %w", err)
+	}
+	if !flagJSON {
+		_, _ = fmt.Fprintf(w, "renamed registry entry %s -> %s\n", oldID, newID)
+	}
+
+	if err := refReplaceWithOptions(ctx, w, oldID, newID, true, flagEntRenameAllowPartial); err != nil {
+		return fmt.Errorf("registry entry renamed to %s, but the reference rewrite failed: %w — "+
+			"references may still point at %s; re-run 'hactl ref replace %s %s --confirm' (idempotent)",
+			newID, err, oldID, oldID, newID)
+	}
+	return nil
+}
+
+// countRenameReferences runs the read-only halves of the ref scan so the
+// rename preview can report how many references a confirmed run would move.
+func countRenameReferences(ctx context.Context, src *refSources, target string) (int, dashboardScanScope, error) {
+	cfgResp, err := src.cc.RefScan(ctx, target)
+	if err != nil {
+		return 0, dashboardScanScope{}, fmt.Errorf("companion ref scan: %w", err)
+	}
+	dashboards, err := src.ws.DashboardList(ctx)
+	if err != nil {
+		return 0, dashboardScanScope{}, fmt.Errorf("listing dashboards: %w", err)
+	}
+	hits, scope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
+	return len(cfgResp.Hits) + len(hits), scope, nil
 }
 
 func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []string) error {
