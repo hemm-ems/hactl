@@ -1,5 +1,13 @@
 # Handover — 2026-07-05 tuning session (branch `tuning/qwen35-cold-start`)
 
+> **Status, 2026-07-29 — history. Read it for the measurements, not for the
+> state.** "State" below says the branch is *NOT pushed (local only by
+> request)*; that stopped being true — it was pushed, merged as #55, and the
+> branch has since been deleted. Progressive manual delivery is the shipped
+> default. The durable rules are in `docs/llm-tuning.md`, the run-by-run
+> history in `patterns.md`, and how to run the loop today in
+> `dev/tuning/CLAUDE.md`.
+
 Supersedes the 2026-05-04 handover. Full run-by-run history in
 `patterns.md`; durable rules in `docs/llm-tuning.md` (session-2 section).
 

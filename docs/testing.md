@@ -180,7 +180,7 @@ This layer intentionally bypasses companion **discovery** — the test writes th
 
 ## Layer 4: Discovery + Ingress Auth
 
-A second companion-related harness lives in `internal/companiontest_discovery/` (build tag `companion_discovery`). It exists because the original companion test harness above hides discovery and ingress auth behind a pre-populated `COMPANION_URL` — exactly the bypass that let two production bugs ship undetected (a wrong WS namespace and the wrong Ingress auth mechanism; see [companion-discovery-fix-plan.md](../../companion-discovery-fix-plan.md)).
+A second companion-related harness lives in `internal/companiontest_discovery/` (build tag `companion_discovery`). It exists because the original companion test harness above hides discovery and ingress auth behind a pre-populated `COMPANION_URL` — exactly the bypass that let two production bugs ship undetected: the add-on list was fetched from a WS namespace that does not exist (`hassio/api`, fixed in #10), and ingress URLs were signed with the wrong mechanism instead of `auth/sign_path` (fixed in #9).
 
 The harness combines:
 
@@ -401,7 +401,7 @@ docker info
 
 ## CI/CD Enforcement
 
-The test suite only works as a quality gate if it runs automatically on every change. hactl uses GitHub Actions for this. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and runs on every push to `main` and every pull request targeting `main`.
+The test suite only works as a quality gate if it runs automatically on every change. hactl uses GitHub Actions for this. The workflow is defined in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and runs on every push to `main` and every pull request targeting `main`.
 
 The jobs run in parallel; `ci.yml` is the list of them, and each corresponds to a `make` target a developer runs locally:
 
