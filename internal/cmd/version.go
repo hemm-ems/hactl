@@ -69,4 +69,12 @@ func printVersion(w io.Writer) {
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
+
+	// `--version` and `hactl version` must give the same first line: the brew
+	// formula's `test do` runs the flag form (homebrew-tap/hactl.rb, mirrored
+	// from .goreleaser.yaml), while everything else prints via printVersion.
+	// Set here rather than in root.go's literal because this file owns the
+	// ldflags-set version/commit/date vars.
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate(fmt.Sprintf("hactl %s (commit %s, built %s)\n", version, commit, date))
 }

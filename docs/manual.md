@@ -685,7 +685,7 @@ hactl cache refresh traces                # pull fresh trace data
 hactl cache refresh                       # refresh everything
 hactl cache clear                         # wipe all local cache, stable IDs included
 
-hactl version                             # version, commit, build date
+hactl version                             # version, commit, build date (same first line as --version)
 hactl rtfm                                # print this manual (for LLM self-teaching)
 ```
 
