@@ -679,7 +679,12 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 	warnPartialDashboardScan(scope)
 
 	if len(hits) == 0 {
-		return emitEmptyList(w, target+": not referenced in any dashboard")
+		// The miss must only claim what the query tested (D-10): matching is
+		// whole-value, so for a substring intent "not referenced" alone would
+		// be a wrong answer under the manual's stop-at-the-first-miss rule.
+		return emitEmptyList(w, target+": not referenced as a whole value in any dashboard "+
+			"(grep matches complete string values, never substrings — for term discovery: "+
+			"hactl ent ls --pattern '*"+target+"*')")
 	}
 
 	tbl := &format.Table{

@@ -147,7 +147,9 @@ var configFileCmd = &cobra.Command{
 var configBlockCmd = &cobra.Command{
 	Use:   "block <path> <id>",
 	Short: "Print a single keyed config block as YAML",
-	Long:  "Print a single block (matched by id/unique_id/key) from a config file.",
+	Long: "Print a single block from a config file: matched by 'id:' or 'alias:' on the direct items " +
+		"of a top-level list (automations.yaml), or by top-level key (scripts.yaml). template.yaml " +
+		"blocks carry neither — read those with 'tpl cat <unique_id>'.",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigBlock(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])

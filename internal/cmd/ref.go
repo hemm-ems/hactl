@@ -191,7 +191,11 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	}
 
 	if len(rows) == 0 {
-		return emitEmptyList(w, target+": not referenced in any config file or dashboard")
+		// Same D-10 rule as runDashGrep's miss: name the matching contract
+		// instead of claiming a verified negative for a query never run.
+		return emitEmptyList(w, target+": not referenced as an id in any config file or dashboard "+
+			"(scan matches ids, not free text — for term discovery: "+
+			"hactl ent ls --pattern '*"+target+"*')")
 	}
 
 	tbl := &format.Table{
