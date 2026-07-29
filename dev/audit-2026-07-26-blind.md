@@ -1,5 +1,22 @@
 # Blind audit, 2026-07-26
 
+> **Status, 2026-07-29 — closed. This is a record, not a backlog.**
+>
+> Every finding below has been addressed. Re-verified by hand against `main` at
+> `v2026.7.15`: N1 (both clients now share `internal/httpretry.IsIdempotent`,
+> #95), N2 (`reload: ok` is conditional on `result.Reloaded`), N3, N4, N5
+> (`runs_24h` reads the logbook, not the bounded trace table), N9 (resolved
+> endpoints are sorted), N10, N11 (`svc call` resolves its target before
+> printing a plan), N12, N13 (the first-`--confirm` refusal is documented at
+> `docs/manual.md:778`), N14, N15, N16, N17, N18, N19 (`internal/cmd/dryrun.go`,
+> with `dry_run: true` asserted), N20. N7 is held by the `TestEmptyResultJSON_*`
+> suite. **N8 was resolved by documenting the behaviour rather than changing
+> it** (`docs/manual.md:790` — `--full` lifting the `--top` cap is now stated,
+> which removes the "silently").
+>
+> Most fix sites carry a comment naming the defect they close, so the quickest
+> way to re-check any entry is to grep the site it names.
+
 Three auditors were run against this tree with **no knowledge of issue #94**.
 None was told what to look for. One was additionally forbidden from reading
 `INVARIANTS.md`, `dev/surfaces/` and `internal/surfaceaudit/`, so that its
