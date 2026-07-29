@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 )
@@ -12,6 +13,7 @@ import (
 // FlowResult represents a response from the config entries flow API.
 type FlowResult struct {
 	DataSchema  []SchemaField     `json:"-"`
+	MenuOptions []MenuOption      `json:"-"`
 	Errors      map[string]string `json:"errors,omitempty"`
 	Result      json.RawMessage   `json:"result,omitempty"`
 	FlowID      string            `json:"flow_id"`
@@ -22,12 +24,22 @@ type FlowResult struct {
 	Description string            `json:"description_placeholders,omitempty"`
 }
 
+// MenuOption is one choice of a "menu" flow step, submitted back as
+// {"next_step_id": ID}. Label carries the human wording when HA sent one.
+type MenuOption struct {
+	ID    string
+	Label string
+}
+
 // SchemaField describes one field in a flow step's data schema.
 type SchemaField struct {
 	Default  any    `json:"default,omitempty"`
 	Name     string `json:"name"`
 	Type     string `json:"type,omitempty"` // "string", "integer", "boolean", "float", "select", "expandable", etc.
 	Required bool   `json:"required"`
+	// Options carries a select field's submittable values. HA sends plain
+	// strings or [value, label] pairs; both normalize to the value.
+	Options []string `json:"options,omitempty"`
 	// Schema holds the nested fields of an "expandable" section. When set, the
 	// field's values must be submitted nested under Name, e.g. {"advanced": {...}}.
 	Schema []SchemaField `json:"schema,omitempty"`
@@ -36,13 +48,50 @@ type SchemaField struct {
 // flowRawResponse is the raw shape of the HA flow API response, used for parsing.
 type flowRawResponse struct {
 	DataSchema []json.RawMessage `json:"data_schema"`
-	Errors     map[string]string `json:"errors"`
-	Result     json.RawMessage   `json:"result"`
-	FlowID     string            `json:"flow_id"`
-	Type       string            `json:"type"`
-	StepID     string            `json:"step_id"`
-	Handler    string            `json:"handler"`
-	Title      string            `json:"title"`
+	// MenuOptions stays raw at this layer: HA sends either []string or
+	// {step_id: label}, and no live probe can enumerate which one a given
+	// integration picks — parseMenuOptions accepts the union (cf. D-8's
+	// tolerant-superset discriminator; a probe answering "list" would only
+	// narrow the fixture).
+	MenuOptions json.RawMessage   `json:"menu_options"`
+	Errors      map[string]string `json:"errors"`
+	Result      json.RawMessage   `json:"result"`
+	FlowID      string            `json:"flow_id"`
+	Type        string            `json:"type"`
+	StepID      string            `json:"step_id"`
+	Handler     string            `json:"handler"`
+	Title       string            `json:"title"`
+}
+
+// parseMenuOptions normalizes both wire shapes of menu_options. The list form
+// keeps HA's order; the map form is sorted by id before anything renders it
+// (H-16 — a map walk is made canonical here, at the parse, not at each caller).
+func parseMenuOptions(raw json.RawMessage) []MenuOption {
+	if len(raw) == 0 {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err == nil {
+		out := make([]MenuOption, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, MenuOption{ID: id})
+		}
+		return out
+	}
+	var labeled map[string]string
+	if err := json.Unmarshal(raw, &labeled); err != nil {
+		return nil
+	}
+	ids = make([]string, 0, len(labeled))
+	for id := range labeled {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]MenuOption, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, MenuOption{ID: id, Label: labeled[id]})
+	}
+	return out
 }
 
 // parseFlowResult converts raw JSON into a FlowResult with parsed schema.
@@ -63,6 +112,7 @@ func parseFlowResult(data []byte) (*FlowResult, error) {
 	}
 
 	result.DataSchema = parseSchemaFields(raw.DataSchema)
+	result.MenuOptions = parseMenuOptions(raw.MenuOptions)
 
 	// A flow step that decoded to nothing must not read as a step hactl simply
 	// does not handle: without a type there is no form, no create_entry and no
@@ -85,6 +135,7 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 			Name     string            `json:"name"`
 			Type     string            `json:"type"`
 			Required bool              `json:"required"`
+			Options  []json.RawMessage `json:"options"`
 			Schema   []json.RawMessage `json:"schema"`
 		}
 		if err := json.Unmarshal(fieldRaw, &field); err != nil {
@@ -95,6 +146,7 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 			Required: field.Required,
 			Type:     field.Type,
 			Default:  field.Default,
+			Options:  parseSelectOptions(field.Options),
 		}
 		if len(field.Schema) > 0 {
 			sf.Schema = parseSchemaFields(field.Schema)
@@ -102,6 +154,27 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 		fields = append(fields, sf)
 	}
 	return fields
+}
+
+// parseSelectOptions normalizes a select's options to their submittable
+// values. HA sends plain strings or [value, label] pairs; anything else in
+// the array is skipped rather than failing the whole schema.
+func parseSelectOptions(raw []json.RawMessage) []string {
+	var out []string
+	for _, o := range raw {
+		var s string
+		if err := json.Unmarshal(o, &s); err == nil {
+			out = append(out, s)
+			continue
+		}
+		var pair []any
+		if err := json.Unmarshal(o, &pair); err == nil && len(pair) > 0 {
+			if v, ok := pair[0].(string); ok {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
 }
 
 // DeleteConfigEntry deletes a config entry by ID.

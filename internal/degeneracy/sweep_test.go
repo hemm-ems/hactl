@@ -122,6 +122,15 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/haapi/websocket.go:IngressSession:resp": "errors explicitly on an empty session token",
 	"internal/haapi/flow.go:parseSchemaFields:field": "the FlowResult these fields hang off is " +
 		"checked, which walks into them",
+	"internal/haapi/flow.go:parseMenuOptions:ids": "union-shape probe (list-or-map wire form); " +
+		"the FlowResult it hangs off is checked, and a menu whose options decode to nothing is " +
+		"rendered as exactly that with a --json pointer, never as an empty success",
+	"internal/haapi/flow.go:parseMenuOptions:labeled": "second half of the same union-shape probe; " +
+		"same reasoning as its sibling line",
+	"internal/haapi/flow.go:parseSelectOptions:s": "union-shape probe (string-or-pair option form); " +
+		"a non-decoding option is skipped, and the FlowResult above is checked",
+	"internal/haapi/flow.go:parseSelectOptions:pair": "second half of the same union-shape probe; " +
+		"same reasoning as its sibling line",
 	"internal/cmd/flow.go:flowIDOf:v": "best-effort flow_id salvage for cleanup; callers handle " +
 		"an empty id",
 	"internal/cmd/flow.go:optionsFlowCurrentValues:raw":   "raw schema passthrough; fields are filtered below",
