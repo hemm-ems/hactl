@@ -100,6 +100,7 @@ _GROUP_SECTIONS = {
     "log": ["### Logs & custom components"],
     "health": ["### Setup & health"],
     "cache": ["### Cache & version"],
+    "energy": ["### Energy"],
     "companion": ["### WireGuard (companion lifeline)"],
     "ref": [],  # no manual section yet; the tool docstrings carry it
 }
