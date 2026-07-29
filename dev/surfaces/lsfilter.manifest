@@ -1,0 +1,36 @@
+# lsfilter — a listing narrows by an identifier filter (--pattern, matching
+# what D-1 decided a pattern matches), or its row here states why there is
+# nothing to narrow.
+#
+# The surface is the live cobra tree: every leaf command named `ls`, walked by
+# TestLsFilterSurfaceIsClosed — with or WITHOUT a filter flag. The other two
+# filter gates close over flags that exist (TestFilterSurfaceIsClosed demands
+# a probe per present flag; TestFilterFlagsAgreeOnCase holds each probe to the
+# D-2 pole), so a listing lacking --pattern never entered any walk and its
+# absence was indistinguishable from a decision. That is how `helper ls`
+# shipped filterless beside four filtered siblings (#108): a forgotten flag
+# left no trace anywhere. This ledger is where the trace lives now (#109).
+#
+# `proven` names the case gate that exercises the flag's probe — presence of
+# the probe itself is enforced by TestFilterSurfaceIsClosed, and
+# TestLsFilterProvenRowsCarryPatternFlags pins each proven row to a flag that
+# actually exists in the tree. `exempt` states why narrowing is pointless for
+# that listing; a reviewer signed each sentence.
+#
+# The ceiling is the number of listings known to be unproven. It may fall
+# without ceremony and may only rise by editing this line on purpose.
+#ceiling 0
+
+# --- proven: --pattern exists and its probe is held to the D-2 pole -----------
+hactl auto ls = proven: TestFilterFlagsAgreeOnCase
+hactl device ls = proven: TestFilterFlagsAgreeOnCase
+hactl ent ls = proven: TestFilterFlagsAgreeOnCase
+hactl helper ls = proven: TestFilterFlagsAgreeOnCase
+hactl script ls = proven: TestFilterFlagsAgreeOnCase
+
+# --- exempt: nothing to narrow -------------------------------------------------
+hactl area ls = exempt: areas are a hand-curated registry of typically a dozen rows, and the listing IS the discovery step — a caller narrows by reading it, and area names feed --area filters elsewhere
+hactl cc ls = exempt: custom components number a handful per instance and the table fits any budget; cc show takes the domain the listing prints
+hactl dash ls = exempt: dashboards are a handful of url_paths per instance; dash show/grep take the url_path the listing prints
+hactl floor ls = exempt: floors are the smallest registry of all (ground/upper/attic); the listing is already the answer
+hactl label ls = exempt: labels are a hand-curated registry like areas; the listing feeds --label filters elsewhere and fits any budget
