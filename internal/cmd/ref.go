@@ -55,7 +55,7 @@ var refReplaceCmd = &cobra.Command{
 		"unverifiable — both refuse loudly unless --allow-partial is given.",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runRefReplace(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+		return refReplaceWithOptions(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], flagRefConfirm, flagRefAllowPartial)
 	},
 }
 
@@ -217,14 +217,15 @@ type dashReplacePlan struct {
 	writable bool
 }
 
-func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) error {
+// refReplaceWithOptions is `ref replace`'s entrypoint with the two behaviour
+// switches as explicit parameters, so a composing command (`ent rename`) can
+// drive the rewrite half without mutating another command's flag globals.
+func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal string, confirm, allowPartial bool) error {
 	src, err := connectRefSources(ctx)
 	if err != nil {
 		return err
 	}
 	defer src.close()
-
-	confirm := flagRefConfirm
 
 	// --- Dashboard side first: read-only planning (D-6) ---
 	// The whole dashboard plan is computed before the companion writes
@@ -240,7 +241,7 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	// cover every reference — a silent skip here is exactly the failure this
 	// command exists to prevent (mirrors `ref validate`'s asymmetric-failure
 	// design: partial is refused unless explicitly allowed).
-	if scope.partial() && !flagRefAllowPartial {
+	if scope.partial() && !allowPartial {
 		return fmt.Errorf("%d of %d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
 			"every reference; nothing was renamed. Re-run with --allow-partial to rename in what could be read",
 			len(scope.unscanned), scope.total(), strings.Join(scope.unscanned, "; "))
@@ -254,7 +255,7 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	// API. A confirmed run that proceeded anyway would leave them dangling, so
 	// it refuses up front — before the companion writes the config half.
 	skippedHits, skippedLabels := unwritableHits(plans)
-	if confirm && skippedHits > 0 && !flagRefAllowPartial {
+	if confirm && skippedHits > 0 && !allowPartial {
 		return yamlHitsError(skippedHits, skippedLabels, oldVal)
 	}
 
@@ -291,7 +292,7 @@ func runRefReplace(ctx context.Context, w io.Writer, oldVal, newVal string) erro
 	// The preview fails exactly where the confirmed run would (H-2): yaml-mode
 	// hits made the confirmed run refuse above, so the dry run reports the
 	// same refusal — after rendering the plan, so the caller sees what is stuck.
-	if !confirm && skippedHits > 0 && !flagRefAllowPartial {
+	if !confirm && skippedHits > 0 && !allowPartial {
 		return yamlHitsError(skippedHits, skippedLabels, oldVal)
 	}
 	// A confirmed run whose dashboard saves failed is a partial rename: the
