@@ -36,6 +36,7 @@ import (
 	"github.com/gorilla/websocket"
 	container "github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -68,6 +69,32 @@ func (i *Instance) Token() string { return i.token }
 // Dir returns a temporary directory containing a .env file pointing to this instance.
 // Suitable for use with hactl --dir.
 func (i *Instance) Dir() string { return i.dir }
+
+// Exec runs a command inside the running HA container and returns its exit
+// code together with its combined output.
+//
+// It exists for one job the HTTP API cannot do: reading the source of the Home
+// Assistant that is actually running. A wire sample answers "what did HA emit
+// this time"; only the producing code answers "what can HA emit". The
+// automation/script `current` attribute is the worked example — every sample
+// this suite can take shows an integer, which is exactly as consistent with
+// "HA guarantees an integer" as with "no run happened to produce a fraction".
+// The image ships the Python that computes it, so the question is answerable
+// rather than merely samplable.
+func (i *Instance) Exec(ctx context.Context, cmd ...string) (int, string, error) {
+	if i.container == nil {
+		return 0, "", errors.New("hatest: instance has no container")
+	}
+	code, reader, err := i.container.Exec(ctx, cmd, tcexec.Multiplexed())
+	if err != nil {
+		return code, "", err
+	}
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		return code, "", err
+	}
+	return code, string(out), nil
+}
 
 // Stop terminates the container and cleans up.
 func (i *Instance) Stop() {
