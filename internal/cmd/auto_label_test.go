@@ -10,11 +10,13 @@ import (
 	"testing"
 )
 
-// withAutoLsFlags pins the `auto ls` filter flags for one test.
-func withAutoLsFlags(t *testing.T, pattern, label string) {
+// withAutoLsFlags pins the `auto ls` filter flags for one test. --pattern is
+// always cleared: the tests that exercise it drive filterAutosByPattern
+// directly, so carrying it as a parameter only ever passed "".
+func withAutoLsFlags(t *testing.T, label string) {
 	t.Helper()
 	oldPattern, oldLabel, oldFailing, oldRestored, oldSince := flagAutoPattern, flagAutoLabel, flagAutoFailing, flagAutoRestored, flagSince
-	flagAutoPattern, flagAutoLabel, flagAutoFailing, flagAutoRestored, flagSince = pattern, label, false, false, "24h"
+	flagAutoPattern, flagAutoLabel, flagAutoFailing, flagAutoRestored, flagSince = "", label, false, false, "24h"
 	t.Cleanup(func() {
 		flagAutoPattern, flagAutoLabel, flagAutoFailing, flagAutoRestored, flagSince = oldPattern, oldLabel, oldFailing, oldRestored, oldSince
 	})
@@ -76,7 +78,7 @@ func autoLabelServer(t *testing.T) *cmdTestServer {
 func TestRunAutoLs_LabelsComeFromEntityRegistry(t *testing.T) {
 	ts := autoLabelServer(t)
 	withFlagDir(t, ts.dir)
-	withAutoLsFlags(t, "", "")
+	withAutoLsFlags(t, "")
 
 	var buf bytes.Buffer
 	if err := runAutoLs(context.Background(), &buf); err != nil {
@@ -95,7 +97,7 @@ func TestRunAutoLs_LabelsComeFromEntityRegistry(t *testing.T) {
 func TestRunAutoLs_LabelFilterMatchesRegistryLabel(t *testing.T) {
 	ts := autoLabelServer(t)
 	withFlagDir(t, ts.dir)
-	withAutoLsFlags(t, "", "batteries")
+	withAutoLsFlags(t, "batteries")
 
 	var buf bytes.Buffer
 	if err := runAutoLs(context.Background(), &buf); err != nil {
@@ -131,7 +133,7 @@ func TestRunAutoLs_LabelFilterWarnsWhenRegistryUnavailable(t *testing.T) {
 		},
 	})
 	withFlagDir(t, ts.dir)
-	withAutoLsFlags(t, "", "batteries")
+	withAutoLsFlags(t, "batteries")
 	logBuf := captureDefaultLogger(t)
 
 	var buf bytes.Buffer

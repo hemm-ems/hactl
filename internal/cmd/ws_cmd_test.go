@@ -107,6 +107,19 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 		mux.HandleFunc(path, h)
 	}
 
+	// A rig that does not mention /api/states still describes a REACHABLE
+	// instance — one that simply holds no entities. Since H-21/§2a, every
+	// command that resolves an automation reference reports a failed states
+	// fetch instead of guessing (H-7), so leaving the route to the mux's 404
+	// would make each of those rigs assert on an error path no real caller with
+	// a working instance reaches. An empty list is the fixture's honest answer.
+	if _, ok := httpHandlers["/api/states"]; !ok {
+		mux.HandleFunc("/api/states", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[]")
+		})
+	}
+
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

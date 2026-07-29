@@ -1046,3 +1046,94 @@ the set of renderers is derived, not listed.
   new renderer must be dispositioned before it merges),
   `internal/cmd/since_test.go` (`TestParseSince_RejectsNegative`),
   `internal/cmd/ws_cmd_test.go` (`TestApplyLogSince`).
+
+## H-21 — A listing decodes only the entities it lists
+
+A command that renders one entity domain reads `/api/states`, which is every
+entity in the instance. The set whose attributes it decodes into a
+domain-specific schema must be a subset of the set it renders: split the
+payload, read the identity, filter, then decode. An entity the command discards
+can never determine whether the command succeeds.
+
+The pole is the **ordering**, not schema tolerance. A command may keep a typed
+attribute schema for the entities it actually renders — `automationAttributes`
+is a correct description of an automation, and `Current int` is right by
+construction, HA computes it as `Script.runs` → `return len(self._runs)`. What a
+command may not do is apply that schema to entities it never describes.
+
+**The collision ships in the box.** Attribute keys in HA are neither
+domain-scoped nor type-stable across domains, and this needs no third-party
+integration to demonstrate: in a single `/api/states` response from HA's own
+integrations, `max` is an integer on `automation.*`/`script.*` (the `max_runs`
+count) and a fraction on `number.*` (`100.0`); `current_temperature` spans
+integral, fractional and null across `climate` and `water_heater`; seven further
+keys behave the same way. `max` is the load-bearing one, because it is a key the
+*listed* domains themselves carry — `automationAttributes` is exactly one
+`Max int` field away from failing on a stock Home Assistant with any `number`
+entity present. Nobody decided that; the field simply was never added. **The old
+ordering held only by luck, and reading this defect as "a weird third-party
+sensor" turns the rule into a hardening nicety it is not.**
+
+What it cost while the ordering was wrong: `auto ls` and `script ls` both died
+on a live instance (HA 2026.7.4) with `cannot unmarshal number -1.7525 into Go
+struct field automationAttributes.attributes.current of type int` — an entity
+neither command lists. Neither H-7 nor the H-14 sweep fires here, because both
+govern decodes that silently yield *nothing*; this one fails loudly on data it
+should never have read.
+
+Two consequences carry the same weight as the ordering:
+
+**The failure names its record.** Decoding per entity means the loop knows the
+entity_id, which `encoding/json` cannot report for a slice element. The error
+reads `parsing states: entity sensor.<id>: attributes.current: cannot unmarshal
+number -1.7525 into Go value of type int`. The report above cost a source-reading
+session only because the message named hactl's Go type instead of the instance's
+entity, and the instance is a third party's that this project cannot reach. An
+error that names the record means the next report arrives with its diagnosis
+inside it.
+
+**A fetch that failed is not an empty answer.** `resolveAutomation` used to
+discard `fetchAutomations`' error and return "no match", so an unreadable
+`/api/states` made every automation reference resolve as unknown with nothing
+printed: `auto show` fell back to its `"automation." + id` guess and 404'd as if
+the caller had typed a bad name, `auto delete` forwarded the raw object id to
+the companion (H-17), `auto cat`/`diff`/`apply`/`rollback` skipped the config-id
+path, and `trace show` passed the reference through unrewritten. That is H-7 at
+five sites — an unavailable source rendering as a confident negative answer —
+and the ordering fix does not retire it, because the fetch can still fail on
+network, on auth, or on a genuinely degenerate payload.
+
+- Enforced by: `internal/cmd/states_domain_decode_test.go`
+  (`TestAutoLsIgnoresAttributesOfEntitiesItDiscards`,
+  `TestScriptLsIgnoresAttributesOfEntitiesItDiscards` — a discarded entity
+  carrying every key of the command's own attribute struct at a colliding type;
+  `TestColliderCoversEachStructsOwnKeys`, which derives that key set from each
+  struct rather than hand-copying one list for two different structs;
+  `TestStatesDecodeErrorNamesTheEntityAndKey`;
+  `TestStatesWithoutEntityIDStillPoisonsTheListing`, the H-14 half — filtering
+  earlier must not narrow a payload that lost its identity into "no automations
+  found"), `internal/cmd/auto_resolve_failure_test.go`
+  (`TestAutomationReferenceCommandsReportAFailedStatesFetch` over every command
+  that takes an automation reference, `TestResolveAutomationDistinguishesNoMatchFromNoAnswer`),
+  `internal/integration/domaindecode_test.go`
+  (`TestAutoLsIgnoresAForeignEntitysAttributeTypes`,
+  `TestScriptLsIgnoresAForeignEntitysAttributeTypes` through the real CLI
+  against a payload HA produced, with `TestEntListingsStillSeeTheColliderIsTheControl`
+  as the negative control that the colliders were in that payload at all).
+- Premises probed, not assumed: `internal/integration/domaindecode_oracle_test.go`
+  (`TestOracleStatesCarriesOneKeyAtTwoJSONTypes` — the stock-HA collision above;
+  `TestOracleAutomationScriptCurrentIsIntegral` — `current` read out of the
+  running container's own source and observed above zero, which is why widening
+  the field is not the fix; `TestOracleStatesSixKeyDomainCensus` — every key
+  both structs decode is reachable at a colliding type, so the acceptance
+  fixture covers all of them).
+- Tier: `make test` for the ordering, the error naming and the resolver;
+  `make test-int` for the real-wire half and the oracles.
+
+The set this law quantifies over is derivable and must be derived: every struct
+with a `json:"attributes"` field whose type is not `map[string]any`, and every
+decode of a whole states payload into it. Until the `domaindecode` surface
+carries that derivation, this section's citations are an enumeration — which is
+what `dev/surfaces/invariant.manifest` records, and the reason a long
+"Enforced by:" list is evidence of a scope built by hand rather than of a rule
+that closes.

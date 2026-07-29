@@ -17,11 +17,24 @@ import (
 // dummy HA server, and points flagDir at a temp .env that wires COMPANION_URL
 // to the stub. connectCompanion tolerates the (failing) HA WS dial and uses
 // COMPANION_URL directly, so the stub only needs to answer the tested endpoint.
+//
+// The HA half answers /api/states with an empty list rather than 404: the
+// instance these tests describe is READABLE and simply holds no automation, so
+// the reference falls through to the companion unchanged. A 404 there means
+// "hactl could not read the instance", which every automation-reference command
+// now reports instead of guessing (H-7, SPEC §2a) — and asserting on the
+// companion's answer while HA is unreachable would be asserting on a path no
+// real caller reaches.
 func companionEnv(t *testing.T, handler http.HandlerFunc) {
 	t.Helper()
 	companionSrv := httptest.NewServer(handler)
 	t.Cleanup(companionSrv.Close)
-	haSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	haSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/states" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, "[]")
+			return
+		}
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	t.Cleanup(haSrv.Close)
