@@ -942,6 +942,81 @@ func entShowFixture(t *testing.T, body string, users []map[string]any) *cmdTestS
 	return ts
 }
 
+// TestRunEntShow_IdentityFields — ent show answers "which integration/config
+// entry owns this entity" in BOTH renders (H-10 both directions, issue #110).
+// Wire truth that config/entity_registry/list carries the three fields:
+// TestOracleEntityRegistryListCarriesIdentityFields (make test-int).
+func TestRunEntShow_IdentityFields(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"config/entity_registry/list": []any{map[string]any{
+			"entity_id":       "light.kitchen",
+			"platform":        "hue",
+			"unique_id":       "hue-abc-123",
+			"config_entry_id": "entry-42",
+		}},
+		"config/area_registry/list":  []any{},
+		"config/label_registry/list": []any{},
+		"config/floor_registry/list": []any{},
+		"config/auth/list":           []map[string]any{},
+	}, map[string]http.HandlerFunc{
+		"/api/states/light.kitchen": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(stateJSON("")))
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow: %v", err)
+	}
+	for _, want := range []string{"platform:     hue", "unique_id:    hue-abc-123", "config_entry_id: entry-42"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("text output missing %q:\n%s", want, buf.String())
+		}
+	}
+
+	buf.Reset()
+	withFlagJSON(t, true)
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow --json: %v", err)
+	}
+	obj, ok := assertValidJSON(t, buf.String()).(map[string]any)
+	if !ok {
+		t.Fatalf("JSON output is not an object: %s", buf.String())
+	}
+	for key, want := range map[string]string{
+		"platform":        "hue",
+		"unique_id":       "hue-abc-123",
+		"config_entry_id": "entry-42",
+	} {
+		if got, _ := obj[key].(string); got != want {
+			t.Errorf("JSON %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// TestRunEntShow_IdentityFields_OmittedForStateOnly — a state-only entity has
+// no registry entry, so the three ownership keys are absent rather than empty.
+func TestRunEntShow_IdentityFields_OmittedForStateOnly(t *testing.T) {
+	ts := entShowFixture(t, stateJSON(""), []map[string]any{})
+	withFlagDir(t, ts.dir)
+	withFlagJSON(t, true)
+
+	var buf bytes.Buffer
+	if err := runEntShow(context.Background(), &buf, "light.kitchen"); err != nil {
+		t.Fatalf("runEntShow --json: %v", err)
+	}
+	obj, ok := assertValidJSON(t, buf.String()).(map[string]any)
+	if !ok {
+		t.Fatalf("JSON output is not an object: %s", buf.String())
+	}
+	for _, key := range []string{"platform", "unique_id", "config_entry_id"} {
+		if _, present := obj[key]; present {
+			t.Errorf("JSON key %q present for a state-only entity, want absent", key)
+		}
+	}
+}
+
 func TestRunEntShow_ChangedBy_KnownUser(t *testing.T) {
 	ts := entShowFixture(t,
 		stateJSON(janUUID),

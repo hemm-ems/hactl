@@ -263,7 +263,7 @@ hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)
 hactl ent ls --restored                   # only "ghost" entities (restored from registry, no live entity)
-hactl ent show sensor.wp_vl               # state + key attributes + area + labels + attribute count
+hactl ent show sensor.wp_vl               # state + key attributes + area + labels + ownership (platform, unique_id, config_entry_id) + attribute count
 hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
 hactl ent hist sensor.wp_vl --resample 5m # override bucket size
