@@ -76,6 +76,7 @@ var FamilySections = map[string][]string{
 	"health":    {"### Setup & health"},
 	"cache":     {"### Cache & version"},
 	"companion": {"### WireGuard (companion lifeline)"},
+	"energy":    {"### Energy"},
 	"ref":       {"### References (find and rename entity_ids)"},
 }
 
@@ -121,8 +122,8 @@ func FamilyFor(top string) (string, bool) {
 // Families returns the family names in stable order (map iteration is not).
 func Families() []string {
 	return []string{
-		"auto", "cache", "companion", "config", "dash", "device", "ent",
-		"health", "helper", "label", "log", "ref", "script", "svc", "tpl",
+		"auto", "cache", "companion", "config", "dash", "device", "energy",
+		"ent", "health", "helper", "label", "log", "ref", "script", "svc", "tpl",
 	}
 }
 
