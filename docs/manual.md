@@ -512,6 +512,8 @@ hactl config flow-step xyz --data '{"device_type": "heat_pump"}' --options --con
 # → {"flow_id":"xyz","type":"create_entry","title":"Heat Pump"}
 ```
 
+Some steps are **menus** (`"type": "menu"`): a choice of next steps instead of fields. `flow-inspect` lists the options; advance with `hactl config flow-step <id> --data '{"next_step_id": "<option>"}'` (plus `--options` in an options flow). **Select fields** list their submittable values below the field table the same way.
+
 Some steps contain **expandable sections** (schema fields of type `expandable`, e.g. the Generic Camera `advanced` section). Their fields must be nested under the section name in `--data`, not passed flat — otherwise HA returns a 400. `flow-inspect` shows the nested fields (as `advanced.framerate`) and prints the exact nesting to use:
 
 ```bash

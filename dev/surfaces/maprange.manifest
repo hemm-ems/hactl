@@ -26,6 +26,7 @@ internal/analyze/trace.go:sortedStepPaths = proven: TestSortedStepPaths_NumericS
 internal/cmd/ent.go:findAreaNeighbors = proven: TestDedupeAndSortRelated_Canonical
 internal/cmd/ent.go:findDeviceSiblings = proven: TestDedupeAndSortRelated_Canonical
 internal/cmd/flow.go:sortedKeys = proven: TestRenderFlowResult_ErrorsAreDeterministic
+internal/haapi/flow.go:parseMenuOptions = proven: TestRenderFlowResult_MenuStep
 internal/cmd/wireguard_cmd.go:writeWireguardMonitor = proven: TestWriteWireguardStatus_ResolvedRenderIsDeterministic
 
 # --- walks whose order is destroyed before anything reads it ------------------

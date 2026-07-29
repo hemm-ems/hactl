@@ -183,6 +183,53 @@ func TestParseFlowResult_Expandable(t *testing.T) {
 	}
 }
 
+// TestParseFlowResult_MenuBothWireShapes — HA sends menu_options either as a
+// list of step ids or as a {step_id: label} map; the parse accepts the union
+// (no live probe can enumerate which shape a given integration picks — the
+// tolerant superset asserts nothing false, cf. D-8). Map form comes out
+// sorted by id (H-16), list form keeps its wire order.
+func TestParseFlowResult_MenuBothWireShapes(t *testing.T) {
+	listForm := []byte(`{"flow_id":"m1","type":"menu","step_id":"init","handler":"knx",
+		"menu_options":["b_second","a_first"]}`)
+	flow, err := parseFlowResult(listForm)
+	if err != nil {
+		t.Fatalf("parseFlowResult(list form): %v", err)
+	}
+	if len(flow.MenuOptions) != 2 || flow.MenuOptions[0].ID != "b_second" || flow.MenuOptions[1].ID != "a_first" {
+		t.Errorf("list form = %+v, want wire order [b_second a_first]", flow.MenuOptions)
+	}
+
+	mapForm := []byte(`{"flow_id":"m2","type":"menu","step_id":"init","handler":"knx",
+		"menu_options":{"z_last":"Z","a_first":"A"}}`)
+	flow, err = parseFlowResult(mapForm)
+	if err != nil {
+		t.Fatalf("parseFlowResult(map form): %v", err)
+	}
+	if len(flow.MenuOptions) != 2 || flow.MenuOptions[0].ID != "a_first" || flow.MenuOptions[1].Label != "Z" {
+		t.Errorf("map form = %+v, want sorted ids [a_first z_last] with labels", flow.MenuOptions)
+	}
+}
+
+// TestParseFlowResult_SelectOptions — a select's options survive the parse in
+// both wire forms (plain strings and [value, label] pairs), normalized to the
+// submittable value.
+func TestParseFlowResult_SelectOptions(t *testing.T) {
+	raw := []byte(`{"flow_id":"s1","type":"form","step_id":"user","handler":"generic",
+		"data_schema":[{"name":"mode","type":"select","required":true,
+			"options":[["opt_a","Label A"],"opt_b"]}]}`)
+	flow, err := parseFlowResult(raw)
+	if err != nil {
+		t.Fatalf("parseFlowResult: %v", err)
+	}
+	if len(flow.DataSchema) != 1 {
+		t.Fatalf("DataSchema = %+v, want one field", flow.DataSchema)
+	}
+	got := flow.DataSchema[0].Options
+	if len(got) != 2 || got[0] != "opt_a" || got[1] != "opt_b" {
+		t.Errorf("Options = %v, want [opt_a opt_b]", got)
+	}
+}
+
 func TestParseFlowResult_InvalidJSON(t *testing.T) {
 	_, err := ParseFlowResult([]byte(`not json`))
 	if err == nil {

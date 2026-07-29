@@ -828,37 +828,17 @@ func renderFlowResult(w io.Writer, data []byte) error {
 		}
 	}
 
+	// Menu step: choices instead of fields. Without this branch a menu step
+	// rendered the five header lines and nothing else, while the choices the
+	// caller must submit were silently dropped at decode (#112).
+	if flow.Type == "menu" {
+		renderMenuOptions(w, flow)
+		return nil
+	}
+
 	// Schema fields table
 	if len(flow.DataSchema) > 0 {
-		_, _ = fmt.Fprintf(w, "\n")
-		tbl := &format.Table{
-			Headers: []string{"Field", "Type", "Required", "Default"},
-		}
-		var sections []haapi.SchemaField
-		for _, f := range flow.DataSchema {
-			appendSchemaRows(tbl, f, "")
-			if len(f.Schema) > 0 {
-				sections = append(sections, f)
-			}
-		}
-		if err := tbl.Render(w, format.RenderOpts{Full: true}); err != nil {
-			return err
-		}
-		// Hint how to submit expandable sections, which must be nested under
-		// their section name in --data (HA rejects flat keys with a 400).
-		for _, s := range sections {
-			parts := make([]string, len(s.Schema))
-			for i, sub := range s.Schema {
-				typ := sub.Type
-				if typ == "" {
-					typ = "string"
-				}
-				parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, typ)
-			}
-			_, _ = fmt.Fprintf(w, "\n%q is an expandable section — nest its fields in --data:\n", s.Name)
-			_, _ = fmt.Fprintf(w, "  {%q: {%s}}\n", s.Name, strings.Join(parts, ", "))
-		}
-		return nil
+		return renderSchemaTable(w, flow)
 	}
 
 	// Result payload for create_entry / abort
@@ -869,6 +849,84 @@ func renderFlowResult(w io.Writer, data []byte) error {
 	}
 
 	return nil
+}
+
+// renderMenuOptions lists a menu step's choices plus the flow-step submit
+// hint. Order is the parse's: wire order for the list form, sorted ids for
+// the map form (H-16, canonicalized in parseMenuOptions). A menu whose
+// options did not decode says so — silence here is the exact #112 shape.
+func renderMenuOptions(w io.Writer, flow *haapi.FlowResult) {
+	if len(flow.MenuOptions) == 0 {
+		_, _ = fmt.Fprintf(w, "\nmenu step, but no options decoded from the flow response — inspect the raw form with --json\n")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\nMenu options:\n")
+	for _, opt := range flow.MenuOptions {
+		if opt.Label != "" && opt.Label != opt.ID {
+			_, _ = fmt.Fprintf(w, "  %s  (%s)\n", opt.ID, opt.Label)
+		} else {
+			_, _ = fmt.Fprintf(w, "  %s\n", opt.ID)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\nchoose with: config flow-step %s --data '{\"next_step_id\": \"<option>\"}' (--options for an options flow)\n", flow.FlowID)
+}
+
+// renderSchemaTable prints a form step's fields, each select's submittable
+// values, and the expandable-section nesting hints.
+func renderSchemaTable(w io.Writer, flow *haapi.FlowResult) error {
+	_, _ = fmt.Fprintf(w, "\n")
+	tbl := &format.Table{
+		Headers: []string{"Field", "Type", "Required", "Default"},
+	}
+	var sections []haapi.SchemaField
+	for _, f := range flow.DataSchema {
+		appendSchemaRows(tbl, f, "")
+		if len(f.Schema) > 0 {
+			sections = append(sections, f)
+		}
+	}
+	// Full is deliberately hardcoded, not flagFull: honouring the flag would
+	// truncate schema tables by default and hide required fields behind a
+	// flag nobody knows to pass (#112 kept this on purpose).
+	if err := tbl.Render(w, format.RenderOpts{Full: true}); err != nil {
+		return err
+	}
+	// A select's submittable values, after the table like the expandable
+	// hint below — they used to be dropped at decode, leaving a next_step_id
+	// select with no visible choices (#112).
+	for _, f := range flow.DataSchema {
+		printSelectOptions(w, f, "")
+	}
+	// Hint how to submit expandable sections, which must be nested under
+	// their section name in --data (HA rejects flat keys with a 400).
+	for _, s := range sections {
+		parts := make([]string, len(s.Schema))
+		for i, sub := range s.Schema {
+			typ := sub.Type
+			if typ == "" {
+				typ = "string"
+			}
+			parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, typ)
+		}
+		_, _ = fmt.Fprintf(w, "\n%q is an expandable section — nest its fields in --data:\n", s.Name)
+		_, _ = fmt.Fprintf(w, "  {%q: {%s}}\n", s.Name, strings.Join(parts, ", "))
+	}
+	return nil
+}
+
+// printSelectOptions prints one line per field that carries options, with the
+// dotted path appendSchemaRows uses, recursing into expandable sections.
+func printSelectOptions(w io.Writer, f haapi.SchemaField, prefix string) {
+	name := f.Name
+	if prefix != "" {
+		name = prefix + "." + f.Name
+	}
+	if len(f.Options) > 0 {
+		_, _ = fmt.Fprintf(w, "\n%q options: %s\n", name, strings.Join(f.Options, ", "))
+	}
+	for _, sub := range f.Schema {
+		printSelectOptions(w, sub, name)
+	}
 }
 
 // appendSchemaRows adds a schema field (and, for expandable sections, its
