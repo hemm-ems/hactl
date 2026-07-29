@@ -92,8 +92,15 @@ func TestRunRefScan_NoReferences(t *testing.T) {
 	if err := runRefScan(context.Background(), &buf, "sensor.absent"); err != nil {
 		t.Fatalf("runRefScan failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "not referenced") {
-		t.Errorf("output = %q, want 'not referenced'", buf.String())
+	// D-10: same rule as runDashGrep's miss — name the contract, route
+	// term discovery, claim only what the query tested.
+	for _, want := range []string{
+		"not referenced as an id",
+		"hactl ent ls --pattern '*sensor.absent*'",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("miss output missing %q, got: %q", want, buf.String())
+		}
 	}
 }
 

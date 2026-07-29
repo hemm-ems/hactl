@@ -476,10 +476,12 @@ hactl config block automations.yaml climate_schedule  # one keyed block from a f
 `files`/`file`/`block` read the config directory **through the companion** and
 are the only `config` subcommands that need it. `file` without `--raw` returns
 the merged document (an `automation: !include automations.yaml` line comes back
-as the inlined list); `--raw` returns the file's own bytes. `block` matches on
-`id`, `unique_id`, or the top-level key and prints that block verbatim, so its
-output may carry a trailing comment line that sits before the next key. All
-three are YAML-only — `--json` is accepted but does not change the output. A
+as the inlined list); `--raw` returns the file's own bytes. `block` matches
+`id:` or `alias:` on the direct items of a top-level list (automations.yaml),
+or a top-level mapping key (scripts.yaml), and prints that block verbatim, so
+its output may carry a trailing comment line that sits before the next key.
+`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`.
+All three are YAML-only — `--json` is accepted but does not change the output. A
 missing file or block is an error with a non-zero exit, not an empty result.
 
 `options`, `flow-start`, and `flow-step` are dry-run by default (they start or advance a stateful flow, and a step can complete the flow and create a config entry) — add `--confirm` to actually start/submit. `entries`, `flow-inspect`, and `--json` reads are always live.
@@ -559,8 +561,9 @@ sits — a card's `entity`, but equally a markdown card whose `content` is exact
 that string, or a view `title`. `dash grep P` finds a view titled `P`. Matching
 is whole-value, so a mention *inside* a longer sentence is not a hit, and map
 keys are never matched or rewritten. Output is `dashboard` + `path`
-(`views[0].cards[1].content`); a miss prints "not referenced in any dashboard"
-and exits 0.
+(`views[0].cards[1].content`); a miss says "not referenced **as a whole
+value**" and routes term discovery to `ent ls --pattern`, exit 0 — it is a
+verified negative only for the exact value asked about.
 
 `dash replace` takes one dashboard (omit `url_path` for the default dashboard,
 which fails with `config_not_found` when the default is HA's auto-generated one),
@@ -587,11 +590,15 @@ hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even 
 
 Requires hactl-companion — it is what reads the config directory. `ref` is the
 whole-instance version of `dash grep`/`dash replace`: YAML config files
-(following `!include`) **and** every dashboard in one pass. Same whole-value
-matching as `dash grep` — `scan` finds references to an exact id, not free-text
-terms (term/name discovery is the name search under "Filtering & discovery") —
-and reports `source` (`config` | `dashboard`), `location` (file name or
-dashboard), and `path` (`[1].trigger[0].entity_id`).
+(following `!include`) **and** every dashboard in one pass. `scan` finds
+references to an exact id, not free-text terms (term/name discovery is the
+name search under "Filtering & discovery") — but its two halves do not match
+identically: dashboards match whole string values (exactly like `dash grep`),
+config files match the id as a word-bounded token, so `scan` **does** find an
+id inside a config-file template string (`{{ states('sensor.wp_vl') }}`) while
+never finding one inside a dashboard's. Reports `source` (`config` |
+`dashboard`), `location` (file name or dashboard), and `path`
+(`[1].trigger[0].entity_id`).
 
 `validate` is the one to reach for after deleting or renaming an entity: it
 sweeps every entity reference and reports the ones that no longer resolve. The

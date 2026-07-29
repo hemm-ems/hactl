@@ -11,7 +11,7 @@
 #ceiling 0
 
 internal/cmd/cc.go:runCCShow = exempt: resolves by scanning the fetched component list and returns "custom component %q not found", which the analysis cannot see because the check is on a loop variable rather than a call result
-internal/cmd/dash.go:runDashGrep = exempt: the argument is a search string, not an identifier; "not referenced in any dashboard" is the correct answer for a value that appears nowhere
+internal/cmd/dash.go:runDashGrep = exempt: the argument is a search string, not an identifier; "not referenced as a whole value in any dashboard" (with the ent ls --pattern routing, D-10) is the correct answer for a value that appears nowhere
 internal/cmd/ref.go:runRefScan = exempt: the argument is a search value rather than an identifier, so there is nothing for it to resolve to
 
 internal/cmd/cache.go:runCacheRefresh = exempt: the category is an enum, not an identifier; an unrecognised value is now refused before any work, so there is no target left to resolve
