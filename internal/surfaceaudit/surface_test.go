@@ -224,3 +224,17 @@ func TestAutomationRefSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.AutomationRefSurface(repoRoot(t))
 	runGate(t, s, err)
 }
+
+// TestResultSurfaceIsClosed — every --confirm-gated command declares whether
+// its confirmed OUTCOME is machine-readable.
+//
+// TestPreviewSurfaceIsClosed above is the same law one branch over, and the two
+// being separate tests is the point: the preview half was closed by a fix whose
+// scope was the word "preview", and the identical omission on the confirmed
+// path survived it in fourteen commands, including the flagship write. The
+// dry-run/confirm pair is one surface with two branches; a gate on one of them
+// is a gate on half a law.
+func TestResultSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.ResultSurface(repoRoot(t))
+	runGate(t, s, err)
+}

@@ -137,8 +137,13 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("creating floor: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created floor %q (id=%s)\n", entry.Name, entry.FloorID)
-	return nil
+	return done("create floor").
+		with("floor_id", entry.FloorID).
+		with("name", entry.Name).
+		withIf(level != nil, "level", flagFloorLevel).
+		withIf(flagFloorIcon != "", "icon", flagFloorIcon).
+		text("created floor %q (id=%s)", entry.Name, entry.FloorID).
+		render(w)
 }
 
 func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
@@ -175,6 +180,9 @@ func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
 		return fmt.Errorf("deleting floor: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted floor %q\n", entry.FloorID)
-	return nil
+	return done("delete floor").
+		with("floor_id", entry.FloorID).
+		with("name", entry.Name).
+		text("deleted floor %q", entry.FloorID).
+		render(w)
 }

@@ -46,6 +46,7 @@ var unidentifiedWireStructs = map[string]string{
 	"companionStatusResult": "hactl's own --json output shape for `companion status`",
 	"healthResult":          "hactl's own --json output shape for `health`",
 	"dryRunJSON":            "hactl's own --json output shape for dry runs",
+	"writeResultJSON":       "hactl's own --json output shape for confirmed writes, dryRunJSON's counterpart",
 	"entWhoJSON":            "hactl's own --json output shape for `ent who`",
 	"entWhoEventJSON":       "hactl's own --json output shape for `ent who`",
 	"entWhoSummaryJSON":     "hactl's own --json output shape for `ent who`",
@@ -139,6 +140,11 @@ var uncheckedDecodeSites = map[string]string{
 		"same reasoning as its sibling line",
 	"internal/cmd/flow.go:flowIDOf:v": "best-effort flow_id salvage for cleanup; callers handle " +
 		"an empty id",
+	"internal/cmd/flow.go:runConfigDelete:haAnswer": "the delete already succeeded when this runs; " +
+		"the anonymous struct carries HA's single `require_restart` boolean into the result document, " +
+		"and false is the answer HA gives for the common case, so a zero decode is a legitimate value " +
+		"rather than a missing one — the identity of the thing deleted comes from the config entry " +
+		"resolved before the write, not from this response",
 	"internal/cmd/flow.go:optionsFlowCurrentValues:raw":   "raw schema passthrough; fields are filtered below",
 	"internal/cmd/flow.go:optionsFlowCurrentValues:field": "skips any field whose name did not decode",
 

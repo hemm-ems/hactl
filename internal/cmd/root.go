@@ -37,6 +37,11 @@ var (
 	// read (never truncate) and reset (see RunWithOutputContext) by the
 	// applyTokenPolicy pipeline.
 	helpRendered bool
+
+	// structuredOutput is set by a command that wrote a DOCUMENT rather than
+	// prose — see markStructuredOutput. Read and reset by the same pipeline
+	// helpRendered is.
+	structuredOutput bool
 )
 
 var rootCmd = &cobra.Command{
@@ -64,7 +69,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagColor, "color", false, "enable colored output (currently a no-op; reserved for future use)")
 	rootCmd.PersistentFlags().BoolVar(&flagStats, "stats", false, "show response size and estimated token count")
 	rootCmd.PersistentFlags().BoolVar(&flagTokens, "tokens", false, "show compact token estimate")
-	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500, "cap output at N tokens (0 = no cap)")
+	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500,
+		"cap output at N tokens (0 = no cap); never applied to --json or to a verbatim/raw document, "+
+			"which would be truncated into something that no longer parses")
 	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout for HA/companion API calls")
 
 	// Cobra's built-in help output must never go through the --tokensmax cap
@@ -102,6 +109,42 @@ func writeStats(w io.Writer, byteCount int64) {
 	_, _ = fmt.Fprintf(w, "---\nstats: %d bytes, ~%d tokens\n", byteCount, tokens)
 }
 
+// markStructuredOutput declares that what this command wrote is a DOCUMENT —
+// JSON, YAML, a shell script, a config file — rather than prose a reader
+// skims.
+//
+// The token cap chops at a byte boundary, walking back only far enough to keep
+// the bytes valid UTF-8. On prose that is a truncated sentence; on a document
+// it is a syntax error, delivered at exit 0 with a plain-English notice
+// appended into the middle of the stream. `dash show lovelace-dev --raw`
+// emitted 2 096 bytes of a 91 541-byte config that way and reported success,
+// and `--raw`'s own help says it exists "for LLM round-trip editing" — the
+// caller most likely to pipe it straight into a parser.
+//
+// The pole is the one --json already sets and docs/manual.md already
+// documents: output whose contract is "this parses" is never capped, and the
+// caller narrows it with filters instead. Truncating it is not a smaller
+// answer, it is a broken one — and a loud refusal would be worse still, since
+// the command CAN answer and the caller asked it to.
+func markStructuredOutput() { structuredOutput = true }
+
+// markGeneratedScript marks cobra's `completion <shell>` output as a document.
+//
+// It cannot be done where the other sites do it, because that command's body is
+// cobra's, not this package's — and cobra adds it lazily during ExecuteC, so an
+// init()-time wrapper would not always find it. The consequence was the same
+// class of defect one layer over: `hactl completion bash > /etc/…`, the exact
+// line the command's own --help prints, produced a shell script cut off
+// mid-identifier at line 60 of 212, and `bash -n` on it exits 2.
+func markGeneratedScript(c *cobra.Command) {
+	for cur := c; cur != nil; cur = cur.Parent() {
+		if cur.Name() == "completion" && cur.Parent() != nil && cur.Parent().Parent() == nil {
+			markStructuredOutput()
+			return
+		}
+	}
+}
+
 // applyTokenPolicy writes data to dst and applies the output token cap.
 // When flagTokens is set, text output gets a compact token-estimate header.
 // When flagTokensMax > 0 and the estimated tokens exceed the limit, output is
@@ -110,7 +153,9 @@ func writeStats(w io.Writer, byteCount int64) {
 // flagTokens is set, the compact token estimate goes to stderr instead.
 // Cobra help output (helpRendered) skips only the cap — never truncated,
 // mid-word or otherwise — since it's the same documentation regardless of
-// --tokensmax and a chopped help screen is worse than a long one.
+// --tokensmax and a chopped help screen is worse than a long one. Structured
+// output (structuredOutput) skips it for the same reason one step further on:
+// a capped document does not parse at all — see markStructuredOutput.
 func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagJSON {
 		if flagTokens {
@@ -123,7 +168,7 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagTokens {
 		_, _ = fmt.Fprintf(dst, "[~%d tok]\n", tokens)
 	}
-	if !helpRendered && flagTokensMax > 0 && tokens > int64(flagTokensMax) {
+	if !helpRendered && !structuredOutput && flagTokensMax > 0 && tokens > int64(flagTokensMax) {
 		limit := min(flagTokensMax*4, len(data))
 		// Walk backward to a valid UTF-8 boundary
 		for limit > 0 && !utf8.Valid(data[:limit]) {
@@ -192,6 +237,7 @@ func Execute() error {
 	defer rootCmd.SetOut(nil)
 
 	executed, err := rootCmd.ExecuteC()
+	markGeneratedScript(executed)
 	// Manual delivery goes to stderr first, so a merged capture reads
 	// manual → marker → result/error (the layout the tuning evals measured);
 	// injection happens on errors too — that's when the agent needs it most.
@@ -255,6 +301,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		flagTokens = false
 		flagTokensMax = 500
 		helpRendered = false
+		structuredOutput = false
 		resetSubcommandFlags()
 	}()
 
@@ -266,6 +313,14 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		target.SetContext(ctx)
 	}
 	err := rootCmd.ExecuteContext(ctx)
+
+	// After, not before: cobra adds the `completion` subtree lazily during
+	// ExecuteC, so a Find ahead of the run cannot resolve it and the mark would
+	// never land. Execute() marks off ExecuteC's own return value for the same
+	// reason.
+	if target, _, findErr := rootCmd.Find(args[1:]); findErr == nil {
+		markGeneratedScript(target)
+	}
 
 	cmdPath := "hactl " + strings.Join(args[1:], " ")
 	applyTokenPolicy(w, capBuf.Bytes(), cmdPath)

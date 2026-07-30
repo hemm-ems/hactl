@@ -160,8 +160,13 @@ func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("creating area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created area %q (id=%s)\n", entry.Name, entry.AreaID)
-	return nil
+	return done("create area").
+		with("area_id", entry.AreaID).
+		with("name", entry.Name).
+		withIf(flagAreaIcon != "", "icon", flagAreaIcon).
+		withIf(flagAreaFloor != "", "floor", flagAreaFloor).
+		text("created area %q (id=%s)", entry.Name, entry.AreaID).
+		render(w)
 }
 
 func runAreaDelete(ctx context.Context, w io.Writer, areaID string) error {
@@ -201,6 +206,9 @@ func runAreaDelete(ctx context.Context, w io.Writer, areaID string) error {
 		return fmt.Errorf("deleting area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted area %q\n", entry.AreaID)
-	return nil
+	return done("delete area").
+		with("area_id", entry.AreaID).
+		with("name", entry.Name).
+		text("deleted area %q", entry.AreaID).
+		render(w)
 }

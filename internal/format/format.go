@@ -4,12 +4,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 )
 
 // Table holds tabular data for compact rendering.
+//
+// A cell is a string because a text table is made of strings. That made the
+// JSON rendering below a re-use of the HUMAN rendering, which is how
+// `ent ls --json` came to report `"last_changed": "06:31"`: the cell held
+// clock.Short's output, and renderJSON copied the cell. Machine sets the
+// machine's value for a cell whose text form is a human rendering — see
+// SetMachine.
 type Table struct {
 	Rows    [][]string
 	Headers []string
+	// Machine[i][header] overrides the JSON value of row i's cell under
+	// header. Text rendering never consults it. Nil for the common table
+	// whose cells mean the same thing to both audiences.
+	Machine []map[string]any
+}
+
+// SetMachine records the value row i's `header` cell carries in JSON output,
+// leaving its text form alone.
+//
+// This is the one place the two audiences are allowed to diverge, and it is
+// deliberately explicit at the call site rather than inferred: a cell that
+// renders "06:31" for a person and "2026-07-30T06:31:28.65+02:00" for a
+// machine is a decision about that column, not a property a renderer can
+// derive.
+func (t *Table) SetMachine(i int, header string, v any) {
+	if t.Machine == nil {
+		t.Machine = make([]map[string]any, len(t.Rows))
+	}
+	for len(t.Machine) <= i {
+		t.Machine = append(t.Machine, nil)
+	}
+	if t.Machine[i] == nil {
+		t.Machine[i] = map[string]any{}
+	}
+	t.Machine[i][header] = v
 }
 
 // RenderOpts controls table output mode.
@@ -48,13 +81,18 @@ func (t *Table) visibleRows(opts RenderOpts) [][]string {
 
 func (t *Table) renderJSON(w io.Writer, opts RenderOpts) error {
 	rows := t.visibleRows(opts)
-	result := make([]map[string]string, len(rows))
+	result := make([]map[string]any, len(rows))
 	for i, row := range rows {
-		m := make(map[string]string, len(t.Headers))
+		m := make(map[string]any, len(t.Headers))
 		for j, h := range t.Headers {
 			if j < len(row) {
 				m[h] = row[j]
 			}
+		}
+		// A machine value replaces the cell's text form. visibleRows returns
+		// every row under JSON (H-10), so i indexes t.Machine directly.
+		if i < len(t.Machine) {
+			maps.Copy(m, t.Machine[i])
 		}
 		result[i] = m
 	}

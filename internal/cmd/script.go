@@ -133,6 +133,7 @@ func init() {
 // round-trippable with `script diff -f`). The companion returns the definition
 // as YAML text in resp.Content.
 func runScriptCat(ctx context.Context, w io.Writer, scriptID string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -393,7 +394,7 @@ func renderScriptShowJSON(ctx context.Context, w io.Writer, cfg *config.Config, 
 			traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
 			result.Traces[i] = scriptShowTrace{
 				ID:       reg.GetOrCreate("trc", traceKey),
-				Time:     formatShortTime(tr.Timestamp.Start),
+				Time:     formatMachineTime(tr.Timestamp.Start),
 				Result:   traceResult(tr),
 				LastStep: tr.LastStep,
 			}
@@ -595,14 +596,22 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	diff := scriptConfigDiff(remoteCandidate.Content, candidate.Content)
-	if scriptDiffHasChanges(diff) {
+	if !scriptDiffHasChanges(diff) {
+		// A no-op is still an outcome a machine caller has to be able to read:
+		// under --json this was the prose line "no changes detected" and exit 0,
+		// indistinguishable from a command that printed nothing at all.
+		return done("apply script").
+			with("script", candidate.ID).
+			with("changed_lines", 0).
+			text("no changes detected").
+			asPreview(!flagScriptConfirm).
+			render(w)
+	}
+	if !flagJSON {
 		_, _ = fmt.Fprintln(w, "diff:")
 		for _, line := range diff {
 			_, _ = fmt.Fprintln(w, line)
 		}
-	} else {
-		_, _ = fmt.Fprintln(w, "no changes detected")
-		return nil
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
@@ -651,10 +660,16 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 		reloaded = true
 	}
 
-	_, _ = fmt.Fprintf(w, "applied: %s\n", candidate.ID)
-	_, _ = fmt.Fprintf(w, "backup:  %s\n", backupPath)
+	res := done("apply script").
+		with("script", candidate.ID).
+		with("validation", scriptValidation).
+		with("changed_lines", len(diff)).
+		with("backup", backupPath).
+		with("reloaded", reloaded).
+		text("applied: %s", candidate.ID).
+		text("backup:  %s", backupPath)
 	if reloaded {
-		_, _ = fmt.Fprintln(w, "reload:  ok")
+		res = res.text("reload:  ok")
 	}
 	entityID := "script." + candidate.ID
 	if stateData, stateErr := client.GetState(ctx, entityID); stateErr == nil {
@@ -663,10 +678,12 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 			// Best-effort echo: Check poisons EntityID/State in place, so a
 			// degenerate payload prints the marker instead of a blank line.
 			_ = degeneracy.Check("/api/states/"+entityID, &ent)
-			_, _ = fmt.Fprintf(w, "state:   %s %s\n", ent.EntityID, ent.State)
+			res = res.with("entity_id", ent.EntityID).
+				with("state", ent.State).
+				text("state:   %s %s", ent.EntityID, ent.State)
 		}
 	}
-	return nil
+	return res.render(w)
 }
 
 func loadScriptCandidate(path, scriptID string) (*scriptConfigCandidate, error) {
@@ -836,8 +853,11 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("running script %s: %w", entityID, err)
 	}
 
-	_, _ = fmt.Fprintf(w, "executed %s\n", entityID)
-	return nil
+	return done("execute "+entityID).
+		with("entity_id", entityID).
+		with("via", "script.turn_on").
+		text("executed %s", entityID).
+		render(w)
 }
 
 func runScriptCreate(ctx context.Context, w io.Writer) error {
@@ -881,13 +901,16 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating script: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created script %q\n", resp.ID)
+	res := done("create script").
+		with("id", resp.ID).
+		with("reloaded", resp.Reloaded).
+		text("created script %q", resp.ID)
 	// The companion reports whether HA reloaded; saying "created" without it
 	// is the issue-#40 failure mode — a definition on disk that HA never read.
 	if !resp.Reloaded {
-		_, _ = fmt.Fprintln(w, "warning: script written but HA did not confirm reload")
+		res = res.warn("script written but HA did not confirm reload")
 	}
-	return nil
+	return res.render(w)
 }
 
 func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
@@ -923,7 +946,10 @@ func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("deleting script: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted script %q\n", scriptID)
 	removeOrphanedEntity(ctx, cfg, orphan)
-	return nil
+	return done("delete script").
+		with("id", scriptID).
+		withIf(orphan != "", "entity_id", orphan).
+		text("deleted script %q", scriptID).
+		render(w)
 }

@@ -137,8 +137,14 @@ func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("creating label: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created label %q (id=%s)\n", entry.Name, entry.LabelID)
-	return nil
+	return done("create label").
+		with("label_id", entry.LabelID).
+		with("name", entry.Name).
+		withIf(flagLabelIcon != "", "icon", flagLabelIcon).
+		withIf(flagLabelColor != "", "color", flagLabelColor).
+		withIf(flagLabelDesc != "", "description", flagLabelDesc).
+		text("created label %q (id=%s)", entry.Name, entry.LabelID).
+		render(w)
 }
 
 func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
@@ -176,8 +182,11 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 		return fmt.Errorf("deleting label: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted label %q\n", labelID)
-	return nil
+	return done("delete label").
+		with("label_id", labelID).
+		with("name", entry.Name).
+		text("deleted label %q", labelID).
+		render(w)
 }
 
 func truncateStr(s string, maxLen int) string {

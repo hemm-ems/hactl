@@ -167,7 +167,11 @@ func Condense(raw *RawTrace) *CondensedTrace {
 
 		if len(runs) > 0 {
 			run := runs[0]
-			step.Time = shortTimestamp(run.Timestamp)
+			// A step's time is JSON-only — FormatCondensed never prints it —
+			// so it carries the machine form: the full instant with its offset,
+			// in the reader's zone. It used to carry shortTimestamp's "08:00:00",
+			// a wall clock with no date and no zone inside a machine document.
+			step.Time = clock.ISO(run.Timestamp)
 			step.Detail = extractDetail(stepType, run)
 			step.Result, step.Reason = stepOutcome(run)
 		}

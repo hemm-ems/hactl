@@ -229,6 +229,7 @@ func renderLogEntriesSimple(w io.Writer, entries []analyze.LogEntry) error {
 			e.Component,
 			msg,
 		}
+		tbl.SetMachine(i, "time", analyze.FormatMachineTimestamp(e.Timestamp))
 	}
 
 	return tbl.Render(w, format.RenderOpts{

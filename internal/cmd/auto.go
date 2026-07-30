@@ -138,6 +138,7 @@ func init() {
 // turns "hactl could not read the instance" into the companion's "automation
 // not found".
 func runAutoCat(ctx context.Context, w io.Writer, automationID string) error {
+	markStructuredOutput()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -857,6 +858,25 @@ func formatShortTime(isoTime string) string {
 	return clock.Short(isoTime)
 }
 
+// formatMachineTime is formatShortTime's counterpart for --json: the full
+// instant with its UTC offset, in the reader's zone.
+//
+// The two exist as a pair because a table cell used to serve both audiences.
+// format.Table renders the same cells as text and as JSON, so every command
+// that put formatShortTime's output in a row also put it in its machine
+// contract — `ent ls --json` answered `"last_changed": "06:31"` while
+// `ent show --json` answered the full instant for the same field. A cell whose
+// text form is a human rendering pairs this with format.Table.SetMachine.
+//
+// The empty placeholder is "" rather than formatShortTime's "-": a machine
+// consumer reads "-" as a value, and "no timestamp" is an absence.
+func formatMachineTime(isoTime string) string {
+	if isoTime == "" {
+		return ""
+	}
+	return clock.ISO(isoTime)
+}
+
 // compactDiffContext is how many unchanged context lines the compact diff
 // renderer keeps on each side of a changed hunk. Unchanged runs longer than
 // this collapse to a single "… N unchanged lines …" marker so the real +/-
@@ -998,8 +1018,16 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		return diffErr
 	}
 	if !diff.HasChanges {
-		_, _ = fmt.Fprintf(w, "no changes detected\n")
-		return nil
+		// A no-op is still an outcome a machine caller has to be able to read:
+		// under --json this used to be the prose line "no changes detected" and
+		// exit 0, indistinguishable from a crash that printed nothing.
+		return done("apply automation").
+			with("automation", autoID).
+			with("config_id", configID).
+			with("changed_lines", 0).
+			text("no changes detected").
+			asPreview(!flagAutoConfirm).
+			render(w)
 	}
 	if !flagJSON {
 		_, _ = fmt.Fprintf(w, "diff:\n")
@@ -1031,16 +1059,23 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	if !flagJSON {
 		_, _ = fmt.Fprintf(w, "\nvalidation: %s\n", validation)
 	}
-	_, _ = fmt.Fprintf(w, "applied: %s\n", autoID)
+	res := done("apply automation").
+		with("automation", autoID).
+		with("config_id", configID).
+		with("validation", validation).
+		with("changed_lines", len(diff.Lines)).
+		with("reloaded", result.Reloaded).
+		withIf(result.BackupPath != "", "backup", result.BackupPath).
+		text("applied: %s", autoID)
 	if result.BackupPath != "" {
-		_, _ = fmt.Fprintf(w, "backup:  %s\n", result.BackupPath)
+		res = res.text("backup:  %s", result.BackupPath)
 	}
 	if result.Reloaded {
-		_, _ = fmt.Fprintf(w, "reload:  ok\n")
+		res = res.text("reload:  ok")
 	} else {
-		_, _ = fmt.Fprintf(w, "warning: written but HA did not confirm reload\n")
+		res = res.warn("written but HA did not confirm reload")
 	}
-	return nil
+	return res.render(w)
 }
 
 // validateAutoCreateCandidate runs HA's validate_config against a
@@ -1139,19 +1174,24 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating automation: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created automation %q\n", resp.ID)
+	res := done("create automation").
+		with("config_id", resp.ID).
+		with("reloaded", resp.Reloaded).
+		withIf(validation != "", "validation", validation).
+		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
+		text("created automation %q", resp.ID)
 	switch {
 	case !resp.Reloaded:
-		_, _ = fmt.Fprintln(w, "warning: automation written but HA did not confirm reload")
+		res = res.warn("automation written but HA did not confirm reload")
 	case resp.EntityID == "":
-		_, _ = fmt.Fprintln(w, "warning: automation reloaded but its live entity_id could not be confirmed")
+		res = res.warn("automation reloaded but its live entity_id could not be confirmed")
 	default:
-		_, _ = fmt.Fprintf(w, "entity_id: %s\n", resp.EntityID)
+		res = res.text("entity_id: %s", resp.EntityID)
 		if resp.EntityID != resp.ID {
-			_, _ = fmt.Fprintf(w, "note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id\n", resp.EntityID, resp.ID)
+			res = res.text("note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id", resp.EntityID, resp.ID)
 		}
 	}
-	return nil
+	return res.render(w)
 }
 
 // resolveAutomation resolves a config id, entity object id, full entity_id,
@@ -1305,13 +1345,16 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 		return fmt.Errorf("deleting automation: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted automation %q\n", autoID)
-
 	if hadLiveEntity {
 		removeOrphanedEntity(ctx, cfg, liveEntityID)
 	}
 
-	return nil
+	return done("delete automation").
+		with("id", autoID).
+		withIf(hadLiveEntity && liveAuto.Attributes.ID != "", "config_id", liveAuto.Attributes.ID).
+		withIf(hadLiveEntity, "entity_id", liveEntityID).
+		text("deleted automation %q", autoID).
+		render(w)
 }
 
 // connectCompanion discovers and connects to the hactl-companion.

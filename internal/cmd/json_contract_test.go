@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -515,6 +516,9 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 		t.Fatalf("--json output does not start with JSON (a human header line precedes it):\n%s", small)
 	}
 
+	// (4) no rendered wall clock anywhere in the document.
+	assertNoRenderedClock(t, parsedSmall, "", small)
+
 	// (2) --top must not remove a single element from JSON output (defeats
 	// defect A generically).
 	//
@@ -656,5 +660,66 @@ func TestScriptShowJSON_Shape(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.Traces[0].ID, "trc:") {
 		t.Errorf("trace id should be a trc: short id, got %q", got.Traces[0].ID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (4): a rendered wall clock never reaches a machine.
+//
+// `ent ls`, `ent hist`, `log` and `log show` built a format.Table whose cells
+// were internal/clock's HUMAN rendering and then rendered that same table as
+// JSON, so `ent ls --json` reported `"last_changed": "06:31"` for an entity
+// whose wire value was `2026-07-30T04:31:28.653662+00:00` — no date, no year,
+// no offset — and `"07-28 11:52"` for anything older than today, which a
+// machine cannot even date. `ent show --json` emitted the full instant for the
+// SAME field, so two commands disagreed about one field's shape.
+//
+// The gate is written against the SHAPE of the value rather than a list of
+// timestamp-ish field names, and that is the whole point: a name list is the
+// enumeration this repository keeps being bitten by, and it would have missed
+// `first_seen`/`last_seen` (the deduped log view) exactly as the original fix
+// missed them. Every shape below is one internal/clock can produce and nothing
+// else in hactl's JSON legitimately does.
+// ---------------------------------------------------------------------------
+
+// renderedClockShapes are the human renderings clock.Short, clock.ShortSeconds
+// and the log pipeline's naive local stamp produce. A JSON string matching any
+// of them is a table cell that escaped into the machine contract.
+var renderedClockShapes = []struct {
+	name string
+	re   *regexp.Regexp
+}{
+	{"clock.Short, same day (HH:MM)", regexp.MustCompile(`^\d{2}:\d{2}$`)},
+	{"clock.ShortSeconds, same day (HH:MM:SS)", regexp.MustCompile(`^\d{2}:\d{2}:\d{2}$`)},
+	{"clock.Short, other day (MM-DD HH:MM)", regexp.MustCompile(`^\d{2}-\d{2} \d{2}:\d{2}$`)},
+	{"clock.ShortSeconds, other day (MM-DD HH:MM:SS)", regexp.MustCompile(`^\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)},
+	{"a naive local stamp with no zone (YYYY-MM-DD HH:MM:SS)", regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$`)},
+}
+
+// assertNoRenderedClock walks a decoded --json document and fails on any string
+// value shaped like a rendered clock, naming the path so the offending column
+// is obvious.
+func assertNoRenderedClock(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			assertNoRenderedClock(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoRenderedClock(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		for _, shape := range renderedClockShapes {
+			if shape.re.MatchString(node) {
+				t.Errorf("--json carries a rendered wall clock at %s: %q looks like %s.\n"+
+					"JSON timestamps must be the full instant with its UTC offset (clock.ISO); the short form "+
+					"belongs to the text table only. If this column is a table cell, give it a machine value "+
+					"with format.Table.SetMachine.\noutput:\n%s",
+					strings.TrimPrefix(path, "."), node, shape.name, raw)
+				return
+			}
+		}
 	}
 }

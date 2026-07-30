@@ -87,6 +87,30 @@ func ShortSeconds(ts string) string {
 	return format(t, "15:04:05", "01-02 15:04:05")
 }
 
+// ISO renders a timestamp for a MACHINE: the full instant, in the reader's
+// zone, with its UTC offset. It is the counterpart of Short, and it exists
+// because the two audiences were being served one string.
+//
+// `ent ls`, `ent hist`, `log` and `log show` built a format.Table whose cells
+// were Short's output and then rendered that same table as JSON, so a machine
+// consumer received `"last_changed": "06:31"` — no date, no year, no zone — for
+// an entity whose wire value was `2026-07-30T04:31:28.653662+00:00`. For a
+// value from another day it degraded to `"07-28 11:52"`, which is not even
+// datable. `ent show --json` on the SAME entity emitted the full instant, so
+// two commands disagreed about the shape of one field.
+//
+// Unparseable input is returned verbatim, exactly as Short does: a wire change
+// must show up as itself rather than as a plausible timestamp. That is also why
+// this does not fabricate a zone — Parse locates a naive value in the reader's
+// zone, which is where hactl's own log pipeline produced it.
+func ISO(ts string) string {
+	t, ok := Parse(ts)
+	if !ok {
+		return ts
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
 // format applies the today/not-today choice.
 //
 // Both sides of the comparison are in the reader's zone. They were not: the
