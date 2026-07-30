@@ -30,14 +30,15 @@ var flagScriptFailing bool
 var flagScriptFile string
 var flagScriptConfirm bool
 
-var scriptCmd = &cobra.Command{
+var scriptCmd = family(&cobra.Command{
 	Use:   "script",
 	Short: "Inspect HA scripts",
 	Long:  "List, inspect, diff, apply, and run Home Assistant scripts.",
-}
+})
 
 var scriptLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List scripts",
 	Long:  "Show scripts table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,7 +50,7 @@ var scriptShowCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show script details and recent traces",
 	Long:  "Display script summary and the last 5 trace runs.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -59,7 +60,7 @@ var scriptRunCmd = &cobra.Command{
 	Use:   "run <id>",
 	Short: "Execute a script (dry-run by default)",
 	Long:  "Run a Home Assistant script via service call script.turn_on. Dry-run by default: verifies the script exists and previews the call; use --confirm to actually run it.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptRun(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -69,7 +70,7 @@ var scriptCatCmd = &cobra.Command{
 	Use:   "cat <id>",
 	Short: "Print a script's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of a script (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -79,7 +80,7 @@ var scriptDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote script config",
 	Long:  "Compare a local YAML file (-f) against the current HA script config.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptDiff(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -89,7 +90,7 @@ var scriptApplyCmd = &cobra.Command{
 	Use:   "apply <id>",
 	Short: "Apply a local YAML config to a script (dry-run by default)",
 	Long:  "Validate and write script config through the companion. Use --confirm to actually write + reload.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptApply(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -97,6 +98,7 @@ var scriptApplyCmd = &cobra.Command{
 
 var scriptCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new script from YAML (dry-run by default)",
 	Long:  "Create a new script from a local YAML file via the companion. Use --confirm to apply.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +110,7 @@ var scriptDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a script (dry-run by default)",
 	Long:  "Delete a script from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

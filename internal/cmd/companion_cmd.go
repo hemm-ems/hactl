@@ -33,13 +33,14 @@ type companionStatusResult struct {
 	AuthMode            string `json:"auth_mode,omitempty"`
 }
 
-var companionCmd = &cobra.Command{
+var companionCmd = family(&cobra.Command{
 	Use:   "companion",
 	Short: "Diagnose hactl-companion connectivity",
-}
+})
 
 var companionStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  takesNone(),
 	Short: "Show companion discovery result and capabilities",
 	Long:  "Run through companion discovery paths and print a one-screen diagnostic.",
 	RunE: func(cmd *cobra.Command, args []string) error {

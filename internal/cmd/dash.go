@@ -32,15 +32,16 @@ var flagDashIcon string
 var flagDashSidebar bool
 var flagDashAdmin bool
 
-var dashCmd = &cobra.Command{
+var dashCmd = family(&cobra.Command{
 	Use:        "dash",
 	SuggestFor: []string{"dashboard", "dashboards", "lovelace"},
 	Short:      "Manage Lovelace dashboards",
 	Long:       "List, inspect, create, and modify Home Assistant Lovelace dashboards.",
-}
+})
 
 var dashLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List dashboards",
 	Long:  "Show all Lovelace dashboards registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,7 +53,7 @@ var dashShowCmd = &cobra.Command{
 	Use:   "show [url_path]",
 	Short: "Show dashboard config",
 	Long:  "Display dashboard views summary, or the full config as raw JSON (--raw/--json) or YAML (--yaml). Omit url_path for the default dashboard.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""
 		if len(args) > 0 {
@@ -66,7 +67,7 @@ var dashSaveCmd = &cobra.Command{
 	Use:   "save [url_path]",
 	Short: "Save dashboard config (dry-run by default)",
 	Long:  "Write a full dashboard config from JSON file or stdin. Use --confirm to apply.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""
 		if len(args) > 0 {
@@ -78,6 +79,7 @@ var dashSaveCmd = &cobra.Command{
 
 var dashCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new dashboard (dry-run by default)",
 	Long:  "Create a new storage-mode Lovelace dashboard. Use --confirm to apply.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -89,7 +91,7 @@ var dashDeleteCmd = &cobra.Command{
 	Use:   "delete <url_path>",
 	Short: "Delete a dashboard (dry-run by default)",
 	Long:  "Delete a Lovelace dashboard by url_path. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDashDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -97,6 +99,7 @@ var dashDeleteCmd = &cobra.Command{
 
 var dashResourcesCmd = &cobra.Command{
 	Use:   "resources",
+	Args:  takesNone(),
 	Short: "List registered resources",
 	Long:  "Show custom card/CSS resources registered in Lovelace.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,7 +114,7 @@ var dashGrepCmd = &cobra.Command{
 		"dashboard and path of each hit. The match is whole-value and position-independent: a card's " +
 		"entity matches, and so does a markdown card whose content or a view whose title is exactly " +
 		"that string. A mention inside a longer string is not a hit; map keys are never matched.",
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDashGrep(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -124,7 +127,7 @@ var dashReplaceCmd = &cobra.Command{
 		"whole-value match `dash grep` reports, so it rewrites card entities, titles and markdown " +
 		"content alike, and never rewrites map keys. Omit url_path for the default dashboard. Use " +
 		"--confirm to save; `hactl ref replace` covers config files and dashboards in one pass.",
-	Args: cobra.RangeArgs(2, 3),
+	Args: takesBetween(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urlPath := ""
 		if len(args) > 2 {

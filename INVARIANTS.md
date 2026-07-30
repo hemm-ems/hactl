@@ -1153,3 +1153,74 @@ of a states payload that the ordering fix never touched. They are safe, but only
 because each addresses `/api/states/<entity_id>` inside its own domain, so the
 set decoded is the single entity rendered. That is a reason somebody had to
 write down; before the surface existed, nobody had checked it.
+
+## H-22 — An argument a command cannot act on ends the command
+
+Every command in the tree declares what positional arguments it takes, and the
+declaration refuses three things before the command body runs: an argument that
+is empty or whitespace-only, an argument on a command that takes none, and — on
+a command that holds subcommands — a subcommand it does not have. The pole is
+**refuse**: an empty string is not a wildcard, an ignored argument is not a
+filter, and a mistyped subcommand is not a help request.
+
+The rule is about the *boundary*, not about any one resolver. Where a resolver
+compares the caller's reference to a field, a record that legitimately carries
+that field empty answers the empty string — and Home Assistant produces such
+records in the ordinary course of being used. A restored automation ("ghost":
+registry entry, no config) has an empty config id and an empty friendly_name; a
+device the user renamed has an empty registry `name`, because the override lives
+in `name_by_user`. So `hactl auto show ''` printed a real, unrelated automation,
+`hactl auto delete ''` printed a plan to delete it, and `hactl device show ''`
+answered with an arbitrary real device — each at exit 0, each one flag from a
+write against an object nobody named.
+
+The other two legs are the same defect where the argument is not an identifier:
+
+- **A command that takes no positionals must say so.** `Args == nil` is cobra's
+  ArbitraryArgs, so `hactl ent ls sensor` accepted `sensor`, discarded it, and
+  printed the same listing as `hactl ent ls` — the most plausible mistake an LLM
+  caller makes with that command, answered with a plausible wrong result. The
+  refusal names the flag that does what the caller meant (`--domain sensor`),
+  built from the command's own flag set rather than a table.
+- **A family group must refuse an unknown subcommand like the root does.**
+  Cobra's `legacyArgs` errors for the root and returns nil for every other
+  group; a group with no `Run` then answers *anything* with its help text at
+  exit 0. Twelve families were confirmed doing it. Setting `Args` on such a
+  group changes nothing — `execute` returns `flag.ErrHelp` before
+  `ValidateArgs` — so a group carries a `RunE` that prints its own help, which
+  is what makes cobra validate its arguments at all.
+
+- Enforced by: `internal/cmd/surface_positional_test.go`
+  (`TestNoCommandAcceptsABlankPositional` — every command in the live tree,
+  driven through the real entry point with one, two and three blank arguments,
+  asserting the refusal comes from the contract rather than from the next error
+  down; `TestEveryFamilyRefusesAnUnknownSubcommand` over every command that
+  holds subcommands; `TestFamilyGroupsAreMarkedAsSuch`, which pins the
+  annotation the MCP gate, the `--json` sweep and the manual guardrail read),
+  `internal/cmd/args_test.go` (the message contracts: the blank refusal names
+  the placeholder from the command's own `Use` line, the unexpected-positional
+  refusal carries the flag alternative, the unknown-subcommand refusal keeps
+  cobra's did-you-mean, and `TestValidUsageIsUnchanged` holds the other half —
+  a bare family still prints help at exit 0, optional arguments stay optional;
+  `TestResolveAutomationRefusesABlankReference` and
+  `TestResolveDeviceRefusesABlankReference` at the two resolvers where the wrong
+  match was actually made),
+  `internal/integration/positional_test.go`
+  (`TestBlankAutomationIdentifierResolvesNothing` against a ghost this test
+  creates through HA's own config API, with the ghost's real identifiers as the
+  control; `TestListingRefusesAPositionalFilter`;
+  `TestUnknownSubcommandFailsAgainstALiveInstance`).
+- Premise probed, not assumed:
+  `TestOracleAutomationWithoutAnIDCarriesNoConfigID` (`make test-int`, the
+  `idless` fixture) — HA reports `attributes.id` only for an automation that has
+  an `id:`, so an automation without one is an entity whose config id is empty.
+  That is the record the empty string matched, and it is stock YAML rather than
+  the field instance's ghost: the same probe established that creating an
+  automation through HA's config API and deleting it again removes the entity
+  outright on HA 2026.x, so the rig cannot make a ghost that way and nothing
+  here needs one.
+- Quantified by: `internal/cmd` (`TestPositionalSurfaceIsClosed`,
+  `make test-surface`) over `dev/surfaces/positional.manifest` — the set is the
+  live cobra tree, and a command whose `Args` is not one of the five
+  constructors in `internal/cmd/args.go` is a site. A new command inherits
+  nothing silently: it is red until its contract is written.

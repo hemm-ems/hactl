@@ -18,6 +18,7 @@ var flagIssuesAll bool
 
 var issuesCmd = &cobra.Command{
 	Use:   "issues",
+	Args:  takesNone(),
 	Short: "Show active HA issues and repairs",
 	Long: "Display currently active Home Assistant issues from the repairs integration " +
 		"(all severities, including WARNING). Ignored issues are hidden unless --all is given.",

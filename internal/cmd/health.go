@@ -25,6 +25,7 @@ var flagHealthCheckConfig bool
 
 var healthCmd = &cobra.Command{
 	Use:   "health",
+	Args:  takesNone(),
 	Short: "Show Home Assistant health overview",
 	Long:  "Display HA version, recorder status, and error count.",
 	RunE: func(cmd *cobra.Command, args []string) error {

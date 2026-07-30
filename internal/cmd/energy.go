@@ -14,12 +14,12 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var energyCmd = &cobra.Command{
+var energyCmd = family(&cobra.Command{
 	Use:   "energy",
 	Short: "Inspect the Energy dashboard configuration",
 	Long: "Read what HA's Energy dashboard measures — which statistics feed which card. " +
 		"Curated read of the energy/get_prefs WebSocket API (D-12: no generic WS passthrough).",
-}
+})
 
 var energyShowCmd = &cobra.Command{
 	Use:   "show",
@@ -28,7 +28,7 @@ var energyShowCmd = &cobra.Command{
 		"from, and the individually tracked devices — so a caller can see which entity feeds which " +
 		"card before touching anything. An instance whose Energy dashboard was never set up says " +
 		"exactly that (HA answers an error, not empty preferences).",
-	Args: cobra.NoArgs,
+	Args: takesNone(),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEnergyShow(cmd.Context(), cmd.OutOrStdout())
 	},

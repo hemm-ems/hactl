@@ -20,6 +20,7 @@ var (
 
 var companionLogsCmd = &cobra.Command{
 	Use:   "logs",
+	Args:  takesNone(),
 	Short: "Show recent companion add-on logs (not in `hactl log`)",
 	Long: "Fetch the companion add-on's own recent log records over the Ingress lifeline.\n\n" +
 		"Add-on logs never reach Home Assistant's core logger, so `hactl log` cannot\n" +

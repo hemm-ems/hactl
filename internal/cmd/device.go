@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -25,11 +26,11 @@ var (
 
 var flagDeviceConfirm bool
 
-var deviceCmd = &cobra.Command{
+var deviceCmd = family(&cobra.Command{
 	Use:   "device",
 	Short: "Browse, inspect, and place devices",
 	Long:  "List and inspect Home Assistant devices, and assign their area or labels.",
-}
+})
 
 var deviceSetAreaCmd = &cobra.Command{
 	Use:   "set-area <device> <area>",
@@ -37,7 +38,7 @@ var deviceSetAreaCmd = &cobra.Command{
 	Long: "Assign a device to an area; the device may be given by ID or name, the area by name or ID. " +
 		"Every entity of the device without its own area_id inherits the device's area (H-8), so this " +
 		"is the one-command way to move a whole device. Use --confirm to apply.",
-	Args: cobra.ExactArgs(2),
+	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},
@@ -48,7 +49,7 @@ var deviceSetLabelCmd = &cobra.Command{
 	Short: "Add label(s) to a device (dry-run by default)",
 	Long: "Merge one or more labels (by name or ID) into a device's labels; the device may be given " +
 		"by ID or name. Use --confirm to apply.",
-	Args: cobra.MinimumNArgs(2),
+	Args: takesAtLeast(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
@@ -56,6 +57,7 @@ var deviceSetLabelCmd = &cobra.Command{
 
 var deviceLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List devices",
 	Long:  "Show devices from the Home Assistant device registry, with entity counts.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,7 +69,7 @@ var deviceShowCmd = &cobra.Command{
 	Use:   "show <device>",
 	Short: "Show device profile",
 	Long:  "Display one device with its area, labels, and registered entities. The device argument may be an ID or name.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -448,7 +450,20 @@ func deviceHasLabel(d haapi.DeviceRegistryEntry, rc *deviceRegistryContext, labe
 	return false
 }
 
+// errNoDeviceGiven is what resolveDevice answers a blank reference with.
+var errNoDeviceGiven = errors.New("no device given (use 'device ls' to see available devices)")
+
 func resolveDevice(devices []haapi.DeviceRegistryEntry, ref string) (haapi.DeviceRegistryEntry, error) {
+	// A blank reference matches nothing. HA leaves a device's registry `name`
+	// empty in ordinary cases (a user-renamed device carries the override in
+	// name_by_user), so the exact-match pass below matched `""` and answered
+	// `device show ''` with an arbitrary real device. The H-22 contract refuses
+	// the empty string at the CLI boundary; this refuses it where the wrong
+	// match was made. `resolveRegistryTarget` has had the same guard since it
+	// was written — this resolver is the one that never got it.
+	if strings.TrimSpace(ref) == "" {
+		return haapi.DeviceRegistryEntry{}, errNoDeviceGiven
+	}
 	refLower := strings.ToLower(ref)
 	for _, d := range devices {
 		if strings.ToLower(d.ID) == refLower || strings.ToLower(d.Name) == refLower {

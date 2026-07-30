@@ -47,15 +47,16 @@ var flagHelperName string
 var flagHelperFile string
 var flagHelperConfirm bool
 
-var helperCmd = &cobra.Command{
+var helperCmd = family(&cobra.Command{
 	Use:        "helper",
 	SuggestFor: []string{"helpers", "input_boolean", "input_number"},
 	Short:      "Manage HA helpers (input_boolean, counter, timer, etc.)",
 	Long:       "List, create, and delete Home Assistant helper entities via the companion.",
-}
+})
 
 var helperLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List helpers",
 	Long: "List all helpers, optionally filtered by domain. Unions YAML helpers (companion-managed) " +
 		"with storage-backed helpers created in the HA UI (discovered live via the entity states), " +
@@ -69,7 +70,7 @@ var helperShowCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show helper details",
 	Long:  "Show the YAML definition of a helper entity.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -79,7 +80,7 @@ var helperCatCmd = &cobra.Command{
 	Use:   "cat <id>",
 	Short: "Print a helper's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of a helper, with no header (pipe-friendly).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -92,7 +93,7 @@ var helperCreateCmd = &cobra.Command{
 Supported domains: input_boolean, input_number, input_select, input_text,
 input_datetime, counter, timer, schedule.
 Use --confirm to apply.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -102,7 +103,7 @@ var helperDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a helper (dry-run by default)",
 	Long:  "Delete a helper entity via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

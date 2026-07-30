@@ -39,7 +39,7 @@ var (
 	helpRendered bool
 )
 
-var rootCmd = &cobra.Command{
+var rootCmd = family(&cobra.Command{
 	Use:   "hactl",
 	Short: "CLI for Home Assistant analysis & development",
 	Long: "hactl – LLM-friendly CLI for Home Assistant analysis, debugging, and controlled automation management.\n\n" +
@@ -50,7 +50,7 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		haapi.DefaultTimeout = flagTimeout
 	},
-}
+})
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")

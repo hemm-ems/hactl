@@ -13,14 +13,15 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var areaCmd = &cobra.Command{
+var areaCmd = family(&cobra.Command{
 	Use:   "area",
 	Short: "Manage areas (rooms)",
 	Long:  "List, create, and delete Home Assistant areas (rooms).",
-}
+})
 
 var areaLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List all areas",
 	Long:  "Show all areas (rooms) registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,7 +37,7 @@ var areaCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new area",
 	Long:  "Create an area (room) in the Home Assistant area registry.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAreaCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -46,7 +47,7 @@ var areaDeleteCmd = &cobra.Command{
 	Use:   "delete <area_id>",
 	Short: "Delete an area (dry-run by default)",
 	Long:  "Delete an area from the Home Assistant area registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAreaDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

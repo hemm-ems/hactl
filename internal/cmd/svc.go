@@ -20,18 +20,18 @@ var flagSvcData string
 var flagSvcReturn bool
 var flagSvcConfirm bool
 
-var svcCmd = &cobra.Command{
+var svcCmd = family(&cobra.Command{
 	Use:        "svc",
 	SuggestFor: []string{"service", "services", "call"},
 	Short:      "Call Home Assistant services",
 	Long:       "Invoke HA service calls (e.g. group.set, input_boolean.turn_on).",
-}
+})
 
 var svcCallCmd = &cobra.Command{
 	Use:   "call <domain>.<service>",
 	Short: "Call a service (dry-run by default)",
 	Long:  "Call a HA service. Use --data for JSON service data. Dry-run by default: prints the planned call without executing it; pass --confirm to actually call.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSvcCall(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

@@ -31,6 +31,7 @@ var (
 
 var logCmd = &cobra.Command{
 	Use:   "log",
+	Args:  takesNone(),
 	Short: "View Home Assistant logs",
 	Long:  "Display HA error log with deduplication and filtering.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,7 +43,7 @@ var logShowCmd = &cobra.Command{
 	Use:   "show <log-id>",
 	Short: "Show log entry details",
 	Long:  "Display full details for a specific log entry by stable ID.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLogShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

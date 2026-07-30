@@ -36,7 +36,11 @@ func leafCommands(root *cobra.Command) []*cobra.Command {
 	var out []*cobra.Command
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if c.Runnable() {
+		// A family group is runnable only so that cobra reaches its argument
+		// validator (H-22, args.go): its RunE prints the group's help, which
+		// has no --json contract to keep. Asking the annotation keeps this
+		// sweep over the commands that answer with data.
+		if c.Runnable() && !isFamilyGroup(c) {
 			out = append(out, c)
 		}
 		for _, ch := range c.Commands() {

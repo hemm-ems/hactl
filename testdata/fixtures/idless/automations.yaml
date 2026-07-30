@@ -1,0 +1,37 @@
+# H-22 fixture: an instance that contains an automation with no config `id:`.
+#
+# This is the record the empty-string identifier used to resolve to. HA reports
+# `attributes.id` only for an automation that has an `id:` in YAML, so an
+# automation without one is an entity whose config id is empty — exactly the
+# shape a restored "ghost" has, and the shape `resolveAutomation`'s
+# `a.Attributes.ID == ref` compared with `""`.
+#
+# It needs no ghost and no deletion to produce: an automation without `id:` is
+# ordinary, stock YAML that HA has always accepted (it is only the UI editor
+# that requires an id). Triggers are inert — an event type HA never emits — so
+# nothing here fires during a test run.
+
+- id: idless_fixture_with_id
+  alias: Has A Config Id
+  description: The control — this one carries a config id, so it is addressable by it.
+  trigger:
+    - platform: event
+      event_type: hactl_idless_never_fires
+  condition: []
+  action:
+    - service: homeassistant.update_entity
+      target:
+        entity_id: sun.sun
+  mode: single
+
+- alias: No Config Id
+  description: No `id:` — HA reports no config id for this automation.
+  trigger:
+    - platform: event
+      event_type: hactl_idless_never_fires
+  condition: []
+  action:
+    - service: homeassistant.update_entity
+      target:
+        entity_id: sun.sun
+  mode: single

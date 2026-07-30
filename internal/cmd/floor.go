@@ -13,14 +13,15 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var floorCmd = &cobra.Command{
+var floorCmd = family(&cobra.Command{
 	Use:   "floor",
 	Short: "Manage floors",
 	Long:  "List, create, and delete Home Assistant floors.",
-}
+})
 
 var floorLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List all floors",
 	Long:  "Show all floors registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,7 +37,7 @@ var floorCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new floor",
 	Long:  "Create a floor in the Home Assistant floor registry.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runFloorCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -46,7 +47,7 @@ var floorDeleteCmd = &cobra.Command{
 	Use:   "delete <floor_id>",
 	Short: "Delete a floor (dry-run by default)",
 	Long:  "Delete a floor from the Home Assistant floor registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runFloorDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

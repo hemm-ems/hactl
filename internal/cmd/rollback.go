@@ -26,7 +26,7 @@ var autoRollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Restore the most recent automation backup (dry-run by default)",
 	Long:  "Rollback to the last backed-up automation config. Optionally specify an automation ID. Dry-run by default: previews which backup would be restored; use --confirm to apply.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		autoID := ""
 		if len(args) > 0 {
@@ -41,7 +41,7 @@ var rollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Deprecated: use 'hactl auto rollback' instead",
 	Long:  "Rollback to the last backed-up automation config (dry-run by default; use --confirm to apply). Use 'hactl auto rollback' instead.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(os.Stderr, rollbackDeprecationMsg())
 		autoID := ""
