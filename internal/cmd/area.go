@@ -136,6 +136,12 @@ func joinStrings(s []string) string {
 }
 
 func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
+	// Before the plan, so the preview fails exactly where --confirm would
+	// (H-2). See requireRegistryName for why this cannot wait for HA's answer.
+	if err := requireRegistryName("area", name); err != nil {
+		return err
+	}
+
 	if !flagAreaConfirm {
 		return dryRun("create area").
 			with("name", name).

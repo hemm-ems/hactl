@@ -34,6 +34,7 @@ internal/cmd/ent.go:runEntShow = exempt: collects the unshown attribute keys int
 internal/cmd/ent_who.go:runEntWho = exempt: tallies trigger counts into summary rows sorted by a total order (count desc, then trigger asc) before rendering
 internal/cmd/rtfm.go:runRTFMFamilies = exempt: groups aliases per family and sort.Strings-es each family's slice before rendering; family order comes from the fixed Families() slice
 internal/degeneracy/degeneracy.go:(*collector).err = exempt: collects the missing-field keys and sort.Strings them before composing the error text
+internal/manual/families.go:FamilyMembers = exempt: collects the aliases pointing at one family and sort.Strings-es the slice before returning it, so the name every banner and refusal interpolates is fixed (TestFamilyMembersCoversTheAliasesPointingAtIt asserts sortedness directly)
 internal/hatest/recorder.go:knownSchemaVersions = exempt: collects the schema versions and sort.Ints them before joining into the message
 internal/jsonwalk/jsonwalk.go:sortedKeys = exempt: this IS a canonicalizer — it collects keys and sort.Strings them so every YAML/JSON walk visits children in one order
 internal/surfaceaudit/surface.go:Check = exempt: the stale-entry sweep appends to a slice that is sort.Strings-ed before the report renders

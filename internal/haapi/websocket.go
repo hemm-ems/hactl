@@ -292,7 +292,7 @@ func (ws *WSClient) AreaRegistryList(ctx context.Context) ([]AreaEntry, error) {
 		return nil, fmt.Errorf("parsing area registry: %w", err)
 	}
 	if err := degeneracy.Check("config/area_registry/list", &entries); err != nil {
-		return nil, err
+		return nil, withRegistryRecovery(err, "area")
 	}
 	return entries, nil
 }
@@ -310,7 +310,7 @@ func (ws *WSClient) LabelRegistryList(ctx context.Context) ([]LabelEntry, error)
 		return nil, fmt.Errorf("parsing label registry: %w", err)
 	}
 	if err := degeneracy.Check("config/label_registry/list", &entries); err != nil {
-		return nil, err
+		return nil, withRegistryRecovery(err, "label")
 	}
 	return entries, nil
 }
@@ -328,7 +328,7 @@ func (ws *WSClient) FloorRegistryList(ctx context.Context) ([]FloorEntry, error)
 		return nil, fmt.Errorf("parsing floor registry: %w", err)
 	}
 	if err := degeneracy.Check("config/floor_registry/list", &entries); err != nil {
-		return nil, err
+		return nil, withRegistryRecovery(err, "floor")
 	}
 	return entries, nil
 }

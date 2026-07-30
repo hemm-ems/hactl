@@ -64,6 +64,18 @@ them too: `auto delete` takes a config id, an alias or a live entity_id, so
 its check is "the companion has the definition **or** HA has the entity" — a
 stricter dry run is the same dishonesty pointing the other way.
 
+*Input* is the half a create has. `area create` has no target to resolve — the
+name does not exist yet — and that reading exempted the three registry creates
+from the `confirm` surface until `area create "" --confirm` created a real area
+with a blank `area_id` on a production instance, which then failed every `area`
+command including `area delete` (H-14 refuses an identity-less record, and
+`delete` must list first) until a raw WebSocket call removed it. The oracle
+says HA accepts a blank name, mints a blank id for it and files a
+whitespace-only name under an id it chose, so the refusal cannot be the
+server's and cannot come after the request: it is client-side, in both modes,
+and the preview refuses exactly what `--confirm` refuses. An exemption argued
+from one half of a rule is how the other half goes unenforced.
+
 **A preview is machine-readable.** `--json` used to be a byte-for-byte no-op
 on nearly every preview, so an agent that asked for JSON got prose. Previews
 share one shape (`internal/cmd/dryrun.go`) that renders as text or as an
@@ -82,7 +94,16 @@ result by looking at the answer, not by remembering which flags it passed.
   `internal/companiontest/write_config_test.go`
   (`TestE2EDryRunRejectsFabricatedTargetCLI`,
   `TestE2ECreateDryRunValidatesInputCLI`,
-  `TestE2EConfirmedRunRejectsWhatDryRunRejectsCLI`)
+  `TestE2EConfirmedRunRejectsWhatDryRunRejectsCLI`),
+  `internal/cmd/registry_write_gate_test.go`
+  (`TestRegistryCreateRefusesABlankName` over both modes and all three
+  registries, with `TestRegistryCreateAcceptsANameWithSurroundingSpace` as the
+  no-false-positive control); oracle:
+  `internal/integration/registry_blank_name_oracle_test.go`
+  (`TestOracleRegistryCreateAcceptsABlankName`, `make test-int`)
+- Quantified by: `internal/cmd/surface_confirm_test.go`
+  (`TestConfirmSurfaceIsClosed`, over `dev/surfaces/confirm.manifest`) — the set
+  of `--confirm` commands is walked from the cobra tree, not listed here.
 
 ## H-3 — The vendored companion contract must not drift
 

@@ -161,7 +161,11 @@ func TestExecute_InjectsFamilyOnErrorToo(t *testing.T) {
 		t.Fatal("auto ls against a closed port should error")
 	}
 	// Cold-start help matters most on failures: manual precedes the error.
-	for _, want := range []string{"[hactl manual core", "'auto' family how-to", "=== RESULT of hactl auto ls ==="} {
+	// The family is named by every command it covers (manual.FamilyLabel), so
+	// this expectation is derived rather than typed — an alias added to the
+	// family must not need this literal edited to stay true.
+	autoNote := "'" + manual.FamilyLabel("auto") + "' family how-to"
+	for _, want := range []string{"[hactl manual core", autoNote, "=== RESULT of hactl auto ls ==="} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("error-path stderr missing %q", want)
 		}

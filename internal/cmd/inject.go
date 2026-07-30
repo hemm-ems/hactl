@@ -142,7 +142,14 @@ func confirmGuard(rawArgs []string) error {
 	if text := manual.Claim(cacheDir, manual.SessionKey(), mode, family, time.Now()); text != "" {
 		fmt.Fprintf(os.Stderr, "%s\n\n=== RESULT of hactl %s ===\n", text, strings.Join(rawArgs, " "))
 	}
-	return fmt.Errorf("--confirm refused: this is the session's first %q command, so its how-to (delivered above) could not have informed the call — run the dry-run form, present the plan to the user, and repeat with --confirm only after the user explicitly confirms (scripts: HACTL_MANUAL_MODE=off)", family)
+	// Name the command the caller actually ran, and the family by every command
+	// it covers. Interpolating the internal family key told an agent that had
+	// only ever run `area create` that this was its "first label command" —
+	// false about its session, and actionable in the wrong direction.
+	return fmt.Errorf("--confirm refused: the how-to for hactl's %s commands (delivered above) had not "+
+		"reached this session, so it could not have informed this %q call — run the dry-run form, "+
+		"present the plan to the user, and repeat with --confirm only after the user explicitly "+
+		"confirms (scripts: HACTL_MANUAL_MODE=off)", manual.FamilyLabel(family), top)
 }
 
 // hasConfirmArg scans unparsed args for the --confirm flag.
