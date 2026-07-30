@@ -200,11 +200,34 @@ func (d *HelperDefinition) Identity() []degeneracy.Field {
 	}
 }
 
-// Identity reports which helper definition was returned.
+// Identity reports which helper definition was returned. Source is deliberately
+// excluded: a companion older than the release that added the field omits it,
+// and an empty source is that companion's honest answer rather than a decode
+// that fell through — poisoning it would break `helper show` against every
+// companion still in the field. The drift this would otherwise catch is caught
+// statically instead, by H-13's struct-tag-versus-spec sweep, which sees a
+// renamed wire field without needing a payload.
 func (r *HelperResponse) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "id", Value: &r.ID},
 		{Name: "domain", Value: &r.Domain},
+	}
+}
+
+// Identity reports the domain the wiring verdict is about. Wired is a bool, so
+// it cannot distinguish "false" from "never decoded" — the domain echo can, and
+// a preview that acted on an undecoded verdict would silently report every
+// instance unwired.
+func (r *WiringResponse) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "domain", Value: &r.Domain}}
+}
+
+// Identity reports where the walk stopped short. An entry with no location
+// cannot be acted on and cannot even be reported to the operator.
+func (s *SkippedFile) Identity() []degeneracy.Field {
+	return []degeneracy.Field{
+		{Name: "location", Value: &s.Location},
+		{Name: "reason", Value: &s.Reason},
 	}
 }
 

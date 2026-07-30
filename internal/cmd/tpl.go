@@ -284,8 +284,15 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 	// never read: HA reports no reload, and without this the command claimed
 	// success for a definition that will never produce an entity.
 	if !resp.Reloaded {
-		_, _ = fmt.Fprintln(w, "warning: template written but HA did not confirm reload "+
-			"(is `template: !include template.yaml` in configuration.yaml?)")
+		// The reason, when the companion has one, replaces the rhetorical
+		// question this line used to end on — an operator asked "is the include
+		// there?" had no way to see HA's actual answer.
+		if resp.ReloadError != "" {
+			_, _ = fmt.Fprintf(w, "warning: template written but HA did not confirm reload: %s\n", resp.ReloadError)
+		} else {
+			_, _ = fmt.Fprintln(w, "warning: template written but HA did not confirm reload "+
+				"(is `template: !include template.yaml` in configuration.yaml?)")
+		}
 	}
 	return nil
 }
