@@ -117,6 +117,21 @@ _CORE_NOTE = (
     "confirmation.]"
 )
 
+def _family_label(group: str) -> str:
+    """Name a family the way a caller can act on it.
+
+    label/area/floor share one section set, keyed "label"; naming the block
+    after that internal key told a caller who had only ever run `area` that
+    this was its "first label command" — false about its session, and
+    actionable in the wrong direction. Derived from the same two tables the
+    lookup above uses, so a new alias cannot leave the naming behind. Mirrors
+    manual.FamilyLabel in internal/manual/families.go; keep the two in sync.
+    """
+    members = [group] if group in _GROUP_SECTIONS else []
+    members += [a for a, g in _GROUP_ALIASES.items() if g == group]
+    return "/".join(sorted(members)) or group
+
+
 _manual_sections = None  # heading -> section text, parsed once from rtfm
 _delivered_headings = set()
 _core_delivered = False
@@ -151,9 +166,10 @@ def _progressive_injection(args) -> str:
     if headings:
         _delivered_headings.update(headings)
         body = "\n\n".join(_manual_sections[h] for h in headings)
+        label = _family_label(group)
         blocks.append(
-            f"[hactl manual — '{group}' family how-to, delivered with your "
-            f"first {group} command. Use it for every subsequent {group} "
+            f"[hactl manual — '{label}' family how-to, delivered with your "
+            f"first {label} command. Use it for every subsequent {label} "
             f"call. Complete the routing-table sequence for the user's "
             f"question before drilling into anything from this section.]"
             f"\n\n{body}"
