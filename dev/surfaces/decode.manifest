@@ -34,6 +34,7 @@ internal/haapi/websocket.go:(*WSClient).ValidateConfig = exempt: reads the wsRes
 internal/haapi/websocket.go:(*WSClient).SystemLogList = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal site
 internal/haapi/websocket.go:(*WSClient).sendCommand = exempt: reads the wsResponse envelope, whose success flag is checked; every caller re-decodes the raw result at a sweep-governed site
 internal/haapi/websocket.go:(*WSClient).connect = exempt: reads the auth handshake envelope and branches on its type field explicitly; anything but auth_ok fails the connect
+internal/mcpserver/stdio.go:probeRequest = exempt: re-reads a line that already failed to decode, looking only for the sender's id; nothing is rendered from it and "decoded nothing" is the explicit branch — the message is dropped rather than answered
 
 # --- hactl's own on-disk artifacts: hactl also writes them ---------------------
 internal/manual/state.go:loadSession = exempt: hactl's own session-state cache; a corrupt or empty decode deliberately falls back to a fresh state rather than rendering anything

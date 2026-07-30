@@ -889,3 +889,4 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
 - One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
+- A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.
