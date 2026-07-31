@@ -87,6 +87,11 @@ input_select:
 # document HA would reject, and does so silently (finding #20). rest_command is
 # used because it is never called unless a service call asks for it, so the
 # secret is carried without the fixture reaching the network.
+# The custom component under custom_components/shapewatch/. Its integration
+# domain is `shapewatch` and the entities it publishes are `sensor.*` — the
+# gap finding #15 fell into.
+shapewatch:
+
 rest_command:
   shape_probe:
     url: http://127.0.0.1:1/unused

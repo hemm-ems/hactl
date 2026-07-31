@@ -1,0 +1,78 @@
+{
+  "_comment": [
+    "Rig capability R4 — energy preferences, seeded in the LEGACY grid form on purpose.",
+    "",
+    "minor_version is 1, so Home Assistant's own _EnergyPreferencesStore._async_migrate_func",
+    "rewrites the grid source into the unified flat form (stat_energy_from / stat_energy_to)",
+    "while loading it. That is why this file is written the old way: the shape the rig serves",
+    "is then HA's own product rather than something a fixture author decided, and the claim",
+    "'a current instance answers energy/get_prefs with the flat form' is proved by the rig",
+    "instead of asserted by a comment.",
+    "",
+    "All five source types HA defines are present (grid, solar, battery, gas, water), because",
+    "the direction a statistic represents is a property of the source type and the field it",
+    "sits on — and the unit fixture that carried only the legacy grid plus solar is exactly",
+    "how finding #26 stayed invisible: solar is the one type for which 'stat_energy_from means",
+    "production' happens to be true.",
+    "",
+    "Home Assistant ignores unknown top-level keys in a .storage file, so this note travels",
+    "with the fixture. Source: homeassistant/components/energy/data.py."
+  ],
+  "version": 1,
+  "minor_version": 1,
+  "key": "energy",
+  "data": {
+    "energy_sources": [
+      {
+        "type": "grid",
+        "flow_from": [
+          {
+            "stat_energy_from": "sensor.grid_import_energy",
+            "stat_cost": null,
+            "entity_energy_price": null,
+            "number_energy_price": 0.36
+          }
+        ],
+        "flow_to": [
+          {
+            "stat_energy_to": "sensor.grid_export_energy",
+            "stat_compensation": null,
+            "entity_energy_price": null,
+            "number_energy_price": null
+          }
+        ],
+        "cost_adjustment_day": 0.0
+      },
+      {
+        "type": "solar",
+        "stat_energy_from": "sensor.solar_yield_energy",
+        "config_entry_solar_forecast": null
+      },
+      {
+        "type": "battery",
+        "stat_energy_from": "sensor.battery_discharge_energy",
+        "stat_energy_to": "sensor.battery_charge_energy"
+      },
+      {
+        "type": "gas",
+        "stat_energy_from": "sensor.gas_meter_energy",
+        "stat_cost": null,
+        "entity_energy_price": null,
+        "number_energy_price": 0.2
+      },
+      {
+        "type": "water",
+        "stat_energy_from": "sensor.water_meter_volume",
+        "stat_cost": null,
+        "entity_energy_price": null,
+        "number_energy_price": null
+      }
+    ],
+    "device_consumption": [
+      {
+        "stat_consumption": "sensor.daily_energy",
+        "name": "Daily Energy"
+      }
+    ]
+  }
+}

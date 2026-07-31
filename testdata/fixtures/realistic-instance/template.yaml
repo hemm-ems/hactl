@@ -56,6 +56,62 @@
       device_class: moisture
       state: "{{ states('input_number.indoor_humidity') | float(0) > 70 }}"
 
+# The meters .storage/energy points at. Energy preferences are statistic ids
+# and HA will serve them whether or not the entities exist — which is exactly
+# why they exist here. A fixture whose energy dashboard reads from six ghosts
+# proves that `energy show` can print a string; one whose meters are real
+# entities can also be asked whether it printed the right string about the
+# right meter.
+- sensor:
+    - name: "Grid Import Energy"
+      unique_id: tpl_grid_import_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: "{{ (states('input_number.power_consumption') | float(0) / 100) | round(2) }}"
+
+    - name: "Grid Export Energy"
+      unique_id: tpl_grid_export_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: "1.5"
+
+    - name: "Solar Yield Energy"
+      unique_id: tpl_solar_yield_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: "7.25"
+
+    - name: "Battery Discharge Energy"
+      unique_id: tpl_battery_discharge_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: "2.5"
+
+    - name: "Battery Charge Energy"
+      unique_id: tpl_battery_charge_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: "3.0"
+
+    - name: "Gas Meter Energy"
+      unique_id: tpl_gas_meter_energy
+      unit_of_measurement: "m³"
+      device_class: gas
+      state_class: total_increasing
+      state: "12.5"
+
+    - name: "Water Meter Volume"
+      unique_id: tpl_water_meter_volume
+      unit_of_measurement: "m³"
+      device_class: water
+      state_class: total_increasing
+      state: "4.75"
+
 # A trigger-based block: the entities under it are keyed by the block's
 # trigger, not by the domain, so an entry appended to it inherits a trigger it
 # never asked for. This is the shape that made `tpl create` corrupt

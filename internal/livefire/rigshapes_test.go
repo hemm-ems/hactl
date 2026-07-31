@@ -298,6 +298,156 @@ func TestRigFixtureBlueprintCarriesInputTags(t *testing.T) {
 	}
 }
 
+// TestRigFixtureCarriesACustomComponentOwningForeignEntities is rig capability
+// R3, and the gap it exists for is between two names that look like one.
+//
+// `shapewatch` is an INTEGRATION domain. `sensor.shape_watch_alpha` is an
+// entity in the SENSOR domain that the integration happens to own. Nothing in
+// the entity_id records the ownership; the entity registry's `platform` field
+// is the only place it is written down. `cc show` matched entity_ids against
+// the integration domain and reported `entities: 0` for all fourteen custom
+// components on the reference instance, one of which owns 467 entities
+// (finding #15).
+//
+// A component publishing `shapewatch.*` entities would be worse than no
+// component at all: the prefix rule would count them correctly and the wrong
+// rule would have a passing test.
+func TestRigFixtureCarriesACustomComponentOwningForeignEntities(t *testing.T) {
+	root := filepath.Join(fixtureDir(t), "custom_components")
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("the fixture has no custom component: %v", err)
+	}
+	domain := entries[0].Name()
+
+	manifest, err := os.ReadFile(filepath.Join(root, domain, "manifest.json")) //nolint:gosec // a path under this repo's testdata
+	if err != nil {
+		t.Fatalf("reading %s/manifest.json: %v", domain, err)
+	}
+	var declared struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(manifest, &declared); err != nil {
+		t.Fatalf("parsing %s/manifest.json: %v", domain, err)
+	}
+	if declared.Domain != domain {
+		t.Errorf("%s/manifest.json declares domain %q — HA loads a custom component by its "+
+			"directory name and the two have to agree", domain, declared.Domain)
+	}
+
+	// A component HA never sets up publishes nothing, and the shape is then a
+	// directory rather than a capability.
+	if _, ok := topLevelKeys(t, parseFixtureFile(t, "configuration.yaml"))[domain]; !ok {
+		t.Errorf("configuration.yaml does not enable %q, so the component is never set up", domain)
+	}
+}
+
+// TestRigFixtureCarriesEnergyPreferences is rig capability R4.
+//
+// The unit fixture for `energy show` carried one grid source in the
+// flow_from/flow_to form plus a solar source, and its comment claimed to
+// mirror HA's data.py. Both halves of that were the wrong way round: data.py
+// calls flow_from/flow_to the LEGACY form and migrates it away on load, so the
+// only shape the test exercised is the one a current instance never answers
+// with — and solar is the single source type for which the code's rule
+// ("stat_energy_from means production") is true by accident.
+//
+// So the fixture is written in the legacy form deliberately and HA migrates it
+// while loading: the flat shape the rig serves is then Home Assistant's own
+// output, not a fixture author's reconstruction of it. All five source types
+// HA defines are present, because the direction a statistic represents is a
+// property of (type, field) and a fixture holding two of five types cannot
+// tell that rule from the one that shipped.
+func TestRigFixtureCarriesEnergyPreferences(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(fixtureDir(t), ".storage", "energy"))
+	if err != nil {
+		t.Fatalf("the fixture has no energy preferences: %v", err)
+	}
+	var stored struct {
+		MinorVersion int `json:"minor_version"`
+		Data         struct {
+			EnergySources []map[string]any `json:"energy_sources"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("parsing .storage/energy: %v", err)
+	}
+
+	// HA's _EnergyPreferencesStore migrates a grid source out of the legacy form
+	// when the stored minor_version is below 3. Bumping this number would leave
+	// the file as-is on load, and the rig would then serve a shape HA itself
+	// would never store.
+	if stored.MinorVersion >= 3 {
+		t.Errorf("minor_version %d is at or past HA's migration threshold — the legacy grid form "+
+			"is passed through unmigrated and the rig stops serving HA's own output",
+			stored.MinorVersion)
+	}
+
+	types := map[string]bool{}
+	legacyGrid := false
+	for _, source := range stored.Data.EnergySources {
+		kind, _ := source["type"].(string)
+		types[kind] = true
+		if kind == "grid" {
+			if _, ok := source["flow_from"]; ok {
+				legacyGrid = true
+			}
+		}
+	}
+	for _, kind := range energySourceTypes {
+		if !types[kind] {
+			t.Errorf("no %q source in the fixture — the direction rule is a property of "+
+				"(type, field) and a type nobody configured cannot disagree with it", kind)
+		}
+	}
+	if !legacyGrid {
+		t.Error("the grid source is not in the legacy flow_from form — nothing then proves that " +
+			"the flat shape the rig serves is HA's migration output rather than a fixture author's " +
+			"reconstruction of it")
+	}
+}
+
+// energySourceTypes is the closed set HA defines: data.py's
+// `type SourceType = GridSourceType | SolarSourceType | BatterySourceType |
+// GasSourceType | WaterSourceType`.
+var energySourceTypes = []string{"grid", "solar", "battery", "gas", "water"}
+
+// rigCapabilityDebt records the capabilities in FIXPLAN-livefire.md §4 the rig
+// has NOT been taught, each with the reason.
+//
+// It exists because of what the surfaces README calls the asymmetry: debt is
+// legal, invisible debt is not. A shape nobody has built is indistinguishable
+// from a shape nobody has thought of, and the second is how a suite acquires a
+// blind spot it cannot report. Delete a row when the shape lands.
+var rigCapabilityDebt = map[string]string{
+	"R6": "HA's error log seeded with long messages and dotted logger names — the log family's " +
+		"honesty cases (#14 #16 #17 #18) need entries this fixture cannot produce on demand; " +
+		"WP3 builds it",
+	"R7": "config entries with options flows and selector-typed schemas — the rig's entries come " +
+		"from default_config and none of them has an options flow, so #82 #83 #84 have no " +
+		"shape to fail against; WP9 builds it",
+	"R8": "two writers against one target — needs drivers, not a fixture, so it is harness work " +
+		"rather than a shape; WP11 builds it",
+	"R9": "hostile transports (hanging host, refused port, http→301→https) — local stubs rather " +
+		"than a Home Assistant, so they belong beside the companion cases in WP8",
+}
+
+// TestRigCapabilityDebtIsRecordedNotSilent keeps the ledger above honest: a row
+// whose reason is a shrug is the idiom this whole mechanism exists to stop
+// forming, and a row for a shape that has since been taught is a ledger that
+// has stopped describing the rig.
+func TestRigCapabilityDebtIsRecordedNotSilent(t *testing.T) {
+	for capability, reason := range rigCapabilityDebt {
+		if len(reason) < 25 {
+			t.Errorf("%s: %q is not a reason", capability, reason)
+		}
+	}
+	if len(rigCapabilityDebt) == 0 {
+		return
+	}
+	t.Logf("rig capabilities not yet taught: %d (see FIXPLAN-livefire.md §4)", len(rigCapabilityDebt))
+}
+
 // TestRigServesTheShapesItCarries is the second half of a capability: the
 // files above are a claim, and Home Assistant deciding to publish an entity
 // for each of them is the evidence. A fixture that parses but whose package
@@ -343,6 +493,82 @@ func TestRigServesTheShapesItCarries(t *testing.T) {
 		if templateSensors < 4 || helpers < 4 {
 			t.Errorf("the instance serves %d sensors and %d helpers; the fixture's shapes are "+
 				"not reaching Home Assistant", templateSensors, helpers)
+		}
+	})
+}
+
+// TestRigServesACustomComponentsForeignEntities is R3's served half: the
+// ownership gap has to be visible through the tool, on both instances.
+//
+// The live profile names powercalc, which owns 218 entities and not one of
+// them is called `powercalc.*` — the same shape as the rig's shapewatch, at a
+// scale no fixture will reproduce.
+func TestRigServesACustomComponentsForeignEntities(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		domain := "shapewatch"
+		if tgt.Profile == Live {
+			domain = "powercalc"
+		}
+		out := tgt.MustRead(t, "cc", "show", domain, "--json")
+		var info struct {
+			EntityIDs []string `json:"entity_ids"`
+		}
+		if err := json.Unmarshal([]byte(out), &info); err != nil {
+			t.Fatalf("cc show %s --json: %v\n%s", domain, err, truncate(out))
+		}
+		if len(info.EntityIDs) == 0 {
+			t.Fatalf("cc show %s reports no entities — the component owns none here, so nothing "+
+				"can tell an entity_id prefix match from a registry join", domain)
+		}
+		for _, id := range info.EntityIDs {
+			if strings.HasPrefix(id, domain+".") {
+				t.Errorf("%s is named after its own integration — an entity a prefix match would "+
+					"find is an entity that proves nothing about the join", id)
+			}
+		}
+	})
+}
+
+// TestRigServesEveryEnergySourceTypeItConfigures is R4's served half.
+//
+// The two profiles expect different sets, and that asymmetry is the point of
+// having both: the reference instance configures three of HA's five source
+// types, so it can show that grid and gas exist in the wild and can say
+// nothing at all about battery or water. The rig configures all five. Neither
+// instance alone establishes the rule that finding #26 turns on.
+func TestRigServesEveryEnergySourceTypeItConfigures(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		want := energySourceTypes
+		if tgt.Profile == Live {
+			want = []string{"grid", "solar", "gas"}
+		}
+		out := tgt.MustRead(t, "energy", "show", "--json")
+		var prefs struct {
+			Configured bool `json:"configured"`
+			Sources    []struct {
+				Type      string `json:"type"`
+				Statistic string `json:"statistic"`
+			} `json:"sources"`
+		}
+		if err := json.Unmarshal([]byte(out), &prefs); err != nil {
+			t.Fatalf("energy show --json: %v\n%s", err, truncate(out))
+		}
+		if !prefs.Configured {
+			t.Fatal("the instance reports no energy dashboard — R4's shape is absent")
+		}
+		got := map[string]bool{}
+		for _, s := range prefs.Sources {
+			got[s.Type] = true
+			if s.Statistic == "" {
+				t.Errorf("a %s row carries no statistic id", s.Type)
+			}
+		}
+		for _, kind := range want {
+			if !got[kind] {
+				t.Errorf("no %q source reaches the output; got %v", kind, got)
+			}
 		}
 	})
 }
