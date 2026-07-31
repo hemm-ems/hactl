@@ -106,8 +106,12 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 	if err := client.CallService(ctx, domain, service, data); err != nil {
 		return fmt.Errorf("calling %s.%s: %w", domain, service, err)
 	}
-	_, _ = fmt.Fprintf(w, "called %s.%s\n", domain, service)
-	return nil
+	return done(fmt.Sprintf("call %s.%s", domain, service)).
+		with("domain", domain).
+		with("service", service).
+		with("data", string(jsonData)).
+		text("called %s.%s", domain, service).
+		render(w)
 }
 
 // resolveData returns JSON bytes from either inline JSON or a @file reference.

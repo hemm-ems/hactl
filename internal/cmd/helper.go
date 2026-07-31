@@ -124,6 +124,7 @@ func init() {
 // id/domain header that `helper show` prints — pipe-friendly and consistent
 // with `auto cat` / `script cat` / `tpl cat`.
 func runHelperCat(ctx context.Context, w io.Writer, helperID string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -373,16 +374,22 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 		return fmt.Errorf("creating helper: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created helper %q (domain=%s)\n", resp.ID, domain)
+	res := done("create helper").
+		with("id", resp.ID).
+		with("domain", domain).
+		with("reloaded", resp.Reloaded).
+		with("entity_created", resp.EntityCreated).
+		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
+		text("created helper %q (domain=%s)", resp.ID, domain)
 	switch {
 	case !resp.Reloaded:
-		_, _ = fmt.Fprintln(w, "warning: helper written but HA did not confirm reload")
+		res = res.warn("helper written but HA did not confirm reload")
 	case !resp.EntityCreated:
-		_, _ = fmt.Fprintf(w, "warning: helper reloaded but entity %q was not found in HA's live state\n", resp.EntityID)
+		res = res.warn("helper reloaded but entity %q was not found in HA's live state", resp.EntityID)
 	default:
-		_, _ = fmt.Fprintf(w, "entity_id: %s\n", resp.EntityID)
+		res = res.text("entity_id: %s", resp.EntityID)
 	}
-	return nil
+	return res.render(w)
 }
 
 // helperCreateID validates a `helper create` input and returns the helper id
@@ -453,10 +460,13 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 		return fmt.Errorf("deleting helper: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted helper %q\n", helperID)
-
 	if orphan != "" {
 		removeOrphanedEntity(ctx, cfg, orphan)
 	}
-	return nil
+	return done("delete helper").
+		with("id", helperID).
+		with("domain", remote.Domain).
+		withIf(orphan != "", "entity_id", orphan).
+		text("deleted helper %q", helperID).
+		render(w)
 }

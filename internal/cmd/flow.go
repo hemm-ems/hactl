@@ -575,17 +575,24 @@ func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {
 		return fmt.Errorf("deleting config entry: %w", err)
 	}
 
-	if flagJSON {
-		_, err = w.Write(data)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w)
-		return err
+	// HA's own answer is carried, not echoed. Echoing it made this the one
+	// write whose --json document had no `dry_run`, no `action` and no `ok`:
+	// valid JSON that a caller still could not tell from a preview, from an
+	// error, or from another command's output. `require_restart` is the one
+	// field HA sends and it is the one thing the caller has to act on, so it
+	// keeps its name inside the result.
+	res := done("delete config entry").
+		with("entry_id", entry.EntryID).
+		with("domain", entry.Domain).
+		with("title", entry.Title).
+		text("deleted config entry %q", entryID)
+	var haAnswer struct {
+		RequireRestart bool `json:"require_restart"`
 	}
-
-	_, _ = fmt.Fprintf(w, "deleted config entry %q\n", entryID)
-	return nil
+	if json.Unmarshal(data, &haAnswer) == nil {
+		res = res.with("require_restart", haAnswer.RequireRestart)
+	}
+	return res.render(w)
 }
 
 func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {
@@ -758,6 +765,7 @@ func runConfigFiles(ctx context.Context, w io.Writer) error {
 // runConfigFile prints a config file's contents verbatim. With --raw the
 // companion leaves !include directives unresolved; otherwise they are inlined.
 func runConfigFile(ctx context.Context, w io.Writer, path string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -782,6 +790,7 @@ func runConfigFile(ctx context.Context, w io.Writer, path string) error {
 
 // runConfigBlock prints a single keyed block from a config file as YAML.
 func runConfigBlock(ctx context.Context, w io.Writer, path, id string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err

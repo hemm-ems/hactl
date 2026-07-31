@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,10 +132,46 @@ func init() {
 	rootCmd.AddCommand(entCmd)
 }
 
+// wireAttributes is an entity's attribute map decoded WITHOUT imposing a Go
+// numeric type on it.
+//
+// H-21 established that a domain-specific schema may only be applied to the
+// entities a command renders, and #105 fixed the decode half. This is the
+// encode half, and it was left standing: `encoding/json` decodes every JSON
+// number into `float64` for a `map[string]any`, and marshals `float64(5000)`
+// back as `5000`. So `ent show --json` re-emitted HA's `"max": 5000.0` — a
+// float by construction on every `number.*` entity, and on climate's
+// temperature/min_temp/max_temp — as a bare JSON integer. Python's
+// `json.loads` types that as `int`, and any consumer checking against HA's own
+// attribute contracts silently disagrees with HA about the entity it is
+// looking at. Non-integral floats were unaffected, which is why it survived:
+// `12.7` round-trips, `45.0` does not.
+//
+// `json.Number` keeps the literal HA sent, so the value re-encodes byte for
+// byte. The property belongs to the TYPE rather than to `ent show`'s renderer
+// on purpose: every decode of an entity state gets it, including the ones
+// inside a slice and the ones written next year, and there is no second place
+// that has to remember. `toFloat64` already accepted `json.Number` before this
+// existed, and nothing in the product asserts `.(float64)` on an attribute.
+type wireAttributes map[string]any
+
+// UnmarshalJSON decodes the attribute map with numbers left as their wire
+// literal.
+func (a *wireAttributes) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil {
+		return err
+	}
+	*a = m
+	return nil
+}
+
 // entityState holds a generic entity from /api/states.
 // Context carries HA's trigger metadata; see haapi.Context.
 type entityState struct {
-	Attributes  map[string]any `json:"attributes"`
+	Attributes  wireAttributes `json:"attributes"`
 	EntityID    string         `json:"entity_id"`
 	State       string         `json:"state"`
 	LastChanged string         `json:"last_changed"`
@@ -237,6 +274,9 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
 		}
 		tbl.Rows[i] = row
+		// The cell above is the reader's short clock; a machine gets the
+		// instant HA sent, with its offset (H-10).
+		tbl.SetMachine(i, "last_changed", formatMachineTime(s.LastChanged))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -706,6 +746,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 			formatShortTime(a.Start.Format(time.RFC3339)),
 			a.Detail,
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -781,7 +822,7 @@ func parseHistoryResponse(data []byte) ([]analyze.DataPoint, error) {
 // historyEntryFull is a history entry with full attributes (for --attr parsing).
 // Source: HA /api/history/period/ returns attributes in each state object.
 type historyEntryFull struct {
-	Attributes  map[string]any `json:"attributes"`
+	Attributes  wireAttributes `json:"attributes"`
 	EntityID    string         `json:"entity_id"`
 	State       string         `json:"state"`
 	LastChanged string         `json:"last_changed"`
@@ -934,6 +975,7 @@ func renderStateTimeline(w io.Writer, entityID string, changes []analyze.StateCh
 			c.State,
 			formatDuration(c.Duration),
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(c.Time.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -976,6 +1018,7 @@ func renderStateAnomalies(w io.Writer, entityID string, changes []analyze.StateC
 			formatShortTime(a.Start.Format(time.RFC3339)),
 			a.Detail,
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -1032,6 +1075,7 @@ func renderHistoryPoints(w io.Writer, entityID string, points []analyze.DataPoin
 			formatShortTime(p.Time.Format(time.RFC3339)),
 			strconv.FormatFloat(p.Value, 'f', 2, 64),
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(p.Time.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -1464,8 +1508,12 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", entityID, merged)
-	return nil
+	// Slices, not their %v rendering: under --json a caller gets real arrays.
+	return done("set entity labels").
+		with("entity_id", entityID).
+		with("labels", nonNil(merged)).
+		text("%s: labels set to %v", entityID, merged).
+		render(w)
 }
 
 func dryRunEntSetLabelSummary(entityID string, current, merged []string) *dryRunPlan {
@@ -1524,8 +1572,12 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 		return fmt.Errorf("updating entity area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", entityID, areaEntry.AreaID)
-	return nil
+	return done("set entity area").
+		with("entity_id", entityID).
+		with("area_id", areaEntry.AreaID).
+		with("area_name", areaEntry.Name).
+		text("%s: area set to %s", entityID, areaEntry.AreaID).
+		render(w)
 }
 
 func resolveAreaEntry(areas []haapi.AreaEntry, area string) (haapi.AreaEntry, bool) {

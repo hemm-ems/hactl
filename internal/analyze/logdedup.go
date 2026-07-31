@@ -210,6 +210,22 @@ func FormatShortTimestamp(ts string) string {
 	return clock.Short(ts)
 }
 
+// FormatMachineTimestamp is FormatShortTimestamp's counterpart for --json: the
+// full instant with its UTC offset, in the reader's zone.
+//
+// A log entry's timestamp has no zone on the wire (HA's system_log and the REST
+// error_log both send "2026-07-23 15:04:05.123"), so this is where the reader's
+// zone is attached explicitly rather than left for the consumer to guess. The
+// consumer used to receive whichever of the two the renderer happened to
+// produce — "08:07" from the table cell, or the zoneless "2026-07-30
+// 08:07:24.044" from `log show` — neither of which names an instant.
+func FormatMachineTimestamp(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	return clock.ISO(ts)
+}
+
 // Log timestamps come in two shapes. HA's system_log entries and the REST
 // error_log carry no zone at all ("2026-07-23 15:04:05.123"); anything already
 // RFC3339 carries its own.

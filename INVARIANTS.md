@@ -396,14 +396,96 @@ the cap without touching the `--json` exemption it already had. `version`
 and `script show` gained a `flagJSON` branch each, encoded straight from a
 struct (`versionInfo`, `scriptShowResult`) with nothing printed before it.
 
+**The contract holds on the branch that WROTE, not only on the branch that
+planned.** Every write in hactl is dry-run by default (H-2), and the preview
+half of this law was closed one release earlier: no `--confirm`-gated command
+may assemble a plan outside `dryRun()`, enforced by the `preview` surface. The
+confirmed branch had no such rule and no such gate, so fourteen commands printed
+their result as unconditional prose — `svc call --confirm --json` answered
+`called script.turn_on` at exit 0 immediately after really firing the script,
+and area/label/floor create and delete, tpl create and delete,
+script/auto/helper create/delete/apply, dash create/save/delete/replace, ent
+set-area/set-label, device set-area/set-label, rollback and `config delete` all
+did the same. A caller that scripted the documented global flag received a JSON
+parse error at the one moment it could no longer retry safely. The pole: **a
+confirmed write renders through `done()`, `dryRunPlan`'s counterpart, so both
+branches answer the machine and a caller tells a plan from a result by reading
+`dry_run` rather than by remembering which flags it passed.** `config delete`
+shows why "valid JSON" is not the rule on its own: it echoed HA's
+`{"require_restart":false}`, which parses and still names neither what was done
+nor whether it worked.
+
+**A rendered wall clock is not a timestamp.** `format.Table` renders one set of
+cells as text and as JSON, so every command that put `clock.Short`'s output in a
+row also put it in its machine contract: `ent ls --json` answered
+`"last_changed": "06:31"` for an entity whose wire value was
+`2026-07-30T04:31:28.653662+00:00`, degrading to `"07-28 11:52"` — undatable —
+for anything older than today, while `ent show --json` answered the full instant
+for the same field. The pole: **JSON carries the full instant with its UTC
+offset; the short form belongs to the text table.** The two audiences diverge in
+exactly one place, `format.Table.SetMachine`, and the gate is written against
+the SHAPE of the value rather than against a list of timestamp-ish field names —
+`first_seen`/`last_seen` on the deduped log view is precisely the column a name
+list forgets. Seven commands were affected; three of them no report had named.
+
+**A number hactl re-emits is the number Home Assistant sent.** H-21 was reported
+as a decode defect and fixed as one; the encode half shipped standing.
+`encoding/json` decodes every JSON number into `float64` for a `map[string]any`
+and marshals `float64(5000)` back as `5000`, so `ent show --json` re-emitted
+HA's `"max": 5000.0` — a float by construction on every `number.*` entity — as a
+bare integer, while `12.7` round-tripped untouched, which is why it survived a
+release. The pole: **an attribute map decodes with `json.Number` and re-encodes
+byte for byte**, a property of the type (`wireAttributes`) rather than of one
+renderer, so every decode of an entity state has it and no second site has to
+remember.
+
+**Truncation is not the cap's business when the output is a document.**
+`--tokensmax` chops at a byte boundary and appends a plain-English notice.
+`--json` was exempt and documented as exempt; nothing else was, although
+`dash show --raw` (its own help: "for LLM round-trip editing"), `--yaml`,
+`--view`, the verbatim `cat` family, `config file`/`block` and `hactl completion
+bash` all write documents. A 91 541-byte dashboard came back as 2 096 bytes of
+invalid JSON at exit 0; `auto cat > backup.yaml` truncated inside a quoted
+scalar, so the backup did not parse; `completion bash >
+/etc/bash_completion.d/hactl`, the line that command's own `--help` prints,
+produced a script `bash -n` rejects. The pole is the one `--json` already set:
+**output whose contract is "this parses" is never capped — a caller narrows it
+with filters — and a command declares itself a document with
+`markStructuredOutput`.** Prose is still capped, which is the control the
+exemption has to keep passing.
+
 - Enforced by: `internal/format/format_test.go` (`TestRenderJSON_TopN` —
   inverted from asserting the truncation bug as correct to asserting `--top`
   has no effect on `--json`), `internal/cmd/json_contract_test.go`
   (`TestJSONContract`, which walks the live cobra command tree — so a newly
   added read command is covered automatically — and asserts all three
   properties on every non-mutating, non-meta, non-verbatim-by-design leaf it
-  can exercise against a fake HA; `TestRootHelp_NeverTokenTruncated`,
-  `TestVersionJSON_Shape`, `TestScriptShowJSON_Shape`),
+  can exercise against a fake HA, and — clause (4) — fails on any string value
+  anywhere in any swept document shaped like `clock.Short`/`ShortSeconds`
+  output; `TestRootHelp_NeverTokenTruncated`, `TestVersionJSON_Shape`,
+  `TestScriptShowJSON_Shape`),
+  `internal/cmd/json_confirm_contract_test.go` (`TestJSONConfirmContract` — the
+  write half: every `--confirm`-gated command the fixture can answer is driven
+  through BOTH branches and must report `dry_run`, `action` and `ok`; a write in
+  the tree that is neither driven nor recorded with a reason fails by name),
+  `internal/cmd/json_timestamp_test.go` (the positive half of clause (4):
+  `TestEntLsJSON_TimestampIsTheInstantHASent`,
+  `TestEntHistJSON_TimestampIsTheInstantHASent`,
+  `TestLogJSON_TimestampCarriesAZone`, `TestLogShowJSON_TimestampCarriesAZone`,
+  `TestTraceShowJSON_StepTimeCarriesAZone`, plus
+  `TestEntShowJSON_WholeFloatAttributeStaysAFloat`, which asserts on the BYTES
+  because Go decodes `5000` and `5000.0` to one value),
+  `internal/integration/json_wireform_oracle_test.go`
+  (`TestOracleEntShowJSONPreservesWireNumberForm` — the same claim against a
+  live HA, since a stub answering `5000.0` proves hactl preserves what it is
+  handed and not that HA hands it over; `TestOracleEntShowJSONNumberDomains`
+  records how wide that oracle is),
+  `internal/cmd/tokencap_document_test.go`
+  (`TestDocumentOutputIsNeverTokenCapped`,
+  `TestCompletionScriptIsNeverTokenCapped`, `TestProseOutputIsStillTokenCapped`
+  as the control that the exemption did not become "nothing is capped", and
+  `TestVerbatimLeavesAreDispositionedForTheTokenCap` as the closure clause over
+  the tree-derived verbatim set),
   `internal/cmd/ref_test.go`
   (`TestRunRefValidate_UnscannableDashboardRefusesUnlessAllowPartial` — the
   unavailability half, watched red against a scanner that swallows the failure;
@@ -411,6 +493,11 @@ struct (`versionInfo`, `scriptShowResult`) with nothing printed before it.
   cry-wolf control, since a dashboard HA holds no config for has no references
   to miss; `TestRunRefScan_UnscannableDashboardStillAnswers` as the
   search-command control)
+- Quantified by: `internal/surfaceaudit` (`TestResultSurfaceIsClosed` — the set
+  of confirmed-write result renderings is derived from the source, mirroring
+  `TestPreviewSurfaceIsClosed` one branch over, and is empty by design;
+  `TestResultExtractorFlagsProseOnConfirm` feeds it a known-bad function so an
+  extractor that stopped matching cannot pass while proving nothing)
 
 ## H-11 — hactl never invents an identifier, and every count it reports reconciles with the count its source reported
 

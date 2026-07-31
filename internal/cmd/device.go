@@ -129,8 +129,13 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 		return fmt.Errorf("updating device area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", device.ID, areaEntry.AreaID)
-	return nil
+	return done("set device area").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		with("area_id", areaEntry.AreaID).
+		with("area_name", areaEntry.Name).
+		text("%s: area set to %s", device.ID, areaEntry.AreaID).
+		render(w)
 }
 
 func dryRunDeviceSetAreaSummary(device haapi.DeviceRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) *dryRunPlan {
@@ -219,8 +224,14 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 		return fmt.Errorf("updating device labels: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", device.ID, merged)
-	return nil
+	// Slices, not their %v rendering, so --json carries real arrays — the same
+	// reason the preview above does it.
+	return done("set device labels").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		with("labels", nonNil(merged)).
+		text("%s: labels set to %v", device.ID, merged).
+		render(w)
 }
 
 type deviceRegistryContext struct {

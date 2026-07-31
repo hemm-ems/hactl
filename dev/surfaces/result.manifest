@@ -1,0 +1,19 @@
+# result — a confirmed write reports its outcome through a renderer that
+# honours --json (INVARIANTS.md H-10, applied to the branch that WROTE).
+#
+# This is a VIOLATION surface, the mirror image of preview.manifest:
+# internal/surfaceaudit.ResultSurface lists only the --confirm-gated
+# entrypoints that print their result straight to the caller's stdout with no
+# --json branch above the line. Empty is the goal. The extractor is guarded
+# against silently matching nothing by TestResultExtractorFlagsProseOnConfirm,
+# which feeds it a known-bad function, rather than by a non-empty check.
+#
+# It was not empty. Fifty-three lines across twenty entrypoints were prose under
+# --json on the SUCCESS path of a write — `svc call --confirm --json` printed
+# `called script.turn_on` immediately after really firing the script, exit 0,
+# and area/label/floor create+delete, tpl create+delete, script/auto/helper
+# create+delete+apply, dash create+save+delete+replace, ent set-area/set-label,
+# device set-area/set-label, config delete and rollback all did the same. The
+# preview half of the identical law was closed one release earlier, by a fix
+# whose scope was the word "preview".
+#ceiling 0

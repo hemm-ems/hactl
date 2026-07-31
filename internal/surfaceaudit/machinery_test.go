@@ -399,3 +399,86 @@ func viaDot(b []byte) { var v map[string]any; _ = Unmarshal(b, &v) }
 		t.Error("a sweep-governed json.Unmarshal in a wire package was flagged here too — the surface would demand a second ledger entry for every site the H-14 sweep already derives")
 	}
 }
+
+// TestResultExtractorFlagsProseOnConfirm guards the result violation surface,
+// which is empty by design and therefore cannot be guarded by a non-empty
+// check.
+//
+// The fixture pins both directions, because both were live in the tree when the
+// gate was written and getting either wrong makes the gate useless:
+//
+//   - the two GUARD SPELLINGS must both be accepted. `if !flagJSON { print }`
+//     is lexical; `if flagJSON { …; return }` followed by prose is an early
+//     return, which is how `config delete` is written and is correct. An
+//     extractor that only understood the first would report a correct command
+//     and teach people to override it.
+//   - a rendered result (`done(…).text(…).render(w)`) must be accepted, and
+//     an unconditional Fprintf on the confirmed branch must be flagged. That
+//     Fprintf is the defect itself: `svc call --confirm --json` printing
+//     `called script.turn_on` in prose right after really firing the script.
+func TestResultExtractorFlagsProseOnConfirm(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := `package cmd
+
+func runThingRendered(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	return done("do the thing").text("did %s", id).render(w)
+}
+
+func runThingLexicallyGuarded(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	if !flagJSON {
+		fmt.Fprintf(w, "did %s\n", id)
+	}
+	return nil
+}
+
+func runThingEarlyReturnGuarded(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	if flagJSON {
+		fmt.Fprintln(w, "{}")
+		return nil
+	}
+	fmt.Fprintf(w, "did %s\n", id)
+	return nil
+}
+
+func runThingAsProse(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	fmt.Fprintf(w, "did %s\n", id)
+	return nil
+}
+
+func runReadOnlyThing(ctx context.Context, w io.Writer) error {
+	fmt.Fprintln(w, "not a write command; no --confirm gate")
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "thing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := surfaceaudit.ResultSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	keys := make([]string, 0, len(s.Sites))
+	for _, site := range s.Sites {
+		keys = append(keys, site.Key)
+	}
+	if len(keys) != 1 || !strings.Contains(keys[0], ":runThingAsProse:") {
+		t.Errorf("want exactly the prose-on-confirm result flagged, got %v", keys)
+	}
+}

@@ -131,6 +131,10 @@ func renderDedupedLogs(w io.Writer, cfg *config.Config, entries []analyze.LogEnt
 			analyze.FormatShortTimestamp(d.LastSeen),
 			msg,
 		}
+		// Both columns are the reader's short clock; a machine gets the full
+		// instant with its offset (H-10).
+		tbl.SetMachine(i, "first_seen", analyze.FormatMachineTimestamp(d.FirstSeen))
+		tbl.SetMachine(i, "last_seen", analyze.FormatMachineTimestamp(d.LastSeen))
 	}
 
 	if saveErr := reg.Save(); saveErr != nil {
@@ -171,6 +175,7 @@ func renderLogEntries(w io.Writer, cfg *config.Config, entries []analyze.LogEntr
 			shortComponent(e.Component),
 			msg,
 		}
+		tbl.SetMachine(i, "time", analyze.FormatMachineTimestamp(e.Timestamp))
 	}
 
 	if saveErr := reg.Save(); saveErr != nil {
@@ -223,7 +228,12 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 	if flagJSON {
 		out := map[string]any{"id": logID}
 		if len(parts) == 3 {
-			out["timestamp"] = parts[0]
+			// The id key holds the timestamp in the shape hactl's log pipeline
+			// produced — a naive local stamp with no zone, which names no
+			// instant. The machine form attaches the reader's offset; the text
+			// form below stays the key's own value, so an id printed by `log`
+			// and the entry `log show` resolves still read alike.
+			out["timestamp"] = analyze.FormatMachineTimestamp(parts[0])
 			out["component"] = parts[1]
 			out["message"] = parts[2]
 		} else {

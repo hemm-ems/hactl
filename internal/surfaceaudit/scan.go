@@ -770,6 +770,292 @@ func callsNamedFunc(fn *ast.FuncDecl, name string) bool {
 }
 
 // ---------------------------------------------------------------------------
+// Result surface
+// ---------------------------------------------------------------------------
+
+// ResultSurface is every write to a command's own output writer, inside a
+// --confirm-gated entrypoint, that is neither guarded by --json nor rendered
+// through a renderer that consults it.
+//
+// Rule (H-10, applied to the confirmed branch): `--json` is a machine contract
+// on the path that WROTE, not only on the path that planned. PreviewSurface
+// closed the preview half — no --confirm-gated command may assemble a plan
+// outside dryRun(). Nothing closed the other half, and the result was the
+// symmetric defect one branch over: `svc call --confirm --json` printed
+// `called script.turn_on` in prose, exit 0, immediately after really firing the
+// script, and the same omission sat unnoticed on area/label/floor create and
+// delete, tpl create and delete, ent set-area/set-label, device set-area,
+// script/auto/helper create/delete/apply, dash create/save/delete and rollback
+// — every write command in the tree except the four whose result already went
+// through renderFlowResult or a format.Table.
+//
+// The two halves are one law and were fixed a release apart precisely because
+// the first fix's scope was "the preview", which is the enumeration this
+// package exists to replace. The extractor is deliberately the mirror image of
+// PreviewSurface's: same set of entrypoints, other branch.
+//
+// A site is flagged when ALL of the following hold, which is exactly the shape
+// the defect takes:
+//
+//   - the enclosing function is a `run…` entrypoint that branches on a
+//     `flag…Confirm` variable, so it is a write command (H-2 makes --confirm
+//     the definition of one);
+//   - it calls fmt.Fprint/Fprintf/Fprintln on the function's io.Writer
+//     parameter, i.e. on the caller's stdout rather than on a buffer or on
+//     stderr;
+//   - no enclosing `if`/`switch` in the same function mentions flagJSON, so the
+//     line is printed whatever the caller asked for.
+//
+// Text a command prints under `if !flagJSON` is not a violation: that is the
+// human branch of a command whose machine branch is elsewhere. Neither is
+// `done(…).text(…).render(w)`, which is a method call and honours --json
+// itself. Both spellings are in the tree and both are correct.
+func ResultSurface(root string) (Surface, error) {
+	files, err := scanSources(root)
+	if err != nil {
+		return Surface{}, err
+	}
+	s := Surface{
+		Name:       "result",
+		Rule:       "a confirmed write reports its outcome through a renderer that honours --json, never as unconditional prose",
+		AllowEmpty: true,
+	}
+	for _, f := range files {
+		if !strings.HasPrefix(f.rel, "internal/cmd/") {
+			continue
+		}
+		for _, decl := range f.ast.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "run") {
+				continue
+			}
+			if !gatesOnConfirm(fn) {
+				continue
+			}
+			writer := writerParamName(fn)
+			if writer == "" {
+				continue
+			}
+			for _, hit := range unguardedWriterPrints(fn, writer) {
+				s.Sites = append(s.Sites, Site{
+					Key:  fmt.Sprintf("%s:%s:%d", f.rel, fn.Name.Name, f.fset.Position(hit.pos).Line),
+					File: f.rel,
+					Line: f.fset.Position(hit.pos).Line,
+					Note: "fmt." + hit.fn + " to " + writer + " with no --json branch above it",
+				})
+			}
+		}
+	}
+	sort.Slice(s.Sites, func(i, j int) bool { return s.Sites[i].Key < s.Sites[j].Key })
+	return s, nil
+}
+
+// writerParamName returns the name of the function's io.Writer parameter, or
+// "" when it has none. The convention in internal/cmd is `w io.Writer`, but the
+// name is read from the signature rather than assumed, so a renamed parameter
+// does not make a whole entrypoint invisible to the sweep.
+func writerParamName(fn *ast.FuncDecl) string {
+	if fn.Type.Params == nil {
+		return ""
+	}
+	for _, field := range fn.Type.Params.List {
+		sel, ok := field.Type.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		pkg, isID := sel.X.(*ast.Ident)
+		if !isID || pkg.Name != "io" || sel.Sel.Name != "Writer" {
+			continue
+		}
+		if len(field.Names) > 0 {
+			return field.Names[0].Name
+		}
+	}
+	return ""
+}
+
+// writerPrint is one fmt.Fprint… call on a command's output writer.
+type writerPrint struct {
+	pos token.Pos
+	fn  string
+}
+
+// unguardedWriterPrints returns every fmt.Fprint… onto writer inside fn that
+// runs whatever the caller asked --json for.
+//
+// Two spellings of the guard are correct Go and both are in the tree, so the
+// walk is block-aware rather than a plain ast.Inspect with an enclosing-node
+// stack:
+//
+//	if !flagJSON { fmt.Fprintf(w, …) }     // lexically enclosed
+//	if flagJSON { …; return }              // an early return; what follows is
+//	fmt.Fprintf(w, …)                      // the text branch by elimination
+//
+// `config delete` is written the second way and is correct; a stack-only check
+// reports it, and a gate that cries wolf is one people learn to override — the
+// same reasoning buildsAPreview follows one helper hop for.
+//
+// The polarity is deliberately not read. `if flagJSON`, `if !flagJSON` and
+// `switch { case flagJSON: … }` all count as a branch on the flag, because what
+// the rule needs is that SOME branch answers the machine, not that a particular
+// one does.
+func unguardedWriterPrints(fn *ast.FuncDecl, writer string) []writerPrint {
+	s := &writerPrintScan{writer: writer}
+	s.stmts(fn.Body.List, false)
+	return s.out
+}
+
+// writerPrintScan carries the walk's state so each statement kind is one small
+// method rather than one branch of a single very large switch.
+type writerPrintScan struct {
+	writer string
+	out    []writerPrint
+}
+
+// record collects every fmt.Fprint… onto the command's writer inside a node
+// that no --json branch guards.
+func (s *writerPrintScan) record(n ast.Node) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		call, ok := m.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		if !isSel {
+			return true
+		}
+		pkg, isID := sel.X.(*ast.Ident)
+		if !isID || pkg.Name != "fmt" || !strings.HasPrefix(sel.Sel.Name, "Fprint") || len(call.Args) == 0 {
+			return true
+		}
+		if dst, isDst := call.Args[0].(*ast.Ident); isDst && dst.Name == s.writer {
+			s.out = append(s.out, writerPrint{pos: call.Pos(), fn: sel.Sel.Name})
+		}
+		return true
+	})
+}
+
+// stmts walks a block, carrying the guard forward past an early return.
+func (s *writerPrintScan) stmts(list []ast.Stmt, guarded bool) {
+	for _, st := range list {
+		s.stmt(st, guarded)
+		if isJSONEarlyReturn(st) {
+			guarded = true
+		}
+	}
+}
+
+func (s *writerPrintScan) stmt(st ast.Stmt, guarded bool) {
+	switch t := st.(type) {
+	case nil:
+		return
+	case *ast.BlockStmt:
+		s.stmts(t.List, guarded)
+	case *ast.IfStmt:
+		inner := guarded || mentionsJSONFlag(t.Cond)
+		s.stmt(t.Init, guarded)
+		s.stmts(t.Body.List, inner)
+		s.stmt(t.Else, inner)
+	case *ast.SwitchStmt:
+		s.switchStmt(t, guarded)
+	case *ast.TypeSwitchStmt:
+		s.clauses(t.Body.List, guarded)
+	case *ast.ForStmt:
+		s.stmts(t.Body.List, guarded)
+	case *ast.RangeStmt:
+		s.stmts(t.Body.List, guarded)
+	case *ast.LabeledStmt:
+		s.stmt(t.Stmt, guarded)
+	case *ast.SelectStmt:
+		s.clauses(t.Body.List, guarded)
+	default:
+		if !guarded {
+			s.record(st)
+		}
+	}
+}
+
+func (s *writerPrintScan) switchStmt(t *ast.SwitchStmt, guarded bool) {
+	tagGuards := t.Tag != nil && mentionsJSONFlag(t.Tag)
+	for _, c := range t.Body.List {
+		clause, ok := c.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		inner := guarded || tagGuards
+		for _, e := range clause.List {
+			if mentionsJSONFlag(e) {
+				inner = true
+			}
+		}
+		s.stmts(clause.Body, inner)
+	}
+}
+
+// clauses walks the bodies of a type-switch or select, which carry no condition
+// this rule can read.
+func (s *writerPrintScan) clauses(list []ast.Stmt, guarded bool) {
+	for _, c := range list {
+		switch clause := c.(type) {
+		case *ast.CaseClause:
+			s.stmts(clause.Body, guarded)
+		case *ast.CommClause:
+			s.stmts(clause.Body, guarded)
+		}
+	}
+}
+
+// isJSONEarlyReturn reports the `if flagJSON { … return }` shape: the machine
+// was answered and the function left, so everything below it in that block is
+// the human branch.
+func isJSONEarlyReturn(st ast.Stmt) bool {
+	ifs, ok := st.(*ast.IfStmt)
+	return ok && ifs.Else == nil && mentionsJSONFlag(ifs.Cond) && blockTerminates(ifs.Body)
+}
+
+// mentionsJSONFlag reports whether an expression reads the --json flag, in
+// either polarity: what the rule needs is that SOME branch answers the machine,
+// not that a particular one does.
+func mentionsJSONFlag(n ast.Node) bool {
+	found := false
+	ast.Inspect(n, func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok && id.Name == "flagJSON" {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// blockTerminates reports whether a block's last statement leaves it — the
+// property that makes an `if flagJSON { … return }` guard everything below it.
+func blockTerminates(b *ast.BlockStmt) bool {
+	if b == nil || len(b.List) == 0 {
+		return false
+	}
+	switch last := b.List[len(b.List)-1].(type) {
+	case *ast.ReturnStmt, *ast.BranchStmt:
+		return true
+	case *ast.ExprStmt:
+		call, ok := last.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		if id, isID := call.Fun.(*ast.Ident); isID && id.Name == "panic" {
+			return true
+		}
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		if !isSel {
+			return false
+		}
+		pkg, isPkg := sel.X.(*ast.Ident)
+		return isPkg && pkg.Name == "os" && sel.Sel.Name == "Exit"
+	default:
+		return false
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Automation-reference surface
 // ---------------------------------------------------------------------------
 

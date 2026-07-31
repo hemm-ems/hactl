@@ -112,6 +112,7 @@ func init() {
 // runTplCat prints a template sensor's remote YAML config verbatim. The
 // companion returns the definition as YAML text in resp.Content.
 func runTplCat(ctx context.Context, w io.Writer, uniqueID string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -245,16 +246,9 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		shape := "entity item"
-		if kind.isBlock {
-			shape = "state-based block"
-			if kind.triggerBased {
-				shape = "trigger-based block"
-			}
-		}
 		plan := dryRun("create template").
 			with("file", flagTplFile).
-			with("shape", shape)
+			with("shape", templateShape(kind))
 		if kind.isBlock {
 			plan = plan.with("domains", strings.Join(kind.domains, ", "))
 		} else {
@@ -273,22 +267,42 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating template: %w", err)
 	}
 
+	res := done("create template").
+		with("unique_id", resp.UniqueID).
+		with("shape", templateShape(kind)).
+		with("reloaded", resp.Reloaded)
 	switch {
 	case kind.triggerBased:
-		_, _ = fmt.Fprintf(w, "created trigger-based template %q\n", resp.UniqueID)
+		res = res.with("domains", strings.Join(kind.domains, ", ")).
+			text("created trigger-based template %q", resp.UniqueID)
 	case kind.isBlock:
-		_, _ = fmt.Fprintf(w, "created template %q\n", resp.UniqueID)
+		res = res.with("domains", strings.Join(kind.domains, ", ")).
+			text("created template %q", resp.UniqueID)
 	default:
-		_, _ = fmt.Fprintf(w, "created template %q (domain=%s)\n", resp.UniqueID, flagTplDomain)
+		res = res.with("domain", flagTplDomain).
+			text("created template %q (domain=%s)", resp.UniqueID, flagTplDomain)
 	}
 	// A template.yaml that no `template:` key !include's is written happily and
 	// never read: HA reports no reload, and without this the command claimed
 	// success for a definition that will never produce an entity.
 	if !resp.Reloaded {
-		_, _ = fmt.Fprintln(w, "warning: template written but HA did not confirm reload "+
+		res = res.warn("template written but HA did not confirm reload " +
 			"(is `template: !include template.yaml` in configuration.yaml?)")
 	}
-	return nil
+	return res.render(w)
+}
+
+// templateShape names what `tpl create` just wrote, in the same vocabulary the
+// preview uses, so the plan and the result describe one thing.
+func templateShape(kind tplKind) string {
+	switch {
+	case kind.triggerBased:
+		return "trigger-based block"
+	case kind.isBlock:
+		return "state-based block"
+	default:
+		return "entity item"
+	}
 }
 
 func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
@@ -324,9 +338,12 @@ func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
 		return fmt.Errorf("deleting template: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted template %q\n", uniqueID)
 	for _, entityID := range orphans {
 		removeOrphanedEntity(ctx, cfg, entityID)
 	}
-	return nil
+	return done("delete template").
+		with("unique_id", uniqueID).
+		with("entities", strings.Join(orphans, ", ")).
+		text("deleted template %q", uniqueID).
+		render(w)
 }
