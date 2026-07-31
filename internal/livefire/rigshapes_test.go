@@ -412,6 +412,77 @@ func TestRigFixtureCarriesEnergyPreferences(t *testing.T) {
 // GasSourceType | WaterSourceType`.
 var energySourceTypes = []string{"grid", "solar", "battery", "gas", "water"}
 
+// TestRigFixtureSeededDevicesAreAnchored is rig capability R1's other half,
+// and it exists because the shape it protects was being deleted at runtime by
+// Home Assistant itself.
+//
+// helpers/device_registry.async_cleanup removes every device referenced by
+// neither a live config entry nor an entity registry entry. The seeded devices
+// have no config entry — nothing in a YAML fixture can give them one — so they
+// were orphans, and the debounced cleanup (CLEANUP_DELAY = 10s, and again on
+// every restart) deleted them. The rename case passed or failed depending on
+// how far the tier had got by then, which is worse than failing outright: it
+// went green while the shape it tests was being removed underneath it, and it
+// only surfaced at all because the recorder backfill added a restart.
+//
+// A seeded device therefore needs an anchor, and "remember to add an anchor"
+// is not a mechanism.
+func TestRigFixtureSeededDevicesAreAnchored(t *testing.T) {
+	var devices struct {
+		Data struct {
+			Devices []struct {
+				ID            string   `json:"id"`
+				Name          string   `json:"name"`
+				ConfigEntries []string `json:"config_entries"`
+			} `json:"devices"`
+		} `json:"data"`
+	}
+	raw, err := os.ReadFile(filepath.Join(fixtureDir(t), ".storage", "core.device_registry"))
+	if err != nil {
+		t.Fatalf("the fixture seeds no device registry: %v", err)
+	}
+	if jsonErr := json.Unmarshal(raw, &devices); jsonErr != nil {
+		t.Fatalf("parsing .storage/core.device_registry: %v", jsonErr)
+	}
+	if len(devices.Data.Devices) == 0 {
+		t.Fatal("the seeded device registry is empty")
+	}
+
+	var entities struct {
+		Data struct {
+			Entities []struct {
+				EntityID string `json:"entity_id"`
+				DeviceID string `json:"device_id"`
+				Platform string `json:"platform"`
+			} `json:"entities"`
+		} `json:"data"`
+	}
+	raw, err = os.ReadFile(filepath.Join(fixtureDir(t), ".storage", "core.entity_registry"))
+	if err != nil {
+		t.Fatalf("the fixture seeds no entity registry, so no seeded device can be anchored: %v", err)
+	}
+	if jsonErr := json.Unmarshal(raw, &entities); jsonErr != nil {
+		t.Fatalf("parsing .storage/core.entity_registry: %v", jsonErr)
+	}
+
+	anchoredBy := map[string]string{}
+	for _, e := range entities.Data.Entities {
+		if e.DeviceID != "" {
+			anchoredBy[e.DeviceID] = e.EntityID
+		}
+	}
+	for _, d := range devices.Data.Devices {
+		if len(d.ConfigEntries) > 0 {
+			continue
+		}
+		if _, ok := anchoredBy[d.ID]; !ok {
+			t.Errorf("device %q (%s) has no config entry and no entity registry row pointing at "+
+				"it — Home Assistant's own cleanup will delete it mid-run, and whichever case "+
+				"depends on it will fail by the clock", d.Name, d.ID)
+		}
+	}
+}
+
 // TestRigBackfilledHistoryCanDisagreeWithAFlooredBucketCount is rig capability
 // R5's fixture half, and it exists because the first version of it was wrong
 // in a way that took a deliberate fail-check to notice.
