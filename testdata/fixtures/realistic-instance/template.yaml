@@ -1,0 +1,70 @@
+# template.yaml — the shape behind finding #89.
+#
+# A top-level `- sensor:` item is a BLOCK, and every entity inside it shares
+# that block's fate: one invalid sibling takes the whole block's entities off
+# the instance. On the reference instance the first `- sensor:` block held two
+# production sensors, so an appended entry landed next to them, and a mistake
+# in the appended entry would have removed both.
+#
+# So the file needs more than one block of the same domain, and the first block
+# needs entities worth losing. Both properties are load-bearing: with a single
+# block "append to the first block" and "append to the right block" are the
+# same instruction, and with one entity per block a poisoned block costs
+# nothing and the test proves nothing.
+
+- sensor:
+    - name: "Outdoor Temperature"
+      unique_id: tpl_outdoor_temp
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      state: "{{ states('input_number.outdoor_temperature') | float(0) }}"
+
+    - name: "Indoor Humidity"
+      unique_id: tpl_indoor_humidity
+      unit_of_measurement: "%"
+      device_class: humidity
+      state_class: measurement
+      state: "{{ states('input_number.indoor_humidity') | float(0) }}"
+
+# A second block of the SAME domain. An entry appended here is invisible to the
+# entities above, which is the whole difference the placement decides.
+- sensor:
+    - name: "Power Consumption"
+      unique_id: tpl_power_consumption
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: "{{ states('input_number.power_consumption') | float(0) }}"
+
+    - name: "Daily Energy"
+      unique_id: tpl_daily_energy
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      state: >-
+        {{ (states('input_number.power_consumption') | float(0) * 24 / 1000) | round(2) }}
+
+- binary_sensor:
+    - name: "Front Door"
+      unique_id: tpl_front_door
+      device_class: door
+      state: "{{ is_state('input_boolean.guest_mode', 'on') }}"
+
+    - name: "High Humidity Alert"
+      unique_id: tpl_high_humidity
+      device_class: moisture
+      state: "{{ states('input_number.indoor_humidity') | float(0) > 70 }}"
+
+# A trigger-based block: the entities under it are keyed by the block's
+# trigger, not by the domain, so an entry appended to it inherits a trigger it
+# never asked for. This is the shape that made `tpl create` corrupt
+# template.yaml in 2026-07-13 and the reason the companion's writer is
+# block-aware rather than domain-aware.
+- trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  sensor:
+    - name: "Five Minute Tick"
+      unique_id: tpl_five_minute_tick
+      state: "{{ now().minute }}"

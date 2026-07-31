@@ -159,6 +159,21 @@
         option: away
   mode: single
 
+# --- Blueprint-backed automation ---
+# The blueprint under blueprints/automation/testhouse/ carries `!input` tags;
+# this entry is what makes them real. An automation defined this way has no
+# trigger/condition/action of its own — the whole definition is a path and a
+# mapping of inputs, so anything that reads an automation's shape from
+# automations.yaml meets a fifth form here (finding #20's neighbourhood).
+- id: blueprint_backed_toggle
+  alias: Blueprint Backed Toggle
+  description: Instantiates the testhouse blueprint
+  use_blueprint:
+    path: testhouse/toggle_on_button.yaml
+    input:
+      button_entity: input_boolean.shape_button
+      target_entity: input_boolean.shape_target
+
 # --- Disabled automation (like real setups have) ---
 - id: legacy_disabled
   alias: Legacy Disabled Rule

@@ -1,0 +1,18 @@
+# A platform-list domain file: `sensor:` as a list of platform entries, the
+# form `template:`'s block list is not, and a third way for a domain to reach
+# HA (after "written out in configuration.yaml" and "a mapping in its own
+# file").
+#
+# time_date earns its place twice over. It is one of the few YAML sensor
+# platforms core still sets up, and its states are wall clocks —
+# `sensor.time` reads "11:12". The livefire sweep's clock case passed on the
+# rig and failed five times against the real instance for exactly that reason:
+# no rig fixture had a sensor whose honest state looks like a rendered
+# timestamp, so "hactl must not put a rendered clock in JSON" could not be
+# told apart from "no state here ever looks like one". That is rig capability
+# R5 in FIXPLAN-livefire.md and this is the half of it a fixture can carry.
+- platform: time_date
+  display_options:
+    - "time"
+    - "date"
+    - "date_time_iso"

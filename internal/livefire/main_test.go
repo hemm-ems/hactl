@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 	// HACTL_LIVEFIRE_DIR names a configured instance, so `go test` can never
 	// wander onto somebody's house by accident.
 	var code int
-	opts := []hatest.Option{hatest.WithFixture("storage-shapes")}
+	opts := []hatest.Option{hatest.WithFixture(rigFixture)}
 	if img := os.Getenv("HACTL_HA_IMAGE"); img != "" {
 		opts = append(opts, hatest.WithImage(img))
 	}

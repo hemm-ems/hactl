@@ -1,0 +1,24 @@
+# A helper domain that does NOT live in configuration.yaml.
+#
+# `input_number:` and `input_select:` are written out in configuration.yaml on
+# purpose; these three are here. Both forms produce identical helpers over the
+# API, so anything that reads the API cannot tell them apart — and anything
+# that goes looking for the definition in configuration.yaml will find nothing
+# for exactly these three.
+guest_mode:
+  name: Guest Mode
+  icon: mdi:account-group
+vacation_mode:
+  name: Vacation Mode
+  icon: mdi:airplane
+alarm_armed:
+  name: Alarm Armed
+  icon: mdi:shield-lock
+
+# The two ends of the blueprint-backed automation in automations.yaml.
+shape_button:
+  name: Shape Button
+  icon: mdi:gesture-tap-button
+shape_target:
+  name: Shape Target
+  icon: mdi:target
