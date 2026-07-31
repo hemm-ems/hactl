@@ -119,7 +119,9 @@ func runHealth(ctx context.Context, w io.Writer) error {
 	}
 
 	// Companion discovery and health check (non-fatal)
-	companionStatus, companionVersion, configValid, configErrors := discoverCompanion(ctx, cfg, flagHealthCheckConfig)
+	comp := discoverCompanion(ctx, cfg, flagHealthCheckConfig)
+	companionStatus, companionVersion := comp.status, comp.version
+	configValid, configErrors := comp.configValid, comp.configErrors
 	hr.CompanionStatus = companionStatus
 	hr.CompanionVersion = companionVersion
 	hr.HAConfigValid = configValid
@@ -144,12 +146,14 @@ func runHealth(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprintf(w, "WARNING: SAFE MODE ACTIVE\n")
 	}
 
-	// Companion status line
+	// Companion status line. The machine contract keeps the reason code
+	// (`companion_status: "not found (auth_invalid)"`); the human line names the
+	// next step, which is what formatCompanionStatusLine is for.
 	if companionStatus != "" {
 		if companionVersion != "" {
 			_, _ = fmt.Fprintf(w, "companion=%s  version=%s\n", companionStatus, companionVersion)
 		} else {
-			_, _ = fmt.Fprintf(w, "companion=%s\n", companionStatus)
+			_, _ = fmt.Fprintln(w, formatCompanionStatusLine(comp.headline, string(comp.reason)))
 		}
 	}
 
@@ -178,24 +182,35 @@ func countErrorEntries(entries []analyze.LogEntry) int {
 	return count
 }
 
-// discoverCompanion attempts to find and health-check the companion.
-// Returns (status, version, configValid, configErrors). Non-fatal: returns
-// ("not found", "", nil, ...) if unavailable. When checkConfig is set and the
-// companion is reachable, it also validates the on-disk HA config; configValid
-// is nil when the check was not requested or could not run (reason in
-// configErrors). The check happens here, not in the caller, because the
-// ingress auth session is tied to the WS client closed on return.
-func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool) (string, string, *bool, string) {
-	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-	var wsConnected bool
-	if err := ws.Connect(ctx); err == nil {
-		wsConnected = true
-		defer func() { _ = ws.Close() }()
-	}
+// companionProbe is what `health` learned about the companion.
+//
+// headline and reason are the two halves of status kept apart, because they
+// answer different readers: `companion_status` in --json is the machine's
+// contract and stays "not found (auth_invalid)", while the text line renders
+// the reason as a next step (formatCompanionStatusLine). Returning them already
+// joined is what left `health` printing a bare reason code while the function
+// written to explain it was called by nothing.
+type companionProbe struct {
+	status       string // the joined form: "ok", "not found (auth_invalid)", "unreachable"
+	headline     string // "ok" / "not found" / "unreachable"
+	reason       companion.DiscoveryReason
+	version      string
+	configValid  *bool
+	configErrors string
+}
 
-	var wsClient *haapi.WSClient
-	if wsConnected {
-		wsClient = ws
+// discoverCompanion attempts to find and health-check the companion.
+//
+// Non-fatal: an unavailable companion is a field of the health report, not a
+// failure of it. When checkConfig is set and the companion is reachable, it also
+// validates the on-disk HA config; configValid is nil when the check was not
+// requested or could not run (reason in configErrors). The check happens here,
+// not in the caller, because the ingress auth session is tied to the WS client
+// closed on return.
+func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool) companionProbe {
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if err := ws.Connect(ctx); err == nil {
+		defer func() { _ = ws.Close() }()
 	}
 
 	notFoundErrors := ""
@@ -203,20 +218,27 @@ func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool
 		notFoundErrors = "companion not found"
 	}
 
-	companionURL, err := companion.Discover(ctx, cfg, wsClient)
+	// Handed over connected or not: a failed Connect carries why it failed, and
+	// that is the discovery reason (#75).
+	companionURL, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
 		slog.Debug("companion discovery failed", "error", err)
 		var de *companion.DiscoveryError
 		if errors.As(err, &de) {
-			return "not found (" + string(de.Reason) + ")", "", nil, notFoundErrors
+			return companionProbe{
+				status:       "not found (" + string(de.Reason) + ")",
+				headline:     "not found",
+				reason:       de.Reason,
+				configErrors: notFoundErrors,
+			}
 		}
-		return "not found", "", nil, notFoundErrors
+		return companionProbe{status: "not found", headline: "not found", configErrors: notFoundErrors}
 	}
 
 	// Health check
 	cc := companion.New(companionURL, cfg.CompanionToken)
-	if wsClient != nil {
-		cc = cc.WithIngressAuth(wsClient)
+	if ws.Connected() {
+		cc = cc.WithIngressAuth(ws)
 	}
 	health, err := cc.Health(ctx)
 	if err != nil {
@@ -224,7 +246,7 @@ func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool
 		if checkConfig {
 			notFoundErrors = "companion unreachable"
 		}
-		return "unreachable", "", nil, notFoundErrors
+		return companionProbe{status: "unreachable", headline: "unreachable", configErrors: notFoundErrors}
 	}
 
 	status := health.Status
@@ -250,7 +272,13 @@ func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool
 		}
 	}
 
-	return status, ver, configValid, configErrors
+	return companionProbe{
+		status:       status,
+		headline:     status,
+		version:      ver,
+		configValid:  configValid,
+		configErrors: configErrors,
+	}
 }
 
 // checkVersionCompat compares hactl and companion major versions.

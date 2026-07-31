@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,21 +35,18 @@ var DefaultTimeout = 30 * time.Second
 
 // DialTimeout bounds connection establishment separately from DefaultTimeout,
 // so an unreachable host fails in seconds instead of consuming the full
-// request timeout (slow queries stay covered by DefaultTimeout).
+// request timeout (slow queries stay covered by DefaultTimeout). It is a
+// ceiling, not a floor: dialBound takes the smaller of it and the caller's
+// --timeout (H-23).
 const DialTimeout = 5 * time.Second
 
 // New creates a new HA API client.
 func New(baseURL, token string) *Client {
+	trimmed := strings.TrimRight(baseURL, "/")
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
-			Transport: &http.Transport{
-				Proxy:       http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{Timeout: DialTimeout}).DialContext,
-			},
-		},
+		baseURL:    trimmed,
+		token:      token,
+		httpClient: HTTPClient(trimmed),
 	}
 }
 

@@ -612,8 +612,6 @@ var rigCapabilityDebt = map[string]string{
 		"shape to fail against; WP9 builds it",
 	"R8": "two writers against one target — needs drivers, not a fixture, so it is harness work " +
 		"rather than a shape; WP11 builds it",
-	"R9": "hostile transports (hanging host, refused port, http→301→https) — local stubs rather " +
-		"than a Home Assistant, so they belong beside the companion cases in WP8",
 	"R11": "a companion beside the rig's Home Assistant — hatest boots HA alone and writes a .env " +
 		"with no COMPANION_URL, so every companion-routed command (config file/block, helper " +
 		"ls/show/create, tpl cat, ref scan) can only be swept on the live profile. Found while " +

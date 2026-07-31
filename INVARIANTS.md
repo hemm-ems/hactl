@@ -1668,3 +1668,97 @@ The other two legs are the same defect where the argument is not an identifier:
   live cobra tree, and a command whose `Args` is not one of the five
   constructors in `internal/cmd/args.go` is a site. A new command inherits
   nothing silently: it is red until its contract is written.
+
+## H-23 — Every connection hactl opens is bounded by the caller's `--timeout`
+
+`--timeout` is documented as "per-request timeout for HA/companion API calls",
+and hactl opens three kinds of connection: REST to Home Assistant, a WebSocket
+to Home Assistant, and HTTP to the companion add-on. Each of them takes its
+bound from that flag, directly or through the one shared constructor. A
+constant is not a bound the caller can ask to be smaller, and `DialTimeout` —
+which exists so an unreachable host fails in seconds rather than consuming the
+whole budget — is a ceiling on the wait, never a floor under it.
+
+The rule covers the WHOLE of establishing a connection, including a retry the
+caller did not ask for. `WSClient.Connect` retries once, and two attempts do not
+entitle a command to twice the time the caller allowed: the retry runs inside
+the budget and is skipped when the budget is gone.
+
+Three transports, three files, three changes, and the flag reached two of them.
+The WebSocket dialled with a 5-second constant, twice, behind a 10-second
+constant handshake, so `companion status --timeout 1s` against a host that never
+answers returned after **10.02s** — with `--timeout 3s` and `--timeout 20s`
+landing on the same 10.02s — while `health --timeout 1s` and `ent ls --timeout
+1s` against the identical host aborted at 1.01s. Against a host that accepts the
+connection and then stalls it was 20.00s. Nothing about that was findable from
+the outside: the flag was documented, and most of the product obeyed it.
+
+The second clause is the same rule about *where* a connection goes. hactl talks
+to the URL it was configured with; a redirect that moves the origin — a
+different scheme, host or port — ends the request with a `*RedirectError` naming
+the origin to configure, rather than being followed. Following it is what a
+browser does, and it made `hactl health` against an `http://` URL a reverse
+proxy 301s to `https://` return a real version, state, location and timezone
+beside `errors: -1` and `companion: not found (unreachable)`, at exit 0: the
+REST half followed the redirect with the credentials intact, and the WebSocket
+half could not, there being no redirect step in the protocol. Half the product
+worked and nothing named the cause. Same-origin redirects are followed to the
+same depth the standard library allows — a trailing-slash redirect is a server
+tidying its own URL space, and Ingress is served under a path prefix.
+
+- Enforced by: `internal/haapi/transport_test.go`
+  (`TestWSConnectHonoursTheCallerTimeout` and
+  `TestHTTPClientIsBoundedByTheCallerTimeout`, both asserting an upper bound on
+  wall time against a host that accepts and never answers — what the caller
+  asked for is "come back within a second", and every way of not doing that is
+  the same defect; `TestRESTRefusesARedirectThatMovesTheOrigin`,
+  `TestWSConnectReportsARedirectAsTheSchemeProblemItIs`, and the boundary
+  `TestRESTFollowsARedirectWithinTheSameOrigin`).
+- Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`,
+  `make test-surface`) over `dev/surfaces/transport.manifest` — the set is every
+  composite literal of `http.Client`, `http.Transport`, `net.Dialer` or
+  `websocket.Dialer` in the typed source, plus every request issued through
+  `http.DefaultClient`, which has no timeout at all. A fourth transport is
+  unclassified on the day it appears.
+
+## H-24 — A connectivity answer names the cause the transport reported, and its exit code carries the verdict
+
+A command whose subject is "can hactl reach this?" answers in two channels, and
+they say the same thing. The body names the cause — and it is the cause the
+transport established, not a category inferred from the absence of a
+connection. The exit code is non-zero when the answer is that it cannot.
+
+`companion status` did neither. It printed `WS connect: failed (authentication
+failed: Invalid access token or password)` and then, one line below,
+`discovery: failed (unreachable)` with a hint reading "Check Ingress / network,
+or set COMPANION_URL in .env" — a remediation that cannot help, for a cause its
+own output had already identified correctly. A rejected token, a refused port
+and a blackholed host produced that identical text, because the discovery
+reason was derived from a nil WebSocket client rather than from the error that
+left it nil: three root causes, one label, one wrong fix. And all three exited
+**0**, so `hactl companion status && proceed` proceeded.
+
+The two clauses are one rule because they fail together. A verdict nobody can
+gate on and a cause nobody can act on are the same command answering a question
+it was not asked.
+
+The exit code follows the command's subject, which for `companion status` is the
+companion: discovery failing or the health check failing is exit 1, and a
+WebSocket that could not open beside a companion reached directly through
+`COMPANION_URL` is not — the companion is usable and the body says what else is
+not. The report is rendered before the verdict is returned and reaches stdout
+(D-33).
+
+- Enforced by: `internal/cmd/companion_verdict_test.go`
+  (`TestCompanionStatusExitsNonZeroWhenTheCompanionIsNotUsable`, asserting the
+  code through the `interface{ ExitCode() int }` the entry point reads;
+  `TestCompanionStatusExitsZeroWhenTheCompanionAnswers`, the control without
+  which the first is satisfied by a command that always fails;
+  `TestCompanionStatusNamesTheCauseTheTransportReported` over a rejected token,
+  a redirected origin and a refused port),
+  `internal/companion/discovery_typed_test.go` (`TestClassifyConnectError`,
+  `TestDiscoveryErrorMessages` — every reason names its own fix and quotes the
+  cause).
+- Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`) for
+  the transport half — the set of places a cause can be produced is the set of
+  connections H-23 closes.

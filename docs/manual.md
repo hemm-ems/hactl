@@ -150,7 +150,7 @@ One discovery call, then stop. `dash create` and `dash save` are dry-run by defa
 
 Your instance is normally configured already — verify with `hactl health`. Instance selection: a directory with a `.env` (`HA_URL`, `HA_TOKEN`) is one instance; select it with `--dir <path>` or `HACTL_DIR`, otherwise hactl walks up from the current directory and falls back to `~/.hactl/default/`.
 
-If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic. Human-facing installation and troubleshooting live in `docs/setup.md`.
+If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic and **exits 1 when the companion is not usable**, naming the cause it observed — a token HA rejected, an `HA_URL` that redirects to another origin, or nothing answering at all. Human-facing installation and troubleshooting live in `docs/setup.md`.
 
 ---
 

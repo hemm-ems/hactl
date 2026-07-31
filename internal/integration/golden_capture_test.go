@@ -7,6 +7,13 @@ import "testing"
 // Golden-file tests capture hactl output and compare against committed snapshots.
 // Run with HACTL_UPDATE_GOLDEN=1 to regenerate golden files after intentional format changes.
 
+// TestGoldenHealth's snapshot changed with WP8 (#75): the companion line used to
+// print the bare reason code, `companion=not found (protocol_mismatch)`, while
+// formatCompanionStatusLine — written to turn exactly that code into a next
+// step — was called by nothing but its own unit tests. The rig is HA Container,
+// so the line it produces here is the remediation for having no Supervisor. The
+// machine contract is unchanged: `health --json` still carries the reason code
+// in `companion_status`.
 func TestGoldenHealth(t *testing.T) {
 	out := runHactl(t, "health")
 	assertGolden(t, "health", out)

@@ -1420,25 +1420,24 @@ func connectCompanion(ctx context.Context) (*companion.Client, error) {
 		return nil, err
 	}
 
-	var wsClient *haapi.WSClient
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if connectErr := ws.Connect(ctx); connectErr != nil {
 		slog.Debug("could not connect WebSocket for companion discovery", "error", connectErr)
-	} else {
-		wsClient = ws
-		// Intentionally leak the WS connection: the returned client uses it
-		// for IngressSession on every Companion call. The OS closes it when
-		// the CLI process exits.
 	}
+	// On success the WS connection is intentionally leaked: the returned client
+	// uses it for IngressSession on every Companion call, and the OS closes it
+	// when the CLI process exits. On failure the client is still handed to
+	// Discover — it carries the reason it could not connect, which is the
+	// discovery reason (#75).
 
-	companionURL, err := companion.Discover(ctx, cfg, wsClient)
+	companionURL, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
 		return nil, fmt.Errorf("companion discovery: %w", err)
 	}
 
 	cc := companion.New(companionURL, cfg.CompanionToken)
-	if wsClient != nil {
-		cc = cc.WithIngressAuth(wsClient)
+	if ws.Connected() {
+		cc = cc.WithIngressAuth(ws)
 	}
 	return cc, nil
 }

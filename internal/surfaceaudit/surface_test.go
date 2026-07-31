@@ -99,6 +99,20 @@ func TestTargetSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestTransportSurfaceIsClosed — every place a connection's bounds are decided
+// declares what decides them.
+//
+// The flag was documented and two of three transports honoured it. The third —
+// the WebSocket, in a package neither of the others is in — was a 5s constant
+// dial attempted twice behind a 10s constant handshake, so `companion status
+// --timeout 1s` came back after 10.02s (#73). Nothing enumerated the set of
+// transports, so a transport that ignored the flag looked exactly like one that
+// did not exist.
+func TestTransportSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.TransportSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestPartialScopeSurfaceIsClosed — every command body that reads a source
 // which can come back incomplete says what it does about a short read.
 //

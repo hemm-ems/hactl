@@ -197,6 +197,14 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		// that rendered one arbitrary entry of a map for a whole release.
 		{"maprange", surfaceaudit.MapRangeSurface, []string{"internal/cmd/wireguard_cmd.go:writeWireguardMonitor"}},
 		{"decode", surfaceaudit.DecodeSurface, []string{"internal/writer/writer.go:(*Writer).remoteEntry"}},
+		// One key per transport kind, because the two legs are derived
+		// independently and the defect was in exactly one of them: the shared
+		// HTTP client both REST callers now build, and the websocket dialer that
+		// had its own constants and was the site of #73.
+		{"transport", surfaceaudit.TransportSurface, []string{
+			"internal/haapi/transport.go:HTTPClient:http.Client",
+			"internal/haapi/websocket.go:(*WSClient).connect:websocket.Dialer",
+		}},
 		// One key per leg: the schema, the whole-payload read, and the join.
 		// fetchAutomations is the site H-21 was written for — the listing that
 		// died on an entity it does not list.

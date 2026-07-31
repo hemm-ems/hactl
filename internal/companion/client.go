@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -62,13 +61,12 @@ func New(baseURL, token string) *Client {
 		baseURL:  trimmed,
 		basePath: basePath,
 		token:    token,
-		httpClient: &http.Client{
-			Timeout: haapi.DefaultTimeout,
-			Transport: &http.Transport{
-				Proxy:       http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{Timeout: haapi.DialTimeout}).DialContext,
-			},
-		},
+		// The same transport the HA REST client uses, for the same reasons:
+		// bounded by the caller's --timeout, and refusing a redirect that moves
+		// the origin (H-23). The companion is reached through Home Assistant's
+		// own Ingress, so it is behind the same reverse proxy and inherits the
+		// same scheme problem.
+		httpClient: haapi.HTTPClient(trimmed),
 	}
 }
 

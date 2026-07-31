@@ -53,9 +53,14 @@ func init() {
 	rootCmd.AddCommand(companionCmd)
 }
 
-// formatCompanionStatusLine returns a one-line companion status string for
-// the health command and tests. status is the top-level status (e.g. "ok",
-// "not found", "unreachable"). reason is the DiscoveryReason string (may be empty).
+// formatCompanionStatusLine returns the one-line companion status `health`
+// prints. status is the top-level status (e.g. "ok", "not found",
+// "unreachable"). reason is the DiscoveryReason string (may be empty).
+//
+// It says what to DO, which is the whole reason it exists: a reason code names
+// a category, and the reader of a one-line overview needs the next step. It had
+// drifted into being called by nothing but its own tests while `health` printed
+// the bare code beside it — the divergence #75 is about, one command over.
 func formatCompanionStatusLine(status, reason string) string {
 	if reason == "" {
 		return "companion=" + status
@@ -63,14 +68,43 @@ func formatCompanionStatusLine(status, reason string) string {
 	switch companion.DiscoveryReason(reason) {
 	case companion.ReasonAuthDenied:
 		return fmt.Sprintf("companion=%s  (token lacks hassio_admin — create token as HA owner or set COMPANION_URL)", status)
+	case companion.ReasonAuthInvalid:
+		return fmt.Sprintf("companion=%s  (HA rejected the token — replace HA_TOKEN in .env)", status)
 	case companion.ReasonAddonMissing:
 		return fmt.Sprintf("companion=%s  (add-on not installed — HA → Settings → Add-ons)", status)
+	case companion.ReasonRedirected:
+		return fmt.Sprintf("companion=%s  (HA_URL redirects elsewhere — point it at the origin that answers)", status)
 	case companion.ReasonProtocolMismatch:
 		return fmt.Sprintf("companion=%s  (HA Container has no Supervisor — set COMPANION_URL)", status)
+	case companion.ReasonUnreachable:
+		return fmt.Sprintf("companion=%s  (nothing answered at HA_URL — check the URL and the network)", status)
 	default:
+		// A reason with no line of its own reaches here and prints its own code,
+		// which is the least a reader can act on. TestEveryDiscoveryReasonHasAStatusLine
+		// quantifies over companion.DiscoveryReasons() so nothing arrives here.
 		return fmt.Sprintf("companion=%s  (%s)", status, reason)
 	}
 }
+
+// companionUnreachableError is `companion status`'s verdict when the answer it
+// just printed is a failure.
+//
+// The command used to exit 0 in every failure mode there is — a rejected token,
+// a refused port, an i/o timeout — while its own body said "WS connect: failed",
+// "discovery: failed (unreachable)" and "companion not found (unreachable)".
+// `hactl companion status && proceed` proceeded (#74). A diagnostic that cannot
+// be gated on is not a diagnostic; the machine-readable half already carried the
+// verdict in `ws_connect`/`discovery`, and the exit code is the same statement
+// in the one channel every caller reads.
+//
+// The report is rendered BEFORE this is returned and reaches stdout, because an
+// error ends a command and does not erase what it printed (D-33).
+type companionUnreachableError struct{ reason string }
+
+func (e *companionUnreachableError) Error() string {
+	return "companion not usable: " + e.reason
+}
+func (e *companionUnreachableError) ExitCode() int { return 1 }
 
 func runCompanionStatus(ctx context.Context, w io.Writer) error {
 	cfg, err := config.Load(flagDir)
@@ -85,18 +119,20 @@ func runCompanionStatus(ctx context.Context, w io.Writer) error {
 		res.Source = ".env (COMPANION_URL)"
 	}
 
+	// The client is handed to Discover whether or not it connected: a failed
+	// Connect carries the reason it failed, and that reason IS the discovery
+	// reason. Passing nil here was what turned an authentication failure into
+	// "check Ingress / network" (#75).
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-	var wsClient *haapi.WSClient
 	if connErr := ws.Connect(ctx); connErr != nil {
 		res.WSConnect = "failed"
 		res.WSError = connErr.Error()
 	} else {
 		defer func() { _ = ws.Close() }()
-		wsClient = ws
 		res.WSConnect = "ok"
 	}
 
-	companionURL, discoverErr := companion.Discover(ctx, cfg, wsClient)
+	companionURL, discoverErr := companion.Discover(ctx, cfg, ws)
 	if discoverErr != nil {
 		var de *companion.DiscoveryError
 		errors.As(discoverErr, &de)
@@ -104,24 +140,30 @@ func runCompanionStatus(ctx context.Context, w io.Writer) error {
 		if de != nil {
 			res.DiscoveryReason = string(de.Reason)
 		} else {
-			res.DiscoveryReason = "unreachable"
+			res.DiscoveryReason = string(companion.ReasonUnreachable)
 		}
 		res.DiscoveryHint = discoverErr.Error()
-		return writeCompanionStatus(w, res)
+		if writeErr := writeCompanionStatus(w, res); writeErr != nil {
+			return writeErr
+		}
+		return &companionUnreachableError{reason: "discovery failed (" + res.DiscoveryReason + ")"}
 	}
 
 	res.Discovery = "ok"
 	res.URL = companionURL
 
 	cc := companion.New(companionURL, cfg.CompanionToken)
-	if wsClient != nil {
-		cc = cc.WithIngressAuth(wsClient)
+	if ws.Connected() {
+		cc = cc.WithIngressAuth(ws)
 	}
 	health, healthErr := cc.Health(ctx)
 	if healthErr != nil {
 		res.Health = "failed"
 		res.HealthError = healthErr.Error()
-		return writeCompanionStatus(w, res)
+		if writeErr := writeCompanionStatus(w, res); writeErr != nil {
+			return writeErr
+		}
+		return &companionUnreachableError{reason: "health check failed"}
 	}
 	res.Health = health.Status
 	res.Version = health.Version

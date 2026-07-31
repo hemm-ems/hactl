@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -26,8 +25,16 @@ type WSClient struct {
 	conn    *websocket.Conn
 	baseURL string
 	token   string
-	mu      sync.Mutex
-	nextID  atomic.Int64
+	// connectErr is why the last Connect failed, kept because the reason a
+	// socket did not open is the answer to a question asked one package over.
+	// companion.Discover used to classify from a nil client — the ABSENCE of a
+	// connection — so a rejected token, a refused port and a blackholed host all
+	// came out as "unreachable", and the hint told the reader to check their
+	// network while `ws_error` on the line above said the token was invalid
+	// (#75). A classification made from an absence cannot be better than that.
+	connectErr error
+	mu         sync.Mutex
+	nextID     atomic.Int64
 }
 
 // NewWSClient creates a new WebSocket client for the given HA instance.
@@ -39,14 +46,42 @@ func NewWSClient(baseURL, token string) *WSClient {
 }
 
 // Connect establishes the WebSocket connection and authenticates.
-// Retries the connection once on failure.
+//
+// The whole of it — both attempts — is bounded by the caller's --timeout
+// (H-23). It used to be bounded by nothing: a 5s constant dial, attempted
+// twice, so `companion status --timeout 1s` against a host that never answers
+// returned after 10.02s, and against one that accepts and then stalls after
+// 20.00s (#73). The retry is inside the budget rather than beside it, because
+// two attempts the caller did not ask for do not entitle the command to twice
+// the time the caller allowed.
 func (ws *WSClient) Connect(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+
 	err := ws.connect(ctx)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		slog.Warn("websocket connection failed, retrying once", "error", err)
-		return ws.connect(ctx)
+		err = ws.connect(ctx)
 	}
-	return nil
+
+	ws.mu.Lock()
+	ws.connectErr = err
+	ws.mu.Unlock()
+	return err
+}
+
+// Connected reports whether the client has a live connection.
+func (ws *WSClient) Connected() bool {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return ws.conn != nil
+}
+
+// ConnectError is why the last Connect failed, or nil.
+func (ws *WSClient) ConnectError() error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return ws.connectErr
 }
 
 // Close closes the WebSocket connection.
@@ -763,11 +798,20 @@ func (ws *WSClient) connect(ctx context.Context) error {
 
 	dialer := &websocket.Dialer{
 		Proxy:            websocket.DefaultDialer.Proxy,
-		NetDialContext:   (&net.Dialer{Timeout: DialTimeout}).DialContext,
-		HandshakeTimeout: 10 * time.Second,
+		NetDialContext:   (&net.Dialer{Timeout: dialBound()}).DialContext,
+		HandshakeTimeout: handshakeBound(),
 	}
-	conn, _, err := dialer.DialContext(ctx, u.String(), nil) //nolint:bodyclose // websocket upgrade; resp.Body not applicable
+	// The response is READ rather than discarded: on a redirect it is the 3xx
+	// carrying the Location, which is the only place the cause of a "bad
+	// handshake" is written down (#76).
+	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
+		if resp != nil {
+			defer func() { _ = resp.Body.Close() }()
+			if re := redirectFromHandshake(ws.baseURL, resp); re != nil {
+				return re
+			}
+		}
 		return fmt.Errorf("connecting to websocket: %w", err)
 	}
 
@@ -800,7 +844,10 @@ func (ws *WSClient) connect(ctx context.Context) error {
 	}
 	if authResp.Type == "auth_invalid" {
 		_ = conn.Close()
-		return fmt.Errorf("authentication failed: %s", authResp.Message)
+		// Typed: the socket opened and Home Assistant answered. Everything
+		// downstream that has to tell a rejected token from an unreachable host
+		// asks this rather than reading the sentence (#75).
+		return &AuthError{Message: authResp.Message}
 	}
 	if authResp.Type != "auth_ok" {
 		_ = conn.Close()

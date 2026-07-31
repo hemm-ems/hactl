@@ -1,0 +1,30 @@
+# transport — every connection hactl opens takes its bound from the caller's
+# --timeout, never from a constant alone.
+#
+# The surface is derived by internal/surfaceaudit.TransportSurface from the
+# typed source: every composite literal of http.Client, http.Transport,
+# net.Dialer or websocket.Dialer, plus every request issued through
+# http.DefaultClient, which has no timeout at all. A site is one such decision,
+# keyed by file, enclosing function and type — one function legitimately makes
+# several, and each is a separate bound. See dev/surfaces/README.md.
+#
+# Why it is a census and not a violation surface: there is no syntactic test for
+# "this bound came from the flag" that survives one level of indirection, and the
+# indirection is the fix — the two HTTP callers now share haapi.HTTPClient rather
+# than each constructing their own. What the gate can guarantee is that the set
+# is closed: a fourth transport anywhere in the tree is unclassified on the day
+# it appears, and somebody has to write down what bounds it.
+#
+# The state this replaces: three transports, three files, three changes, and the
+# flag reaching two of them. `companion status --timeout 1s` against a host that
+# never answers returned after 10.02s — 1s, 3s and 20s all landing on the same
+# number — while `health --timeout 1s` against the identical host aborted at
+# 1.01s (#73). Nothing was findable from the outside: the flag was documented and
+# most of the product obeyed it.
+#ceiling 0
+
+internal/haapi/transport.go:HTTPClient:http.Client = proven: TestHTTPClientIsBoundedByTheCallerTimeout
+internal/haapi/transport.go:HTTPClient:http.Transport = proven: TestHTTPClientIsBoundedByTheCallerTimeout
+internal/haapi/transport.go:HTTPClient:net.Dialer = proven: TestHTTPClientIsBoundedByTheCallerTimeout
+internal/haapi/websocket.go:(*WSClient).connect:websocket.Dialer = proven: TestWSConnectHonoursTheCallerTimeout
+internal/haapi/websocket.go:(*WSClient).connect:net.Dialer = proven: TestWSConnectHonoursTheCallerTimeout

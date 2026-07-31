@@ -96,20 +96,18 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 	_, _ = fmt.Fprintf(out, "\nChecking for hactl-companion add-on ...\n")
 	fakeCfg := &config.Config{URL: haURL, Token: haToken}
 	ws := haapi.NewWSClient(haURL, haToken)
-	var wsClient *haapi.WSClient
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		defer func() { _ = ws.Close() }()
-		wsClient = ws
 	}
-	companionURL, discoverErr := companion.Discover(ctx, fakeCfg, wsClient)
+	companionURL, discoverErr := companion.Discover(ctx, fakeCfg, ws)
 	if discoverErr != nil {
 		_, _ = fmt.Fprintf(out, "  Companion not found — install the hactl-companion add-on from\n")
 		_, _ = fmt.Fprintf(out, "  Settings → Add-ons to unlock full config editing.\n")
 		_, _ = fmt.Fprintf(out, "  No separate secret is needed: HA Ingress handles authentication automatically.\n")
 	} else {
 		cc := companion.New(companionURL, haToken)
-		if wsClient != nil {
-			cc = cc.WithIngressAuth(wsClient)
+		if ws.Connected() {
+			cc = cc.WithIngressAuth(ws)
 		}
 		if h, hErr := cc.Health(ctx); hErr == nil {
 			_, _ = fmt.Fprintf(out, "  Companion found: %s (v%s)\n", companionURL, h.Version)

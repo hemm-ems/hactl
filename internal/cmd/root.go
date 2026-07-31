@@ -72,7 +72,14 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&flagTokensMax, "tokensmax", 500,
 		"cap output at N tokens (0 = no cap); never applied to --json or to a verbatim/raw document, "+
 			"which would be truncated into something that no longer parses")
-	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout for HA/companion API calls")
+	// "per-request" was always the documented meaning and it was true of the
+	// REST client; the WebSocket transport read a constant instead, so
+	// `companion status --timeout 1s` returned after 10.02s while `health
+	// --timeout 1s` returned after 1.01s. The wording is unchanged because it was
+	// never wrong — H-23 is the code catching up with it — and the parenthesis
+	// names the set, which is what a caller bounding worst-case latency needs.
+	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second,
+		"per-request timeout for HA/companion API calls (bounds every connection: REST, WebSocket, companion)")
 
 	// Cobra's built-in help output must never go through the --tokensmax cap
 	// (defect C): wrap the default HelpFunc purely to record that help was
