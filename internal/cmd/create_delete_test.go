@@ -4,17 +4,45 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// writeEnvWithCompanion writes a .env with COMPANION_URL so companion discovery
-// succeeds in unit tests without needing a live companion server.
+// writeEnvWithCompanion writes a .env pointing at a companion stub that answers
+// the create-layout probe (`GET /v1/config/wiring`) as wired, and 404s
+// everything else.
+//
+// A dead address used to do: the previews under test never talked to the
+// companion at all, which is precisely why `helper create`'s preview could
+// promise a create the confirmed run could not perform. A preview that asks
+// needs something to ask.
 func writeEnvWithCompanion(t *testing.T, dir string) {
 	t.Helper()
-	content := "HA_URL=http://127.0.0.1:19999\nHA_TOKEN=test\nCOMPANION_URL=http://127.0.0.1:19998\n"
+	writeEnvWithWiringVerdict(t, dir, `{"domain":"input_boolean","wired":true,"file":"input_boolean.yaml"}`)
+}
+
+// writeEnvWithWiringVerdict is writeEnvWithCompanion with the probe's answer
+// chosen by the caller, so a test can put the CLI on an instance whose
+// configuration.yaml a create cannot extend.
+func writeEnvWithWiringVerdict(t *testing.T, dir, verdict string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/config/wiring" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, verdict)
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	content := fmt.Sprintf("HA_URL=http://127.0.0.1:19999\nHA_TOKEN=test\nCOMPANION_URL=%s\n", srv.URL)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

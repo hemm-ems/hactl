@@ -203,6 +203,13 @@ paths:
         required: true
         schema:
           type: string
+        description: "Block address: `id:` or `alias:` of a direct item in a list-rooted
+          file (automations.yaml), a top-level key in a mapping-rooted file (scripts.yaml),
+          or — for list-rooted files — a zero-based list index, bare (`3`) or bracketed
+          (`[3]`) exactly as `ref scan` prints it in path prefixes. An id/alias match
+          wins over a bare numeric index (HA's UI mints purely numeric automation
+          ids; the bracketed form never collides). An out-of-range index is a 404
+          naming the valid range."
   /v1/related/entity:
     get:
       summary: Find entities related to an entity from HA config and storage 
@@ -313,6 +320,39 @@ paths:
                           type: string
                         matched_value:
                           type: string
+                  skipped:
+                    type: array
+                    description: 'Config files this walk did not read, so the result
+                      covers less than the config does: a renamed or deleted `!include`
+                      target, a file the path guard refuses (`secrets.yaml`), an `!include_dir_*`
+                      naming a directory that is not there, an include that leaves
+                      the config directory. Present only when at least one file was
+                      skipped; absent — not empty, not null — otherwise. A client
+                      that certifies something about the whole config (no dangling
+                      references, a completed rename) must treat any entry here as
+                      "cannot certify": what is missing from the result may only be
+                      missing because it was never opened. Note a YAML syntax error
+                      is not in this list — it fails the request outright rather than
+                      being skipped.'
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - reason
+                      properties:
+                        location:
+                          type: string
+                          description: Config-relative path of the file or 
+                            directory, e.g. `packages/energy.yaml` — the same 
+                            form as `location` elsewhere in this API, never an 
+                            absolute path.
+                        reason:
+                          type: string
+                          description: 'Why the file was not read: `missing` (not
+                            there), `unreadable` (refused by the path guard, by the
+                            OS, or for lying outside the config directory), `unparseable`
+                            (could not be turned into a tree), `circular` (include
+                            cycle).'
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -356,6 +396,39 @@ paths:
                           type: string
                         matched_value:
                           type: string
+                  skipped:
+                    type: array
+                    description: 'Config files this walk did not read, so the result
+                      covers less than the config does: a renamed or deleted `!include`
+                      target, a file the path guard refuses (`secrets.yaml`), an `!include_dir_*`
+                      naming a directory that is not there, an include that leaves
+                      the config directory. Present only when at least one file was
+                      skipped; absent — not empty, not null — otherwise. A client
+                      that certifies something about the whole config (no dangling
+                      references, a completed rename) must treat any entry here as
+                      "cannot certify": what is missing from the result may only be
+                      missing because it was never opened. Note a YAML syntax error
+                      is not in this list — it fails the request outright rather than
+                      being skipped.'
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - reason
+                      properties:
+                        location:
+                          type: string
+                          description: Config-relative path of the file or 
+                            directory, e.g. `packages/energy.yaml` — the same 
+                            form as `location` elsewhere in this API, never an 
+                            absolute path.
+                        reason:
+                          type: string
+                          description: 'Why the file was not read: `missing` (not
+                            there), `unreadable` (refused by the path guard, by the
+                            OS, or for lying outside the config directory), `unparseable`
+                            (could not be turned into a tree), `circular` (include
+                            cycle).'
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -397,6 +470,39 @@ paths:
                           type: string
                         after:
                           type: string
+                  skipped:
+                    type: array
+                    description: 'Config files this walk did not read, so the result
+                      covers less than the config does: a renamed or deleted `!include`
+                      target, a file the path guard refuses (`secrets.yaml`), an `!include_dir_*`
+                      naming a directory that is not there, an include that leaves
+                      the config directory. Present only when at least one file was
+                      skipped; absent — not empty, not null — otherwise. A client
+                      that certifies something about the whole config (no dangling
+                      references, a completed rename) must treat any entry here as
+                      "cannot certify": what is missing from the result may only be
+                      missing because it was never opened. Note a YAML syntax error
+                      is not in this list — it fails the request outright rather than
+                      being skipped.'
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - reason
+                      properties:
+                        location:
+                          type: string
+                          description: Config-relative path of the file or 
+                            directory, e.g. `packages/energy.yaml` — the same 
+                            form as `location` elsewhere in this API, never an 
+                            absolute path.
+                        reason:
+                          type: string
+                          description: 'Why the file was not read: `missing` (not
+                            there), `unreadable` (refused by the path guard, by the
+                            OS, or for lying outside the config directory), `unparseable`
+                            (could not be turned into a tree), `circular` (include
+                            cycle).'
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -509,6 +615,11 @@ paths:
                     type: string
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -551,6 +662,11 @@ paths:
                     type: string
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -599,6 +715,11 @@ paths:
                     type: string
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -720,6 +841,11 @@ paths:
                     type: string
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -867,6 +993,11 @@ paths:
                     nullable: true
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
@@ -953,14 +1084,34 @@ paths:
                 properties:
                   id:
                     type: string
+                    description: 'The identifier this helper is addressed by: the
+                      YAML top-level key when `source` is `yaml`, the live entity_id
+                      when `source` is `storage`.'
                   domain:
                     type: string
                   content:
                     type: string
+                    description: "The definition as YAML. For `source: storage` it
+                      is rendered from HA's collection and carries a leading `# source:
+                      storage` comment, because this content is read-only."
+                  source:
+                    type: string
+                    enum:
+                    - yaml
+                    - storage
+                    description: '`yaml` — defined in a helper YAML file this service
+                      manages, editable via PUT/DELETE. `storage` — created in the
+                      Home Assistant UI, readable here but not editable; PUT/DELETE
+                      answer 409 for it.'
         4XX:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: 'Resolves both sources: a YAML helper by its top-level key, and
+        a storage-backed helper (created in the Home Assistant UI) by its entity_id,
+        its collection id, or `<domain>.<collection id>`. `input_button` is readable
+        here although it has no YAML form. 409 if a bare id is ambiguous across storage
+        domains.'
       parameters:
       - name: id
         in: query
@@ -989,6 +1140,11 @@ paths:
                     type: string
                   reloaded:
                     type: boolean
+                  reload_error:
+                    type: string
+                    description: "Why the reload failed: HA's HTTP status plus a bounded
+                      excerpt of its response body, or the transport error class.
+                      Present only when `reloaded` is false; absent otherwise."
                   entity_created:
                     type: boolean
         4XX:
@@ -1066,6 +1222,53 @@ paths:
       - name: domain
         in: query
         required: false
+        schema:
+          type: string
+  /v1/config/wiring:
+    get:
+      summary: Would a create for this domain reach a file Home Assistant reads?
+      tags:
+      - config
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - domain
+                - wired
+                properties:
+                  domain:
+                    type: string
+                  wired:
+                    type: boolean
+                    description: Whether a create for this domain can be written
+                      to a file Home Assistant reads.
+                  file:
+                    type: string
+                    description: Config-relative path a new entry would be 
+                      written to. Present only when `wired`.
+                  reason:
+                    type: string
+                    description: Why a create would be refused — byte-identical 
+                      to the 400 message the create route answers with. Present 
+                      only when `wired` is false.
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      description: 'The C-10 include-wiring check, exposed read-only so a client can
+        preview a create without attempting it. Answers 200 either way: `wired: true`
+        with the `file` a new entry would go to, or `wired: false` with the `reason`
+        — the exact text the create route refuses with, so a dry run can fail with
+        the same explanation as the confirmed run. Accepts the domains that have a
+        create route: automation, script, template and the YAML helper domains.'
+      parameters:
+      - name: domain
+        in: query
+        required: true
         schema:
           type: string
   /v1/ha/reload/{domain}:

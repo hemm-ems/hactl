@@ -76,6 +76,27 @@ server's and cannot come after the request: it is client-side, in both modes,
 and the preview refuses exactly what `--confirm` refuses. An exemption argued
 from one half of a rule is how the other half goes unenforced.
 
+**Resolving the target is not the whole check.** Some confirmed runs fail on a
+fact about the *instance* rather than about the argument, and the preview owes
+that fact too. On a Home Assistant whose `input_boolean:` is written inline in
+`configuration.yaml` instead of `!include`-ing a file, every `helper create
+--confirm` is a structural 400 — and every dry run printed "would create"
+anyway, eight domains out of eight, because the layout check lived inside the
+companion's create where nothing could ask it. It is askable now
+(`GET /v1/config/wiring`, companion C-10), and the preview asks. Two rules fall
+out of that episode: hactl does not re-derive a server-side rule to keep a
+promise — it asks the server, so the two cannot drift and the preview quotes
+the same refusal the confirmed run would print — and a preview that cannot
+reach its check fails rather than proceeding, because a silent fallback
+restores exactly the behaviour the check exists to remove.
+
+The converse half is what a *read* fix can break. `helper delete` resolves
+through the companion's helper lookup; teaching that lookup to resolve
+storage-backed (UI-created) helpers — which is what makes `helper show`/`cat`
+work at all on a normal instance — turned "the lookup succeeded" into a weaker
+claim than "the delete can happen". The preview now checks the source, so a
+target the confirmed run refuses is refused in preview too.
+
 **A preview is machine-readable.** `--json` used to be a byte-for-byte no-op
 on nearly every preview, so an agent that asked for JSON got prose. Previews
 share one shape (`internal/cmd/dryrun.go`) that renders as text or as an
@@ -100,7 +121,17 @@ result by looking at the answer, not by remembering which flags it passed.
   registries, with `TestRegistryCreateAcceptsANameWithSurroundingSpace` as the
   no-false-positive control); oracle:
   `internal/integration/registry_blank_name_oracle_test.go`
-  (`TestOracleRegistryCreateAcceptsABlankName`, `make test-int`)
+  (`TestOracleRegistryCreateAcceptsABlankName`, `make test-int`),
+  `internal/cmd/helper_family_test.go`
+  (`TestHelperCreatePreviewAgreesWithConfirmOnEveryLayout`,
+  `TestHelperDeleteRefusesAStorageHelperInBothModes` — both written as an
+  equality between the dry run's verdict and `--confirm`'s, plus equality of
+  the explanation, rather than as two hand-written expectations that can drift
+  apart), `internal/companiontest/helper_family_e2e_test.go`
+  (`TestE2EHelperCreatePreviewMatchesConfirmOnEveryLayoutCLI`,
+  `TestE2EHelperDeleteAgreesWithItselfOnAUIHelperCLI` — the same equalities
+  against a real HA, on the inline layout and the UI-created helper that
+  produced the defect; `make test-companion`)
 - Quantified by: `internal/cmd/surface_confirm_test.go`
   (`TestConfirmSurfaceIsClosed`, over `dev/surfaces/confirm.manifest`) — the set
   of `--confirm` commands is walked from the cobra tree, not listed here.

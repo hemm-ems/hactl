@@ -319,18 +319,32 @@ func runHelperShow(ctx context.Context, w io.Writer, helperID string) error {
 	if flagJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
+		out := map[string]any{
 			"id":      resp.ID,
 			"domain":  resp.Domain,
 			"content": resp.Content,
-		})
+		}
+		if resp.Source != "" {
+			out["source"] = resp.Source
+		}
+		return enc.Encode(out)
 	}
 
 	_, _ = fmt.Fprintf(w, "id:     %s\n", resp.ID)
 	_, _ = fmt.Fprintf(w, "domain: %s\n", resp.Domain)
+	// The same column `helper ls` shows, on the same helper. Omitted rather than
+	// guessed when the companion predates the field: printing "yaml" for an
+	// unknown source would be inventing the one fact this line exists to state.
+	if resp.Source != "" {
+		_, _ = fmt.Fprintf(w, "source: %s\n", resp.Source)
+	}
 	_, _ = fmt.Fprintf(w, "---\n%s", resp.Content)
 	return nil
 }
+
+// helperSourceStorage is the companion's marker for a helper created in HA's
+// UI: readable, never editable through this CLI.
+const helperSourceStorage = "storage"
 
 func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	if flagHelperFile == "" {
@@ -353,8 +367,19 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	}
 
 	if !flagHelperConfirm {
-		if _, connErr := connectCompanion(ctx); connErr != nil {
+		cc, connErr := connectCompanion(ctx)
+		if connErr != nil {
 			return connErr
+		}
+		// H-2: the preview fails where --confirm would. Parsing the input is not
+		// enough — on an instance whose `input_boolean:` is written inline in
+		// configuration.yaml (rather than `!include`-ing a file), every create is
+		// a structural 400 and every preview used to print "would create" anyway:
+		// 8 domains, 8 confident plans, 8 deterministic failures. The layout is
+		// knowable in advance, and only the companion can answer it without
+		// hactl re-deriving its include-resolution rules in Go.
+		if wiringErr := checkHelperDomainWired(ctx, cc, domain); wiringErr != nil {
+			return wiringErr
 		}
 		return dryRun("create helper").
 			with("id", helperID).
@@ -383,7 +408,7 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 		text("created helper %q (domain=%s)", resp.ID, domain)
 	switch {
 	case !resp.Reloaded:
-		res = res.warn("helper written but HA did not confirm reload")
+		res = res.warn("helper written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
 	case !resp.EntityCreated:
 		res = res.warn("helper reloaded but entity %q was not found in HA's live state", resp.EntityID)
 	default:
@@ -432,6 +457,17 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 	if err != nil {
 		return fmt.Errorf("helper %q not found among the YAML helpers "+
 			"(use 'helper ls' — rows with source=storage are not editable through hactl): %w", helperID, err)
+	}
+
+	// The other half of the same law. The companion now *resolves* a
+	// storage-backed helper — that is what makes `helper show`/`cat` work at all
+	// on a UI-managed instance — so a lookup that succeeds no longer means the
+	// target is deletable. Without this check the preview would print a plan for
+	// a delete whose --confirm is a 409, which is exactly the H-2 inversion the
+	// resolve-before-planning rule exists to prevent.
+	if remote.Source == helperSourceStorage {
+		return fmt.Errorf("helper %q is storage-backed (created in the HA UI, source=storage in 'helper ls'): "+
+			"it has no YAML definition to delete. Remove it in the UI; 'helper show' can still read it", helperID)
 	}
 
 	if !flagHelperConfirm {

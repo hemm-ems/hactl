@@ -910,7 +910,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	// The companion reports whether HA reloaded; saying "created" without it
 	// is the issue-#40 failure mode — a definition on disk that HA never read.
 	if !resp.Reloaded {
-		res = res.warn("script written but HA did not confirm reload")
+		res = res.warn("script written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
 	}
 	return res.render(w)
 }

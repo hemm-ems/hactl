@@ -412,6 +412,24 @@ func (c *Client) DeleteAutomationDef(ctx context.Context, id string) (*ConfigDel
 	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
+// GetWiring calls GET /v1/config/wiring?domain=<domain>: whether a create for
+// that domain would reach a file HA reads, and if not, why not.
+//
+// The answer exists so a dry run can fail exactly where --confirm would (H-2)
+// without hactl re-deriving the companion's include-vs-inline resolution in Go.
+// Re-deriving it is the four-copy drift this seam already paid for once: the
+// rules would be restated in a second language, and the preview would explain
+// its refusal differently from the run it predicts.
+func (c *Client) GetWiring(ctx context.Context, domain string) (*WiringResponse, error) {
+	q := url.Values{"domain": {domain}}
+	data, err := c.doGet(ctx, "/v1/config/wiring", q)
+	if err != nil {
+		return nil, err
+	}
+	var r WiringResponse
+	return &r, decodeResponse("/v1/config/wiring", data, &r)
+}
+
 // --- Helper CRUD ---
 
 // ListHelpers calls GET /v1/config/helpers[?domain=<domain>].

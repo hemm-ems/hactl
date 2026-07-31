@@ -1184,7 +1184,7 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		text("created automation %q", resp.ID)
 	switch {
 	case !resp.Reloaded:
-		res = res.warn("automation written but HA did not confirm reload")
+		res = res.warn("automation written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
 	case resp.EntityID == "":
 		res = res.warn("automation reloaded but its live entity_id could not be confirmed")
 	default:

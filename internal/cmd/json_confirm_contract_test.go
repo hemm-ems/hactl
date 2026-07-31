@@ -320,6 +320,14 @@ func startConfirmCompanion(t *testing.T) *httptest.Server {
 			ok(w, `{"status":"ok","written":true,"reloaded":true}`)
 		}
 	})
+	// `helper create` asks whether HA actually reads the domain's file before it
+	// promises anything (H-2, companion C-10). This stub accepts writes, so the
+	// layout it describes must be one a create can extend — otherwise the sweep
+	// would be measuring the probe's refusal instead of the write's JSON.
+	mux.HandleFunc("/v1/config/wiring", func(w http.ResponseWriter, r *http.Request) {
+		domain := r.URL.Query().Get("domain")
+		ok(w, fmt.Sprintf(`{"status":"ok","domain":%q,"wired":true,"file":"%s.yaml"}`, domain, domain))
+	})
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

@@ -71,8 +71,25 @@ type RelatedEntityEntry struct {
 
 // RefScanResponse is the response from GET /v1/ref/scan.
 type RefScanResponse struct {
-	Target string       `json:"target"`
-	Hits   []RefScanHit `json:"hits"`
+	Target  string        `json:"target"`
+	Hits    []RefScanHit  `json:"hits"`
+	Skipped []SkippedFile `json:"skipped,omitempty"`
+}
+
+// SkippedFile is one config file a companion walk could not read, so its result
+// covers less than the config does — a renamed `!include` target, a file the
+// path guard refuses, an `!include_dir_*` naming a directory that is not there.
+//
+// Decoded on every route that reports it, like Validated and Reloaded before it,
+// so the field-level contract (H-13) stays whole rather than ignore-listed: a
+// documented field no struct decodes is the D45 shape, and the ignore list is
+// empty by design. No command renders it yet — a caller certifying something
+// about the *whole* config (no dangling references, a completed rename) must
+// read any entry here as "cannot certify", and giving that its own reporting is
+// a separate change from this one.
+type SkippedFile struct {
+	Location string `json:"location"`
+	Reason   string `json:"reason"`
 }
 
 // RefScanHit is one literal reference found in a config file, reported against
@@ -86,7 +103,8 @@ type RefScanHit struct {
 // RefEntitiesResponse is the response from GET /v1/ref/entities: every
 // entity_id-shaped leaf across the config !include graph, unfiltered.
 type RefEntitiesResponse struct {
-	Entities []RefEntity `json:"entities"`
+	Entities []RefEntity   `json:"entities"`
+	Skipped  []SkippedFile `json:"skipped,omitempty"`
 }
 
 // RefEntity is one entity_id-shaped value found in a config file. Unlike
@@ -102,8 +120,9 @@ type RefEntity struct {
 
 // RefReplaceResponse is the response from POST /v1/ref/replace.
 type RefReplaceResponse struct {
-	Status  string      `json:"status"` // "dry_run" | "applied"
-	Changes []RefChange `json:"changes"`
+	Status  string        `json:"status"` // "dry_run" | "applied"
+	Changes []RefChange   `json:"changes"`
+	Skipped []SkippedFile `json:"skipped,omitempty"`
 }
 
 // RefChange is one literal rewritten (or, in dry-run, that would be rewritten)
@@ -146,6 +165,11 @@ type TemplateCreateResponse struct {
 	Status   string `json:"status"`
 	UniqueID string `json:"unique_id"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
 }
 
 // ScriptDefinition represents a script definition.
@@ -172,6 +196,11 @@ type ScriptCreateResponse struct {
 	Status   string `json:"status"`
 	ID       string `json:"id"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
 }
 
 // AutomationDefinition represents an automation definition.
@@ -199,6 +228,11 @@ type AutomationCreateResponse struct {
 	ID       string `json:"id"`
 	EntityID string `json:"entity_id"` // live entity_id, empty if HA never confirmed it
 	Reloaded bool   `json:"reloaded"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
 }
 
 // CheckConfigResponse is the response from POST /v1/ha/check-config. Valid is a
@@ -222,6 +256,11 @@ type ConfigDeleteResponse struct {
 	Status   string `json:"status"`
 	Diff     string `json:"diff,omitempty"`
 	Reloaded bool   `json:"reloaded,omitempty"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
 }
 
 // HelperDefinition represents a helper entity definition.
@@ -242,6 +281,22 @@ type HelperResponse struct {
 	ID      string `json:"id"`
 	Domain  string `json:"domain"`
 	Content string `json:"content"`
+	// Source is "yaml" for a helper defined in a file the companion manages and
+	// "storage" for one created in HA's UI. It is what makes `helper show`
+	// honest about a definition nothing here can edit, and what lets
+	// `helper delete`'s preview refuse a target its --confirm cannot delete.
+	Source string `json:"source"`
+}
+
+// WiringResponse is the response from GET /v1/config/wiring: whether a create
+// for a domain would reach a file Home Assistant reads. Reason is the companion's
+// own refusal text, so a preview built on it explains a failure exactly as the
+// confirmed run would.
+type WiringResponse struct {
+	Domain string `json:"domain"`
+	Wired  bool   `json:"wired"`
+	File   string `json:"file,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // HelperCreateResponse is the response from POST /v1/config/helper.
@@ -251,6 +306,11 @@ type HelperCreateResponse struct {
 	EntityID      string `json:"entity_id"`
 	Reloaded      bool   `json:"reloaded"`
 	EntityCreated bool   `json:"entity_created"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
 }
 
 // --- WireGuard ---

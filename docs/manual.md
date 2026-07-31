@@ -428,7 +428,8 @@ hactl helper ls                                      # list all helpers
 hactl helper ls --domain input_boolean               # filter by domain
 hactl helper ls --pattern guest                      # filter by helper id (glob/substring)
 hactl helper ls --name "Guest Mode"                  # filter by display name (substring)
-hactl helper show guest_mode                         # id + domain header, then the YAML definition
+hactl helper show guest_mode                         # id + domain + source header, then the YAML definition
+hactl helper show input_boolean.anwesenheit_flur     # storage helpers: address them by entity_id
 hactl helper cat guest_mode                          # the same YAML with no header (pipe-friendly)
 hactl helper create input_boolean -f toggle.yaml             # dry-run
 hactl helper create input_boolean -f toggle.yaml --confirm   # create via companion + reload
@@ -437,6 +438,24 @@ hactl helper delete guest_mode --confirm             # delete via companion + re
 ```
 
 Supported domains: input_boolean, input_number, input_select, input_text, input_datetime, counter, timer, schedule. Requires hactl-companion.
+
+`helper ls` shows a **source** column, and `show`/`cat` report it too:
+
+- `yaml` — defined in a helper file the companion manages. Editable with
+  `create` / `delete`.
+- `storage` — created in the HA UI, which is how most helpers on a real
+  instance exist. `show`, `cat` and `ls` read them (address one by its
+  `entity_id`, e.g. `input_boolean.anwesenheit_flur`, or by its bare id);
+  `helper delete` refuses them in dry run and with `--confirm` alike — there is
+  no YAML definition to delete, so remove it in the UI. `cat` output for a
+  storage helper carries a leading `# source: storage` comment; it is still
+  valid YAML.
+
+`helper create`'s dry run checks the same thing `--confirm` does: that
+`configuration.yaml` has a `<domain>:` key which `!include`s a file. If the
+domain is written **inline** in `configuration.yaml` instead, no create can
+append to it, and the preview says so with the same message `--confirm` would —
+rather than planning a create that cannot happen.
 
 The `-f` file must be a **keyed mapping with exactly one top-level key** — the
 helper id — not a bare definition:
