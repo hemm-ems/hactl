@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -37,5 +39,60 @@ func TestOracleEnergyGetPrefsUnconfigured(t *testing.T) {
 	if !strings.Contains(strings.ToLower(err.Error()), "no prefs") {
 		t.Errorf("unconfigured error %q no longer contains \"no prefs\" — "+
 			"update isEnergyUnconfigured's mapping in internal/cmd/energy.go", err)
+	}
+}
+
+// energyDirectionTable is the set of source types internal/cmd's
+// energyDirectionByType classifies. Kept here as a literal rather than
+// imported, because the two lists agreeing is the thing being asserted and a
+// gate that reads its expectation from the code it checks proves nothing.
+var energyDirectionTable = []string{"battery", "gas", "grid", "solar", "water"}
+
+// TestOracleEnergySourceTypes asks Home Assistant which energy source types
+// exist, and fails when hactl's direction table does not cover exactly those.
+//
+// A wire sample cannot answer this: energy/get_prefs returns the types the
+// instance happens to have configured, which is as consistent with "HA defines
+// five" as with "HA defines nine and this house uses three". The producing
+// code answers it — data.py declares `type SourceType = GridSourceType |
+// SolarSourceType | BatterySourceType | GasSourceType | WaterSourceType`, a
+// closed union, and each member carries the `type: Literal["…"]` this reads.
+//
+// This is the closure gate for finding #26. The defect was a direction derived
+// from the field name alone, and the fix is a table over the source types;
+// a table is only a fix while it is complete, so the day HA adds a sixth type
+// this test says so instead of `hactl energy show` quietly labelling it
+// "unknown" in somebody's terminal.
+func TestOracleEnergySourceTypes(t *testing.T) {
+	const path = "/usr/src/homeassistant/homeassistant/components/energy/data.py"
+	code, out, err := ha.Exec(context.Background(), "grep", "-oE", `type: Literal\["[a-z_]+"\]`, path)
+	if err != nil {
+		t.Fatalf("reading %s from the running container: %v", path, err)
+	}
+	if code != 0 {
+		t.Fatalf("grep over %s exited %d: %s", path, code, out)
+	}
+
+	literal := regexp.MustCompile(`"([a-z_]+)"`)
+	seen := map[string]bool{}
+	for _, match := range literal.FindAllStringSubmatch(out, -1) {
+		seen[match[1]] = true
+	}
+	got := make([]string, 0, len(seen))
+	for kind := range seen {
+		got = append(got, kind)
+	}
+	sort.Strings(got)
+
+	if len(got) == 0 {
+		t.Fatalf("no `type: Literal[…]` declarations found in %s — the extractor has stopped "+
+			"matching and would pass forever while proving nothing:\n%s", path, out)
+	}
+	if strings.Join(got, ",") != strings.Join(energyDirectionTable, ",") {
+		t.Errorf("Home Assistant defines energy source types %v; hactl's energyDirectionByType "+
+			"covers %v.\nA type HA emits and the table does not classify renders as %q — add it to "+
+			"internal/cmd/energy.go with the direction data.py's own docstring gives it, and to "+
+			"energySourceTypes in internal/livefire/rigshapes_test.go.",
+			got, energyDirectionTable, "unknown")
 	}
 }

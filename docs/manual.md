@@ -506,7 +506,12 @@ hactl energy show --json                  # same, as {configured, sources[], dev
 
 One row per statistic feeding the dashboard (`type` grid/solar/battery/gas/water,
 `direction`, `statistic`), plus the individually tracked devices — the joins to
-run before touching anything (`ent show <statistic>` answers who owns it). An
+run before touching anything (`ent show <statistic>` answers who owns it).
+`direction` is what that statistic means for that source type, in HA's own
+terms: grid `consumption`/`return`, solar `production`, battery
+`discharge`/`charge`, gas and water `consumption`. Only a generative source
+reads `production`; a source type this build does not know reads `unknown`
+rather than a guess. An
 instance whose Energy dashboard was never set up says exactly that (`--json`:
 `{"configured": false}`) — HA answers an error for missing preferences, so an
 empty dashboard and a missing one are never conflated. Read-only; there is no

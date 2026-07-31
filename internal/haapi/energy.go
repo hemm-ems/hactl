@@ -22,9 +22,19 @@ type EnergyPreferences struct {
 	DeviceConsumption []DeviceConsumption `json:"device_consumption"`
 }
 
-// EnergySource is one source on the energy dashboard. Type decides where the
-// statistics live: "grid" carries them in flow_from/flow_to, every other type
-// ("solar", "battery", "gas", "water") on its own stat_energy_* fields.
+// EnergySource is one source on the energy dashboard.
+//
+// All five types HA defines — "grid", "solar", "battery", "gas", "water" —
+// carry their statistics on stat_energy_from/stat_energy_to. flow_from and
+// flow_to are the LEGACY grid form: HA's own store rewrites it into the flat
+// fields while loading (data.py, _EnergyPreferencesStore, minor_version 3), so
+// a current instance never answers with it and the arms exist only for an
+// instance that has not migrated yet.
+//
+// The comment here used to say the opposite — that grid carries its statistics
+// in flow_from/flow_to and every other type on the flat fields — and the unit
+// fixture was written to match, which is how finding #26 survived: the only
+// grid shape under test was the one no live instance produces.
 type EnergySource struct {
 	Type           string       `json:"type"`
 	StatEnergyFrom string       `json:"stat_energy_from"`
