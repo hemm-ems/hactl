@@ -38,11 +38,11 @@ hactl svc call [target] = proven: TestSvcCallDryRunRefusesAServiceHADoesNotHave
 hactl device set-area [target] = proven: TestDeviceSetAreaDryRunRefusesUnresolvable
 hactl device set-label [target] = proven: TestDeviceSetLabelDryRunRefusesUnresolvable
 hactl ent rename [target] = proven: TestEntRenameDryRunRefusesUnresolvable
-hactl helper create [target] = proven: TestHelperCreatePreviewAgreesWithConfirmOnEveryLayout
+hactl helper create [target] = proven: TestHelperCreateRefusesADomainItCannotWrite
 
 # --- values: a named test asserts the preview refuses an unusable one ---------
 hactl script create [value] = proven: TestCreateDryRunRejectsUnusableInput
-hactl helper create [value] = proven: TestCreateDryRunRejectsUnusableInput
+hactl helper create [value] = proven: TestHelperCreateRefusesAnIDHomeAssistantCannotUse
 hactl auto create [value] = proven: TestAutoCreate_MalformedYAMLRefused_DryRun
 hactl area create [value] = proven: TestRegistryCreateRefusesABlankName
 hactl floor create [value] = proven: TestRegistryCreateRefusesABlankName
@@ -51,6 +51,17 @@ hactl dash create [value] = proven: TestRunDashCreate_DryRunResolvesItsInput
 hactl svc call [value] = proven: TestUnknownFieldsRefusesWhatHomeAssistantRefuses
 hactl ent rename [value] = proven: TestEntRenameDryRunRefusesUnresolvable
 hactl auto apply [value] = proven: TestWriter_ApplyWritesTheBytesTheDiffShowed
+
+# `helper create` shows the same lesson a third time, and this manifest's own
+# preamble predicted it: both its rows were `proven` by tests that asked a
+# narrower question than their key. [target] cited the C-10 wiring probe, which
+# answers "does Home Assistant read this domain's config from a file this route
+# can extend" — true of `script`, `automation` and `template`, none of which
+# `helper create` may write, so `helper create script` planned a create POST
+# answers 400 to. [value] cited the one-top-level-key check, so the KEY itself
+# went unjudged and hactl echoed `id: pg w6 space` back as a plan for a write
+# that fails HA's whole helper mapping. Both rows now cite tests that assert the
+# refusal they claim (D-30).
 
 # The three registry creates were exempt from this surface entirely until
 # 2026-07-30, on the reading that "the argument names something that does not
@@ -88,7 +99,7 @@ hactl rollback [value] = exempt: same path as auto rollback and the same absence
 
 # --- debt: the rule applies and nothing proves it ----------------------------
 hactl tpl create [target] = debt: a create names nothing yet, but the unique_id it mints must not collide, and nothing asserts what the preview does when it does
-hactl tpl create [value] = debt: classifyTemplate hard-errors on unparseable YAML, a top-level list and an empty file before the plan (read 2026-07-26); a mapping with no recognised key still previews as an entity item and nothing asserts what --confirm does with it
+hactl tpl create [value] = debt: classifyTemplate hard-errors on unparseable YAML, a top-level list and an empty file before the plan (read 2026-07-26); a mapping with no recognised key still previews as an entity item, and --domain reaches the companion unchecked against its _ENTITY_DOMAINS so `tpl create --domain frobnicate` plans a create POST answers 400 to — helper create's D-30 question, unasked in this family
 hactl auto rollback [target] = debt: PlanRollback errors via findLatestBackup before the plan (read 2026-07-26); no test asserts it, and the raw "reading backup dir" message leaks when backups/ is absent
 hactl rollback [target] = debt: same path as auto rollback and the same gap; no test asserts the refusal
 hactl config flow-start [target] = debt: the dry run is proven to preview a domain that has a flow handler, but nothing asserts what it does with a domain that has none

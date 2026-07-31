@@ -42,7 +42,7 @@ var scriptLsCmd = &cobra.Command{
 	Short: "List scripts",
 	Long:  "Show scripts table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runScriptLs(cmd.Context(), cmd.OutOrStdout())
+		return runScriptLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -173,7 +173,8 @@ type scriptRow struct {
 	errors  int
 }
 
-func runScriptLs(ctx context.Context, w io.Writer) error {
+func runScriptLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -216,6 +217,8 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 	}
 
 	rows := buildScriptRows(scripts, traces, cutoff, fires)
+	// Before any filter runs — see emptyListing.
+	total := len(rows)
 
 	// Enrich with area/labels from registry
 	if rc != nil {
@@ -236,6 +239,10 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 
 	if flagScriptFailing {
 		rows = filterScriptsFailing(rows)
+	}
+
+	if len(rows) == 0 {
+		return emptyListing(cmd, w, "scripts", total, failingHints(flagScriptFailing)...)
 	}
 
 	tbl := &format.Table{

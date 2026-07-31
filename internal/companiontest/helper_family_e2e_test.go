@@ -5,9 +5,12 @@ package companiontest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"maps"
+	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -293,4 +296,80 @@ func stripDomainKeys(config, domain string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+// TestE2EHelperCreateDomainSetMatchesTheCompanionCLI — live-fire #63's remnant,
+// pinned against the service that owns the answer.
+//
+// hactl refuses a domain `helper create` cannot write BEFORE asking anything,
+// because the remote check it used to rely on answers a different question: the
+// C-10 wiring probe knows every domain the companion has a create route for,
+// which includes `script`, `automation` and `template`. That local refusal is a
+// copy of the companion's ALLOWED_DOMAINS, and a copy with no oracle is
+// folklore one release later — so this asks the companion itself.
+//
+// The companion states the set in its own 400: "Invalid helper domain: X.
+// Allowed: a, b, c". Reading it back out is not elegant, and it is the only
+// place the set crosses the wire — the OpenAPI schema types `domain` as a bare
+// string. A message change fails this test, which is the correct outcome: the
+// day the wording moves is the day the mirror needs re-deriving.
+func TestE2EHelperCreateDomainSetMatchesTheCompanionCLI(t *testing.T) {
+	file := writeTempYAML(t, "domainset.yaml", "e2e_domain_set_probe:\n  name: E2E Domain Set\n")
+
+	// A domain no create route writes at all, so the refusal is the domain
+	// check's and nothing downstream can produce it.
+	out, err := runHactlE2E(t, "helper", "create", "e2e_not_a_domain", "-f", file)
+	if err == nil {
+		t.Fatalf("`helper create e2e_not_a_domain` was accepted:\n%s", out)
+	}
+	local := allowedDomainsFrom(out)
+	if len(local) == 0 {
+		t.Fatalf("hactl's refusal does not state which domains it writes:\n%s", out)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		compURL+"/v1/config/helper?domain=e2e_not_a_domain", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+companionToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("asking the companion which helper domains it writes: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("the companion answered %d to an invalid helper domain, want 400: %s", resp.StatusCode, body)
+	}
+	remote := allowedDomainsFrom(string(body))
+	if len(remote) == 0 {
+		t.Fatalf("the companion's refusal no longer lists its allowed domains, so this oracle has "+
+			"stopped asking anything: %s", body)
+	}
+
+	if !slices.Equal(local, remote) {
+		t.Errorf("hactl writes %v, the companion allows %v — helperCreateDomains "+
+			"(internal/cmd/helper.go) has drifted from routes/helpers.py ALLOWED_DOMAINS, and the "+
+			"gap is a preview that promises a create the confirmed run refuses (H-2)", local, remote)
+	}
+}
+
+// allowedDomainsRE matches the "Allowed: a, b, c" tail both refusals carry.
+var allowedDomainsRE = regexp.MustCompile(`(?i)Allowed: ([a-z_, ]+)`)
+
+func allowedDomainsFrom(s string) []string {
+	m := allowedDomainsRE.FindStringSubmatch(s)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for d := range strings.SplitSeq(m[1], ",") {
+		if d = strings.TrimSpace(strings.TrimRight(d, `."\`)); d != "" {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

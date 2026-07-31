@@ -47,7 +47,7 @@ var autoLsCmd = &cobra.Command{
 	Short: "List automations",
 	Long:  "Show automations table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAutoLs(cmd.Context(), cmd.OutOrStdout())
+		return runAutoLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -206,7 +206,8 @@ type autoRow struct {
 	restored bool
 }
 
-func runAutoLs(ctx context.Context, w io.Writer) error {
+func runAutoLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -250,6 +251,8 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 	}
 
 	rows := buildAutoRows(autos, traces, fires, cutoff)
+	// Before any filter runs — see emptyListing.
+	total := len(rows)
 
 	// Enrich with area/labels from registry. Labels only exist in the entity
 	// registry — /api/states never carries them — so --label depends on this.
@@ -277,13 +280,14 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 
 	if flagAutoFailing {
 		rows = filterFailing(rows)
-		if len(rows) == 0 {
-			return emitEmptyList(w, failingEmptyHint())
-		}
 	}
 
 	if flagAutoRestored {
 		rows = filterAutosRestored(rows)
+	}
+
+	if len(rows) == 0 {
+		return emptyListing(cmd, w, "automations", total, failingHints(flagAutoFailing)...)
 	}
 
 	// #54: HA marks an automation `restored: true` when its state was resurrected
@@ -771,10 +775,18 @@ func filterAutosByTag(rows []autoRow, tag string) []autoRow {
 	return result
 }
 
-// failingEmptyHint returns the hint printed when --failing yields no rows.
-func failingEmptyHint() string {
-	return "# no failing automations in recent traces\n" +
-		"# (try: hactl log --errors --unique to check the error log)"
+// failingHints is the extra line `--failing` offers when nothing failed: the
+// traces it reads are bounded, so "none" is a statement about recent traces
+// rather than about the instance, and the error log is where the rest is.
+//
+// It used to be the whole message, returned from an early exit inside the
+// --failing branch, which meant `auto ls --pattern zzz --failing` reported one
+// of the two narrowings the caller had typed and silently dropped the other.
+func failingHints(failing bool) []string {
+	if !failing {
+		return nil
+	}
+	return []string{"# --failing reads recent traces only; try: hactl log --errors --unique for the error log"}
 }
 
 func filterFailing(rows []autoRow) []autoRow {

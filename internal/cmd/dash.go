@@ -473,17 +473,44 @@ func reportNoStoredConfig(w io.Writer, urlPath string) error {
 // invalid JSON by the default cap for exactly that reason.
 func showSingleView(w io.Writer, cfg *haapi.LovelaceConfig) error {
 	markStructuredOutput()
-	for _, raw := range cfg.Views {
-		s := haapi.ParseViewSummary(raw)
-		if s.Path == flagDashView || s.Title == flagDashView {
-			enc := json.NewEncoder(w)
-			enc.SetIndent("", "  ")
-			var v any
-			_ = json.Unmarshal(raw, &v)
-			return enc.Encode(v)
+	raw, ok := selectView(cfg.Views, flagDashView)
+	if !ok {
+		return viewNotFound(flagDashView)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	var v any
+	_ = json.Unmarshal(raw, &v)
+	return enc.Encode(v)
+}
+
+// selectView picks the view --view names: by its path first, then by its title,
+// neither decided by case (D-2).
+//
+// Two copies of this match existed and disagreed. `showSingleView` took the
+// first view matching path OR title in one pass; `selectDashboardViewRaw` ran
+// path over every view before considering titles — so on a dashboard where one
+// view's title equals another view's path, `dash show d --view X` and `dash
+// show d --view X --raw` selected DIFFERENT views, and each was internally
+// consistent. Path-first is the surviving rule: a path is the view's
+// identifier, a title is what a human wrote above it.
+//
+// Case was the other half. A title is human-written and it is what `dash show`
+// prints in its own views summary, so a caller reading one off the screen and
+// typing it back is the case D-2 decided for, one command over from the
+// `device ls --name` miss that decided it.
+func selectView(views []json.RawMessage, view string) (json.RawMessage, bool) {
+	for _, candidate := range views {
+		if strings.EqualFold(haapi.ParseViewSummary(candidate).Path, view) {
+			return candidate, true
 		}
 	}
-	return fmt.Errorf("view %q not found", flagDashView)
+	for _, candidate := range views {
+		if strings.EqualFold(haapi.ParseViewSummary(candidate).Title, view) {
+			return candidate, true
+		}
+	}
+	return nil, false
 }
 
 func selectDashboardViewRaw(raw json.RawMessage, view string) (json.RawMessage, error) {
@@ -491,19 +518,20 @@ func selectDashboardViewRaw(raw json.RawMessage, view string) (json.RawMessage, 
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing dashboard config: %w", err)
 	}
-	for _, candidate := range cfg.Views {
-		s := haapi.ParseViewSummary(candidate)
-		if s.Path == view {
-			return candidate, nil
-		}
+	if candidate, ok := selectView(cfg.Views, view); ok {
+		return candidate, nil
 	}
-	for _, candidate := range cfg.Views {
-		s := haapi.ParseViewSummary(candidate)
-		if s.Title == view {
-			return candidate, nil
-		}
-	}
-	return nil, fmt.Errorf("view %q not found", view)
+	return nil, viewNotFound(view)
+}
+
+// viewNotFound is what `dash show --view` says when the dashboard has no such
+// view. It names the flag as well as the value, like every other answer a
+// narrowing empties (live-fire #28) — a refusal is the form that rule takes on
+// a selector, where an absent view is a caller error rather than a dashboard
+// with nothing in it (live-fire #8).
+func viewNotFound(view string) error {
+	return fmt.Errorf("no view matches --view %q in this dashboard "+
+		"(run `hactl dash show <url_path>` for its views summary)", view)
 }
 
 func viewType(t string) string {

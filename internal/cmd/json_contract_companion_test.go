@@ -75,6 +75,19 @@ var contractHelpers = map[string]struct {
 // wireguard status), /v1/related/entity (ent related — already enforced, and
 // no longer forced down its companion-less fallback now that a companion
 // answers).
+// filterContractLogs keeps the records whose `field` contains needle, folding
+// case. It stands in for the add-on's own filtering, which is all this stub
+// owes: the point is that a narrowed request can come back empty.
+func filterContractLogs(entries []map[string]any, field, needle string) []map[string]any {
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		if v, ok := e[field].(string); ok && strings.Contains(strings.ToLower(v), strings.ToLower(needle)) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func startContractCompanion(t *testing.T) *contractCompanion {
 	t.Helper()
 
@@ -166,11 +179,23 @@ func startContractCompanion(t *testing.T) *contractCompanion {
 	// `hactl companion logs` fills from --top, so the stub honours it too: a
 	// stub that ignored it would hide that this command's --top reaches its
 	// source rather than only its text table.
+	//
+	// ?component= and ?level= are honoured for the same reason one step on.
+	// This command's narrowing happens server side, so a stub that answered the
+	// full buffer whatever it was asked made an empty answer unreachable — and
+	// the empty answer is where `companion logs` used to print "(no log
+	// entries)" for a component nothing logs under (live-fire #28's class).
 	mux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
 		entries := []map[string]any{
 			{"ts": 1767256200.25, "level": "INFO", "name": "companion.wireguard", "message": "tunnel wg0 up, 1 peer"},
 			{"ts": 1767256260.5, "level": "WARN", "name": "companion.config", "message": "automations.yaml reloaded with 2 warnings"},
 			{"ts": 1767256320.75, "level": "ERROR", "name": "companion.api", "message": "GET /v1/config/helper?id=ghost -> 404"},
+		}
+		if component := r.URL.Query().Get("component"); component != "" {
+			entries = filterContractLogs(entries, "name", component)
+		}
+		if level := r.URL.Query().Get("level"); level != "" {
+			entries = filterContractLogs(entries, "level", level)
 		}
 		if limit, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && limit > 0 && limit < len(entries) {
 			entries = entries[:limit]

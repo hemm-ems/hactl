@@ -63,8 +63,9 @@ func TestBooleanColumnsRenderAsJSONBooleans(t *testing.T) {
 			// Unfiltered on purpose: --restored shows ONLY ghosts, so the
 			// column could never be observed false. The column appears because
 			// the listing contains one.
-			name:    "ent ls",
-			run:     func(ctx context.Context, buf *bytes.Buffer) error { return runEntLs(ctx, buf) },
+			name: "ent ls",
+			//nolint:contextcheck // ctx reaches the command through listingCmd, which is how cobra carries it
+			run:     func(ctx context.Context, buf *bytes.Buffer) error { return runEntLs(listingCmd(ctx, "ent", "ls"), buf) },
 			columns: []string{restoredColumn},
 			before: func(t *testing.T) {
 				t.Helper()
@@ -73,8 +74,11 @@ func TestBooleanColumnsRenderAsJSONBooleans(t *testing.T) {
 			},
 		},
 		{
-			name:    "auto ls",
-			run:     func(ctx context.Context, buf *bytes.Buffer) error { return runAutoLs(ctx, buf) },
+			name: "auto ls",
+			//nolint:contextcheck // ctx reaches the command through listingCmd, which is how cobra carries it
+			run: func(ctx context.Context, buf *bytes.Buffer) error {
+				return runAutoLs(listingCmd(ctx, "auto", "ls"), buf)
+			},
 			columns: []string{restoredColumn},
 			before: func(t *testing.T) {
 				t.Helper()
@@ -86,8 +90,11 @@ func TestBooleanColumnsRenderAsJSONBooleans(t *testing.T) {
 			},
 		},
 		{
-			name:    "config entries",
-			run:     func(ctx context.Context, buf *bytes.Buffer) error { return runConfigEntries(ctx, buf) },
+			name: "config entries",
+			//nolint:contextcheck // ctx reaches the command through listingCmd, which is how cobra carries it
+			run: func(ctx context.Context, buf *bytes.Buffer) error {
+				return runConfigEntries(listingCmd(ctx, "config", "entries"), buf)
+			},
 			columns: []string{"options"},
 			before: func(t *testing.T) {
 				t.Helper()

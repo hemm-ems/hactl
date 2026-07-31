@@ -502,7 +502,7 @@ func TestRunEntLs_WithStates(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs failed: %v", err)
 	}
 	out := buf.String()
@@ -534,7 +534,7 @@ func TestRunEntLs_DomainFilter(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs with domain filter failed: %v", err)
 	}
 	out := buf.String()
@@ -560,20 +560,26 @@ func TestRunEntLs_Empty(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs empty failed: %v", err)
 	}
-	// An instance with no entities has to render as the header and nothing
-	// else. The two failure modes worth separating are a listing that invents
-	// rows and a listing that swallows the header along with the rows, so the
-	// caller cannot tell "no entities" from "the command printed nothing".
+	// An instance with no entities says so, in one line, and says nothing more:
+	// nothing narrowed this listing, so there is no narrowing to name and no
+	// count to report. The two failure modes worth separating are a listing
+	// that invents rows and a listing that prints nothing at all, leaving the
+	// caller unable to tell "no entities" from "the command produced no output".
+	//
+	// It used to answer with the bare table header. Honest, and mute: the same
+	// header is what `ent ls --pattern zzz` printed on an instance holding
+	// 4 486 entities, so the two answers a caller most needs to tell apart were
+	// byte-identical (live-fire #28).
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 1 {
-		t.Fatalf("empty /api/states rendered %d lines, want header only: %q", len(lines), out)
+		t.Fatalf("empty /api/states rendered %d lines, want one: %q", len(lines), out)
 	}
-	if !strings.Contains(lines[0], "entity_id") || !strings.Contains(lines[0], "last_changed") {
-		t.Errorf("header line = %q, want the entity_id..last_changed columns", lines[0])
+	if lines[0] != "no entities" {
+		t.Errorf("empty listing = %q, want %q", lines[0], "no entities")
 	}
 	// The `restored` column is conditional on at least one restored entity;
 	// with no entities at all it must not appear.
@@ -649,7 +655,7 @@ func TestRunLog_HTTPFallback(t *testing.T) {
 	withLogFlags(t, false, "", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog HTTP fallback failed: %v", err)
 	}
 	out := buf.String()
@@ -702,7 +708,7 @@ func TestRunAutoLs_WithAutomations(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs failed: %v", err)
 	}
 	out := buf.String()
@@ -736,7 +742,7 @@ func TestRunConfigEntries_WithEntries(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries failed: %v", err)
 	}
 	out := buf.String()
@@ -768,7 +774,7 @@ func TestRunConfigEntries_DomainFilter(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries with filter failed: %v", err)
 	}
 	out := buf.String()
@@ -794,7 +800,7 @@ func TestRunConfigEntries_Empty(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries empty failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no config entries") {
@@ -1636,7 +1642,7 @@ func TestRunDeviceLs(t *testing.T) {
 	defer func() { flagDeviceLabel = oldLabel }()
 
 	var buf bytes.Buffer
-	if err := runDeviceLs(context.Background(), &buf); err != nil {
+	if err := runDeviceLs(listingCmd(context.Background(), "device", "ls"), &buf); err != nil {
 		t.Fatalf("runDeviceLs failed: %v", err)
 	}
 	out := buf.String()
@@ -2434,7 +2440,7 @@ func TestRunHelperLs_WithCompanion(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs failed: %v", err)
 	}
 	out := buf.String()
@@ -2467,7 +2473,7 @@ func TestRunHelperLs_Empty(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs empty failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no helpers") {
@@ -2919,7 +2925,7 @@ func TestRunAutoLs_WithTraces(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with traces failed: %v", err)
 	}
 	out := buf.String()
@@ -4480,7 +4486,7 @@ func TestRunScriptLs_WithScripts(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runScriptLs(context.Background(), &buf); err != nil {
+	if err := runScriptLs(listingCmd(context.Background(), "script", "ls"), &buf); err != nil {
 		t.Fatalf("runScriptLs failed: %v", err)
 	}
 	out := buf.String()
@@ -5105,7 +5111,7 @@ func TestRunLog_ErrorsFilter(t *testing.T) {
 	withLogFlags(t, true, "", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --errors failed: %v", err)
 	}
 	out := buf.String()
@@ -5138,7 +5144,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --warnings alone: only the WARNING line.
 	restore(false, true, false, "")
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --warnings failed: %v", err)
 	}
 	out := buf.String()
@@ -5152,7 +5158,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --errors --warnings: both, but not INFO.
 	restore(true, true, false, "")
 	buf.Reset()
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --errors --warnings failed: %v", err)
 	}
 	out = buf.String()
@@ -5173,7 +5179,7 @@ func TestRunLog_ComponentFilter(t *testing.T) {
 	withLogFlags(t, false, "alpha", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --component failed: %v", err)
 	}
 	out := buf.String()
@@ -5196,7 +5202,7 @@ func TestRunLog_Unique(t *testing.T) {
 	withLogFlags(t, false, "", true)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --unique failed: %v", err)
 	}
 	out := buf.String()
@@ -5278,7 +5284,7 @@ func TestRunAutoLs_WithPattern(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with pattern failed: %v", err)
 	}
 	out := buf.String()
@@ -5347,7 +5353,7 @@ func TestRunAutoLs_WithFailing(t *testing.T) {
 
 	var buf bytes.Buffer
 	// runAutoLs with --failing - should include only automations with errors
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs --failing failed: %v", err)
 	}
 	out := buf.String()
@@ -5827,7 +5833,7 @@ func TestRunAutoLs_WithRegistryContext(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with registry failed: %v", err)
 	}
 	out := buf.String()

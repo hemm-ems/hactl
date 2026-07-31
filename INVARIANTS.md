@@ -1201,6 +1201,33 @@ Two bounds keep the rule from degrading into "match anything":
 - **A resource that matches on two of its identifiers is still one row.** The
   filter widens what matches, never how often.
 
+**A glob is anchored at every identifier form the listing prints.** The
+substring form of `--pattern` matches anywhere in the id, so `helper ls
+--pattern anwesenheit` found six helpers; the glob form is anchored, so
+`--pattern 'anwesen*'` found none — an id is `input_boolean.anwesenheit_flur`
+and the anchor lands on the domain (finding #29). `helper ls` makes that
+unanswerable rather than merely surprising: it prints a bare YAML slug for a
+companion-managed row and a full entity_id for a storage-backed one, IN THE SAME
+COLUMN, so one anchor cannot serve both and `--pattern 'pg_*'` matched by which
+source a row happened to come from. D-28 fixes the pole: the id as printed and
+the part after the domain are both anchors, in the one shared matcher. A dot
+still selects — the tail of `binary_sensor.foo` is `foo`, which `sensor.*` does
+not match — so the fix widens the promise without weakening the filter.
+
+**And when a match finds nothing, the answer says what it was matching.** The
+same stop-at-the-first-miss rule that makes an empty listing read as "no such
+entity" makes `no helpers` read as "this instance has none": `helper ls
+--pattern zzz` printed exactly that on an instance holding 220, `device ls` on
+one holding 307, and `config entries` the same (finding #28). Four more listings
+printed a bare table header — honest, and byte-identical to the answer on an
+instance that really is empty, which is the pair a caller most needs to tell
+apart. D-29 fixes the pole: **an empty listing names the narrowings that emptied
+it and how many records they were applied to.** The narrowings are read from the
+command's own flag set (`activeNarrowings`), never enumerated per call site,
+because a listing that grows a sixth filter is exactly the site an enumeration
+forgets — the same mechanism that let three `--domain` filters sit outside the
+D-2 case pole for as long as that pole's set was four names typed into a test.
+
 - Enforced by: `internal/cmd/auto_test.go` —
   `TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints`,
   `TestFilterAutosByPattern_AcceptsTheAliasHactlPrints`,
@@ -1230,7 +1257,19 @@ Two bounds keep the rule from degrading into "match anything":
   (`TestAutomationRefSurfaceIsClosed`, `make test-surface`) — the set of
   entrypoints taking an automation reference is derived from the source, and
   one that bypasses `resolveAutomation` fails the build the day it appears;
-  and `TestTargetSurfaceIsClosed` for the wider any-resource half.
+  and `TestTargetSurfaceIsClosed` for the wider any-resource half;
+  `internal/cmd/surface_filter_test.go`
+  (`TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints` — over the live
+  tree's glob-documented filters rather than the command that reported it, with
+  a fixture whose records are named after the needle so an anchor on the domain
+  prefix cannot pass; `TestNarrowingFlagsDeclareThemselves`, which holds the
+  tree to the convention the derivation reads) and
+  `internal/cmd/surface_emptyanswer_test.go`
+  (`TestEveryNarrowedListingSaysWhatNarrowedIt` — every narrowing flag in the
+  tree, driven against the contract fixture until it finds nothing, with the
+  unfiltered run as the negative control so a command that always prints a flag
+  name cannot pass; `TestEmptyListingCountsTheInventoryItSearched`,
+  `TestEmptyListingUnderJSONIsStillAnArray`).
 
 ## H-18 — `runs_24h` counts runs, and it counts the same runs `auto show` lists
 

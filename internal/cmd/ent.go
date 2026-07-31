@@ -49,7 +49,7 @@ var entLsCmd = &cobra.Command{
 	Short: "List entities",
 	Long:  "Show entities table, optionally filtered by glob pattern.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEntLs(cmd.Context(), cmd.OutOrStdout())
+		return runEntLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -179,7 +179,8 @@ type entityState struct {
 	Context     haapi.Context  `json:"context"`
 }
 
-func runEntLs(ctx context.Context, w io.Writer) error {
+func runEntLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -198,6 +199,9 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	if err := degeneracy.Check("/api/states", &states); err != nil {
 		return err
 	}
+
+	// Before any filter runs — see emptyListing.
+	total := len(states)
 
 	if flagEntDomain != "" {
 		filtered := filterEntitiesByDomain(states, flagEntDomain)
@@ -234,6 +238,10 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 
 	if flagEntRestored {
 		states = filterEntitiesByRestored(states)
+	}
+
+	if len(states) == 0 {
+		return emptyListing(cmd, w, "entities", total)
 	}
 
 	// #54: HA marks a state `restored: true` when it was resurrected from the
@@ -1195,10 +1203,19 @@ func boolCell(b bool) string {
 	return ""
 }
 
+// filterEntitiesByDomain keeps the entities in exactly one domain, matched
+// without regard to case (D-2).
+//
+// It compared with `==`, so `ent ls --domain SENSOR` answered for 2 551 real
+// sensors on the reference instance — through domainNotFoundHint, which then
+// told the caller to "verify the domain exists". Entity domains are always
+// lowercase in HA, which is exactly why this flag had no stake in the case
+// question and why it went on answering it wrongly: the pole D-2 decided
+// covers every filter, not the ones where case can obviously bite.
 func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
-		if haapi.EntityIDDomain(s.EntityID) == domain {
+		if strings.EqualFold(haapi.EntityIDDomain(s.EntityID), domain) {
 			result = append(result, s)
 		}
 	}
@@ -1222,6 +1239,22 @@ func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 // deleted the strings.ToLower to make it consistent with `ent ls --pattern` —
 // harmonising toward the sibling with no stake in the answer. Consistency was
 // the right instinct and the wrong direction.
+// A glob is anchored at BOTH identifier forms a listing prints (D-28). The
+// substring form matches anywhere in the id, so `--pattern anwesenheit` finds
+// `input_boolean.anwesenheit_flur`; the glob form is anchored, so
+// `--pattern 'anwesen*'` found nothing at all — the id it is anchored against
+// begins with the domain, not with the name (finding #29). `helper ls` makes
+// that unanswerable rather than merely surprising: it prints a bare YAML slug
+// for a companion-managed row and a full entity_id for a storage-backed one, in
+// the same column, so ONE anchor cannot serve both and `--pattern 'pg_*'`
+// matched half a listing by which source the row happened to come from.
+//
+// So a qualified identifier has two anchors: the id as printed, and the part
+// after the domain. A pattern carrying a dot (`sensor.*`) still selects by
+// domain, because the tail of `binary_sensor.foo` is `foo` and does not match
+// it. A value with a dot that is not a domain — a device named "Sonos v1.2" —
+// gains an anchor it has no use for, which is a false positive in the
+// permissive direction on a filter and cannot turn a match into a miss.
 func matchPattern(s, pattern string) bool {
 	if pattern == "" {
 		return s == ""
@@ -1230,7 +1263,13 @@ func matchPattern(s, pattern string) bool {
 	if !strings.ContainsAny(pattern, "*?") {
 		return strings.Contains(s, pattern)
 	}
-	return matchGlob(s, pattern)
+	if matchGlob(s, pattern) {
+		return true
+	}
+	if _, unqualified, found := strings.Cut(s, "."); found {
+		return matchGlob(unqualified, pattern)
+	}
+	return false
 }
 
 func matchGlob(s, pattern string) bool {
@@ -1299,9 +1338,12 @@ func filterEntitiesByArea(states []entityState, rc *registryContext, area string
 	return result
 }
 
-// labelNotFoundHint returns the user-facing message when a --label value isn't in the registry.
+// labelNotFoundHint returns the user-facing message when a --label value isn't
+// in the registry. It names the flag as well as the value: this is one of the
+// empty answers a listing can give, and every one of them says which narrowing
+// produced it (live-fire #28, TestEveryNarrowedListingSaysWhatNarrowedIt).
 func labelNotFoundHint(label string) string {
-	return fmt.Sprintf("label %q not found in registry (try: hactl label ls)", label)
+	return fmt.Sprintf("no entities match --label %q: that label is not in the registry (try: hactl label ls)", label)
 }
 
 // domainNotFoundHint returns the user-facing message when --domain matches no
@@ -1309,9 +1351,11 @@ func labelNotFoundHint(label string) string {
 // timer / schedule domains and have their own listing command.
 func domainNotFoundHint(domain string) string {
 	if domain == "helper" || domain == "helpers" {
-		return fmt.Sprintf("%q is not an entity domain — list helpers with: hactl helper ls", domain)
+		return fmt.Sprintf("no entities match --domain %q: that is not an entity domain — "+
+			"list helpers with: hactl helper ls", domain)
 	}
-	return fmt.Sprintf("no entities in domain %q — verify the domain exists (e.g. sensor, light, input_boolean) before reporting a negative result", domain)
+	return fmt.Sprintf("no entities match --domain %q — verify the domain exists "+
+		"(e.g. sensor, light, input_boolean) before reporting a negative result", domain)
 }
 
 // labelExistsInRegistry returns true if the given label value matches (by

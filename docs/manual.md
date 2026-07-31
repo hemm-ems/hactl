@@ -91,7 +91,7 @@ hactl auto create -f auto.yaml --confirm    # create + reload
 hactl script create -f script.yaml --confirm
 hactl helper create input_boolean -f toggle.yaml --confirm
 ```
-`script create` and `helper create` take a mapping with **exactly one top-level key — the id** (`my_toggle:` with `name:`/`icon:` nested under it); a bare `name:`/`icon:` mapping is rejected. `tpl create` takes an entity item or a full block instead (see Templates). If HA does not confirm the reload, the command says so — a written file HA never read produces no entity.
+`script create` and `helper create` take a mapping with **exactly one top-level key — the id** (`my_toggle:` with `name:`/`icon:` nested under it); a bare `name:`/`icon:` mapping is rejected. That id becomes the entity's object id, so it must be one HA can use: lowercase letters, digits and single underscores, not starting or ending with one. `helper create` refuses anything else, and refuses a domain outside its eight, before it plans or sends anything. `tpl create` takes an entity item or a full block instead (see Templates). If HA does not confirm the reload, the command says so — a written file HA never read produces no entity.
 
 ### "Delete an automation / helper"
 ```
@@ -467,11 +467,16 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
   storage helper carries a leading `# source: storage` comment; it is still
   valid YAML.
 
-`helper create`'s dry run checks the same thing `--confirm` does: that
-`configuration.yaml` has a `<domain>:` key which `!include`s a file. If the
-domain is written **inline** in `configuration.yaml` instead, no create can
-append to it, and the preview says so with the same message `--confirm` would —
-rather than planning a create that cannot happen.
+`helper create`'s dry run checks everything `--confirm` does, in the order that
+answers cheapest first: the domain is one of the eight it writes (`script`,
+`automation` and `template` are HA domains but not helper domains); the id is
+one HA can turn into an entity; and `configuration.yaml` has a `<domain>:` key
+which `!include`s a file. If the domain is written **inline** in
+`configuration.yaml` instead, no create can append to it, and the preview says
+so with the same message `--confirm` would — rather than planning a create that
+cannot happen. The id check is stricter than the companion, deliberately: HA
+validates a helper file as a whole, so one unusable key stops every helper in
+that file from loading.
 
 The `-f` file must be a **keyed mapping with exactly one top-level key** — the
 helper id — not a bare definition:
@@ -871,9 +876,7 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 
 ## Filtering & discovery
 
-> **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop. Do not chain fallback patterns or broaden the search unless the user explicitly asks.
-
-> **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area), confirm it exists (the matching registry `ls`) before reporting a negative — that one call is exempt from stop-at-first-miss.
+> **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop — do not chain fallback patterns or broaden the search unless the user asks. An empty listing says what emptied it (`no helpers match --pattern "guest" (220 on this instance)`); the bare `no helpers` means the instance holds none. Report the one you got.
 
 Five commands take `--pattern` (glob or substring, case-insensitive), and it matches **identifiers, not display names**:
 
@@ -885,7 +888,9 @@ hactl helper ls --pattern guest           # helper id
 hactl device ls --pattern wozi            # exception: id OR name ("Wozi Tv")
 ```
 
-`*`/`?` → glob, otherwise substring. An entity's display name can share no
+`*`/`?` → glob, otherwise substring, never case-sensitive; a glob anchors at the
+printed id and at the part after the domain (`'anwesen*'` matches
+`input_boolean.anwesenheit_flur`). A display name can share no
 token with its entity_id (`light.ap_gast_v2_led` ↔ "AP6 Flur LED") and listings
 print no name column, so quoted names need the server-side name search:
 

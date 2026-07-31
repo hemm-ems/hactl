@@ -157,7 +157,7 @@ func TestAutoLsIgnoresAttributesOfEntitiesItDiscards(t *testing.T) {
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("auto ls failed because of an entity it does not list: %v\n"+
 			"H-21: the set whose attributes a listing decodes into a domain-specific schema must be "+
 			"a subset of the set it renders. %s is a sensor; `auto ls` discards it and must never "+
@@ -188,7 +188,7 @@ func TestScriptLsIgnoresAttributesOfEntitiesItDiscards(t *testing.T) {
 	withFlagDir(t, ts.dir)
 
 	var buf bytes.Buffer
-	if err := runScriptLs(context.Background(), &buf); err != nil {
+	if err := runScriptLs(listingCmd(context.Background(), "script", "ls"), &buf); err != nil {
 		t.Fatalf("script ls failed because of an entity it does not list: %v\n"+
 			"H-21: %s is a sensor; `script ls` discards it and must never have decoded it.",
 			err, colliderEntityID)

@@ -122,11 +122,15 @@ func TestAutoShowTriggerContent(t *testing.T) {
 	assertContains(t, out, "mode=")
 }
 
+// TestAutoLsPattern — a glob that matches nothing succeeds and says what it
+// searched (D-29). It used to assert the bare table header, which is what an
+// instance with no automations at all prints: the two cases a caller most needs
+// to tell apart were byte-identical (live-fire #28).
 func TestAutoLsPattern(t *testing.T) {
-	// --pattern should filter automations by glob
-	// Even if no automations match, the command should succeed with just the header
 	out := runHactl(t, "auto", "ls", "--pattern", "nonexistent_xyz_*")
-	assertContains(t, out, "id") // header should still appear
+	assertContains(t, out, "--pattern")
+	assertContains(t, out, "nonexistent_xyz_*")
+	assertContains(t, out, "automations on this instance")
 }
 
 func TestAutoLsPatternMatch(t *testing.T) {
@@ -174,10 +178,11 @@ func TestAutoLsPatternSubstring(t *testing.T) {
 }
 
 func TestAutoLsLabelNoMatch(t *testing.T) {
-	// --label with a nonexistent label should return only headers
+	// A label nothing carries: the answer names the label rather than the
+	// inventory, and carries no automation of its own (D-29).
 	out := runHactl(t, "auto", "ls", "--label", "nonexistent_label_xyz")
-	assertContains(t, out, "id") // header present
-	// Should not contain any automation IDs
+	assertContains(t, out, "--label")
+	assertContains(t, out, "nonexistent_label_xyz")
 	entries := runHactlJSON[[]map[string]string](t, "auto", "ls")
 	for _, e := range entries {
 		assertNotContains(t, out, e["id"])

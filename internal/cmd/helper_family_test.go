@@ -249,3 +249,170 @@ func TestHelperCreatePreviewAgreesWithConfirmOnEveryLayout(t *testing.T) {
 		})
 	}
 }
+
+// TestHelperCreateRefusesADomainItCannotWrite — live-fire #63, and the half of
+// it the wiring probe does not answer.
+//
+// #63 was reported as "a typo domain previews as a plan", and the C-10 wiring
+// probe closed that: `helper create input_boolea` now fails at dry-run because
+// no create route writes that domain's config. But the probe's table covers
+// every create route the companion has, so `script`, `automation` and
+// `template` pass it — and `helper create script -f x.yaml` went on printing
+// "dry-run: would create helper" at exit 0 while POST answers 400 "Invalid
+// helper domain". One predicate, two questions.
+//
+// The assertion is the equality H-2 states, over the domains that separate the
+// two questions: a domain nothing writes, and a domain another route writes.
+func TestHelperCreateRefusesADomainItCannotWrite(t *testing.T) {
+	for _, domain := range []string{"input_boolea", "pg_fake_domain", "script", "automation", "template", "input_button"} {
+		t.Run(domain, func(t *testing.T) {
+			posted := false
+			dir := helperFamilyEnv(t, map[string]func(http.ResponseWriter, *http.Request){
+				// The probe answers `wired` for every domain, which is what
+				// makes this case load-bearing: if the local check is removed,
+				// nothing downstream refuses and the preview plans the write.
+				"/v1/config/wiring": jsonRoute(fmt.Sprintf(
+					`{"domain":%q,"wired":true,"file":"%s.yaml"}`, domain, domain)),
+				"/v1/config/helper": func(w http.ResponseWriter, _ *http.Request) {
+					posted = true
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"code":400,"message":`+
+						`"Invalid helper domain: `+domain+`. Allowed: counter, input_boolean, input_datetime, `+
+						`input_number, input_select, input_text, schedule, timer"}}`)
+				},
+			})
+			withFlagDir(t, dir)
+
+			file := filepath.Join(dir, "probe.yaml")
+			if err := os.WriteFile(file, []byte("probe:\n  name: Probe\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldFile := flagHelperFile
+			flagHelperFile = file
+			defer func() { flagHelperFile = oldFile }()
+
+			for _, confirm := range []bool{false, true} {
+				old := flagHelperConfirm
+				flagHelperConfirm = confirm
+				var buf bytes.Buffer
+				err := runHelperCreate(context.Background(), &buf, domain)
+				flagHelperConfirm = old
+
+				if err == nil {
+					t.Fatalf("confirm=%v: `helper create %s` was accepted:\n%s", confirm, domain, buf.String())
+				}
+				if !strings.Contains(err.Error(), "invalid helper domain") {
+					t.Errorf("confirm=%v: refusal does not name the reason: %v", confirm, err)
+				}
+				if strings.Contains(buf.String(), "would create") {
+					t.Errorf("confirm=%v: a plan was printed for a create that cannot happen:\n%s", confirm, buf.String())
+				}
+			}
+			if posted {
+				t.Error("the create was sent to the companion although hactl knows the domain is not one it writes")
+			}
+		})
+	}
+}
+
+// TestHelperCreateRefusesAnIDHomeAssistantCannotUse — live-fire #64.
+//
+// Unlike every other case in this file the assertion is NOT preview/confirm
+// equality, because the companion accepts these ids: it writes whatever key it
+// is handed, so preview and confirm agreed perfectly on a create that poisons
+// the file. Home Assistant validates a helper file with
+// `cv.schema_with_slug_keys`, which fails the WHOLE mapping on one bad key —
+// one unusable id takes every working helper in that shared file with it. So
+// the rule here is that the id never reaches the wire, in either mode.
+func TestHelperCreateRefusesAnIDHomeAssistantCannotUse(t *testing.T) {
+	for _, tc := range []struct{ name, id string }{
+		{"space", "pg w6 space"},
+		{"umlaut", "pg_w6_umlaut_öäü"},
+		{"emoji", "pg_w6_emoji_😀"},
+		{"uppercase", "PG_W6_Upper"},
+		{"dot", "pg.w6.dotted"},
+		{"leading underscore", "_pg_w6"},
+		{"trailing underscore", "pg_w6_"},
+		{"double underscore", "pg__w6"},
+		{"dash", "pg-w6-dash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posted := false
+			dir := helperFamilyEnv(t, map[string]func(http.ResponseWriter, *http.Request){
+				"/v1/config/wiring": jsonRoute(`{"domain":"input_boolean","wired":true,"file":"input_boolean.yaml"}`),
+				"/v1/config/helper": func(w http.ResponseWriter, _ *http.Request) {
+					// What the real companion does: accepts the key.
+					posted = true
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusCreated)
+					_, _ = io.WriteString(w, `{"status":"created","id":"x","entity_id":"input_boolean.x",`+
+						`"reloaded":true,"entity_created":true}`)
+				},
+			})
+			withFlagDir(t, dir)
+
+			file := filepath.Join(dir, "probe.yaml")
+			body := fmt.Sprintf("%q:\n  name: Probe\n", tc.id)
+			if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldFile := flagHelperFile
+			flagHelperFile = file
+			defer func() { flagHelperFile = oldFile }()
+
+			for _, confirm := range []bool{false, true} {
+				old := flagHelperConfirm
+				flagHelperConfirm = confirm
+				var buf bytes.Buffer
+				err := runHelperCreate(context.Background(), &buf, "input_boolean")
+				flagHelperConfirm = old
+
+				if err == nil {
+					t.Fatalf("confirm=%v: id %q was accepted:\n%s", confirm, tc.id, buf.String())
+				}
+				if !strings.Contains(err.Error(), tc.id) {
+					t.Errorf("confirm=%v: the refusal does not quote the id it refused: %v", confirm, err)
+				}
+				if strings.Contains(buf.String(), "would create") {
+					t.Errorf("confirm=%v: a plan was printed for an id HA cannot use:\n%s", confirm, buf.String())
+				}
+			}
+			if posted {
+				t.Error("an id Home Assistant cannot turn into an entity was written into a shared helper file")
+			}
+		})
+	}
+}
+
+// TestHelperCreateAcceptsTheIDsHomeAssistantAccepts is the control the two
+// cases above need: a validation that refuses everything passes every test that
+// only checks refusals. Driven through the command rather than through the
+// predicate, so it also proves the new checks sit before the plan without
+// replacing it.
+func TestHelperCreateAcceptsTheIDsHomeAssistantAccepts(t *testing.T) {
+	for _, id := range []string{"pg_w6_flag", "flag2", "a", "123", "a_b_c_1"} {
+		t.Run(id, func(t *testing.T) {
+			dir := helperFamilyEnv(t, map[string]func(http.ResponseWriter, *http.Request){
+				"/v1/config/wiring": jsonRoute(`{"domain":"counter","wired":true,"file":"counter.yaml"}`),
+			})
+			withFlagDir(t, dir)
+
+			file := filepath.Join(dir, "probe.yaml")
+			if err := os.WriteFile(file, []byte(id+":\n  name: Probe\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldFile := flagHelperFile
+			flagHelperFile = file
+			defer func() { flagHelperFile = oldFile }()
+
+			var buf bytes.Buffer
+			if err := runHelperCreate(context.Background(), &buf, "counter"); err != nil {
+				t.Fatalf("%q is a valid entity object id in a domain helper create writes, and was refused: %v", id, err)
+			}
+			if !strings.Contains(buf.String(), "would create") || !strings.Contains(buf.String(), id) {
+				t.Errorf("the plan for %q does not name what would be created:\n%s", id, buf.String())
+			}
+		})
+	}
+}

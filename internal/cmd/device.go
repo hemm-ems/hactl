@@ -61,7 +61,7 @@ var deviceLsCmd = &cobra.Command{
 	Short: "List devices",
 	Long:  "Show devices from the Home Assistant device registry, with entity counts.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeviceLs(cmd.Context(), cmd.OutOrStdout())
+		return runDeviceLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -242,7 +242,8 @@ type deviceRegistryContext struct {
 	deviceByID map[string]haapi.DeviceRegistryEntry
 }
 
-func runDeviceLs(ctx context.Context, w io.Writer) error {
+func runDeviceLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -261,7 +262,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 
 	devices := filterDevices(rc.devices, rc)
 	if len(devices) == 0 {
-		return emitEmptyList(w, "no devices")
+		return emptyListing(cmd, w, "devices", len(rc.devices))
 	}
 
 	sort.Slice(devices, func(i, j int) bool {

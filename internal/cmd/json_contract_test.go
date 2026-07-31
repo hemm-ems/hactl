@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -946,7 +946,7 @@ func TestLogJSON_CarriesTheWholeMessage(t *testing.T) {
 	defer func() { flagJSON = oldJSON }()
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog: %v", err)
 	}
 	var rows []map[string]any
@@ -990,7 +990,7 @@ func TestLogText_ComponentIsTheLastSegment(t *testing.T) {
 	withLogFlags(t, false, "", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog: %v", err)
 	}
 	if strings.Contains(buf.String(), "homeassistant.components.template.config") {

@@ -206,7 +206,7 @@ func TestRunDashShow_ViewNotFoundOnAZeroViewDashboard(t *testing.T) {
 			if err == nil {
 				t.Fatalf("a missing view was reported as success:\n%s", buf.String())
 			}
-			if !strings.Contains(err.Error(), `view "absent-view" not found`) {
+			if !strings.Contains(err.Error(), `--view "absent-view"`) {
 				t.Errorf("error = %v, want the view-not-found message", err)
 			}
 			if strings.Contains(buf.String(), "no views") {

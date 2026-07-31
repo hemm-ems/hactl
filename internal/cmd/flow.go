@@ -37,7 +37,7 @@ var configEntriesCmd = &cobra.Command{
 	Short: "List config entries",
 	Long:  "List all config entries. Use --domain to filter by integration domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runConfigEntries(cmd.Context(), cmd.OutOrStdout())
+		return runConfigEntries(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -192,7 +192,25 @@ type configEntry struct {
 	ReasonTranslateKey string `json:"error_reason_translation_key"`
 }
 
-func runConfigEntries(ctx context.Context, w io.Writer) error {
+// filterConfigEntriesByDomain keeps the entries of exactly one integration
+// domain, matched without regard to case (D-2).
+//
+// It compared with `==` and lived inline in runConfigEntries, where nothing
+// could probe it: `config entries --domain MQTT` answered "no config entries"
+// on an instance running mqtt. Extracted so the case gate drives the filter the
+// command itself calls rather than a reimplementation of it.
+func filterConfigEntriesByDomain(entries []configEntry, domain string) []configEntry {
+	out := make([]configEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.EqualFold(e.Domain, domain) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func runConfigEntries(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -211,19 +229,15 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	// Filter by domain if requested
+	// Before the filter runs — see emptyListing.
+	total := len(entries)
+
 	if flagConfigDomain != "" {
-		var filtered []configEntry
-		for _, e := range entries {
-			if e.Domain == flagConfigDomain {
-				filtered = append(filtered, e)
-			}
-		}
-		entries = filtered
+		entries = filterConfigEntriesByDomain(entries, flagConfigDomain)
 	}
 
 	if len(entries) == 0 {
-		return emitEmptyList(w, "no config entries")
+		return emptyListing(cmd, w, "config entries", total)
 	}
 
 	tbl := &format.Table{

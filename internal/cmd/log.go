@@ -42,7 +42,7 @@ var logCmd = &cobra.Command{
 	Short: "View Home Assistant logs",
 	Long:  "Display HA error log with deduplication and filtering.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runLog(cmd.Context(), cmd.OutOrStdout(), cmd.Flags().Changed("since"))
+		return runLog(cmd, cmd.OutOrStdout(), cmd.Flags().Changed("since"))
 	},
 }
 
@@ -65,7 +65,8 @@ func init() {
 	rootCmd.AddCommand(logCmd)
 }
 
-func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
+func runLog(cmd *cobra.Command, w io.Writer, sinceSet bool) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -79,6 +80,10 @@ func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	if entries, err = applyLogSince(entries, sinceSet); err != nil {
 		return err
 	}
+	// Before the level and component filters run — see emptyListing. --since
+	// is deliberately outside the count: it bounds which log the caller is
+	// asking about rather than narrowing an answer within it.
+	total := len(entries)
 
 	// --errors and --warnings are additive: either alone narrows to that
 	// level; together they surface both (the "what went wrong" signal, since
@@ -93,6 +98,10 @@ func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	entries = analyze.FilterByLevels(entries, levels...)
 	if flagLogComponent != "" {
 		entries = analyze.FilterByComponent(entries, flagLogComponent)
+	}
+
+	if len(entries) == 0 {
+		return emptyListing(cmd, w, "log entries", total)
 	}
 
 	if flagLogUnique {

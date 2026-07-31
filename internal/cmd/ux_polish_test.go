@@ -95,11 +95,17 @@ func TestSvcCall_NoReturn(t *testing.T) {
 	}
 }
 
-// TestAutoLs_Failing_EmptyHint verifies that failingEmptyHint returns a useful string.
+// TestAutoLs_Failing_EmptyHint verifies that --failing's extra line stays
+// actionable, and that it is offered ONLY when --failing was typed: it used to
+// be the whole message from an early exit, so `auto ls --pattern zzz --failing`
+// named one of the two narrowings the caller had applied.
 func TestAutoLs_Failing_EmptyHint(t *testing.T) {
-	hint := failingEmptyHint()
-	if !strings.Contains(hint, "hactl log") {
-		t.Errorf("failing empty hint should mention 'hactl log', got: %q", hint)
+	hints := failingHints(true)
+	if len(hints) != 1 || !strings.Contains(hints[0], "hactl log") {
+		t.Errorf("failing empty hint should mention 'hactl log', got: %q", hints)
+	}
+	if got := failingHints(false); got != nil {
+		t.Errorf("a listing that did not filter by --failing must not be told about it, got: %q", got)
 	}
 }
 

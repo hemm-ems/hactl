@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -27,6 +29,29 @@ import (
 var helperDomains = []string{
 	"input_boolean", "input_number", "input_select", "input_text",
 	"input_datetime", "input_button", "counter", "timer", "schedule",
+}
+
+// helperCreateDomains is the narrower set `helper create` can write: the
+// companion's own ALLOWED_DOMAINS, which is helperDomains minus input_button —
+// input_button exists only as a UI collection and has no YAML schema at all.
+//
+// Two sets rather than one, because read and write have different reach and a
+// single list would have to be wrong for one of them. The companion says the
+// same thing in the same words (`STORAGE_DOMAINS > ALLOWED_DOMAINS`), and
+// TestE2EHelperCreateDomainSetMatchesTheCompanionCLI holds this copy to the
+// companion's by asking it, so the mirror cannot drift into folklore.
+//
+// The set is checked locally because the companion's is not the only gate a
+// create passes, and the other one answers a DIFFERENT question. C-10's wiring
+// probe asks whether Home Assistant reads `<domain>` config from a file this
+// route can extend — true of `script`, `automation` and `template`, none of
+// which `helper create` may write. So `helper create script -f x.yaml` printed
+// "dry-run: would create helper" at exit 0 while --confirm answers 400
+// "Invalid helper domain" (H-2). One predicate was standing in for two
+// questions, which is the same shape as live-fire #24 and D-24.
+var helperCreateDomains = []string{
+	"counter", "input_boolean", "input_datetime", "input_number",
+	"input_select", "input_text", "schedule", "timer",
 }
 
 // helperRow is one row in the merged helper listing: either a YAML helper
@@ -62,7 +87,7 @@ var helperLsCmd = &cobra.Command{
 		"with storage-backed helpers created in the HA UI (discovered live via the entity states), " +
 		"distinguished by a source column — only the yaml ones are editable via create/set/delete.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runHelperLs(cmd.Context(), cmd.OutOrStdout())
+		return runHelperLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -142,7 +167,8 @@ func runHelperCat(ctx context.Context, w io.Writer, helperID string) error {
 // .storage — invisible to the companion, which only ever reads/writes YAML).
 // Most real instances create helpers in the UI, so listing YAML alone reports
 // "no helpers" while dozens exist live. See issue #71.
-func runHelperLs(ctx context.Context, w io.Writer) error {
+func runHelperLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -167,6 +193,9 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 		return err
 	}
 	rows = append(rows, storage...)
+	// Before the filters run: the number that tells a caller whether their
+	// filter missed or the instance is empty. See emptyListing.
+	total := len(rows)
 
 	if flagHelperDomain != "" {
 		rows = filterHelperRowsByDomain(rows, flagHelperDomain)
@@ -179,7 +208,7 @@ func runHelperLs(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(rows) == 0 {
-		return emitEmptyList(w, "no helpers")
+		return emptyListing(cmd, w, "helpers", total)
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
@@ -259,10 +288,20 @@ func fetchStorageHelpers(ctx context.Context, skip map[string]bool) ([]helperRow
 	return rows, nil
 }
 
+// filterHelperRowsByDomain keeps rows in exactly one domain, matched without
+// regard to case (D-2).
+//
+// It compared with `==` while --pattern and --name in the same command were
+// explicitly case-insensitive, so `helper ls --domain INPUT_BOOLEAN` answered
+// for 60 real input_boolean helpers — and answered it through the same "no
+// helpers" line that claims the instance holds none. Domain names are always
+// lowercase in HA, which is precisely why nothing here had a stake in the
+// answer and why the pole had to be decided rather than harmonised toward the
+// flag with nothing to lose.
 func filterHelperRowsByDomain(rows []helperRow, domain string) []helperRow {
 	out := make([]helperRow, 0, len(rows))
 	for _, r := range rows {
-		if r.Domain == domain {
+		if strings.EqualFold(r.Domain, domain) {
 			out = append(out, r)
 		}
 	}
@@ -351,6 +390,13 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 		return errors.New("--file / -f is required for create")
 	}
 
+	// The domain first, and locally: it decides which file is written, it is
+	// knowable without asking anything, and the remote probe below cannot
+	// answer it (see helperCreateDomains).
+	if domainErr := validHelperCreateDomain(domain); domainErr != nil {
+		return domainErr
+	}
+
 	data, err := os.ReadFile(flagHelperFile) //nolint:gosec // file path provided by user via CLI flag
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
@@ -364,6 +410,13 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	helperID, err := helperCreateID(content)
 	if err != nil {
 		return err
+	}
+
+	// The id, still locally, and before the network: it is the object_id half
+	// of the entity_id this create promises to mint, and Home Assistant's own
+	// rule decides whether that is a usable one.
+	if idErr := validHelperCreateID(domain, helperID); idErr != nil {
+		return idErr
 	}
 
 	if !flagHelperConfirm {
@@ -416,6 +469,46 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	}
 	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)
+}
+
+// validHelperCreateDomain refuses a domain `helper create` cannot write, in
+// the companion's own words and before anything is planned or sent.
+func validHelperCreateDomain(domain string) error {
+	if slices.Contains(helperCreateDomains, domain) {
+		return nil
+	}
+	return fmt.Errorf("invalid helper domain: %s. Allowed: %s",
+		domain, strings.Join(helperCreateDomains, ", "))
+}
+
+// validHelperCreateID refuses an id Home Assistant cannot turn into an entity.
+//
+// The helper id is the object_id half of `<domain>.<id>` — the companion mints
+// exactly that entity_id and hactl prints it on success — so the rule is
+// haapi.ValidEntityID applied to the id this create will produce, which is HA's
+// own VALID_ENTITY_ID mirrored clause by clause and pinned to the running
+// container by TestOracleEntityIDRule.
+//
+// Nothing checked it anywhere: hactl echoed `id: pg w1 space`, `id:
+// pg_w1_umlaut_öäü` and a 226-character id back as a plan at exit 0, and the
+// companion writes whatever key it is handed. The harm is not the plan. HA
+// validates a helper file with `cv.schema_with_slug_keys`, which fails the
+// WHOLE mapping on one bad key — so a single unusable id written into a shared
+// per-domain file takes every working helper in that file down with it, and
+// `check_config` reports it as a config error nowhere near the write.
+//
+// HA's slug rule and this one differ on exactly one input, the empty string:
+// `cv.slug("")` passes (slugify("") == "") while `input_boolean.` is not an
+// entity_id anybody can address. Being stricter there is refusing something HA
+// would accept into the file and then fail to build an entity from — and a
+// blank identifier never resolves to anything in this CLI anyway (#45/#92).
+func validHelperCreateID(domain, helperID string) error {
+	if haapi.ValidEntityID(domain + "." + helperID) {
+		return nil
+	}
+	return fmt.Errorf("helper id %q is not usable: Home Assistant would create %q, and an entity_id "+
+		"is lowercase letters, digits and single underscores, not starting or ending with one "+
+		"(no spaces, accents, capitals or dots)", helperID, domain+"."+helperID)
 }
 
 // helperCreateID validates a `helper create` input and returns the helper id

@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +76,7 @@ func TestRunHelperLs_UnionsStorageAndYAML(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs: %v", err)
 	}
 	out := buf.String()
@@ -120,7 +120,7 @@ func TestRunHelperLs_StorageOnly_NoLongerReportsNoHelpers(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs: %v", err)
 	}
 	out := buf.String()
@@ -155,7 +155,7 @@ func TestRunHelperLs_DomainFilter_ReachesStorageOnlyDomain(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs --domain input_button: %v", err)
 	}
 	out := buf.String()
@@ -178,7 +178,7 @@ func TestRunHelperLs_JSON_Mixed(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON: %v", err)
 	}
 	v := assertValidJSON(t, buf.String())
@@ -212,7 +212,7 @@ func TestRunHelperLs_JSON_Empty(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON empty: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -233,7 +233,7 @@ func TestRunHelperLs_JSON_Empty_HAUnreachable(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON, HA unreachable: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -256,7 +256,7 @@ func TestRunHelperLs_PatternAndNameFilters(t *testing.T) {
 		defer func() { flagHelperPattern, flagHelperName = oldP, oldN }()
 		set()
 		var buf bytes.Buffer
-		if err := runHelperLs(context.Background(), &buf); err != nil {
+		if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 			t.Fatalf("runHelperLs: %v", err)
 		}
 		return buf.String()
