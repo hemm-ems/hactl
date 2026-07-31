@@ -50,3 +50,20 @@ func checkHelperDomainWired(ctx context.Context, cc *companion.Client, domain st
 	}
 	return errors.New(verdict.Reason)
 }
+
+// warnIfReformatted surfaces the companion's C-14 fallback on a write result.
+//
+// A single-entry write normally splices only that entry's lines. When the
+// companion cannot — an anchor whose definition lived in the replaced entry, a
+// layout its span arithmetic does not cover — it re-serializes the whole file
+// and says so with `reformatted: true`. Formatting of entries the caller never
+// touched may then have changed, which matters to anyone keeping config in git.
+// Staying silent would let a whole-file rewrite read as the surgical write it
+// was not, which is the defect the field exists to make visible.
+func warnIfReformatted(res *writeResult, reformatted bool) *writeResult {
+	if !reformatted {
+		return res
+	}
+	return res.warn("the whole file was re-serialized, not just this entry — " +
+		"formatting elsewhere in the file may have changed")
+}

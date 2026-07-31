@@ -912,6 +912,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	if !resp.Reloaded {
 		res = res.warn("script written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
 	}
+	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)
 }
 

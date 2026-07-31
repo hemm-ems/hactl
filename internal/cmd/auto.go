@@ -1193,6 +1193,7 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 			res = res.text("note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id", resp.EntityID, resp.ID)
 		}
 	}
+	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)
 }
 

@@ -414,6 +414,7 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	default:
 		res = res.text("entity_id: %s", resp.EntityID)
 	}
+	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)
 }
 

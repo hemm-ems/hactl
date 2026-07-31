@@ -170,6 +170,14 @@ type TemplateCreateResponse struct {
 	// Absent on success. Decoded because a bare `reloaded: false` sends an
 	// operator hunting for a reason the companion already had.
 	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // ScriptDefinition represents a script definition.
@@ -201,6 +209,14 @@ type ScriptCreateResponse struct {
 	// Absent on success. Decoded because a bare `reloaded: false` sends an
 	// operator hunting for a reason the companion already had.
 	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // AutomationDefinition represents an automation definition.
@@ -233,6 +249,14 @@ type AutomationCreateResponse struct {
 	// Absent on success. Decoded because a bare `reloaded: false` sends an
 	// operator hunting for a reason the companion already had.
 	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // CheckConfigResponse is the response from POST /v1/ha/check-config. Valid is a
@@ -261,6 +285,14 @@ type ConfigDeleteResponse struct {
 	// Absent on success. Decoded because a bare `reloaded: false` sends an
 	// operator hunting for a reason the companion already had.
 	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // HelperDefinition represents a helper entity definition.
@@ -311,6 +343,14 @@ type HelperCreateResponse struct {
 	// Absent on success. Decoded because a bare `reloaded: false` sends an
 	// operator hunting for a reason the companion already had.
 	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // --- WireGuard ---
