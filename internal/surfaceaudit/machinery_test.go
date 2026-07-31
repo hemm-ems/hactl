@@ -278,6 +278,20 @@ func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
 	if err := os.WriteFile(filepath.Join(dir, "thing.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The surface now reads docs/manual.md as well — the sentence that MAKES the
+	// promise is the second derivation, after the first (a parameter-name
+	// convention) missed `trace show` for a release (#66). The fixture tree needs
+	// the claim for the same reason it needs a thing.go: an extractor is being
+	// exercised, so both of its inputs have to be there.
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	claim := "**Automation identifiers:** every command that takes an automation — " +
+		"`auto show|cat` — accepts any of its interchangeable names.\n"
+	if err := os.WriteFile(filepath.Join(docs, "manual.md"), []byte(claim), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	s, err := surfaceaudit.AutomationRefSurface(root)
 	if err != nil {

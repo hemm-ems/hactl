@@ -127,13 +127,14 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		Rows:    make([][]string, len(entries)),
 	}
 	tbl.SetWidth("message", 50)
+	tbl.SetTimeColumn("time")
 	for i, e := range entries {
 		msg := e.Message
 		if msg == "" {
 			msg = e.Name
 		}
 		tbl.Rows[i] = []string{
-			formatShortTime(e.When),
+			e.When,
 			e.EntityID,
 			e.State,
 			triggerLabel(e, users),

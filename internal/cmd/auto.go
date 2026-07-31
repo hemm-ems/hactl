@@ -302,7 +302,7 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		}
 	}
 
-	headers := []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"}
+	headers := []string{"id", "state", "area", "labels", runsColumn(flagSince), "errors", "last_err"}
 	if anyRestored {
 		headers = append(headers, restoredColumn)
 	}
@@ -448,6 +448,8 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 		Headers: []string{"id", "time", "result", "last_step"},
 		Rows:    make([][]string, len(recent)),
 	}
+	// The cell carries the instant; the column decides its shape (#71).
+	tbl.SetTimeColumn("time")
 	res.Traces = make([]autoShowTrace, len(recent))
 	for i, tr := range recent {
 		traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
@@ -455,7 +457,7 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 
 		tbl.Rows[i] = []string{
 			shortID,
-			formatShortTime(tr.Timestamp.Start),
+			tr.Timestamp.Start,
 			traceResult(tr),
 			tr.LastStep,
 		}

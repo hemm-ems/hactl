@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -1073,10 +1074,85 @@ const automationResolver = "resolveAutomation"
 
 // automationTargetParam reports whether a run-entrypoint's target parameter is
 // an automation reference, by the package's own naming convention: the
-// caller-supplied identifier is named autoID or automationID, and nothing else
-// in internal/cmd names a parameter that way.
+// caller-supplied identifier is named autoID or automationID.
+//
+// It is ONE of the two derivations, and on its own it was wrong. `trace show`'s
+// parameter is `traceID`, so the command the manual's D-1 paragraph names in the
+// same breath as `auto show` was invisible to this surface — and refused all
+// four identifier forms while H-17 asserted it accepted them (#66). A membership
+// rule read off a local naming convention can only ever cover the sites that
+// followed the convention.
 func automationTargetParam(name string) bool {
 	return strings.Contains(strings.ToLower(name), "auto")
+}
+
+// automationIdentifierClaim is the line in docs/manual.md that makes the promise
+// this surface enforces.
+const automationIdentifierClaim = "**Automation identifiers:**"
+
+// commandsPromisedTheIdentifierContract reads the manual's own statement of D-1
+// and returns the `run…` entrypoints it names.
+//
+// The manual is the SPEC — "every command that takes an automation — `auto
+// show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
+// interchangeable names" — and the second derivation is simply to hold the code
+// to the sentence the product ships. A command added to that list is on this
+// surface the moment the sentence is written, which is the order the project's
+// own "spec before code" ritual asks for.
+func commandsPromisedTheIdentifierContract(root string) ([]string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "manual.md")) //nolint:gosec // a fixed path under the repository root
+	if err != nil {
+		return nil, fmt.Errorf("reading the manual: %w", err)
+	}
+	idx := strings.Index(string(raw), automationIdentifierClaim)
+	if idx < 0 {
+		return nil, fmt.Errorf("docs/manual.md no longer contains %q — the claim this surface enforces has moved or gone",
+			automationIdentifierClaim)
+	}
+	claim := string(raw)[idx:]
+	if end := strings.Index(claim, "accepts any of its"); end > 0 {
+		claim = claim[:end]
+	}
+	var out []string
+	for _, span := range backtickedSpans(claim) {
+		// "auto show|cat|diff|apply|delete|rollback" and "trace show".
+		family, verbs, ok := strings.Cut(span, " ")
+		if !ok {
+			continue
+		}
+		for verb := range strings.SplitSeq(verbs, "|") {
+			out = append(out, "run"+title(family)+title(verb))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// backtickedSpans returns the `…` spans of a fragment of markdown.
+func backtickedSpans(s string) []string {
+	var out []string
+	for {
+		start := strings.Index(s, "`")
+		if start < 0 {
+			return out
+		}
+		s = s[start+1:]
+		end := strings.Index(s, "`")
+		if end < 0 {
+			return out
+		}
+		out = append(out, s[:end])
+		s = s[end+1:]
+	}
+}
+
+// title upper-cases the first rune, which is all the manual's command words need
+// to become the Go identifiers internal/cmd uses.
+func title(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // AutomationRefSurface is every command entrypoint that takes an automation
@@ -1105,6 +1181,10 @@ func AutomationRefSurface(root string) (Surface, error) {
 		Rule:       "an automation reference reaches resolveAutomation, so every command accepts every identifier form the family prints",
 		AllowEmpty: true,
 	}
+	promised, err := commandsPromisedTheIdentifierContract(root)
+	if err != nil {
+		return Surface{}, err
+	}
 	cmdFuncs := packageFuncs(files, "internal/cmd/")
 	for _, f := range files {
 		if !strings.HasPrefix(f.rel, "internal/cmd/") {
@@ -1116,17 +1196,29 @@ func AutomationRefSurface(root string) (Surface, error) {
 				continue
 			}
 			target, _ := runFuncTarget(fn)
-			if target == "" || !automationTargetParam(target) {
+			if target == "" {
+				continue
+			}
+			// Two derivations, unioned: the package's naming convention, and
+			// the manual's own list of the commands that make the promise. The
+			// first alone missed `trace show` for a release (#66).
+			byName := automationTargetParam(target)
+			byClaim := slices.Contains(promised, fn.Name.Name)
+			if !byName && !byClaim {
 				continue
 			}
 			if reachesFunc(fn, automationResolver, cmdFuncs) {
 				continue
 			}
+			why := "takes " + target + " and never passes it through " + automationResolver
+			if byClaim {
+				why = "docs/manual.md promises this command accepts every automation identifier, and it never reaches " + automationResolver
+			}
 			s.Sites = append(s.Sites, Site{
 				Key:  f.rel + ":" + fn.Name.Name,
 				File: f.rel,
 				Line: f.fset.Position(fn.Pos()).Line,
-				Note: "takes " + target + " and never passes it through " + automationResolver,
+				Note: why,
 			})
 		}
 	}

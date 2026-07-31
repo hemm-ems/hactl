@@ -43,6 +43,22 @@ type SchemaField struct {
 	// Schema holds the nested fields of an "expandable" section. When set, the
 	// field's values must be submitted nested under Name, e.g. {"advanced": {...}}.
 	Schema []SchemaField `json:"schema,omitempty"`
+	// Suggested is the value HA proposes for this field —
+	// `description.suggested_value` on the wire. For an OPTIONS flow it is the
+	// entry's current configuration, which is the whole difference between an
+	// options flow and a fresh config flow: `config show --probe-options-flow`
+	// exists to surface exactly this. It was on the wire and decoded nowhere,
+	// so `flow-inspect --options` rendered an empty Default column beside a
+	// field whose current value HA had just sent (#83).
+	Suggested any `json:"suggested_value,omitempty"`
+	// Selector is the KIND of selector HA wrapped this field in — "number",
+	// "select", "entity", "device", "template", … — read from the single key of
+	// the `selector` object. A modern HA schema types its fields this way and
+	// leaves `type` empty, so every selector-backed field rendered as the
+	// fallback "string": a number, a 28-value enum, an entity picker and a
+	// device picker were indistinguishable in the table while --json carried
+	// the difference (#82).
+	Selector string `json:"selector,omitempty"`
 }
 
 // flowRawResponse is the raw shape of the HA flow API response, used for parsing.
@@ -131,22 +147,36 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 	var fields []SchemaField
 	for _, fieldRaw := range rawFields {
 		var field struct {
-			Default  any               `json:"default"`
-			Name     string            `json:"name"`
-			Type     string            `json:"type"`
-			Required bool              `json:"required"`
-			Options  []json.RawMessage `json:"options"`
-			Schema   []json.RawMessage `json:"schema"`
+			Default     any               `json:"default"`
+			Name        string            `json:"name"`
+			Type        string            `json:"type"`
+			Required    bool              `json:"required"`
+			Options     []json.RawMessage `json:"options"`
+			Schema      []json.RawMessage `json:"schema"`
+			Selector    json.RawMessage   `json:"selector"`
+			Description struct {
+				SuggestedValue any `json:"suggested_value"`
+			} `json:"description"`
 		}
 		if err := json.Unmarshal(fieldRaw, &field); err != nil {
 			continue
 		}
+		kind, selOptions := parseSelector(field.Selector)
 		sf := SchemaField{
-			Name:     field.Name,
-			Required: field.Required,
-			Type:     field.Type,
-			Default:  field.Default,
-			Options:  parseSelectOptions(field.Options),
+			Name:      field.Name,
+			Required:  field.Required,
+			Type:      field.Type,
+			Default:   field.Default,
+			Options:   parseSelectOptions(field.Options),
+			Suggested: field.Description.SuggestedValue,
+			Selector:  kind,
+		}
+		// A select selector carries its choices inside the selector rather than
+		// beside it, and those are the SUBMITTABLE values — the same thing the
+		// top-level `options` list holds for the older shape. One list, so the
+		// renderer that already prints choices prints these too.
+		if len(sf.Options) == 0 {
+			sf.Options = selOptions
 		}
 		if len(field.Schema) > 0 {
 			sf.Schema = parseSchemaFields(field.Schema)
@@ -154,6 +184,43 @@ func parseSchemaFields(rawFields []json.RawMessage) []SchemaField {
 		fields = append(fields, sf)
 	}
 	return fields
+}
+
+// parseSelector reads the KIND of selector a field is wrapped in, and a select
+// selector's submittable values.
+//
+// HA sends `"selector": {"<kind>": {…}}` — exactly one key, and that key IS the
+// kind. Reading it rather than matching a list of known kinds is the point: a
+// selector HA adds next month types its field correctly here without anybody
+// touching this function, and the alternative (a hand-written map) is the shape
+// that made every one of them render as "string" (#82).
+//
+// The inner object is only inspected for `select`, whose `options` are the
+// values a caller may submit. Everything else about a selector — a number's
+// min/max, an entity picker's domain filter — is a constraint hactl does not
+// enforce and would only be repeating.
+func parseSelector(raw json.RawMessage) (kind string, options []string) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wrapper); err != nil || len(wrapper) != 1 {
+		return "", nil
+	}
+	var inner json.RawMessage
+	for k, v := range wrapper {
+		kind, inner = k, v
+	}
+	if kind != "select" {
+		return kind, nil
+	}
+	var sel struct {
+		Options []json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(inner, &sel); err != nil {
+		return kind, nil
+	}
+	return kind, parseSelectOptions(sel.Options)
 }
 
 // parseSelectOptions normalizes a select's options to their submittable
@@ -172,6 +239,16 @@ func parseSelectOptions(raw []json.RawMessage) []string {
 			if v, ok := pair[0].(string); ok {
 				out = append(out, v)
 			}
+			continue
+		}
+		// The third shape, which a select SELECTOR uses:
+		// {"value": "battery", "label": "Battery"}. Only the value is
+		// submittable, so only the value is kept.
+		var obj struct {
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal(o, &obj); err == nil && obj.Value != "" {
+			out = append(out, obj.Value)
 		}
 	}
 	return out

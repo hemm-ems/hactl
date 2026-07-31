@@ -115,7 +115,15 @@ var unidentifiedWireStructs = map[string]string{
 // Keyed by name rather than by line so the table survives edits above it.
 var uncheckedDecodeSites = map[string]string{
 	// Targets with no identity to check — see unidentifiedWireStructs.
-	"internal/haapi/flow.go:ConfigFlowHandlers:handlers":     "decodes into []string",
+	"internal/haapi/flow.go:ConfigFlowHandlers:handlers": "decodes into []string",
+	// The three legs of reading a modern HA form field's type (#82). None can
+	// render a zero value as an answer: an absent or unreadable selector leaves
+	// the field's own `type` in place and the table falls back to "string",
+	// which is what an unadorned field IS — and a select whose options do not
+	// decode prints no choice list, exactly as before this existed.
+	"internal/haapi/flow.go:parseSelector:wrapper":           "an unreadable selector leaves the field's declared type",
+	"internal/haapi/flow.go:parseSelector:sel":               "a select with no readable options prints no choices",
+	"internal/haapi/flow.go:parseSelectOptions:obj":          "one option shape of three; a miss skips that option",
 	"internal/haapi/lovelace.go:ParseViewSummary:v":          "LovelaceViewSummary has no identity",
 	"internal/haapi/lovelace.go:ParseLovelaceConfig:cfg":     "LovelaceConfig has no identity",
 	"internal/haapi/websocket.go:DashboardConfigSave:parsed": "validates hactl's own outgoing body",
@@ -123,10 +131,10 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/haapi/lovelace.go:LovelaceStrategyType:doc": "an ABSENT strategy is the answer for " +
 		"every ordinary dashboard, so a zero decode here is the common case rather than a " +
 		"degenerate one — the caller has already parsed the same document for its views",
-	"internal/cmd/dash.go:showSingleView:v":                  "decodes one raw view into any, for YAML re-encoding",
-	"internal/cmd/svc.go:runSvcCall:data":                    "decodes the user's own --data argument",
-	"internal/cmd/flow.go:diagnosticsConfigData:envelope":    "raw diagnostics passthrough, with an explicit fallback",
-	"internal/cmd/flow.go:runConfigFlowStep:rawData":         "decodes the user's own --data argument",
+	"internal/cmd/dash.go:showSingleView:v":               "decodes one raw view into any, for YAML re-encoding",
+	"internal/cmd/svc.go:runSvcCall:data":                 "decodes the user's own --data argument",
+	"internal/cmd/flow.go:diagnosticsConfigData:envelope": "raw diagnostics passthrough, with an explicit fallback",
+	"internal/cmd/flow.go:runConfigFlowStep:rawData":      "decodes the user's own --data argument",
 	"internal/cmd/states.go:decodeStateAttributes:attrs": "decodes ONE entity's attributes into " +
 		"automationAttributes/scriptAttributes, both of which are legitimately empty on a restored " +
 		"ghost (see unidentifiedWireStructs); the record's identity lives on the statesEnvelope " +
@@ -158,9 +166,9 @@ var uncheckedDecodeSites = map[string]string{
 	// Raw JSON walked structurally or re-encoded, never rendered as a record.
 	"internal/cmd/dash.go:walkDashboardConfigs:root": "walked by jsonwalk, not rendered; the one " +
 		"dashboard walk every scan goes through",
-	"internal/cmd/dash.go:dashReplaceOne:root": "walked by jsonwalk, not rendered",
-	"internal/cmd/dash.go:runDashShow:v":       "raw config decoded into any for YAML re-encoding",
-	"internal/cmd/dash.go:runDashShow:buf":     "raw config round-trip for re-indenting",
+	"internal/cmd/dash.go:dashReplaceOne:root":  "walked by jsonwalk, not rendered",
+	"internal/cmd/dash.go:runDashShow:v":        "raw config decoded into any for YAML re-encoding",
+	"internal/cmd/dash.go:runDashShow:buf":      "raw config round-trip for re-indenting",
 	"internal/cmd/trace.go:runTraceShow:pretty": "re-indents the raw trace for display",
 	"internal/cmd/trace.go:runTraceShow:raw":    "analyze.FormatCondensed spells its own UNPARSED (H-7)",
 

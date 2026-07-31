@@ -1148,7 +1148,10 @@ The `ent hist` expectations have no such licence and are computed from HA's raw
 series at test time (count, min, max, mean, span).
 
 - Enforced by: `internal/integration/backfill_test.go`, `TestRecorderBackfill` —
-  `make test-int` (Docker tier). Subtests: `rig_lands_in_has_own_history` (the
+  `make test-int` (Docker tier); `internal/cmd/since_runs_test.go`
+  (`TestRunsColumnNamesTheWindowItCounted`, over the default and three other
+  windows); sweep case `TestSweepACountNamesTheWindowItCounted` (both
+  profiles). Subtests: `rig_lands_in_has_own_history` (the
   rig writes what HA reads back, and HA's attribute-only filter still behaves as
   the row shape assumes), `anomalies_finds_injected_gap`,
   `anomalies_finds_injected_stuck_run`, `anomalies_finds_injected_spike` (each
@@ -1296,6 +1299,18 @@ because a listing that grows a sixth filter is exactly the site an enumeration
 forgets — the same mechanism that let three `--domain` filters sit outside the
 D-2 case pole for as long as that pole's set was four names typed into a test.
 
+**The column's NAME is part of the count.** It was `runs_24h` whatever `--since`
+said, so `auto ls --since 1h --json` answered `"runs_24h": "0"` for a count that
+covered one hour (live-fire #72). The number was right; the key was a claim
+about it that the invocation contradicted, and a JSON consumer that trusts the
+key over the command line that produced it reads the wrong thing. The name is
+derived from the flag — `runs_24h` at the default, `runs_1h` under `--since 1h`,
+`runs` for a window that cannot be spelled inside an identifier — so it cannot
+fall out of step with it, and no caller who left `--since` alone sees any change
+at all. This is H-11's reconciliation rule one layer up from the count: a label
+is kept in step with what it labels by being the same expression, never by a
+second copy of it.
+
 - Enforced by: `internal/cmd/auto_test.go` —
   `TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints`,
   `TestFilterAutosByPattern_AcceptsTheAliasHactlPrints`,
@@ -1339,7 +1354,25 @@ D-2 case pole for as long as that pole's set was four names typed into a test.
   name cannot pass; `TestEmptyListingCountsTheInventoryItSearched`,
   `TestEmptyListingUnderJSONIsStillAnArray`).
 
-## H-18 — `runs_24h` counts runs, and it counts the same runs `auto show` lists
+**`trace show` was named in this law's own statement and refused every form of
+it.** docs/manual.md says: "every command that takes an automation — `auto
+show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
+interchangeable names". All four were answered `invalid trace ID format`
+(live-fire #66), and "invalid" was the wrong word: the forms are valid, they
+address an automation rather than one of its runs. The command now resolves such
+a reference through `resolveAutomation` and shows the automation's most recent
+stored run.
+
+The reason the gate did not catch it is the more important half. The
+`autoref` surface derived its membership from the PARAMETER NAME of each
+entrypoint — `autoID`, `automationID` — and `trace show`'s is `traceID`, so the
+one command the manual names outside the `auto` family was invisible to the rule
+it was named in. A membership test read off a local naming convention covers
+exactly the sites that followed the convention. The surface now unions that
+derivation with a second one: the commands the manual's own sentence lists.
+The spec makes the promise, so the spec decides the set.
+
+## H-18 — The run count counts runs, it counts the same runs `auto show` lists, and its name is the window it counted
 
 A **run** is a trigger whose conditions passed: the automation entered its
 actions. An errored run is still a run — the `errors` column reports it, not the

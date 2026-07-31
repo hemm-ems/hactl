@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -2374,13 +2375,19 @@ func TestResolveTraceID_DirectKey(t *testing.T) {
 	}
 }
 
-func TestResolveTraceID_InvalidFormat(t *testing.T) {
+// TestResolveTraceID_NeitherAddressForm was TestResolveTraceID_InvalidFormat,
+// and the rename is the fix (#66): "invalid_format" is not invalid, it is an
+// automation reference, and calling it malformed is what made `trace show
+// 24v_booster_schalten` refuse an identifier the manual promises it accepts.
+// The assertion is now on the SENTINEL rather than on "an error", because the
+// caller branches on it.
+func TestResolveTraceID_NeitherAddressForm(t *testing.T) {
 	idsPath := filepath.Join(t.TempDir(), "ids.json")
 	reg := idsRegistry(idsPath)
 
 	_, _, _, err := resolveTraceID(reg, "invalid_format") //nolint:dogsled
-	if err == nil {
-		t.Fatal("expected error for invalid format, got nil")
+	if !errors.Is(err, errNotATraceReference) {
+		t.Fatalf("resolveTraceID = %v, want errNotATraceReference", err)
 	}
 }
 

@@ -265,6 +265,8 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		Headers: headers,
 		Rows:    make([][]string, len(states)),
 	}
+	// The cell carries the instant; the column decides its shape (#71).
+	tbl.SetTimeColumn("last_changed")
 	// A state wider than the column is shortened for the reader only. It used
 	// to be shortened here, so `ent ls --json` answered
 	// `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's 4486
@@ -283,7 +285,7 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 			s.State,
 			areaName,
 			lblNames,
-			formatShortTime(s.LastChanged),
+			s.LastChanged,
 		}
 		if anyRestored {
 			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
@@ -758,10 +760,11 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, a := range anomalies {
 		tbl.Rows[i] = []string{
 			string(a.Type),
-			formatShortTime(a.Start.Format(time.RFC3339)),
+			a.Start.Format(time.RFC3339),
 			a.Detail,
 		}
 		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
@@ -987,9 +990,10 @@ func renderStateTimeline(w io.Writer, entityID string, changes []analyze.StateCh
 		Headers: []string{"time", "state", "duration"},
 		Rows:    make([][]string, len(changes)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, c := range changes {
 		tbl.Rows[i] = []string{
-			formatShortTime(c.Time.Format(time.RFC3339)),
+			c.Time.Format(time.RFC3339),
 			c.State,
 			formatDuration(c.Duration),
 		}
@@ -1030,10 +1034,11 @@ func renderStateAnomalies(w io.Writer, entityID string, changes []analyze.StateC
 		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, a := range anomalies {
 		tbl.Rows[i] = []string{
 			string(a.Type),
-			formatShortTime(a.Start.Format(time.RFC3339)),
+			a.Start.Format(time.RFC3339),
 			a.Detail,
 		}
 		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
@@ -1088,9 +1093,10 @@ func renderHistoryPoints(w io.Writer, entityID string, points []analyze.DataPoin
 		Headers: []string{"time", "value"},
 		Rows:    make([][]string, len(points)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, p := range points {
 		tbl.Rows[i] = []string{
-			formatShortTime(p.Time.Format(time.RFC3339)),
+			p.Time.Format(time.RFC3339),
 			strconv.FormatFloat(p.Value, 'f', 2, 64),
 		}
 		tbl.SetMachine(i, "time", formatMachineTime(p.Time.Format(time.RFC3339)))

@@ -246,7 +246,7 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"},
+		Headers: []string{"id", "state", "area", "labels", runsColumn(flagSince), "errors", "last_err"},
 		Rows:    make([][]string, len(rows)),
 	}
 	for i, r := range rows {

@@ -607,9 +607,6 @@ func TestRigFixtureCarriesTheErrorLogShapes(t *testing.T) {
 // from a shape nobody has thought of, and the second is how a suite acquires a
 // blind spot it cannot report. Delete a row when the shape lands.
 var rigCapabilityDebt = map[string]string{
-	"R7": "config entries with options flows and selector-typed schemas — the rig's entries come " +
-		"from default_config and none of them has an options flow, so #82 #83 #84 have no " +
-		"shape to fail against; WP9 builds it",
 	"R8": "two writers against one target — needs drivers, not a fixture, so it is harness work " +
 		"rather than a shape; WP11 builds it",
 	"R11": "a companion beside the rig's Home Assistant — hatest boots HA alone and writes a .env " +

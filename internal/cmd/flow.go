@@ -723,9 +723,7 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 		// expired or was never started reads exactly like a live one in a
 		// preview that never asks HA about it.
 		if _, inspectErr := client.InspectFlow(ctx, flowID, flagFlowOptions); inspectErr != nil {
-			return fmt.Errorf("no in-progress %s with id %q "+
-				"(flows expire; start one with 'config flow-start' or 'config options'): %w",
-				endpoint, flowID, inspectErr)
+			return flowLookupError(flowID, flagFlowOptions, inspectErr)
 		}
 		return dryRun("submit data to advance the flow").
 			with("flow_id", flowID).
@@ -737,7 +735,7 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 
 	data, err := client.StepFlow(ctx, flowID, flagFlowOptions, rawData)
 	if err != nil {
-		return fmt.Errorf("stepping flow: %w", err)
+		return flowLookupError(flowID, flagFlowOptions, fmt.Errorf("stepping flow: %w", err))
 	}
 	return renderFlowResult(w, data)
 }
@@ -750,9 +748,39 @@ func runConfigFlowInspect(ctx context.Context, w io.Writer, flowID string) error
 	client := haapi.New(cfg.URL, cfg.Token)
 	data, err := client.InspectFlow(ctx, flowID, flagFlowOptions)
 	if err != nil {
-		return fmt.Errorf("inspecting flow: %w", err)
+		return flowLookupError(flowID, flagFlowOptions, fmt.Errorf("inspecting flow: %w", err))
 	}
 	return renderFlowResult(w, data)
+}
+
+// flowLookupError explains a flow id Home Assistant does not know.
+//
+// It exists because the explanation was a sentence inside ONE branch of ONE
+// command. `config flow-step <bad-id>` without --confirm said "flows expire;
+// start one with 'config flow-start' or 'config options'"; `config flow-inspect
+// <the same bad id>` said `inspecting flow: GET …: 404 Not Found:
+// {"message":"Invalid flow specified"}`, and `flow-step --confirm` said
+// `stepping flow: …` — three commands, one condition, and the help attached to
+// whichever one somebody was looking at when they wrote it (#84).
+//
+// The three causes HA answers identically are named, because a 404 alone does
+// not distinguish them and the reader's next action differs for each: the id
+// never existed, the flow expired or was aborted, or the id belongs to the
+// other endpoint and --options is missing or extra. The last is the one a
+// caller cannot guess, so it names the flag and the direction to move it.
+//
+// Anything other than a 404 passes through untouched: a 500 from HA is not a
+// caller mistake and telling them to check their flag would be a guess.
+func flowLookupError(flowID string, options bool, err error) error {
+	if status, ok := haapi.HTTPStatus(err); !ok || status != http.StatusNotFound {
+		return err
+	}
+	endpoint, other, flag := "config flow", "options flow", "add --options"
+	if options {
+		endpoint, other, flag = "options flow", "config flow", "drop --options"
+	}
+	return fmt.Errorf("no in-progress %s with id %q — it never existed, it expired or was aborted, "+
+		"or it belongs to the %s (%s): %w", endpoint, flowID, other, flag, err)
 }
 
 func runConfigFiles(ctx context.Context, w io.Writer) error {
@@ -966,11 +994,7 @@ func renderSchemaTable(w io.Writer, flow *haapi.FlowResult) error {
 	for _, s := range sections {
 		parts := make([]string, len(s.Schema))
 		for i, sub := range s.Schema {
-			typ := sub.Type
-			if typ == "" {
-				typ = "string"
-			}
-			parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, typ)
+			parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, schemaFieldType(sub))
 		}
 		_, _ = fmt.Fprintf(w, "\n%q is an expandable section — nest its fields in --data:\n", s.Name)
 		_, _ = fmt.Fprintf(w, "  {%q: {%s}}\n", s.Name, strings.Join(parts, ", "))
@@ -993,6 +1017,46 @@ func printSelectOptions(w io.Writer, f haapi.SchemaField, prefix string) {
 	}
 }
 
+// schemaFieldType is the word the Type column carries.
+//
+// A modern HA schema types its fields with a SELECTOR and leaves `type` empty,
+// so the fallback "string" was the answer for every one of them: a number, a
+// 28-value enum, an entity picker and a device picker all rendered identically
+// while --json carried the difference (#82). The selector kind is the type when
+// there is one; `type` is preferred when both are present, because that is the
+// field's own declaration; "string" remains the answer when HA said neither,
+// which is what an unadorned voluptuous string field is.
+func schemaFieldType(f haapi.SchemaField) string {
+	switch {
+	case f.Type != "":
+		return f.Type
+	case f.Selector != "":
+		return f.Selector
+	default:
+		return "string"
+	}
+}
+
+// schemaFieldDefault is the value the Default column carries.
+//
+// HA sends two different things and they mean different things: `default` is
+// what the field falls back to, and `description.suggested_value` is what HA
+// PROPOSES — for an options flow, the entry's current configuration. The second
+// was decoded nowhere, so `flow-inspect --options` on a template helper showed
+// an empty Default beside a `state` field whose current value `{{ true }}` was
+// in the same response (#83). The suggestion wins where both exist: it is the
+// more specific statement, and it is the one a caller re-submitting a form
+// wants to see.
+func schemaFieldDefault(f haapi.SchemaField) string {
+	if f.Suggested != nil {
+		return fmt.Sprintf("%v", f.Suggested)
+	}
+	if f.Default != nil {
+		return fmt.Sprintf("%v", f.Default)
+	}
+	return ""
+}
+
 // appendSchemaRows adds a schema field (and, for expandable sections, its
 // nested sub-fields) to the table. Sub-fields are shown with a dotted path
 // (e.g. "advanced.framerate") so the nesting is visible at a glance.
@@ -1005,15 +1069,7 @@ func appendSchemaRows(tbl *format.Table, f haapi.SchemaField, prefix string) {
 	if f.Required {
 		req = "yes"
 	}
-	def := ""
-	if f.Default != nil {
-		def = fmt.Sprintf("%v", f.Default)
-	}
-	typ := f.Type
-	if typ == "" {
-		typ = "string"
-	}
-	tbl.Rows = append(tbl.Rows, []string{name, typ, req, def})
+	tbl.Rows = append(tbl.Rows, []string{name, schemaFieldType(f), req, schemaFieldDefault(f)})
 	for _, sub := range f.Schema {
 		appendSchemaRows(tbl, sub, name)
 	}

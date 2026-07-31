@@ -7,6 +7,8 @@ import (
 	"maps"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/hemm-ems/hactl/internal/clock"
 )
 
 // Table holds tabular data for compact rendering.
@@ -27,6 +29,9 @@ type Table struct {
 	// Widths[header] caps how wide that column renders AS TEXT. Nil for the
 	// common table whose cells are short by nature. See SetWidth.
 	Widths map[string]int
+	// TimeColumns[header] says that column's cells are raw instants this type
+	// renders as a clock. Nil for a table with no time column. See SetTimeColumn.
+	TimeColumns map[string]bool
 }
 
 // SetWidth declares that a column is too wide to print and how wide it may be.
@@ -50,6 +55,30 @@ func (t *Table) SetWidth(header string, runes int) {
 		t.Widths = make(map[string]int, len(t.Headers))
 	}
 	t.Widths[header] = runes
+}
+
+// SetTimeColumn declares that a column holds raw Home Assistant timestamps,
+// which this type renders — rather than the call site.
+//
+// It is SetWidth's argument about a different value. Every renderer used to turn
+// the instant into a clock while ASSEMBLING the row, and the abbreviation
+// "today means no date" is a decision that can only be made correctly once the
+// whole column is known: `auto show`'s trace table printed `07-29 01:15` on four
+// rows and a bare `01:15` on the fifth, because that run started today (#71).
+// Nothing in the answer says so, and by the time the cells reach here the date
+// is gone — there is nothing left to undo, exactly as with a message cut to 60
+// characters before it arrived.
+//
+// The cell therefore carries the wire value and the column is rendered at
+// display time, after --top has decided which rows are shown: a date that only
+// appears because of a row nobody sees is a worse answer than the one it
+// replaced. JSON is untouched — the cell's raw instant is already the machine
+// contract (H-10), and SetMachine still wins where a site has a better one.
+func (t *Table) SetTimeColumn(header string) {
+	if t.TimeColumns == nil {
+		t.TimeColumns = make(map[string]bool, 1)
+	}
+	t.TimeColumns[header] = true
 }
 
 // SetMachine records the value row i's `header` cell carries in JSON output,
@@ -95,6 +124,40 @@ func (t *Table) Render(w io.Writer, opts RenderOpts) error {
 	return t.renderText(w, opts)
 }
 
+// renderTimeColumns replaces every declared time column's raw instants with a
+// clock rendering that is uniform down the column.
+func (t *Table) renderTimeColumns(rows [][]string) [][]string {
+	if len(t.TimeColumns) == 0 {
+		return rows
+	}
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		cells := make([]string, len(row))
+		copy(cells, row)
+		out[i] = cells
+	}
+	for j, h := range t.Headers {
+		if !t.TimeColumns[h] {
+			continue
+		}
+		raw := make([]string, 0, len(out))
+		for _, row := range out {
+			if j < len(row) {
+				raw = append(raw, row[j])
+			} else {
+				raw = append(raw, "")
+			}
+		}
+		rendered := clock.ShortColumn(raw)
+		for i, row := range out {
+			if j < len(row) {
+				row[j] = rendered[i]
+			}
+		}
+	}
+	return out
+}
+
 // visibleRows returns the rows to render. Top only ever truncates text
 // output: JSON is a machine contract that must never be silently short, so
 // opts.JSON always yields every row regardless of Top (see H-10 in
@@ -130,7 +193,7 @@ func (t *Table) renderJSON(w io.Writer, opts RenderOpts) error {
 }
 
 func (t *Table) renderText(w io.Writer, opts RenderOpts) error {
-	rows := t.displayRows(t.visibleRows(opts), opts.Full)
+	rows := t.displayRows(t.renderTimeColumns(t.visibleRows(opts)), opts.Full)
 	remaining := len(t.Rows) - len(rows)
 
 	// Runes, not bytes: fmt's `%-*s` pads to a rune count, so measuring a cell

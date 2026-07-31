@@ -179,10 +179,12 @@ hactl auto ls --restored                  # only "ghost" automations (restored f
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
 hactl auto cat climate_schedule           # the automation's remote YAML, verbatim (no header)
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
+hactl trace show climate_schedule         # the automation's most recent run, by any of its identifiers
 hactl trace show trc:a7 --full            # raw trace JSON
 ```
 
-`runs_24h` counts **runs**, not triggers: a trigger blocked by its conditions never
+The run-count column is named for the window it counted: `runs_24h` by default,
+`runs_1h` under `--since 1h`. It counts **runs**, not triggers: a trigger blocked by its conditions never
 entered the actions and does not count — it appears in `auto show`'s trace table as
 `result: failed_conditions`. An errored run still counts, with the failure reported in
 `errors`. The two reconcile — `runs_24h` equals the trace rows *not* marked

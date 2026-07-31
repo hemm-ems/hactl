@@ -19,3 +19,5 @@ internal/clock/render.go:ShortSeconds = proven: TestNaiveWireValueKeepsItsDigits
 
 internal/cmd/log.go:systemLogToEntries = exempt: builds its value with time.Unix, which returns a Time already located in the reader's zone, so there is nothing to convert
 internal/cmd/companion_logs_cmd.go:writeCompanionLogs = exempt: same shape, time.Unix over the companion's epoch seconds is already local
+
+internal/clock/render.go:ShortColumn = proven: TestShortColumnIsUniformDownTheColumn
