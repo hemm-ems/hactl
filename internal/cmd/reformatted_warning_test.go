@@ -30,7 +30,7 @@ func startReformattingCompanion(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	ok := func(w http.ResponseWriter, body string) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
+		_, _ = w.Write([]byte(body)) //nolint:gosec // body is a literal written by this test, not caller input
 	}
 	mux.HandleFunc("/v1/config/wiring", func(w http.ResponseWriter, r *http.Request) {
 		domain := r.URL.Query().Get("domain")
@@ -115,17 +115,20 @@ func TestConfirmedWriteReportsAWholeFileRewrite(t *testing.T) {
 			var doc struct {
 				Warnings []string `json:"warnings"`
 			}
-			body := raw[strings.Index(raw, "{"):]
-			if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			_, body, found := strings.Cut(raw, "{")
+			if !found {
+				t.Fatalf("--json output carries no JSON document:\n%s", raw)
+			}
+			if err := json.Unmarshal([]byte("{"+body), &doc); err != nil {
 				t.Fatalf("--json output is not JSON: %v\n%s", err, raw)
 			}
-			found := false
+			warned := false
 			for _, warning := range doc.Warnings {
 				if strings.Contains(warning, "re-serialized") {
-					found = true
+					warned = true
 				}
 			}
-			if !found {
+			if !warned {
 				t.Errorf("warnings do not carry the whole-file rewrite: %#v", doc.Warnings)
 			}
 		})

@@ -263,7 +263,7 @@ func startConfirmCompanion(t *testing.T) *httptest.Server {
 
 	ok := func(w http.ResponseWriter, body string) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body) //nolint:gosec // body is a literal written by this test, not caller input
 	}
 
 	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, _ *http.Request) {
