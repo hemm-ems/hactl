@@ -656,7 +656,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	reloaded := false
-	if reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
+	if _, reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
 		slog.Warn("script reload failed, config was written but not activated", "error", reloadErr)
 	} else {
 		reloaded = true
@@ -849,7 +849,7 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 			render(w)
 	}
 
-	if err := client.CallService(ctx, "script", "turn_on", map[string]any{
+	if _, err := client.CallService(ctx, "script", "turn_on", map[string]any{
 		"entity_id": entityID,
 	}); err != nil {
 		return fmt.Errorf("running script %s: %w", entityID, err)

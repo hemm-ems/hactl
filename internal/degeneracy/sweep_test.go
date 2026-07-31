@@ -72,6 +72,10 @@ var unidentifiedWireStructs = map[string]string{
 	"automationAttributes": "a `restored` ghost automation legitimately arrives with an empty " +
 		"attribute set, and `auto ls` must keep listing it",
 	"scriptAttributes": "same as automationAttributes: a restored ghost has no attributes",
+	"ServiceDescriptor": "a service that documents neither fields nor a target is a real answer — " +
+		"89 of the reference instance's 434 do exactly that, and svc call's payload check " +
+		"treats an unpublished schema as \"nothing may be refused\" rather than as an error",
+	"ServiceField":     "a leaf field carries no nested fields; that emptiness is what separates it from a section",
 	"WireGuardIface":   "every field is optional; nothing there separates absent from not-decoded",
 	"WireGuardMonitor": "every field is optional, and the booleans are honestly false when idle",
 	"AutomationDefinition": "an automation with no `id:` is legal HA and the companion reports " +

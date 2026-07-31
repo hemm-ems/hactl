@@ -46,7 +46,20 @@ func TestEntRenameDryRunRefusesUnresolvable(t *testing.T) {
 	cases := []struct {
 		name, oldID, newID, wantErr string
 	}{
-		{"malformed new id", "sensor.old", "nodomain", "not of the form <domain>.<object_id>"},
+		{"malformed new id", "sensor.old", "nodomain", "not one Home Assistant accepts"},
+		// The five shapes a live instance refused at confirm time while the
+		// preview printed "would rename … references: 2" at exit 0 — the same
+		// five, re-keyed to this stub's registry. HA's answers were
+		// "Invalid entity ID" for four and "New entity ID should be same
+		// domain" for the cross-domain one (measured 2026-07-31); a preview
+		// that accepts them promises a rename --confirm cannot perform.
+		{"a space", "sensor.old", "sensor.pg w5 bad", "not one Home Assistant accepts"},
+		{"uppercase and punctuation", "sensor.old", "sensor.PG_w5_Bad!", "not one Home Assistant accepts"},
+		{"a multi-byte character", "sensor.old", "sensor.pg_w5_🔥bad", "not one Home Assistant accepts"},
+		{"more than one dot", "sensor.old", "sensor.pg.w5.bad", "not one Home Assistant accepts"},
+		{"a doubled underscore", "sensor.old", "sensor.pg__w5", "not one Home Assistant accepts"},
+		{"a trailing underscore", "sensor.old", "sensor.pg_w5_", "not one Home Assistant accepts"},
+		{"across domains", "sensor.old", "switch.old", "same domain"},
 		{"identical ids", "sensor.old", "sensor.old", "identical"},
 		{"unknown old id", "sensor.ghost", "sensor.new", `"sensor.ghost" not found in the registry`},
 		{"collision with existing id", "sensor.old", "sensor.taken", `"sensor.taken" already exists`},

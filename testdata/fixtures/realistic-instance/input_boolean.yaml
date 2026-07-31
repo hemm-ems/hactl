@@ -22,3 +22,12 @@ shape_button:
 shape_target:
   name: Shape Target
   icon: mdi:target
+
+# The sweep's write target, named for the live profile's rule rather than the
+# rig's. Nothing on the rig needs a namespace — but the corpus is ONE corpus,
+# and a case that has to discover a different object per profile is two cases
+# wearing one name. `pg_` is what guardLiveWrite allows, so the same case
+# toggles pg_wp4_probe on both sides.
+pg_wp4_probe:
+  name: PG WP4 Probe
+  icon: mdi:toggle-switch

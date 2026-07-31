@@ -245,7 +245,7 @@ func fetchStorageHelpers(ctx context.Context, skip map[string]bool) ([]helperRow
 
 	var rows []helperRow
 	for _, s := range states {
-		domain := parseEntityDomain(s.EntityID)
+		domain := haapi.EntityIDDomain(s.EntityID)
 		if !domains[domain] || skip[s.EntityID] {
 			continue
 		}

@@ -340,7 +340,7 @@ func TestCallService(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok")
-	if err := c.CallService(context.Background(), "automation", "reload", nil); err != nil {
+	if _, err := c.CallService(context.Background(), "automation", "reload", nil); err != nil {
 		t.Fatalf("CallService: %v", err)
 	}
 }

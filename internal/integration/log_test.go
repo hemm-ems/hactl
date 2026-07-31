@@ -65,7 +65,7 @@ func writeLogProbes(t *testing.T, inst *hatest.Instance) {
 	client := haapi.New(inst.URL(), inst.Token())
 	ctx := context.Background()
 	for _, p := range []logProbe{errProbe, warnProbe} {
-		if err := client.CallService(ctx, "system_log", "write", map[string]any{
+		if _, err := client.CallService(ctx, "system_log", "write", map[string]any{
 			"level":   p.level,
 			"logger":  p.logger,
 			"message": p.message,

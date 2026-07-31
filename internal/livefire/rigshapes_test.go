@@ -683,6 +683,16 @@ func TestRigServesTheShapesItCarries(t *testing.T) {
 			t.Errorf("the instance serves %d sensors and %d helpers; the fixture's shapes are "+
 				"not reaching Home Assistant", templateSensors, helpers)
 		}
+
+		// A pg_-namespaced helper on BOTH profiles. Nothing on the rig needs a
+		// namespace, but the write cases discover their target by that prefix
+		// (it is what guardLiveWrite allows), so a rig without one turns every
+		// write case into a skip — the failure mode a corpus shared by two
+		// profiles is most exposed to, because a skip reads like a pass.
+		if pgInputBoolean(t, tgt) == "" {
+			t.Error("no pg_ input_boolean is served here; the sweep's write cases would all skip " +
+				"(the rig's is in testdata/fixtures/realistic-instance/input_boolean.yaml)")
+		}
 	})
 }
 

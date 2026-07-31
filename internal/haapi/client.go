@@ -108,58 +108,123 @@ func (c *Client) UpdateAutomationConfig(ctx context.Context, automationID string
 // ServiceDomain is one entry of GET /api/services: a domain and the services
 // it registers, keyed by service name.
 type ServiceDomain struct {
-	Services map[string]json.RawMessage `json:"services"`
-	Domain   string                     `json:"domain"`
+	Services map[string]ServiceDescriptor `json:"services"`
+	Domain   string                       `json:"domain"`
 }
 
+// ErrServiceNotRegistered is LookupService's answer when Home Assistant
+// answered, and the answer was "no such service". It is a sentinel rather than
+// a nil descriptor so the caller cannot conflate it with "we could not ask",
+// which is the distinction the probe exists to preserve.
+var ErrServiceNotRegistered = errors.New("service not registered in Home Assistant")
+
 // ServiceExists reports whether Home Assistant has a service registered under
-// domain.service.
+// domain.service. It is LookupService with the descriptor dropped, kept for
+// callers that only need the yes/no (the integration tiers probing for a
+// `<domain>.reload`).
+func (c *Client) ServiceExists(ctx context.Context, domain, service string) (bool, error) {
+	_, err := c.LookupService(ctx, domain, service)
+	if errors.Is(err, ErrServiceNotRegistered) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// LookupService returns what Home Assistant publishes about domain.service, or
+// nil when HA has no such service registered.
 //
-// It exists so a dry run can refuse a misspelled service. `svc call` used to
-// preview any string containing a dot without contacting HA at all, so
+// It exists so a dry run can refuse a call --confirm cannot make. `svc call`
+// used to preview any string containing a dot without contacting HA at all, so
 // "would call: light.turn_onn" was the artifact a human approved before
 // --confirm — and --confirm then failed with HA's 400. The manual routes
 // "turn X on" through the preview as the verification step; it verified only
 // that the argument had a dot in it.
 //
-// A failure to reach /api/services is reported as (false, err) so the caller
-// can distinguish "HA says no such service" from "we could not ask".
-func (c *Client) ServiceExists(ctx context.Context, domain, service string) (bool, error) {
+// The descriptor rather than a bool, because the same fetch answers the second
+// half of the same question: `svc call automation.trigger --data
+// '{"target":{"entity_id":[…]}}'` previewed cleanly and 400'd on --confirm,
+// because HA validates service data with PREVENT_EXTRA and `target` is not a
+// field of that service. What HA accepts is exactly what HA publishes here —
+// hactl does not re-derive the rule, it asks (H-2).
+//
+// A failure to reach /api/services is reported as a transport error and a
+// missing service as ErrServiceNotRegistered, so the caller can distinguish
+// "HA says no such service" from "we could not ask".
+func (c *Client) LookupService(ctx context.Context, domain, service string) (*ServiceDescriptor, error) {
 	body, err := c.doGet(ctx, "/api/services")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	var domains []ServiceDomain
 	if unmarshalErr := json.Unmarshal(body, &domains); unmarshalErr != nil {
-		return false, fmt.Errorf("parsing /api/services: %w", unmarshalErr)
+		return nil, fmt.Errorf("parsing /api/services: %w", unmarshalErr)
 	}
 	if degErr := degeneracy.Check("/api/services", &domains); degErr != nil {
-		return false, degErr
+		return nil, degErr
 	}
 	// A live Home Assistant always registers services, so an empty list is not
 	// the answer "no such service" — it is the absence of an answer, and
 	// reporting it as the former would refuse calls that work (H-7). The
 	// caller warns and proceeds unverified.
 	if len(domains) == 0 {
-		return false, errors.New("/api/services returned no domains")
+		return nil, errors.New("/api/services returned no domains")
 	}
 	for _, d := range domains {
 		if d.Domain != domain {
 			continue
 		}
-		_, ok := d.Services[service]
-		return ok, nil
+		desc, ok := d.Services[service]
+		if !ok {
+			return nil, fmt.Errorf("%s.%s: %w", domain, service, ErrServiceNotRegistered)
+		}
+		return &desc, nil
 	}
-	return false, nil
+	return nil, fmt.Errorf("%s.%s: %w", domain, service, ErrServiceNotRegistered)
 }
 
-// CallService calls POST /api/services/<domain>/<service> with optional service data.
-func (c *Client) CallService(ctx context.Context, domain, service string, data any) error {
+// ServiceStateChange is one entry of the array POST /api/services answers with:
+// a state Home Assistant attributed to this very call, by context.
+type ServiceStateChange struct {
+	EntityID string `json:"entity_id"`
+	State    string `json:"state"`
+}
+
+// CallService calls POST /api/services/<domain>/<service> with optional service
+// data and returns the state changes HA attributed to the call.
+//
+// The body used to be discarded (`_, err := c.doPost(…)`), which is why every
+// confirmed `svc call` reported the same unqualified success whether it had
+// changed an entity or matched nothing at all. HA collects the state-change
+// events carrying this call's own context and answers with them, so the one
+// signal that distinguishes the two was already on the wire and in hand.
+//
+// The return is deliberately not an answer to "did it match anything": HA
+// reports zero changes both for a call that matched nothing and for one that
+// fired asynchronously (`automation.trigger` on a real automation answers `[]`,
+// verified against a live instance 2026-07-31, because the automation's own
+// state change carries a child context). The caller must not upgrade it.
+func (c *Client) CallService(ctx context.Context, domain, service string, data any) ([]ServiceStateChange, error) {
 	if data == nil {
 		data = map[string]any{}
 	}
-	_, err := c.doPost(ctx, "/api/services/"+domain+"/"+service, data)
-	return err
+	body, err := c.doPost(ctx, "/api/services/"+domain+"/"+service, data)
+	if err != nil {
+		return nil, err
+	}
+	var changed []ServiceStateChange
+	if unmarshalErr := json.Unmarshal(body, &changed); unmarshalErr != nil {
+		// The call succeeded; only the report of what it touched is unreadable.
+		// Failing here would turn a completed write into an error, which is the
+		// one thing a caller must never be told about a mutation that happened.
+		slog.Warn("could not read the state changes Home Assistant reported for the call",
+			"service", domain+"."+service, "error", unmarshalErr)
+		return nil, nil
+	}
+	// Best-effort echo, the same posture as `script apply`'s state read: Check
+	// poisons an entity_id-less record in place so the marker reaches the
+	// reader, and the write itself is not retracted over its own receipt.
+	_ = degeneracy.Check("/api/services/"+domain+"/"+service, &changed)
+	return changed, nil
 }
 
 // CallServiceWithResponse calls POST /api/services/<domain>/<service>?return_response=true

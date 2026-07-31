@@ -37,7 +37,7 @@ func countingServer(t *testing.T, status int) (*Client, *atomic.Int32) {
 func TestPostNotRetriedOn5xx(t *testing.T) {
 	client, calls := countingServer(t, http.StatusInternalServerError)
 
-	if err := client.CallService(context.Background(), "notify", "mobile_app", map[string]any{"message": "hi"}); err == nil {
+	if _, err := client.CallService(context.Background(), "notify", "mobile_app", map[string]any{"message": "hi"}); err == nil {
 		t.Fatal("a 500 from HA must surface as an error")
 	}
 	if got := calls.Load(); got != 1 {
@@ -53,7 +53,8 @@ func TestNonIdempotentWritesAreIssuedOnce(t *testing.T) {
 		call func(*Client) error
 	}{
 		{"CallService", func(c *Client) error {
-			return c.CallService(context.Background(), "light", "turn_on", nil)
+			_, err := c.CallService(context.Background(), "light", "turn_on", nil)
+			return err
 		}},
 		{"CallServiceWithResponse", func(c *Client) error {
 			_, err := c.CallServiceWithResponse(context.Background(), "calendar", "get_events", nil)

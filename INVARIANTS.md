@@ -97,6 +97,35 @@ work at all on a normal instance — turned "the lookup succeeded" into a weaker
 claim than "the delete can happen". The preview now checks the source, so a
 target the confirmed run refuses is refused in preview too.
 
+**The identifier and the payload are one question, and the answer belongs to
+Home Assistant.** Resolving the target says nothing about the *value* being
+written, and two previews shipped as `proven` on this surface while accepting
+values HA refuses. `ent rename input_boolean.x 'input_boolean.pg w5 bad'`
+printed "would rename … references: 2" at exit 0 for five malformed or
+cross-domain ids, each of which `config/entity_registry/update` answers with
+"Invalid entity ID" or "New entity ID should be same domain". `svc call
+automation.trigger --data '{"target":{"entity_id":[…]}}'` echoed the JSON back
+unexamined and --confirm answered 400, because HA validates service data with
+PREVENT_EXTRA and `target:` is script syntax it flattens before the call.
+Both are now judged by HA's own rule — `homeassistant/core.py`'s
+`VALID_ENTITY_ID`, mirrored in `internal/haapi/entityid.go` under an oracle
+that reads the regex out of the running container, and the accepted key set of
+`GET /api/services` — never by a check invented here.
+
+The same measurement bounds the refusal. HA answers 200 to an `entity_id` that
+names nothing, to a payload for a service whose registry entry documents no
+fields (`script.<name>` takes arbitrary variables), and to a nested section's
+leaf field (`mqtt.publish` `qos`) while refusing the section name itself. A
+preview refusing any of those would be this rule pointing the other way, so
+the enforcement carries both directions in one table.
+
+**Where a preview cannot refuse, it states.** A targeted service called with no
+`entity_id`/`device_id`/`area_id`/`label_id`/`floor_id` reaches *no* entity —
+HA's target extraction returns before it looks at one — and `entity_id: all`
+reaches every entity of the domain. Both are legal, so neither is refused;
+both are stated in the plan, because a preview that renders identically for a
+no-op and for a domain-wide broadcast is not a preview of either.
+
 **A preview is machine-readable.** `--json` used to be a byte-for-byte no-op
 on nearly every preview, so an agent that asked for JSON got prose. Previews
 share one shape (`internal/cmd/dryrun.go`) that renders as text or as an
@@ -104,7 +133,16 @@ object stating `"dry_run": true` — a caller must be able to tell a plan from a
 result by looking at the answer, not by remembering which flags it passed.
 
 - Enforced by: `internal/cmd/ref_test.go` (dry-run default asserted against a
-  stubbed companion), `internal/cmd/confirm_guard_test.go` (first-write
+  stubbed companion), `internal/haapi/servicedata_test.go`
+  (`TestUnknownFieldsRefusesWhatHomeAssistantRefuses`,
+  `TestMalformedEntityIDsMatchesHomeAssistantsRefusal`,
+  `TestTargetsAnythingSeesTheTwoExtremes`,
+  `TestAcceptedFieldsFlattensSectionsAndIsSorted`,
+  `TestValidEntityIDMirrorsHomeAssistantsRegex` — each table carries the
+  payloads HA answered 400 to *and* the ones it answered 200 to); oracle:
+  `internal/integration/entityid_oracle_test.go`
+  (`TestOracleEntityIDRule`, `make test-int`),
+  `internal/cmd/confirm_guard_test.go` (first-write
   refusal + informed retry), `internal/cmd/config_delete_test.go`
   (`TestConfigDeleteDryRunRefusesUnknownEntry`),
   `internal/cmd/create_delete_test.go` (`TestRegistryDeleteDryRunResolvesTarget`,

@@ -285,6 +285,14 @@ completed half and the idempotent remediation (`ref replace <old> <new>
 replace`. Under `--json`, the dry run is one plan object; a confirmed run
 returns the reference report (registry success is the exit code).
 
+The new id is judged before the plan is printed, by HA's rule rather than by a
+dot check: `<domain>.<object_id>`, lowercase letters, digits and underscores,
+no leading, trailing or doubled underscore — and the **same domain** as the old
+id, because HA refuses a cross-domain rename (`switch.x` for an
+`input_boolean`). Those are the two answers HA gives at confirm time
+("Invalid entity ID", "New entity ID should be same domain"), so the preview
+gives them first.
+
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration, one row per **state run** — consecutive records reporting the same state are one row lasting until the state actually changes, and an `unavailable` gap splits the run rather than being spanned. Anomaly detection runs client-side on cached history.
 
 `ent show` closes with `attributes: N total; use --full to see all`. `N` is the
@@ -500,6 +508,15 @@ hactl tpl eval '{{ label_entities("energy") | list }}'
 `area_entities`, `device_entities`, `label_entities`, and `integration_entities` resolve membership; `states | selectattr(...)` filters on any attribute (display name, device_class, …) and is the only way to search entities by display name.
 
 `svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
+
+The dry run judges the **payload**, not just the service name, against HA's own service registry — an undeclared field or a malformed `entity_id` ends the command, because HA answers both with 400. Two payload shapes are worth naming:
+
+- **`-d '{"target":{"entity_id":…}}'` is refused.** The `target:` wrapper is automation/script YAML syntax, which HA flattens before calling the service; a service call takes `entity_id`/`device_id`/`area_id`/`label_id`/`floor_id` at the top level.
+- **A targeted service with no target reaches nothing.** The preview says so (`targets: none — …`); HA selects no entity when none of the five selector fields is present. `"entity_id":"all"` is the opposite and the preview says that too.
+
+What the preview does *not* refuse: an `entity_id` naming an entity that does not exist (HA accepts it and changes nothing), and any payload for a service whose registry entry documents no fields — `script.<name>` takes arbitrary keys as script variables.
+
+A confirmed call reports what HA attributed to it: `changed: light.kitchen`, or `changed: none reported`. Read that as HA's own answer, not as proof of a miss — a service that acts asynchronously (`automation.trigger`) reports no change either.
 
 ### Energy
 

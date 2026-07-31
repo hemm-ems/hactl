@@ -1127,7 +1127,7 @@ func filterEntitiesByPattern(states []entityState, pattern string) []entityState
 // domain where HA's config id and entity_id are independent strings by design,
 // and the only one hactl prints the config id for.
 func entityConfigID(s entityState) string {
-	if parseEntityDomain(s.EntityID) != "automation" {
+	if haapi.EntityIDDomain(s.EntityID) != "automation" {
 		return ""
 	}
 	id, _ := s.Attributes["id"].(string)
@@ -1141,7 +1141,7 @@ func entityConfigID(s entityState) string {
 // domain's friendly_name is a display name no hactl command resolves anything
 // by, so matching it would widen the filter past what hactl accepts.
 func entityAlias(s entityState) string {
-	if parseEntityDomain(s.EntityID) != "automation" {
+	if haapi.EntityIDDomain(s.EntityID) != "automation" {
 		return ""
 	}
 	alias, _ := s.Attributes["friendly_name"].(string)
@@ -1181,7 +1181,7 @@ func boolCell(b bool) string {
 func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
-		if parseEntityDomain(s.EntityID) == domain {
+		if haapi.EntityIDDomain(s.EntityID) == domain {
 			result = append(result, s)
 		}
 	}
@@ -1255,14 +1255,11 @@ func matchGlob(s, pattern string) bool {
 // writeEntListing.
 const entStateWidth = 20
 
-// parseEntityDomain extracts the domain from an entity ID (e.g. "sensor" from "sensor.temperature").
-func parseEntityDomain(entityID string) string {
-	if domain, _, ok := strings.Cut(entityID, "."); ok {
-		return domain
-	}
-	return entityID
-}
-
+// The domain half of an entity_id is haapi.EntityIDDomain. This file used to
+// carry its own `parseEntityDomain`, which differed in one case — a dotless id
+// came back whole rather than empty — and the rename check then had to agree
+// with it about what "the domain" is. Two functions answering one question is
+// how #30's display and --name halves came to disagree; there is one now.
 // filterEntitiesByArea matches an area by the id `area ls` prints in its first
 // column, or by its name — the same pair `device ls --area` has always matched.
 //
@@ -1355,9 +1352,25 @@ var entRenameCmd = &cobra.Command{
 func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 	// Shape refusals before any connection (H-2: the preview fails exactly
 	// where --confirm would, and HA refuses a malformed id at confirm time).
-	domain := parseEntityDomain(newID)
-	if domain == "" || domain == newID || strings.HasSuffix(newID, ".") {
-		return fmt.Errorf("new entity_id %q is not of the form <domain>.<object_id>", newID)
+	//
+	// This used to check only that the id had a dot with something on both
+	// sides, so `input_boolean.pg w5 bad`, `input_boolean.PG_w5_Bad!`,
+	// `input_boolean.pg_w5_🔥bad`, `input_boolean.pg.w5.bad` and the
+	// cross-domain `switch.pg_w5_renamed` all printed a confident "would
+	// rename … references: 2" at exit 0 — and `config/entity_registry/update`
+	// answers "Invalid entity ID" or "New entity ID should be same domain" to
+	// every one of them (measured on a live instance, 2026-07-31). The comment
+	// above was already the promise; the code kept half of it, which is the
+	// shape of every defect in dev/surfaces/README.md.
+	if !haapi.ValidEntityID(newID) {
+		return fmt.Errorf("new entity_id %q is not one Home Assistant accepts: <domain>.<object_id>, both "+
+			"lowercase letters, digits and underscores, no leading, trailing or doubled underscore "+
+			"(HA answers \"Invalid entity ID\")", newID)
+	}
+	if from, to := haapi.EntityIDDomain(oldID), haapi.EntityIDDomain(newID); from != to {
+		return fmt.Errorf("renaming %s to %s would move it from the %s domain to %s — Home Assistant refuses "+
+			"that (\"New entity ID should be same domain\"); an entity's domain follows its platform, "+
+			"not its id", oldID, newID, from, to)
 	}
 	if newID == oldID {
 		return errors.New("old and new entity_id are identical — nothing to rename")
@@ -1882,7 +1895,7 @@ func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
 		return nil
 	}
 	// Every entity in the area, whatever its domain. This used to also require
-	// parseEntityDomain(e) == parseEntityDomain(entityID), which made "area
+	// haapi.EntityIDDomain(e) == haapi.EntityIDDomain(entityID), which made "area
 	// neighbors" mean "same area AND same domain" — narrower than `ent ls
 	// --area` and than HA's own area_entities(), which has no notion of a
 	// domain. The restriction was invisible in the output (there is no domain
@@ -1908,7 +1921,7 @@ func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
 func findGroupMemberships(states []entityState, entityID string) []relatedEntry {
 	var result []relatedEntry
 	for _, s := range states {
-		if parseEntityDomain(s.EntityID) != "group" {
+		if haapi.EntityIDDomain(s.EntityID) != "group" {
 			continue
 		}
 		members, ok := s.Attributes["entity_id"].([]any)

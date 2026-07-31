@@ -139,3 +139,11 @@ func (s *SchemaField) Identity() []degeneracy.Field {
 func (s *ServiceDomain) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "domain", Value: &s.Domain}}
 }
+
+// Identity reports the entity a reported state change belongs to. HA answers a
+// service call with the states it attributed to the call; a record with no
+// entity_id names nothing, and `svc call --confirm` prints the list as its
+// evidence that the call did something.
+func (s *ServiceStateChange) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "entity_id", Value: &s.EntityID}}
+}

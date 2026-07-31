@@ -262,7 +262,7 @@ func exerciseOracleRig(t *testing.T, inst *hatest.Instance) {
 
 	toggle := func(entityID string) {
 		for _, svc := range []string{"turn_on", "turn_off"} {
-			if err := client.CallService(ctx, "input_boolean", svc,
+			if _, err := client.CallService(ctx, "input_boolean", svc,
 				map[string]any{"entity_id": entityID}); err != nil {
 				t.Fatalf("call input_boolean.%s on %s: %v", svc, entityID, err)
 			}
@@ -284,7 +284,7 @@ func exerciseOracleRig(t *testing.T, inst *hatest.Instance) {
 	for range 3 {
 		toggle("input_boolean.oracle_trigger_c")
 	}
-	if err := client.CallService(ctx, "input_boolean", "turn_on",
+	if _, err := client.CallService(ctx, "input_boolean", "turn_on",
 		map[string]any{"entity_id": "input_boolean.oracle_gate"}); err != nil {
 		t.Fatalf("open input_boolean.oracle_gate: %v", err)
 	}
@@ -293,7 +293,7 @@ func exerciseOracleRig(t *testing.T, inst *hatest.Instance) {
 		toggle("input_boolean.oracle_trigger_c")
 	}
 	for range 2 {
-		if err := client.CallService(ctx, "script", "turn_on",
+		if _, err := client.CallService(ctx, "script", "turn_on",
 			map[string]any{"entity_id": "script.oracle_script_broken"}); err != nil {
 			t.Fatalf("run script.oracle_script_broken: %v", err)
 		}

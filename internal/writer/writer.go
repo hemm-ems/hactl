@@ -160,7 +160,7 @@ func (w *Writer) Apply(ctx context.Context, automationID, localPath string, conf
 	}
 
 	// Reload automations
-	if reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
+	if _, reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
 		slog.Warn("reload failed, config was written but not activated", "error", reloadErr)
 	} else {
 		result.Reloaded = true
@@ -210,7 +210,7 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	// config was live at the exact moment Home Assistant was still running the
 	// broken one. Apply, forty lines up, always reported it correctly.
 	reloaded := true
-	if reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
+	if _, reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
 		slog.Warn("reload failed after rollback; the restored config is on disk but HA has not read it", "error", reloadErr)
 		reloaded = false
 	}

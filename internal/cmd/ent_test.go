@@ -89,12 +89,16 @@ func TestParseEntityDomain(t *testing.T) {
 	}{
 		{"sensor.temperature", "sensor"},
 		{"binary_sensor.door", "binary_sensor"},
-		{"nodomain", "nodomain"},
+		// A dotless string is not an entity_id and has no domain. The old
+		// cmd-local helper answered "nodomain" here — harmless for the domain
+		// FILTERS that call it, and wrong for the rename check, which asks the
+		// same question to decide whether HA would refuse the move.
+		{"nodomain", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {
-		if got := parseEntityDomain(tt.input); got != tt.want {
-			t.Errorf("parseEntityDomain(%q) = %q, want %q", tt.input, got, tt.want)
+		if got := haapi.EntityIDDomain(tt.input); got != tt.want {
+			t.Errorf("EntityIDDomain(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -286,7 +290,7 @@ func TestFilterEntitiesByDomain(t *testing.T) {
 		t.Fatalf("expected 3 sensor entities, got %d", len(result))
 	}
 	for _, s := range result {
-		if parseEntityDomain(s.EntityID) != "sensor" {
+		if haapi.EntityIDDomain(s.EntityID) != "sensor" {
 			t.Errorf("non-sensor entity in result: %s", s.EntityID)
 		}
 	}
