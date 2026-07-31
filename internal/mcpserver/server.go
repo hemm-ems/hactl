@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -44,13 +46,14 @@ var runMu sync.Mutex
 // Run serves the MCP protocol on stdio until the client disconnects or ctx
 // is cancelled. Nothing here may write to stdout except the transport.
 func Run(ctx context.Context, opts Options) error {
-	return NewServer(opts).Run(ctx, &mcp.StdioTransport{})
+	return NewServer(opts).Run(ctx, &resilientTransport{in: os.Stdin, out: os.Stdout})
 }
 
 // NewServer builds the MCP server with the hactl tool and manual resource.
 // Exposed separately from Run so tests can connect over in-memory transports.
 func NewServer(opts Options) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "hactl", Version: opts.Version}, nil)
+	server.AddReceivingMiddleware(recoverMiddleware)
 
 	mcp.AddTool(server, &mcp.Tool{Name: "hactl", Description: toolDescription(opts)}, toolHandler(opts))
 
@@ -69,6 +72,41 @@ func NewServer(opts Options) *mcp.Server {
 	})
 
 	return server
+}
+
+// recoverMiddleware turns a panic in any receiving handler into an answer.
+//
+// Nothing in the SDK recovers: a panic in a tool handler unwinds the
+// goroutine jsonrpc2 dispatched it on and takes the process down, so one bug
+// in one command would end the whole agent session — the same failure mode as
+// a malformed message, from the other side of the connection. A tool call
+// answers with an error *result* (the caller is a model, and an isError
+// result is the channel it reads); anything else answers with a JSON-RPC
+// error; a notification has no answer, so it only gets the stderr note.
+func recoverMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "hactl mcp: recovered panic in %s: %v\n%s\n", method, r, debug.Stack())
+			switch {
+			case method == "tools/call":
+				result, err = &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{
+						Text: fmt.Sprintf("internal error: hactl panicked handling this call: %v", r),
+					}},
+				}, nil
+			case strings.HasPrefix(method, "notifications/"):
+				result, err = nil, nil
+			default:
+				result, err = nil, fmt.Errorf("internal error: hactl panicked handling %s: %v", method, r)
+			}
+		}()
+		return next(ctx, method, req)
+	}
 }
 
 type toolInput struct {
