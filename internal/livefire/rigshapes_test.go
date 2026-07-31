@@ -412,6 +412,37 @@ func TestRigFixtureCarriesEnergyPreferences(t *testing.T) {
 // GasSourceType | WaterSourceType`.
 var energySourceTypes = []string{"grid", "solar", "battery", "gas", "water"}
 
+// TestRigBackfilledHistoryCanDisagreeWithAFlooredBucketCount is rig capability
+// R5's fixture half, and it exists because the first version of it was wrong
+// in a way that took a deliberate fail-check to notice.
+//
+// TestSweepResampleUsesTheBucketItWasGiven asks for ten-minute buckets. The
+// backfilled series was two hours long, and against the DEFECT it was written
+// for it passed: `int(span/bucket)` and `ceil(span/bucket)` agree exactly when
+// the span divides evenly, and `span/count` then reproduces the requested
+// width by arithmetic accident. The rig had a case for finding #39 that finding
+// #39 could not fail.
+//
+// So the span has to be a non-multiple of the bucket, and that is not a
+// property anyone will remember while editing an unrelated number.
+func TestRigBackfilledHistoryCanDisagreeWithAFlooredBucketCount(t *testing.T) {
+	if rigHistory.Span%sweepResampleBucket == 0 {
+		t.Errorf("the backfilled span is %s, a whole number of %s buckets — the floored "+
+			"bucket count and the correct one then agree, and the resample case passes against "+
+			"the defect it exists for", rigHistory.Span, sweepResampleBucket)
+	}
+	if rigHistory.Span < 3*sweepResampleBucket {
+		t.Errorf("the backfilled span is %s, which is fewer than three %s buckets — "+
+			"\"every gap is one bucket\" needs three points to be a claim rather than an "+
+			"accident of two endpoints", rigHistory.Span, sweepResampleBucket)
+	}
+	if rigHistory.Step >= sweepResampleBucket {
+		t.Errorf("samples are %s apart and buckets are %s wide, so a bucket holds at most one "+
+			"sample — nothing is being averaged and a resampler that mis-assigns samples to "+
+			"buckets passes every value check there is", rigHistory.Step, sweepResampleBucket)
+	}
+}
+
 // rigCapabilityDebt records the capabilities in FIXPLAN-livefire.md §4 the rig
 // has NOT been taught, each with the reason.
 //

@@ -297,7 +297,11 @@ included in it.
 entity has no live state *and* nothing recorded in the window, because those two
 cases are indistinguishable from a typo. An entity that was deleted but still
 has recorder history reports that history as before. `--resample` must be a
-positive duration; `0m` and negative values are refused rather than ignored.
+positive duration; `0m` and negative values are refused rather than ignored. A
+`--resample` bucket is the width it says: buckets are that wide, there are as
+many as it takes to cover the recorded span, and a bucket holding no samples
+produces no row — so a gap in the history stays a gap rather than being closed
+up.
 
 `ent show`'s `changed_by:` line and `ent who` answer the same question — who or what changed this entity — through **one shared resolution**: the logbook's answer when it has one, the state's own `context` otherwise, and every answer names its source (`source: logbook` | `source: state context`). The sources are not equal: the logbook knows the proximate cause (`Automation: <alias>`, `Script: <id>`, `Device: <name>`, `User <name>`), while the state context carries only the propagated user id — it can name the human who started a causal chain but never the automation that acted.
 

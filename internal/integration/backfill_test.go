@@ -774,14 +774,37 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 			entClean, gotMean, raw.Mean, math.Abs(gotMean-raw.Mean))
 	}
 
-	// 4. --resample honours the bucket width against HA's actual span, rather
-	//    than the nominal --since window.
+	// 4. --resample buckets are the width the caller asked for, and there are
+	//    enough of them to cover HA's actual span rather than the nominal
+	//    --since window.
+	//
+	//    This clause used to expect `int(span / time.Hour)` — the floor — and
+	//    that expectation WAS the defect (live-fire finding #39): the last
+	//    partial bucket was dropped and every remaining bucket widened to
+	//    span/count to cover the ground it had held, so `--resample 10m` over
+	//    an hour answered five points twelve minutes apart. The count was the
+	//    only thing checked, and the count is the one thing a wrong width can
+	//    still get right, so the assertion is now on the spacing first.
 	span := raw.Last.Sub(raw.First)
 	wantBuckets := int(span / time.Hour)
+	if span%time.Hour != 0 {
+		wantBuckets++
+	}
 	hourly := entHist(t, inst, entClean, "--resample", "1h")
 	if len(hourly) != wantBuckets {
-		t.Errorf("ent hist %s --resample 1h rendered %d points; HA's series spans %s, so %d one-hour buckets",
+		t.Errorf("ent hist %s --resample 1h rendered %d points; HA's series spans %s, which needs "+
+			"%d one-hour buckets to cover",
 			entClean, len(hourly), span.Truncate(time.Minute), wantBuckets)
+	}
+	for i := 1; i < len(hourly); i++ {
+		prev := reportedInstant(t, "ent hist point", hourly[i-1].Time)
+		at := reportedInstant(t, "ent hist point", hourly[i].Time)
+		if gap := at.Sub(prev); gap != time.Hour {
+			t.Errorf("ent hist %s --resample 1h put points %d and %d %s apart, want exactly 1h — "+
+				"the series is a uniform 5-minute grid with no holes, so every bucket is populated "+
+				"and the spacing IS the bucket width the caller asked for",
+				entClean, i-1, i, gap)
+		}
 	}
 }
 
