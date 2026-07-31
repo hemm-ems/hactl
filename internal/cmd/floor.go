@@ -38,8 +38,27 @@ var floorCreateCmd = &cobra.Command{
 	Long:  "Create a floor in the Home Assistant floor registry.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runFloorCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
+		return runFloorCreate(cmd.Context(), cmd.OutOrStdout(), args[0], levelFromFlags(cmd))
 	},
+}
+
+// levelFromFlags reads --level as the optional value it is: the level the
+// caller gave, or nil when they gave none.
+//
+// `if flagFloorLevel != 0` cannot tell `--level 0` from no --level at all, so
+// the most common real level there is — HA's convention for a ground floor,
+// and the manual's own canonical example — was dropped from the request and
+// from the preview, and the floor came back with `level: null`. 0 is a value
+// here, not an absence; only cobra knows which the caller meant, and it knows
+// it as Changed(). HA distinguishes the two on its side
+// (TestOracleFloorLevelZeroIsStored), which is what makes the distinction
+// worth carrying.
+func levelFromFlags(cmd *cobra.Command) *int {
+	if !cmd.Flags().Changed("level") {
+		return nil
+	}
+	level := flagFloorLevel
+	return &level
 }
 
 var floorDeleteCmd = &cobra.Command{
@@ -107,11 +126,21 @@ func runFloorLs(ctx context.Context, w io.Writer) error {
 	})
 }
 
-func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
+func runFloorCreate(ctx context.Context, w io.Writer, name string, level *int) error {
+	// Before the plan, so the preview fails exactly where --confirm would
+	// (H-2). See requireRegistryName for why this cannot wait for HA's answer.
+	if err := requireRegistryName("floor", name); err != nil {
+		return err
+	}
+
 	if !flagFloorConfirm {
-		return dryRun("create floor").
-			with("name", name).
-			withIf(flagFloorLevel != 0, "level", flagFloorLevel).
+		plan := dryRun("create floor").with("name", name)
+		if level != nil {
+			// Not withIf: its value argument is evaluated eagerly, so a nil
+			// level cannot be dereferenced inside the call.
+			plan = plan.with("level", *level)
+		}
+		return plan.
 			withIf(flagFloorIcon != "", "icon", flagFloorIcon).
 			render(w)
 	}
@@ -126,11 +155,6 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("connecting to HA: %w", connErr)
 	}
 	defer func() { _ = ws.Close() }()
-
-	var level *int
-	if flagFloorLevel != 0 {
-		level = &flagFloorLevel
-	}
 
 	entry, err := ws.FloorRegistryCreate(ctx, name, flagFloorIcon, level)
 	if err != nil {

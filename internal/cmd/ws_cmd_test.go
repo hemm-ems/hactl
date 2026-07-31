@@ -33,6 +33,7 @@ type cmdTestServer struct {
 	dir       string
 	mu        sync.Mutex
 	cmdCounts map[string]int
+	cmdParams map[string]map[string]any
 }
 
 // wsErrorResponse makes startCmdServer answer a WS command with success=false
@@ -50,7 +51,10 @@ type wsErrorResponse struct {
 func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[string]http.HandlerFunc) *cmdTestServer {
 	t.Helper()
 	mux := http.NewServeMux()
-	ts := &cmdTestServer{cmdCounts: make(map[string]int)}
+	ts := &cmdTestServer{
+		cmdCounts: make(map[string]int),
+		cmdParams: make(map[string]map[string]any),
+	}
 
 	mux.HandleFunc("/api/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := cmdWSUpgrader.Upgrade(w, r, nil)
@@ -73,6 +77,7 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 			cmdType, _ := cmd["type"].(string)
 			ts.mu.Lock()
 			ts.cmdCounts[cmdType]++
+			ts.cmdParams[cmdType] = cmd
 			ts.mu.Unlock()
 			respData, ok := wsResponses[cmdType]
 			if !ok {
@@ -138,6 +143,17 @@ func (ts *cmdTestServer) commandCount(cmdType string) int {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	return ts.cmdCounts[cmdType]
+}
+
+// lastParams returns the full envelope of the most recent WS command of that
+// type, so a test can assert on what hactl actually put on the wire rather than
+// on what it printed afterwards. A flag that is silently dropped before the
+// request is invisible to any assertion on hactl's own output — which is how
+// `floor create --level 0` shipped.
+func (ts *cmdTestServer) lastParams(cmdType string) map[string]any {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.cmdParams[cmdType]
 }
 
 // withFlagDir sets flagDir for the duration of a test and restores afterward.
@@ -4071,7 +4087,7 @@ func TestRunFloorCreate(t *testing.T) {
 	defer func() { flagFloorConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
-	if err := runFloorCreate(context.Background(), &buf, "Ground"); err != nil {
+	if err := runFloorCreate(context.Background(), &buf, "Ground", &level); err != nil {
 		t.Fatalf("runFloorCreate failed: %v", err)
 	}
 	out := buf.String()

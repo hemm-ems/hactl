@@ -36,11 +36,21 @@ hactl dash create = proven: TestRunDashCreate_DryRunResolvesItsInput
 hactl device set-area = proven: TestDeviceSetAreaDryRunRefusesUnresolvable
 hactl device set-label = proven: TestDeviceSetLabelDryRunRefusesUnresolvable
 hactl ent rename = proven: TestEntRenameDryRunRefusesUnresolvable
+hactl area create = proven: TestRegistryCreateRefusesABlankName
+hactl floor create = proven: TestRegistryCreateRefusesABlankName
+hactl label create = proven: TestRegistryCreateRefusesABlankName
+
+# The three creates above were exempt here until 2026-07-30, on the reading
+# that "the argument names something that does not exist yet, so there is no
+# target to resolve". True, and beside the point: H-2 has two halves, and the
+# second one — the INPUT is judged before the plan is printed — applies to a
+# create exactly as it applies to `script create`'s file. `area create ""
+# --confirm` then created a real area with a blank area_id on a production
+# instance and took down every `area` command until a raw WebSocket call
+# removed it. An exemption argued from one half of a rule is how a rule's other
+# half goes unenforced.
 
 # --- exempt: nothing for the preview to resolve -----------------------------
-hactl area create = exempt: the argument is a name that does not exist yet, so there is no target to resolve; HA rejects a duplicate on the confirmed run
-hactl floor create = exempt: same shape as area create, the argument names something the command is about to bring into existence
-hactl label create = exempt: same shape as area create, the argument names something the command is about to bring into existence
 hactl companion wireguard config = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
 hactl companion wireguard up = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
 hactl companion wireguard down = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier

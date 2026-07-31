@@ -356,6 +356,10 @@ hactl ent set-area  sensor.wp_vl living_room --confirm  # set entity area
 
 Labels and areas are applied via the entity registry (dry-run by default; `--confirm` to apply). Multiple labels can be passed to `set-label` at once.
 
+**Names.** `label`/`area`/`floor create` refuse a blank name (empty or whitespace only) before contacting HA, in dry-run and with `--confirm` alike. Home Assistant would accept it: an empty name mints a record with an empty `area_id`/`floor_id`/`label_id`, and every command of that family then fails — `ls`, `create` and `delete` together, because each has to list the registry first — until the record is removed outside hactl. A name that merely carries surrounding spaces (`" Kitchen "`) is a real name and is sent verbatim.
+
+**`floor --level`** is optional and `0` is a value, not an absence: `--level 0` is stored as level 0 (HA's ground floor), a negative level is a basement, and omitting the flag leaves the floor with no level at all.
+
 ### Write path (automations)
 
 ```bash

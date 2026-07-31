@@ -117,6 +117,12 @@ func dryRunLabelSummary(name, icon, color, description string) *dryRunPlan {
 }
 
 func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
+	// Before the plan, so the preview fails exactly where --confirm would
+	// (H-2). See requireRegistryName for why this cannot wait for HA's answer.
+	if err := requireRegistryName("label", name); err != nil {
+		return err
+	}
+
 	if !flagLabelConfirm {
 		return dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc).render(w)
 	}
