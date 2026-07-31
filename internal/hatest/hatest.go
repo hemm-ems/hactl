@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration || livefire
 
 // Package hatest provides test helpers for spinning up a real Home Assistant
 // container via testcontainers-go, automating headless onboarding, and

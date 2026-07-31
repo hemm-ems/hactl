@@ -13,7 +13,7 @@ COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
 .PHONY: build lint check-markers deadcode tools test test-assert-floor test-surface surfaces \
-        test-int test-companion test-int-discovery test-matrix gates require-docker \
+        test-int test-companion test-int-discovery test-livefire test-livefire-live test-matrix gates require-docker \
         testcount hooks hooks-check clean sync-spec check-spec-drift
 
 build:
@@ -45,18 +45,18 @@ tools:
 # on every setup failure, two dead harness functions, and a deprecated
 # reverse-proxy hook.
 #
-# The four invocations below mirror the four test targets one for one, so a
+# The five invocations below mirror the five test targets one for one, so a
 # file any gate compiles is a file some lint invocation reads. They are
 # deliberately NOT collapsed into a single `--build-tags=a,b,c` run: that
 # combination is not a build that ever happens, and it lets a symbol used only
 # by the discovery tier look "used" in the companion tier.
 #
-# All four run even when an earlier one fails, for the same reason
+# All five run even when an earlier one fails, for the same reason
 # `issues.uniq-by-line: false` is set in .golangci.yml: a gate has to report
 # everything it knows in one run. Stopping at the first red invocation would
 # hide the companion tier's findings behind an untagged one and turn a single
 # fix into four round trips.
-LINT_TAGSETS := untagged integration companion companion_discovery
+LINT_TAGSETS := untagged integration companion companion_discovery livefire
 
 # check-markers — a [NEEDS ORACLE: ...] marker records an assumption about HA
 # that has not been verified against a live instance. Markers may exist on a
@@ -225,6 +225,16 @@ test-companion:
 
 test-int-discovery:
 	go test -tags=companion_discovery -v -count=1 -timeout 900s ./internal/companiontest_discovery/...
+
+# The two-profile sweep. `test-livefire` runs the rig profile only, which is
+# what CI can do; `test-livefire-live` adds the real instance and is local-only
+# by design — the live profile writes nothing outside pg_* and refuses to try.
+test-livefire:
+	go test -tags=livefire -count=1 -timeout 1800s ./internal/livefire/...
+
+test-livefire-live:
+	@test -n "$(HACTL_LIVEFIRE_DIR)" || { echo "set HACTL_LIVEFIRE_DIR to the instance directory"; exit 1; }
+	HACTL_LIVEFIRE_DIR=$(HACTL_LIVEFIRE_DIR) go test -tags=livefire -count=1 -timeout 1800s -v ./internal/livefire/...
 
 test-matrix:
 	@echo "Run via CI (see .github/workflows/ci.yml)"
