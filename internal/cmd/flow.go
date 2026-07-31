@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
@@ -239,6 +240,11 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 			yesNo(e.SupportsOptions),
 			dashIfEmpty(e.DisabledBy),
 		}
+		// Both cells above are renderings for a person; the machine gets what
+		// HA sent (finding #22). `config show --json` already emits the raw
+		// field for disabled_by, and these two were the pair that disagreed.
+		tbl.SetMachine(i, "options", e.SupportsOptions)
+		tbl.SetMachine(i, "disabled_by", e.DisabledBy)
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -797,10 +803,43 @@ func runConfigBlock(ctx context.Context, w io.Writer, path, id string) error {
 	}
 	resp, err := cc.ReadConfigBlock(ctx, path, id)
 	if err != nil {
+		if redirect := templateRedirect(ctx, cc, path, id, err); redirect != nil {
+			return redirect
+		}
 		return fmt.Errorf("reading config block: %w", err)
 	}
 	_, _ = fmt.Fprint(w, resp.Content)
 	return nil
+}
+
+// templateRedirect turns a block-not-found into the referral `config block`'s
+// own --help already promises, or returns nil when there is nothing to refer to.
+//
+// The help says: "template.yaml blocks carry neither [id: nor alias:] — read
+// those with 'tpl cat <unique_id>'". Nothing implemented that sentence, so
+// `config block template.yaml posclock_jan` — a real unique_id in a real file —
+// answered `Block not found: posclock_jan`, word for word what a typo gets
+// (finding #24). The command that knows the id is addressable said nothing
+// about it.
+//
+// Whether the id IS addressable is asked, not assumed from the filename: the
+// companion is the only thing that knows which unique_ids exist, and a rule
+// keyed on `path == "template.yaml"` would miss a template split into its own
+// file and would fire on a typo inside template.yaml. A 404 from the template
+// route means no — the caller keeps the original error, which is the true one.
+func templateRedirect(ctx context.Context, cc *companion.Client, path, id string, blockErr error) error {
+	if status, ok := haapi.HTTPStatus(blockErr); !ok || status != http.StatusNotFound {
+		return nil
+	}
+	if _, err := cc.GetTemplate(ctx, id); err != nil {
+		// Deliberately swallowed: this call is a QUESTION ("is that id a
+		// template?"), not work the caller asked for. Its failure — a 404, an
+		// unreachable companion, anything — is the answer "no", and the error
+		// the caller gets is the block read's own, which is the true one.
+		return nil //nolint:nilerr // the probe's failure is data, not this command's failure
+	}
+	return fmt.Errorf("no block with id or alias %q in %s, but a template entity has that unique_id — "+
+		"read it with 'hactl tpl cat %s'", id, path, id)
 }
 
 func renderFlowResult(w io.Writer, data []byte) error {

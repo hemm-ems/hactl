@@ -168,18 +168,56 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 	if flagTokens {
 		_, _ = fmt.Fprintf(dst, "[~%d tok]\n", tokens)
 	}
-	if !helpRendered && !structuredOutput && flagTokensMax > 0 && tokens > int64(flagTokensMax) {
-		limit := min(flagTokensMax*4, len(data))
+	maxTok := effectiveTokensMax()
+	if !helpRendered && !structuredOutput && maxTok > 0 && tokens > int64(maxTok) {
+		limit := min(maxTok*4, len(data))
 		// Walk backward to a valid UTF-8 boundary
 		for limit > 0 && !utf8.Valid(data[:limit]) {
 			limit--
 		}
 		_, _ = dst.Write(data[:limit])
 		hint := truncationHint(cmdPath)
-		_, _ = fmt.Fprintf(dst, "\n\u2026output capped at %d tok; %s\n", flagTokensMax, hint)
+		_, _ = fmt.Fprintf(dst, "\n\u2026output capped at %d tok; %s\n", maxTok, hint)
 	} else {
 		_, _ = dst.Write(data)
 	}
+}
+
+// effectiveTokensMax is the cap applyTokenPolicy enforces, after --full.
+//
+// `--full` is documented globally as "show full/raw output", and it did that
+// for exactly one thing: format.Table's --top row cap. The 500-token prose cap
+// sat behind it untouched, so the flag ranged from useless to actively
+// harmful depending on which side of the table the command was on
+// (finding #21, re-measured live 2026-07-31):
+//
+//   - `config entries --full` dropped the 10-row cap, produced 213 rows, and
+//     was then chopped mid-row by the token cap at SEVEN \u2014 three rows FEWER
+//     than the same command without the flag, and the last one cut in half.
+//   - `config show <entry> --full` on an entry large enough to truncate was
+//     byte-identical to `config show <entry>`: no rows to uncap, so the flag
+//     had nothing to do and said nothing about it.
+//
+// One rule rather than a per-command wiring, because a flag that means
+// something different in each of 60 commands is the defect and not the fix:
+// --full lifts every cap on the answer's size, which is the only reading of
+// "full" that both commands above satisfy at once.
+//
+// An explicit --tokensmax still wins. `--full --tokensmax 200` is a caller
+// asking for every row and a bound on the bytes, and there is no reading under
+// which a flag should silently discard a number the caller typed.
+func effectiveTokensMax() int {
+	if flagFull && !tokensMaxWasGiven() {
+		return 0
+	}
+	return flagTokensMax
+}
+
+// tokensMaxWasGiven reports whether --tokensmax appeared on the command line
+// this invocation, as opposed to holding its default.
+func tokensMaxWasGiven() bool {
+	f := rootCmd.PersistentFlags().Lookup("tokensmax")
+	return f != nil && f.Changed
 }
 
 // emitEmptyList prints prose for humans when a listing has no results, or —
@@ -302,6 +340,11 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		flagTokensMax = 500
 		helpRendered = false
 		structuredOutput = false
+		// pflag records `Changed` on the flag object, which outlives an
+		// invocation exactly as the variables above do. Leaving it set would
+		// make one `--tokensmax 200` look, to every later in-process run, like
+		// a number the caller had typed — see effectiveTokensMax.
+		rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 		resetSubcommandFlags()
 	}()
 

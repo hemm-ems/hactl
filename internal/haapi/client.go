@@ -233,15 +233,25 @@ func HTTPStatus(err error) (int, bool) {
 	return 0, false
 }
 
-// httpStatusError builds an *HTTPStatusError from a non-2xx response, trimming
-// and length-capping the body.
-func httpStatusError(method, path string, status int, body []byte) error {
+// NewHTTPStatusError builds an *HTTPStatusError from a non-2xx response,
+// trimming and length-capping the body.
+//
+// Exported because the companion client raises the same kind of failure from
+// its own transport and used to report it as a bare fmt.Errorf: identical text,
+// no type, so a caller wanting "was that a 404?" had to match on the message —
+// the thing HTTPStatus exists to stop. One constructor keeps the body cap in
+// one place too.
+func NewHTTPStatusError(method, path string, status int, body []byte) error {
 	const maxLen = 500
 	msg := strings.TrimSpace(string(body))
 	if len(msg) > maxLen {
 		msg = msg[:maxLen] + "…"
 	}
 	return &HTTPStatusError{Method: method, Path: path, Status: status, Body: msg}
+}
+
+func httpStatusError(method, path string, status int, body []byte) error {
+	return NewHTTPStatusError(method, path, status, body)
 }
 
 func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {

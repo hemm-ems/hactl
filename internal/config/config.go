@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -31,7 +32,7 @@ func ResolvedDir() string { return resolvedDir }
 // dirFlag is the value of --dir (may be empty).
 // Returns a validated Config or an error with a clear user-facing message.
 func Load(dirFlag string) (*Config, error) {
-	dir, err := resolveDir(dirFlag)
+	dir, origin, err := resolveDir(dirFlag)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func Load(dirFlag string) (*Config, error) {
 
 	env, err := parseEnvFile(envPath)
 	if err != nil {
-		return nil, err
+		return nil, withOrigin(err, envPath, origin)
 	}
 
 	url := strings.TrimRight(env["HA_URL"], "/")
@@ -81,7 +82,7 @@ func Load(dirFlag string) (*Config, error) {
 // location (e.g. manual-delivery session tracking) even when the command
 // never loaded config. Returns "" when resolution fails entirely.
 func BestEffortDir(dirFlag string) string {
-	dir, err := resolveDir(dirFlag)
+	dir, _, err := resolveDir(dirFlag)
 	if err != nil {
 		return ""
 	}
@@ -92,6 +93,39 @@ func BestEffortDir(dirFlag string) string {
 	return abs
 }
 
+// origin names which of the four discovery candidates supplied the directory.
+//
+// It is carried out of resolveDir rather than recomputed at the error site
+// because only resolveDir knows which candidate won, and a message that guesses
+// is the defect this exists to fix.
+type origin int
+
+const (
+	originDirFlag  origin = iota // --dir <path>
+	originEnvVar                 // $HACTL_DIR
+	originDiscovery              // cwd, its parents, or the ~/.hactl/default fallback
+)
+
+func (o origin) String() string {
+	switch o {
+	case originDirFlag:
+		return "--dir"
+	case originEnvVar:
+		return "$HACTL_DIR"
+	default:
+		return "discovery"
+	}
+}
+
+// named reports whether the caller pointed at this directory themselves.
+//
+// The distinction is the whole of findings #55/#77: an explicit override that
+// does not resolve must be answered with the path the caller gave, the way a
+// found-but-incomplete .env already answers with `no HA_TOKEN in .env at
+// <path>`. Discovery names nothing because the caller named nothing — and the
+// four-step block below already lists every candidate it tried.
+func (o origin) named() bool { return o == originDirFlag || o == originEnvVar }
+
 // resolveDir determines the instance directory by checking candidates in order:
 // 1. --dir flag, 2. HACTL_DIR env var, 3. cwd and its parents, 4. ~/.hactl/default/
 //
@@ -99,27 +133,31 @@ func BestEffortDir(dirFlag string) string {
 // dir should error loudly rather than silently fall through to another instance.
 // Parent directories are only accepted when their .env actually configures
 // hactl (contains HA_URL), so unrelated project .env files are skipped.
-func resolveDir(dirFlag string) (string, error) {
+//
+// The second return value says which candidate answered, so a failure further
+// down can tell "the path you gave me is not an instance" from "I looked in the
+// usual places and found nothing".
+func resolveDir(dirFlag string) (string, origin, error) {
 	if dirFlag != "" {
 		slog.Debug("trying instance dir", "path", dirFlag, "source", "--dir flag")
-		return dirFlag, nil
+		return dirFlag, originDirFlag, nil
 	}
 
 	if envDir := os.Getenv("HACTL_DIR"); envDir != "" {
 		slog.Debug("trying instance dir", "source", "HACTL_DIR")
-		return envDir, nil
+		return envDir, originEnvVar, nil
 	}
 
 	cwd, cwdErr := os.Getwd()
 	if cwdErr == nil {
 		slog.Debug("trying instance dir", "path", cwd, "source", "cwd")
 		if _, statErr := os.Stat(filepath.Join(cwd, ".env")); statErr == nil {
-			return cwd, nil
+			return cwd, originDiscovery, nil
 		}
 		for dir := filepath.Dir(cwd); ; dir = filepath.Dir(dir) {
 			slog.Debug("trying instance dir", "path", dir, "source", "parent")
 			if envFileHasHAURL(filepath.Join(dir, ".env")) {
-				return dir, nil
+				return dir, originDiscovery, nil
 			}
 			if dir == filepath.Dir(dir) { // reached filesystem root
 				break
@@ -129,11 +167,11 @@ func resolveDir(dirFlag string) (string, error) {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
+		return "", originDiscovery, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	defaultDir := filepath.Join(home, ".hactl", "default")
 	slog.Debug("trying instance dir", "path", defaultDir, "source", "~/.hactl/default")
-	return defaultDir, nil
+	return defaultDir, originDiscovery, nil
 }
 
 // envFileHasHAURL reports whether path is a readable .env file that contains
@@ -155,13 +193,39 @@ func (e *ConfigNotFoundError) Error() string { return e.msg }
 // ExitCode returns 2 to signal a configuration error rather than a generic program error.
 func (e *ConfigNotFoundError) ExitCode() int { return 2 }
 
-const noConfigMsg = "no hactl instance configured\n\n" +
+// discoveryOrder is the four-candidate block appended to every
+// config-not-found message. It follows the headline rather than being part of
+// it so the headline can say something specific when there is something
+// specific to say.
+const discoveryOrder = "\n\n" +
 	"hactl looks for a .env in this order:\n" +
 	"  1. --dir <path>\n" +
 	"  2. $HACTL_DIR\n" +
 	"  3. the current directory (and parents)\n" +
 	"  4. ~/.hactl/default\n\n" +
 	"Quick start:  hactl setup"
+
+const noConfigMsg = "no hactl instance configured" + discoveryOrder
+
+// withOrigin gives the config-not-found message a headline that names the path
+// when the caller named it (findings #55/#77).
+//
+// It rewrites only ConfigNotFoundError — the "there is no .env here" case.
+// Every other failure from parseEnvFile already carries the path it was
+// reading, which is precisely the sibling this defect was measured against:
+// `no HA_TOKEN in .env at <path>` names its file, and the one error that knew
+// the caller had typed a path was the one that printed a four-step lecture
+// instead of repeating it back. The block itself stays: it is where `hactl
+// setup` is offered, and a caller whose --dir was a typo still wants it.
+func withOrigin(err error, envPath string, o origin) error {
+	var nf *ConfigNotFoundError
+	if !errors.As(err, &nf) || !o.named() {
+		return err
+	}
+	return &ConfigNotFoundError{
+		msg: fmt.Sprintf("no .env at %s (from %s)%s", envPath, o, discoveryOrder),
+	}
+}
 
 // parseEnvFile reads a .env file and returns key-value pairs.
 // It supports blank lines, # comments, and optional quoting of values.

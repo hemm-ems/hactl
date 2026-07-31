@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -38,8 +39,12 @@ type IngressAuth interface {
 
 // Client talks to the hactl-companion add-on API.
 type Client struct {
-	httpClient   *http.Client
-	baseURL      string
+	httpClient *http.Client
+	baseURL    string
+	// basePath is baseURL's path component, the transport prefix every route
+	// is hung under. Kept so an error can name the route without the prefix —
+	// see route.
+	basePath     string
 	token        string
 	ingressAuth  IngressAuth
 	sessionMu    sync.Mutex
@@ -48,9 +53,15 @@ type Client struct {
 
 // New creates a new companion API client.
 func New(baseURL, token string) *Client {
+	trimmed := strings.TrimRight(baseURL, "/")
+	var basePath string
+	if u, err := url.Parse(trimmed); err == nil {
+		basePath = strings.TrimRight(u.Path, "/")
+	}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
+		baseURL:  trimmed,
+		basePath: basePath,
+		token:    token,
 		httpClient: &http.Client{
 			Timeout: haapi.DefaultTimeout,
 			Transport: &http.Transport{
@@ -587,6 +598,57 @@ func (c *Client) Logs(ctx context.Context, p LogsParams) (*LogsResponse, error) 
 	return &r, decodeResponse("/v1/logs", data, &r)
 }
 
+// route strips the transport prefix from a request path, leaving the companion
+// API route the caller actually asked for.
+//
+// Every failure used to be reported with the full URL path, which under
+// Ingress reads
+//
+//	reading config file: GET /api/hassio_ingress/<43 chars>/v1/config/file: 404 …
+//
+// The segment in the middle is the add-on's Supervisor ingress token: stable
+// across invocations, per install, and printed on every 404 a user might paste
+// into a bug report (finding #23). It also tells the reader nothing — the route
+// is `/v1/config/file` no matter how the request got there, and *that* is what
+// distinguishes one failure from another.
+//
+// Derived by trimming baseURL's own path rather than by matching
+// "/api/hassio_ingress/", so a companion reached through any other prefix — a
+// reverse proxy, a direct port, whatever comes next — is named the same way
+// without a second rule to remember. `companion status` still prints the full
+// URL: that command's question IS the transport, and a user debugging
+// discovery needs the address to curl.
+func (c *Client) route(p string) string {
+	if c.basePath == "" {
+		return p
+	}
+	if trimmed := strings.TrimPrefix(p, c.basePath); trimmed != p && trimmed != "" {
+		return trimmed
+	}
+	return p
+}
+
+// scrubTransportError rewrites the URL net/http embeds in its own error text.
+//
+// `*url.Error` renders as `Get "<the whole URL>": dial tcp …`, so a route-only
+// wrapper around it would have printed the route and then the prefix anyway.
+// The host stays — it is the address the caller configured and the useful part
+// of a connection failure — and only the path is reduced to the route.
+func (c *Client) scrubTransportError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	u, parseErr := url.Parse(ue.URL)
+	if parseErr != nil {
+		// Cannot rewrite what will not parse; drop the URL rather than print it.
+		return ue.Err
+	}
+	u.Path = c.route(u.Path)
+	u.RawQuery = ""
+	return &url.Error{Op: ue.Op, URL: u.String(), Err: ue.Err}
+}
+
 func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]byte, error) {
 	u := c.baseURL + path
 	if query != nil {
@@ -693,14 +755,17 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
+			return nil, fmt.Errorf("%s %s: %w", req.Method, c.route(req.URL.Path), err)
 		}
 		if status < 200 || status >= 300 {
-			return nil, fmt.Errorf("%s %s: %d %s: %s", req.Method, req.URL.Path, status, http.StatusText(status), string(respBody))
+			// Typed, not fmt.Errorf: the text is the same, but a caller can now
+			// ask haapi.HTTPStatus whether this was a 404 instead of matching
+			// on a message that embeds the companion's response body.
+			return nil, haapi.NewHTTPStatusError(req.Method, c.route(req.URL.Path), status, respBody)
 		}
 		return respBody, nil
 	}
-	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, req.URL.Path)
+	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, c.route(req.URL.Path))
 }
 
 // doOnce performs a single HTTP request attempt and returns the response
@@ -711,6 +776,12 @@ func (c *Client) doOnce(req *http.Request) ([]byte, int, error) {
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL is operator-provided config (SSRF by design for a CLI tool)
 	duration := time.Since(start)
 	if err != nil {
+		// Scrubbed here rather than at the call site: net/http's *url.Error
+		// carries the full request URL in its own message, so wrapping it with
+		// a clean route would have re-leaked the prefix one layer down — and
+		// the slog line below would have leaked it whether anything wrapped it
+		// or not.
+		err = c.scrubTransportError(err)
 		slog.Debug("companion request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // method is a Go HTTP constant
 		return nil, 0, err
 	}

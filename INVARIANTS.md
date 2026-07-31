@@ -459,6 +459,21 @@ the SHAPE of the value rather than against a list of timestamp-ish field names �
 `first_seen`/`last_seen` on the deduped log view is precisely the column a name
 list forgets. Seven commands were affected; three of them no report had named.
 
+**And neither is a rendered absence.** The same mechanism, the same table, one
+column over: `dashIfEmpty` puts `-` in a cell that stands for "no value" and
+`yesNo` puts `yes`/`no` in a cell that stands for a bool, and both reached
+`--json` verbatim. `config entries --json` reported `disabled_by: "-"` on 212 of
+213 entries while `config show --json` reported `""` for the same field of the
+same entry, so `if entry["disabled_by"]` — the obvious thing for a consumer to
+write — answered "every entry is disabled" from one command and the truth from
+its sibling; `options` was the string `"yes"` where a machine wanted `true`, and
+`"no"` is non-empty, so a boolean read as true in both of its states. The pole
+is the clock rule's: **a cell whose text form is a rendering declares its
+machine value with `format.Table.SetMachine`.** The gate is clause (5) of the
+`TestJSONContract` sweep and is written against the value's SHAPE, with one
+per-field exemption that states its reason — `state` is HA's own payload, and an
+input_select may honestly hold `yes`.
+
 **A number hactl re-emits is the number Home Assistant sent.** H-21 was reported
 as a decode defect and fixed as one; the encode half shipped standing.
 `encoding/json` decodes every JSON number into `float64` for a `map[string]any`

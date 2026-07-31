@@ -549,9 +549,17 @@ as the inlined list); `--raw` returns the file's own bytes. `block` matches
 `id:` or `alias:` on the direct items of a top-level list (automations.yaml),
 or a top-level mapping key (scripts.yaml), and prints that block verbatim, so
 its output may carry a trailing comment line that sits before the next key.
-`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`.
-All three are YAML-only — `--json` is accepted but does not change the output. A
-missing file or block is an error with a non-zero exit, not an empty result.
+`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`;
+`block` says so when the id you gave is a template unique_id, so a wrong guess
+costs one command rather than a search. All three are YAML-only — `--json` is
+accepted but does not change the output. A missing file or block is an error
+with a non-zero exit, not an empty result. `file` without `--raw` re-renders the
+document, and HA's own tags survive that rendering as tags (`!input`, `!secret`,
+`!env_var` are printed, never resolved and never quoted into strings).
+
+`entries --json` carries values, not the table's renderings: `disabled_by` is
+`""` when the entry is enabled (the same shape `config show --json` gives) and
+`options` is a boolean.
 
 `options`, `flow-start`, and `flow-step` are dry-run by default (they start or advance a stateful flow, and a step can complete the flow and create a config entry) — add `--confirm` to actually start/submit. `entries`, `flow-inspect`, and `--json` reads are always live.
 
@@ -863,7 +871,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 
 ## Output conventions
 
-- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `completion`, `--help`.
+- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--full` removes it too, unless you pass `--tokensmax` yourself. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `completion`, `--help`.
 - **Tables:** one header line, one row per item; `…+N more` for overflow, capped by `--top`.
 - **Stable IDs:** `trc:a7` (`auto`/`script show`), `log:f2` (`log` incl. `--unique`, `cc logs`) — kept in `cache/ids.json` until `cache clear`; `ent anomalies` mints none.
 - **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included (whose other cells stay strings: `"runs_24h":"0"`).
@@ -882,7 +890,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
 | `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
 | `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
-| `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **On tables it lifts the `--top` cap** — prefer `--top N`, or `--tokensmax` byte-truncates the table |
+| `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **Lifts both caps** — `--top` rows and `--tokensmax` tokens — so it can return a lot; an explicit `--tokensmax` still wins |
 | `--json` | off | JSON output |
 | `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |
@@ -907,6 +915,11 @@ hactl --dir ~/ha/cabin auto ls --failing
 ```
 
 No global config, no profiles. Directory = instance.
+
+A `--dir` or `$HACTL_DIR` that holds no `.env` is answered with the path you
+gave and where it came from (`no .env at <path>/.env (from --dir)`, exit 2);
+only discovery — no flag, no variable — falls back to the generic four-step
+"no hactl instance configured".
 
 ---
 

@@ -168,6 +168,32 @@ type contractFixture struct {
 	companion *contractCompanion
 }
 
+// contractConfigEntries is how many entries the fixture's config-entries
+// endpoint serves.
+//
+// It is 40 rather than 1 so the shared fixture can express a listing LONGER
+// than the default caps — `--top 10` cuts it, and the whole thing is well past
+// the 500-token prose cap. A one-row listing cannot tell a working `--full`
+// from a broken one, and that is exactly how finding #21 stayed invisible to
+// this tier while the real instance answered `config entries --full` with
+// seven rows where the default gave ten.
+const contractConfigEntries = 40
+
+// configEntriesJSON is the fixture's /api/config/config_entries/entry payload:
+// entry1 first (every positional in contractPosArgs names it), then filler
+// with titles long enough that the listing has real width.
+func configEntriesJSON() string {
+	rows := []string{
+		`{"entry_id":"entry1","domain":"mydomain","title":"My Domain","state":"loaded","source":"user","supports_options":true,"supports_reconfigure":false}`,
+	}
+	for i := 1; i < contractConfigEntries; i++ {
+		rows = append(rows, fmt.Sprintf(
+			`{"entry_id":"entry%02d","domain":"filler_domain_%02d","title":"Filler Integration Number %02d (a title with enough width to matter)",`+
+				`"state":"loaded","source":"user","supports_options":false,"supports_reconfigure":false}`, i+1, i, i))
+	}
+	return "[" + strings.Join(rows, ",") + "]"
+}
+
 // buildContractFixture stands up ONE shared fake HA (startCmdServer) with
 // enough data — states, registries, dashboards, logbook, history, config
 // entries, a flow, an issue, and a trace — PLUS one companion-shaped stub
@@ -267,7 +293,7 @@ func buildContractFixture(t *testing.T) *contractFixture {
 		},
 		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `[{"entry_id":"entry1","domain":"mydomain","title":"My Domain","state":"loaded","source":"user","supports_options":true,"supports_reconfigure":false}]`)
+			_, _ = fmt.Fprint(w, configEntriesJSON())
 		},
 		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -523,6 +549,9 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 	// (4) no rendered wall clock anywhere in the document.
 	assertNoRenderedClock(t, parsedSmall, "", small)
 
+	// (5) no rendered absence placeholder anywhere in the document.
+	assertNoRenderedPlaceholder(t, parsedSmall, "", small)
+
 	// (2) --top must not remove a single element from JSON output (defeats
 	// defect A generically).
 	//
@@ -724,6 +753,72 @@ func assertNoRenderedClock(t *testing.T, v any, path, raw string) {
 					strings.TrimPrefix(path, "."), node, shape.name, raw)
 				return
 			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (5): a rendered absence never reaches a machine.
+//
+// `config entries --json` reported `disabled_by: "-"` on all 212 entries that
+// were NOT disabled, because the JSON rendering re-uses the table row and the
+// row cell came from dashIfEmpty. Its sibling `config show --json` reported
+// `""` for the same field of the same entry, so one command said "every entry
+// is disabled" to `if entry["disabled_by"]` and the other said the truth
+// (finding #22).
+//
+// The same mechanism one column over is yesNo: `"options": "yes"` where a
+// machine wants `true`, and "no" is a non-empty string too — a boolean that
+// reads as true in both of its states.
+//
+// The check is on the SHAPE of the value, like clause (4) and for the same
+// reason: a list of column names is the enumeration that forgets whichever
+// column is added next. Exemptions are per-field and each has to say why.
+// ---------------------------------------------------------------------------
+
+// renderedPlaceholders are the strings hactl's table renderers put in a cell
+// that stands for a value the wire did not carry, or for a value a machine
+// should receive typed.
+var renderedPlaceholders = map[string]string{
+	"-":   "dashIfEmpty's stand-in for an empty string — a machine reads it as a value",
+	"yes": "yesNo's rendering of true — a machine wants the bool",
+	"no":  "yesNo's rendering of false — non-empty, so it reads as true",
+}
+
+// passedThroughJSONField names the fields whose value hactl copies from Home
+// Assistant rather than rendering, and where one of the strings above is
+// therefore HA's own answer and not a placeholder.
+//
+// `state` is the only one, and it is genuinely reachable: an input_select or a
+// template binary sensor may legitimately hold "yes", "no" or "-". Every other
+// field stays covered, including whichever column is added next.
+func passedThroughJSONField(field string) bool {
+	return field == "state"
+}
+
+// assertNoRenderedPlaceholder walks a decoded --json document and fails on any
+// string value that is one of the renderers' placeholders, naming the path so
+// the offending column is obvious.
+func assertNoRenderedPlaceholder(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			if passedThroughJSONField(k) {
+				continue
+			}
+			assertNoRenderedPlaceholder(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoRenderedPlaceholder(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		if why, bad := renderedPlaceholders[node]; bad {
+			t.Errorf("--json carries a rendered placeholder at %s: %q is %s.\n"+
+				"Give the column its machine value with format.Table.SetMachine, or emit the "+
+				"underlying field directly.\noutput:\n%s",
+				strings.TrimPrefix(path, "."), node, why, raw)
 		}
 	}
 }

@@ -51,6 +51,33 @@ func (t Target) MustRead(tb testing.TB, args ...string) string {
 	return out
 }
 
+// ReadDiagnostic runs a read command and returns what the process wrote to
+// STDERR, where every error message goes.
+//
+// Read returns stdout alone, which is what a case asserting on an ANSWER
+// wants. A case asserting on a MESSAGE needs the other stream, and using Read
+// for one would be worse than not writing the case: the assertion would run
+// against an empty string and pass. Findings #23 and #24 are both about the
+// wording of a failure, so they read here.
+//
+// The manual is delivered to stderr on a session's first command and is
+// therefore mixed in. That is harmless for both directions of assertion — a
+// message that must not appear does not appear in the manual either — and it
+// is the price of reading the stream errors actually use.
+func (t Target) ReadDiagnostic(tb testing.TB, args ...string) (stderr string, err error) {
+	tb.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	full := append([]string{"--dir", t.Dir}, args...)
+	cmd := exec.CommandContext(ctx, t.Bin, full...) //nolint:gosec // G204: the binary is built by this tier and the args are test-owned
+	var errBuf strings.Builder
+	cmd.Stdout = &strings.Builder{}
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
+	return errBuf.String(), runErr
+}
+
 // Write runs a mutating command.
 //
 // targets are the objects the case intends to change; vocab is every other

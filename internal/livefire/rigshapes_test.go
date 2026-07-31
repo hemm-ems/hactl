@@ -532,6 +532,11 @@ var rigCapabilityDebt = map[string]string{
 		"rather than a shape; WP11 builds it",
 	"R9": "hostile transports (hanging host, refused port, http→301→https) — local stubs rather " +
 		"than a Home Assistant, so they belong beside the companion cases in WP8",
+	"R11": "a companion beside the rig's Home Assistant — hatest boots HA alone and writes a .env " +
+		"with no COMPANION_URL, so every companion-routed command (config file/block, helper " +
+		"show, tpl cat, ref scan) can only be swept on the live profile. Found while adding " +
+		"WP2's cases; the stack exists already in internal/companiontest/docker-compose.yaml, " +
+		"so this is wiring rather than a shape",
 }
 
 // TestRigCapabilityDebtIsRecordedNotSilent keeps the ledger above honest: a row

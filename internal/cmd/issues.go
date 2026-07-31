@@ -112,6 +112,10 @@ func runIssues(ctx context.Context, w io.Writer) error {
 			yesNo(issue.Ignored),
 			issue.BreaksInHAVersion,
 		}
+		// yesNo is a rendering, and "yes"/"no" is not what a boolean looks like
+		// to a machine — see its doc comment.
+		tbl.SetMachine(i, "fixable", issue.IsFixable)
+		tbl.SetMachine(i, "ignored", issue.Ignored)
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -122,6 +126,14 @@ func runIssues(ctx context.Context, w io.Writer) error {
 	})
 }
 
+// yesNo renders a bool for a person.
+//
+// A cell it fills is a HUMAN rendering, so a table that reaches --json must
+// pair it with format.Table.SetMachine carrying the bool itself. "yes" and
+// "no" are both non-empty strings: a consumer writing `if row["fixable"]` —
+// the obvious thing to write — reads every issue as fixable. That is the same
+// defect as finding #22 one column over, and the reason this note lives on the
+// renderer rather than at one call site.
 func yesNo(b bool) string {
 	if b {
 		return "yes"
@@ -130,6 +142,13 @@ func yesNo(b bool) string {
 }
 
 // dashIfEmpty renders an empty string as "-" for compact table cells.
+//
+// Same rule as yesNo, and this is the function finding #22 was filed against:
+// `config entries --json` reported `disabled_by: "-"` for all 212 entries that
+// were not disabled, while `config show --json` reported `""` for the same
+// field on the same entry. A machine asking `if entry["disabled_by"]` gets
+// "every entry is disabled" from one command and the truth from its sibling.
+// A cell built here needs SetMachine with the underlying value.
 func dashIfEmpty(s string) string {
 	if s == "" {
 		return "-"
