@@ -2074,6 +2074,9 @@ func TestRunCCShow_JSON(t *testing.T) {
 
 	ts := startCmdServer(t, map[string]any{
 		"manifest/list": manifests,
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "update.hacs_update", "platform": "hacs_update", "unique_id": "u1"},
+		},
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -3137,8 +3140,14 @@ func TestRunCCShow_Found(t *testing.T) {
 		{"domain": "hacs", "name": "HACS", "version": "1.34.0", "is_built_in": false},
 	}
 	// update.hacs carries the *installed* version, which must win over the
-	// manifest's 1.34.0. The two hacs.* entities are what `entities:` counts;
-	// sensor.temp and the built-in's entity must not be counted.
+	// manifest's 1.34.0.
+	//
+	// `entities:` counts what the REGISTRY attributes to the hacs platform, not
+	// what happens to be spelled `hacs.*`. sensor.hacs_downloads is the case
+	// that matters: it belongs to hacs and its entity_id begins with `sensor.`,
+	// so the prefix match this replaced could never see it — which is why the
+	// count came back 0 for virtually every real component (P2 #16). mqtt.broker
+	// and sensor.temp belong to other platforms and must stay out.
 	states := []map[string]any{
 		{
 			"entity_id": "update.hacs",
@@ -3151,13 +3160,24 @@ func TestRunCCShow_Found(t *testing.T) {
 		},
 		{"entity_id": "hacs.default", "state": "ok"},
 		{"entity_id": "hacs.repositories", "state": "ok"},
+		{"entity_id": "sensor.hacs_downloads", "state": "42"},
 		{"entity_id": "mqtt.broker", "state": "ok"},
 		{"entity_id": "sensor.temp", "state": "21.5"},
 	}
 	statesJSON, _ := json.Marshal(states)
 
+	registry := []map[string]any{
+		{"entity_id": "update.hacs", "platform": "hacs", "unique_id": "h0"},
+		{"entity_id": "hacs.default", "platform": "hacs", "unique_id": "h1"},
+		{"entity_id": "hacs.repositories", "platform": "hacs", "unique_id": "h2"},
+		{"entity_id": "sensor.hacs_downloads", "platform": "hacs", "unique_id": "h3"},
+		{"entity_id": "mqtt.broker", "platform": "mqtt", "unique_id": "m1"},
+		{"entity_id": "sensor.temp", "platform": "met", "unique_id": "t1"},
+	}
+
 	ts := startCmdServer(t, map[string]any{
-		"manifest/list": manifests,
+		"manifest/list":               manifests,
+		"config/entity_registry/list": registry,
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -3179,7 +3199,7 @@ func TestRunCCShow_Found(t *testing.T) {
 		"domain:   hacs",
 		"name:     HACS",
 		"version:  1.32.0", // installed_version from update.hacs, not the manifest
-		"entities: 2",      // hacs.default + hacs.repositories only
+		"entities: 4",      // every entity the registry attributes to hacs, whatever its entity domain
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q: %q", want, out)
@@ -4762,8 +4782,17 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 		{"domain": "hacs_update", "name": "HACS Update", "is_built_in": false},
 	}
 
+	// Only some_entity is attributed to the platform. update.hacs_update is the
+	// update entity HA's own `update` integration publishes ABOUT it, which is
+	// why attribution cannot be read off an entity_id in either direction.
+	registry := []map[string]any{
+		{"entity_id": "hacs_update.some_entity", "platform": "hacs_update", "unique_id": "s1"},
+		{"entity_id": "update.hacs_update", "platform": "update", "unique_id": "u1"},
+	}
+
 	ts := startCmdServer(t, map[string]any{
-		"manifest/list": manifests,
+		"manifest/list":               manifests,
+		"config/entity_registry/list": registry,
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -4784,7 +4813,7 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 		t.Errorf("output missing version: %q", out)
 	}
 	if !strings.Contains(out, "entities: 1") {
-		t.Errorf("output missing honest entity count (only update.hacs_update matches the domain prefix, not hacs_update.some_entity): %q", out)
+		t.Errorf("output missing honest entity count (the registry attributes only hacs_update.some_entity to this platform): %q", out)
 	}
 }
 

@@ -136,24 +136,10 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("custom component %q not found", name)
 	}
 
-	// Honest entity count + (with --full) the actual entity_ids — states-based
-	// so it counts everything live, not just what the entity registry knows.
-	var entityIDs []string
-	states, statesErr := client.GetStates(ctx)
-	if statesErr == nil {
-		var allStates []entityState
-		if jsonErr := json.Unmarshal(states, &allStates); jsonErr == nil {
-			if degErr := degeneracy.Check("/api/states", &allStates); degErr != nil {
-				return degErr
-			}
-			for _, s := range allStates {
-				if strings.HasPrefix(s.EntityID, found.Domain+".") {
-					entityIDs = append(entityIDs, s.EntityID)
-				}
-			}
-		}
+	entityIDs, err := componentEntityIDs(ctx, cfg, client, found.Domain)
+	if err != nil {
+		return err
 	}
-	sort.Strings(entityIDs)
 
 	if flagJSON {
 		out := map[string]any{
@@ -336,4 +322,61 @@ func enrichVersionsFromUpdateEntities(
 		}
 	}
 	return nil
+}
+
+// componentEntityIDs returns the entity_ids an integration owns.
+//
+// The join is the entity registry's `platform` field, which names the
+// integration that created the entity. It used to be a prefix match on the
+// entity_id — `strings.HasPrefix(id, domain+".")` — which reads plausibly and
+// is wrong for almost every integration there is: an entity_id's first segment
+// is its ENTITY domain (`sensor`, `light`, `binary_sensor`), not the
+// integration that supplied it. `powercalc` publishes `sensor.*`, `pyscript`
+// publishes `pyscript.*` only for its own service entities, and so on, so the
+// count came back 0 for virtually every real component on a live instance
+// (live-fire 2026-07-30, P2 #16) while the component plainly had entities.
+//
+// A registry lookup is authoritative for attribution and is the only source
+// that carries it; `/api/states` does not. Entities absent from the registry
+// (a platform that never registers a unique_id) therefore cannot be attributed
+// at all, and are not guessed at — an undercount that names its reason beats a
+// count assembled from a rule that does not hold.
+func componentEntityIDs(ctx context.Context, cfg *config.Config, client *haapi.Client, domain string) ([]string, error) {
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if err := ws.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("entity attribution needs the entity registry: %w", err)
+	}
+	entries, err := ws.EntityRegistryList(ctx)
+	_ = ws.Close()
+	if err != nil {
+		return nil, fmt.Errorf("listing the entity registry: %w", err)
+	}
+
+	// Only entities HA currently holds a state for are counted, so a stale
+	// registry row for a removed device does not inflate the answer.
+	live := map[string]bool{}
+	if states, statesErr := client.GetStates(ctx); statesErr == nil {
+		var allStates []entityState
+		if jsonErr := json.Unmarshal(states, &allStates); jsonErr == nil {
+			if degErr := degeneracy.Check("/api/states", &allStates); degErr != nil {
+				return nil, degErr
+			}
+			for _, s := range allStates {
+				live[s.EntityID] = true
+			}
+		}
+	}
+
+	var ids []string
+	for _, e := range entries {
+		if e.Platform != domain {
+			continue
+		}
+		if len(live) > 0 && !live[e.EntityID] {
+			continue
+		}
+		ids = append(ids, e.EntityID)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
