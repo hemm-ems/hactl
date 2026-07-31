@@ -265,7 +265,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 	}
 
 	sort.Slice(devices, func(i, j int) bool {
-		return strings.ToLower(deviceDisplayName(devices[i])) < strings.ToLower(deviceDisplayName(devices[j]))
+		return strings.ToLower(deviceUserFacingName(devices[i])) < strings.ToLower(deviceUserFacingName(devices[j]))
 	})
 
 	tbl := &format.Table{
@@ -275,7 +275,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 	for i, d := range devices {
 		tbl.Rows[i] = []string{
 			d.ID,
-			d.Name,
+			deviceUserFacingName(d),
 			deviceAreaName(d, rc),
 			deviceLabelNames(d, rc),
 			strconv.Itoa(len(rc.entityByID[d.ID])),
@@ -420,7 +420,7 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 		if flagDevicePattern != "" && !deviceMatchesPattern(d, flagDevicePattern) {
 			continue
 		}
-		if flagDeviceName != "" && !containsFold(deviceUserFacingName(d), flagDeviceName) {
+		if flagDeviceName != "" && !deviceMatchesName(d, flagDeviceName) {
 			continue
 		}
 		if flagDeviceArea != "" && !containsFold(d.AreaID, flagDeviceArea) && !containsFold(deviceAreaName(d, rc), flagDeviceArea) {
@@ -442,7 +442,7 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 // honoured name_by_user since issue #72, and a --pattern that did not would be
 // the same defect one flag over.
 func deviceMatchesPattern(d haapi.DeviceRegistryEntry, pattern string) bool {
-	return matchPattern(d.ID, pattern) || matchPattern(deviceUserFacingName(d), pattern)
+	return matchPattern(d.ID, pattern) || matchPattern(d.NameByUser, pattern) || matchPattern(d.Name, pattern)
 }
 
 // deviceHasLabel matches via the same matchingLabelIDs substring rule ent.go's
@@ -494,7 +494,7 @@ func resolveDevice(devices []haapi.DeviceRegistryEntry, ref string) (haapi.Devic
 	if len(matches) > 1 {
 		names := make([]string, len(matches))
 		for i, d := range matches {
-			names[i] = fmt.Sprintf("%s (%s)", deviceDisplayName(d), d.ID)
+			names[i] = fmt.Sprintf("%s (%s)", deviceUserFacingName(d), d.ID)
 		}
 		sort.Strings(names)
 		return haapi.DeviceRegistryEntry{}, fmt.Errorf("device %q is ambiguous: %s", ref, strings.Join(names, ", "))
@@ -576,14 +576,31 @@ func registryEntityLabelNames(e haapi.EntityRegistryEntry, rc *deviceRegistryCon
 	return strings.Join(names, ", ")
 }
 
-func deviceDisplayName(d haapi.DeviceRegistryEntry) string {
-	return firstNonEmpty(d.Name, d.ID)
+// deviceUserFacingName is the name HA's own UI shows: the user's override when
+// they set one, otherwise the name the integration supplied.
+//
+// There used to be a second function, deviceDisplayName, answering
+// firstNonEmpty(d.Name, d.ID) — and that split was the defect (live-fire
+// finding #30). The listing, the sort and the ambiguity report went through it
+// and rendered the registry name, so a device its owner had renamed appeared
+// under a name that exists nowhere in their house: 17 of 307 devices on the
+// reference instance, e.g. "Wozi-Yeelight10" for a lamp the owner calls
+// "Wohnzimmer Tisch Licht Pendelleuchte". One name, one function.
+func deviceUserFacingName(d haapi.DeviceRegistryEntry) string {
+	return firstNonEmpty(d.NameByUser, d.Name, d.ID)
 }
 
-// deviceUserFacingName returns the name a user searches for and sees in the
-// HA UI: the custom name_by_user when set, falling back to the registry name.
-func deviceUserFacingName(d haapi.DeviceRegistryEntry) string {
-	return firstNonEmpty(d.NameByUser, d.Name)
+// deviceMatchesName reports whether a search term matches EITHER name a device
+// carries.
+//
+// A renamed device has two, and matching one of them is what the code did in
+// both directions at once: the listing rendered `name` while `--name` matched
+// only `name_by_user`, so `--name Pendelleuchte` found the lamp and
+// `--name Yeelight10` — the name still printed on the device and in every
+// integration log — found nothing. Whichever of the two names a user knows is
+// the right one to search by, because HA keeps both.
+func deviceMatchesName(d haapi.DeviceRegistryEntry, term string) bool {
+	return containsFold(d.NameByUser, term) || containsFold(d.Name, term)
 }
 
 func firstNonEmpty(values ...string) string {

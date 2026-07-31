@@ -1,0 +1,175 @@
+# Realistic automation test fixture — diverse automation patterns
+# inspired by a real-world HA installation with 381 automations.
+
+# --- Lighting automations (WC door light pattern) ---
+- id: bathroom_light_on_door
+  alias: Bathroom Light On Door Open
+  description: Turns on bathroom light when door opens
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.front_door
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_boolean.guest_mode
+      state: "off"
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.alarm_armed
+  mode: single
+
+- id: bathroom_light_auto_off
+  alias: Bathroom Light Auto Off
+  description: Auto-off after 5 minutes
+  trigger:
+    - platform: state
+      entity_id: input_boolean.alarm_armed
+      to: "on"
+      for:
+        minutes: 5
+  condition: []
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.alarm_armed
+  mode: restart
+
+# --- Climate automations ---
+- id: climate_schedule
+  alias: Climate Schedule
+  description: Manages heating based on time and occupancy
+  trigger:
+    - platform: time_pattern
+      hours: "/1"
+  condition:
+    - condition: state
+      entity_id: input_select.house_mode
+      state: home
+    - condition: template
+      value_template: "{{ states('sensor.outdoor_temperature') | float < 20 }}"
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.outdoor_temperature
+      data:
+        value: 21
+  mode: single
+
+- id: vent_boost_humidity
+  alias: Ventilation Boost on Humidity
+  description: Boosts ventilation when humidity is high
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.indoor_humidity
+      above: 70
+  condition: []
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.indoor_humidity
+      data:
+        value: 50
+  mode: single
+
+# --- Morning routine ---
+- id: alarm_morning
+  alias: Morning Alarm
+  description: Activates morning routine at 7am
+  trigger:
+    - platform: time
+      at: "07:00:00"
+  condition:
+    - condition: state
+      entity_id: input_boolean.vacation_mode
+      state: "off"
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: home
+  mode: single
+
+# --- Night mode ---
+- id: night_mode
+  alias: Night Mode
+  description: Activates sleep mode at 23:00
+  trigger:
+    - platform: time
+      at: "23:00:00"
+  condition: []
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: sleep
+  mode: single
+
+# --- Power monitoring ---
+- id: power_spike_alert
+  alias: Power Spike Alert
+  description: Notifies on unusual power consumption
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.power_consumption
+      above: 3000
+  condition: []
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.alarm_armed
+  mode: single
+
+# --- Guest mode ---
+- id: guest_welcome
+  alias: Guest Welcome
+  description: Welcome routine when guest mode activated
+  trigger:
+    - platform: state
+      entity_id: input_boolean.guest_mode
+      to: "on"
+  condition: []
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: party
+  mode: single
+
+# --- Vacation ---
+- id: vacation_security
+  alias: Vacation Security
+  description: Arms security when vacation mode is on
+  trigger:
+    - platform: state
+      entity_id: input_boolean.vacation_mode
+      to: "on"
+  condition: []
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.alarm_armed
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: away
+  mode: single
+
+# --- Disabled automation (like real setups have) ---
+- id: legacy_disabled
+  alias: Legacy Disabled Rule
+  description: Old automation kept but disabled
+  trigger:
+    - platform: time
+      at: "12:00:00"
+  condition: []
+  action:
+    - service: input_boolean.toggle
+      target:
+        entity_id: input_boolean.guest_mode
+  mode: single
+  enabled: false

@@ -104,14 +104,28 @@ func TestDeviceMatchesPattern_IgnoresCase(t *testing.T) {
 	}
 }
 
-// TestDeviceMatchesPattern_UsesTheNameTheUserSees — `--name` has honoured
-// name_by_user since issue #72; a --pattern that matched the raw Name would be
-// the same defect one flag over.
-func TestDeviceMatchesPattern_UsesTheNameTheUserSees(t *testing.T) {
+// TestDeviceMatchesPattern_MatchesEitherNameADeviceCarries — a renamed device
+// has two names and HA keeps both, so a search matches either.
+//
+// This test used to say the opposite: that matching the raw Name "would be the
+// same defect one flag over". Reproducing finding #30 against a real instance
+// showed the reasoning had it backwards. `--name Pendelleuchte` (the override)
+// found the lamp and `--name Yeelight10` — the name the integration gave it,
+// the one in every log line and on the device itself — found nothing. Honouring
+// name_by_user was never supposed to mean forgetting the other name; it meant
+// not IGNORING the override, which the listing was doing at the same time.
+func TestDeviceMatchesPattern_MatchesEitherNameADeviceCarries(t *testing.T) {
 	d := haapi.DeviceRegistryEntry{ID: "dev1", Name: "0x00158d0004d2b1", NameByUser: "Wozi Tv"}
 
 	if !deviceMatchesPattern(d, "wozi") {
-		t.Errorf("deviceMatchesPattern(%+v, \"wozi\") = false — the user-facing name is the one on screen", d)
+		t.Errorf("deviceMatchesPattern(%+v, \"wozi\") = false — the name on screen must match", d)
+	}
+	if !deviceMatchesPattern(d, "00158d") {
+		t.Errorf("deviceMatchesPattern(%+v, \"00158d\") = false — a renamed device is still reachable "+
+			"by the name the integration gave it", d)
+	}
+	if deviceMatchesPattern(d, "kitchen") {
+		t.Errorf("deviceMatchesPattern(%+v, \"kitchen\") = true — matched a name it does not carry", d)
 	}
 }
 

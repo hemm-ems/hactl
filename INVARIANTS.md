@@ -322,7 +322,7 @@ and fixed alongside it, in the same files:
   `TestRunEntHist_JSON_NoHeaderLine`, `TestRunEntAnomalies_JSON_NoHeaderLine`,
   `TestRunEntRelated_JSON_NoHeaderLine`),
   `internal/cmd/device_test.go` (`TestDeviceMatchesPattern_IgnoresCase`,
-  `TestDeviceMatchesPattern_UsesTheNameTheUserSees`,
+  `TestDeviceMatchesPattern_MatchesEitherNameADeviceCarries`,
   `TestDeviceHasLabel_SubstringMatchesEnt`,
   `TestRegistryEntityAreaName_DeviceFallback`)
 

@@ -566,28 +566,52 @@ func copyFixtureToTemp(srcDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if copyErr := copyTree(srcDir, tmpDir); copyErr != nil {
+		return "", copyErr
+	}
+	return tmpDir, nil
+}
 
+// copyTree copies a fixture directory recursively.
+//
+// It used to skip subdirectories outright, and that one line decided what the
+// whole rig could represent: a fixture was three flat YAML files, so `.storage`
+// (the entity registry, storage-backed helpers, storage-mode dashboards),
+// `custom_components/`, `blueprints/` and `packages/` could not exist on the
+// rig at all. Every defect living in one of those shapes was therefore
+// untestable here, and the tests that covered them were green because the
+// condition could not occur — which is how a build with 90 findings against a
+// real instance passed this tier (live-fire 2026-07-30).
+//
+// Hidden entries are copied deliberately: `.storage` is the point.
+func copyTree(srcDir, dstDir string) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return "", fmt.Errorf("reading fixture dir: %w", err)
+		return fmt.Errorf("reading fixture dir: %w", err)
 	}
 
 	for _, entry := range entries {
 		srcPath := filepath.Join(srcDir, entry.Name())
-		dstPath := filepath.Join(tmpDir, entry.Name())
+		dstPath := filepath.Join(dstDir, entry.Name())
 
 		if entry.IsDir() {
-			continue // skip subdirectories in fixtures
+			if mkErr := os.MkdirAll(dstPath, 0o750); mkErr != nil {
+				return fmt.Errorf("creating %s: %w", entry.Name(), mkErr)
+			}
+			if subErr := copyTree(srcPath, dstPath); subErr != nil {
+				return subErr
+			}
+			continue
 		}
 
 		data, readErr := os.ReadFile(srcPath) //nolint:gosec // fixture files from testdata
 		if readErr != nil {
-			return "", fmt.Errorf("reading %s: %w", entry.Name(), readErr)
+			return fmt.Errorf("reading %s: %w", entry.Name(), readErr)
 		}
 		if writeErr := os.WriteFile(dstPath, data, 0o600); writeErr != nil { //nolint:gosec // dstPath is constructed from a temp dir + fixture filename
-			return "", fmt.Errorf("writing %s: %w", entry.Name(), writeErr)
+			return fmt.Errorf("writing %s: %w", entry.Name(), writeErr)
 		}
 	}
 
-	return tmpDir, nil
+	return nil
 }
