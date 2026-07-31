@@ -1469,9 +1469,9 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 		return err
 	}
 	if scope.partial() && !flagEntRenameAllowPartial {
-		return fmt.Errorf("%d of %d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
-			"every reference; nothing was renamed. Re-run with --allow-partial to proceed over what could be read",
-			len(scope.unscanned), scope.total(), strings.Join(scope.unscanned, "; "))
+		return fmt.Errorf("%s could not be read, so this rename cannot claim to cover every reference; "+
+			"nothing was renamed. Re-run with --allow-partial to proceed over what could be read: %s",
+			strings.Join(scope.unreadSources(), " and "), renameScopeDetail(scope))
 	}
 
 	if !flagEntConfirm {
@@ -1500,19 +1500,38 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 	return nil
 }
 
+// renameScopeDetail names what went unread, one clause per source, so the
+// refusal says which dashboard and which file rather than only how many.
+func renameScopeDetail(scope sweepScope) string {
+	var parts []string
+	if reason := scope.configReason(); reason != nil {
+		parts = append(parts, reason.Error())
+	}
+	if scope.dash.partial() {
+		parts = append(parts, strings.Join(scope.dash.unscanned, "; "))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // countRenameReferences runs the read-only halves of the ref scan so the
 // rename preview can report how many references a confirmed run would move.
-func countRenameReferences(ctx context.Context, src *refSources, target string) (int, dashboardScanScope, error) {
+//
+// It returns the whole sweepScope, not just the dashboard half: the companion
+// names the config files its walk could not read, and a file that keeps the old
+// id after a confirmed rename is a dangling pointer left behind a success
+// message. Counting the hits from a partial answer and dropping the reason was
+// how the count could look complete.
+func countRenameReferences(ctx context.Context, src *refSources, target string) (int, sweepScope, error) {
 	cfgResp, err := src.cc.RefScan(ctx, target)
 	if err != nil {
-		return 0, dashboardScanScope{}, fmt.Errorf("companion ref scan: %w", err)
+		return 0, sweepScope{}, fmt.Errorf("companion ref scan: %w", err)
 	}
 	dashboards, err := src.ws.DashboardList(ctx)
 	if err != nil {
-		return 0, dashboardScanScope{}, fmt.Errorf("listing dashboards: %w", err)
+		return 0, sweepScope{}, fmt.Errorf("listing dashboards: %w", err)
 	}
-	hits, scope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
-	return len(cfgResp.Hits) + len(hits), scope, nil
+	hits, dashScope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
+	return len(cfgResp.Hits) + len(hits), sweepScope{configSkipped: unreadConfigFiles(cfgResp.Skipped), dash: dashScope}, nil
 }
 
 func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []string) error {

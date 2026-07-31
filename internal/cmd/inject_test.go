@@ -71,6 +71,15 @@ func TestTopCommandName(t *testing.T) {
 // executeCapture runs Execute() the way the real CLI does (args from
 // os.Args), with both streams swapped for pipes so the injection hook sees an
 // agent-shaped invocation.
+//
+// Both pipes are drained by goroutines while the command runs, not read
+// afterwards. A pipe holds 64 KiB, and `hactl rtfm` prints the whole manual:
+// this helper worked for as long as that document stayed under the buffer and
+// deadlocked the moment a manual edit pushed it from 65 261 to 67 380 bytes —
+// the command blocked in os.File.Write with its only reader waiting for the
+// command to return. Nothing about the product was wrong (a real consumer of
+// stdout reads while the process writes); the harness had a size limit nobody
+// had written down.
 func executeCapture(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	// Other tests leak cobra state (SetArgs, --dir flag values); start clean.
@@ -90,13 +99,24 @@ func executeCapture(t *testing.T, args ...string) (stdout, stderr string, err er
 		resetSubcommandFlags()
 	}()
 
+	outC, errC := drainPipe(rOut), drainPipe(rErr)
+
 	err = Execute()
 
 	_ = wOut.Close()
 	_ = wErr.Close()
-	outB, _ := io.ReadAll(rOut)
-	errB, _ := io.ReadAll(rErr)
-	return string(outB), string(errB), err
+	return <-outC, <-errC, err
+}
+
+// drainPipe reads a pipe to EOF in the background and delivers the whole of it
+// on the returned channel.
+func drainPipe(r *os.File) <-chan string {
+	out := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		out <- string(b)
+	}()
+	return out
 }
 
 func setupInjectEnv(t *testing.T, session string) {

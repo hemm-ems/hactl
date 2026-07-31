@@ -208,6 +208,9 @@ func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool)
 // RefScan calls GET /v1/ref/scan?target=<target> and returns every literal
 // reference to target across the config file !include graph.
 func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, error) {
+	if err := RefTargetError(target); err != nil {
+		return nil, err
+	}
 	q := url.Values{"target": {target}}
 	data, err := c.doGet(ctx, "/v1/ref/scan", q)
 	if err != nil {
@@ -233,6 +236,17 @@ func (c *Client) RefEntities(ctx context.Context) (*RefEntitiesResponse, error) 
 // config file !include graph. With dryRun the companion reports the changes
 // without writing; otherwise it rewrites each owning file.
 func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun bool) (*RefReplaceResponse, error) {
+	// Both sides take the rule. The old value is the pattern, so a target that
+	// is not a whole token matches the interior of every id in the tree — `ref
+	// replace . X` planned 2747 rewrites of real config files. The new value is
+	// what lands in each of those positions, and a replacement that does not
+	// start and end on a word character glues itself to the text around it.
+	if err := RefTargetError(oldVal); err != nil {
+		return nil, err
+	}
+	if err := RefTargetError(newVal); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(map[string]any{"old": oldVal, "new": newVal, "dry_run": dryRun})
 	if err != nil {
 		return nil, fmt.Errorf("encoding ref replace body: %w", err)

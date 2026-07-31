@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,6 +30,7 @@ var flagDashURLPath string
 var flagDashIcon string
 var flagDashSidebar bool
 var flagDashAdmin bool
+var flagDashAllowPartial bool
 
 var dashCmd = family(&cobra.Command{
 	Use:        "dash",
@@ -158,6 +158,10 @@ func init() {
 	dashCreateCmd.Flags().BoolVar(&flagDashAdmin, "admin", false, "require admin access")
 	dashCreateCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually create (default is dry-run)")
 	dashDeleteCmd.Flags().BoolVar(&flagDashConfirm, "confirm", false, "actually delete (default is dry-run)")
+	dashGrepCmd.Flags().BoolVar(&flagDashAllowPartial, "allow-partial", false,
+		"search the dashboards that could be read when one cannot be fetched. Without it, plain text "+
+			"still answers and states the scope beside the hits, while --json refuses: its document is a "+
+			"bare array of rows with nowhere to say the search was incomplete")
 
 	_ = dashCreateCmd.MarkFlagRequired("url-path")
 	_ = dashCreateCmd.MarkFlagRequired("title")
@@ -765,19 +769,6 @@ func scanDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScanT
 	return hits, scope
 }
 
-// warnPartialDashboardScan is how a *search* command reports a dashboard it
-// could not read: loudly enough to be seen (slog.Warn, never slog.Debug — the
-// D-7 defect), but without failing and without touching stdout, because
-// `dash grep`/`ref scan` answer "where is X?" rather than "is the tree clean?"
-// and their --json shape is a contract (H-10).
-func warnPartialDashboardScan(scope dashboardScanScope) {
-	if !scope.partial() {
-		return
-	}
-	slog.Warn("some dashboards could not be scanned; this answer is partial",
-		"scanned", scope.scanned, "of", scope.total(), "unscanned", scope.unscanned)
-}
-
 // dashReplaceOne fetches one dashboard's raw config and returns a deep copy with
 // every exact occurrence of oldVal rewritten to newVal, along with the changed
 // paths. It never saves. A nil error with no changed paths means no match.
@@ -815,13 +806,29 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
 
-	hits, scope := scanDashboards(ctx, ws, dashboardScanTargets(dashboards), target)
-	warnPartialDashboardScan(scope)
+	hits, dashScope := scanDashboards(ctx, ws, dashboardScanTargets(dashboards), target)
+
+	// The same law `ref scan` takes, on the same walk: a search command answers
+	// over what it could read and states the scope where the answer goes, and
+	// refuses under --json, whose bare array of rows has nowhere to say the
+	// search was incomplete (H-10, D-7 as amended). This is the sibling site —
+	// fixing `ref scan` alone would have been the half-fix dev/surfaces exists
+	// to catch.
+	scope := sweepScope{dash: dashScope}
+	if gateErr := searchScopeGateError(scope, flagDashAllowPartial); gateErr != nil {
+		return gateErr
+	}
+	reportSweepScope(w, scope)
 
 	if len(hits) == 0 {
 		// The miss must only claim what the query tested (D-10): matching is
 		// whole-value, so for a substring intent "not referenced" alone would
-		// be a wrong answer under the manual's stop-at-the-first-miss rule.
+		// be a wrong answer under the manual's stop-at-the-first-miss rule. A
+		// dashboard that went unread is the same rule with a wider gap.
+		if scope.partial() {
+			return emitEmptyList(w, "no reference to "+target+" in the dashboards that could be read "+
+				"(see the partial-sweep note above — the rest was not searched)")
+		}
 		return emitEmptyList(w, target+": not referenced as a whole value in any dashboard "+
 			"(grep matches complete string values, never substrings — for term discovery: "+
 			"hactl ent ls --pattern '*"+target+"*')")

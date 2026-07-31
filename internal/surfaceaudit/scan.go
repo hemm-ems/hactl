@@ -359,31 +359,36 @@ func isNilIdent(e ast.Expr) bool {
 // renames a command does before using it — `configID := automationID`,
 // `entityID := autoID`. Without this the analysis loses the target at the first
 // assignment and calls a command unresolved that resolves one line later.
+//
+// A PLAIN RENAME, and nothing else. The docstring said that from the start; the
+// code said "any assignment whose right-hand side mentions an alias", which is
+// a different and much wider claim — `entries = FilterByComponent(entries, name)`
+// made `entries` an alias of the target, so the next err-binding call that
+// touched `entries` read as resolution and `cc logs` never appeared on this
+// surface (recorded in WP3 as known, unfixed, because tightening it changes
+// membership tree-wide).
+//
+// It bit for real in WP7: `hits, scope := scanDashboards(…, target)` aliased
+// BOTH results, `scope` flowed into a partial-sweep gate whose error escapes,
+// and `dash grep` — the anchor this surface's own machinery test names as
+// structural, "nothing that would remove it" — silently left the surface. A
+// value derived FROM the target is not the target: only `x := target` is.
 func targetAliases(fn *ast.FuncDecl, target string) map[string]bool {
 	aliases := map[string]bool{target: true}
 	for range 4 { // a fixpoint; command bodies never chain renames deeper
 		grew := false
 		ast.Inspect(fn, func(n ast.Node) bool {
 			as, ok := n.(*ast.AssignStmt)
-			if !ok {
+			if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
 				return true
 			}
-			mentions := false
-			for _, r := range as.Rhs {
-				for a := range aliases {
-					if referencesIdent(r, a) {
-						mentions = true
-					}
-				}
-			}
-			if !mentions {
+			rhs, isID := as.Rhs[0].(*ast.Ident)
+			if !isID || !aliases[rhs.Name] {
 				return true
 			}
-			for _, l := range as.Lhs {
-				if id, isID := l.(*ast.Ident); isID && id.Name != "_" && !aliases[id.Name] {
-					aliases[id.Name] = true
-					grew = true
-				}
+			if lhs, lhsIsID := as.Lhs[0].(*ast.Ident); lhsIsID && lhs.Name != "_" && !aliases[lhs.Name] {
+				aliases[lhs.Name] = true
+				grew = true
 			}
 			return true
 		})

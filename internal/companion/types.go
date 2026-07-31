@@ -83,14 +83,49 @@ type RefScanResponse struct {
 // Decoded on every route that reports it, like Validated and Reloaded before it,
 // so the field-level contract (H-13) stays whole rather than ignore-listed: a
 // documented field no struct decodes is the D45 shape, and the ignore list is
-// empty by design. No command renders it yet — a caller certifying something
-// about the *whole* config (no dangling references, a completed rename) must
-// read any entry here as "cannot certify", and giving that its own reporting is
-// a separate change from this one.
+// empty by design.
+//
+// It was decoded here and read by nothing for a release — the same shape one
+// layer along, and D-7 recorded it in writing as a known limit. WP7 gave it its
+// reporting (D-31): every consumer of the three routes now treats an entry that
+// HidesReferences as a partial answer, whether it is searching (`ref scan`,
+// which says so beside the hits), certifying (`ref validate`, which refuses),
+// or renaming (`ref replace`, `ent rename`, which refuse before the write).
 type SkippedFile struct {
 	Location string `json:"location"`
 	Reason   string `json:"reason"`
 }
+
+// The reasons a companion walk records, verbatim from its SKIP_* constants.
+const (
+	// SkipMissing — the file or include directory is not there.
+	SkipMissing = "missing"
+	// SkipUnreadable — refused by the path guard, OS permissions, or outside
+	// the config directory.
+	SkipUnreadable = "unreadable"
+	// SkipUnparseable — the file could not be turned into a tree.
+	SkipUnparseable = "unparseable"
+	// SkipCircular — an include cycle.
+	SkipCircular = "circular"
+)
+
+// HidesReferences reports whether this skip leaves references UNKNOWN, which is
+// the only thing that makes an answer partial.
+//
+// A target that is not there is not a target that went unread: Home Assistant's
+// own loader globs an `!include_dir_*` directory and yields nothing when it does
+// not exist (annotatedyaml `_find_files`, read out of the stable image
+// 2026-07-31), so a `themes: !include_dir_merge_named themes/` with no themes
+// directory is zero entries to HA and zero references here — a complete answer
+// about a file that holds nothing, exactly as a dashboard HA stores no config
+// for is a complete zero rather than an unscanned one (D-23).
+//
+// Treating it as partial is not the safe direction, it is the cry-wolf one: that
+// include line is in stock configurations, and `ref validate --exit-code` would
+// have refused to certify anything, forever, on every instance carrying it. The
+// other three reasons name a file that EXISTS and was not read, and references
+// in those are genuinely unknown.
+func (f *SkippedFile) HidesReferences() bool { return f.Reason != SkipMissing }
 
 // RefScanHit is one literal reference found in a config file, reported against
 // the file it actually lives in (mirrors the Go jsonwalk hit shape).

@@ -1,0 +1,32 @@
+# partialscope — a source that could not be read reaches the answer: stated in
+# the report body, or refused when the answer's medium cannot carry the
+# statement. Never only a log line.
+#
+# The surface is derived by internal/surfaceaudit.PartialScopeSurface from the
+# code that produces partial answers, not from a list of commands: every
+# internal/cmd function returning a scope type (dashboardScanScope, sweepScope),
+# and every companion route whose response declares a `Skipped` field. A site is
+# any internal/cmd function that calls one of those. See dev/surfaces/README.md.
+#
+# D-7 has now been stated over the wrong set twice. The first version said "a
+# dashboard", and the fix for a silent dashboard left a silent entity registry
+# one function below it. The second said "a source of ref validate", and left
+# `ref scan` returning three of twenty-four references at exit 0 with the whole
+# config half dropped at slog.Warn — the same walk, the same channel, a command
+# the rule's own prose named as deliberately exempt. This file is the set.
+#
+# The producers are exempt BY SHAPE, not by judgement: a function that returns
+# the scope has handed the question to its caller, and every caller is a site.
+# The exemption stops being true the day one of them starts printing.
+#ceiling 0
+
+internal/cmd/dash.go:scanDashboards = exempt: returns the scope to its caller and prints nothing; it is the producer, so the question it answers is asked at every call site instead
+internal/cmd/ref.go:collectDashboardEntityRefs = exempt: returns the scope to its caller and prints nothing; ref validate decides what to do with it
+internal/cmd/ref.go:planDashboardReplacements = exempt: returns the scope to its caller and prints nothing; ref replace refuses on it before any write
+
+internal/cmd/dash.go:runDashGrep = proven: TestRunDashGrep_PartialIsStatedAndRefusesUnderJSON
+internal/cmd/ref.go:runRefScan = proven: TestRunRefScan_PartialRefusesUnderJSONUnlessAllowPartial
+internal/cmd/ref.go:runRefValidate = proven: TestRunRefValidate_SkippedConfigFilesTakeTheGate
+internal/cmd/ref.go:refReplaceWithOptions = proven: TestRefReplaceRefusesWhenTheCompanionSkippedAFile
+internal/cmd/ent.go:countRenameReferences = proven: TestEntRenameRefusesWhenTheConfigHalfSkippedAFile
+internal/cmd/ent.go:runEntRename = proven: TestEntRenameRefusesWhenTheConfigHalfSkippedAFile

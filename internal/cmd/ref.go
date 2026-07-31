@@ -98,6 +98,11 @@ var refValidateCmd = &cobra.Command{
 }
 
 func init() {
+	refScanCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
+		"search whatever could be read when a source is unavailable — the config files (or some of "+
+			"them), or a dashboard whose config cannot be fetched. Without it, plain text still answers "+
+			"and states the scope beside the hits, while --json refuses: its document is a bare array "+
+			"of rows with nowhere to say the search was incomplete")
 	refReplaceCmd.Flags().BoolVar(&flagRefConfirm, "confirm", false, "actually apply changes (default is dry-run)")
 	refReplaceCmd.Flags().BoolVar(&flagRefAllowPartial, "allow-partial", false,
 		"rename in whatever can be scanned and written even when some dashboards cannot be "+
@@ -158,6 +163,13 @@ type refRow struct {
 }
 
 func runRefScan(ctx context.Context, w io.Writer, target string) error {
+	// A target the matcher cannot honour is the caller's mistake, not a source
+	// that went unread, and it ends the command before anything is contacted
+	// (the client enforces the same rule for every other caller of the route).
+	if err := companion.RefTargetError(target); err != nil {
+		return err
+	}
+
 	src, err := connectRefSources(ctx)
 	if err != nil {
 		return err
@@ -165,12 +177,16 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	defer src.close()
 
 	var rows []refRow
+	var scope sweepScope
 
-	// Config files (companion). A companion failure is surfaced as a warning
-	// but does not hide dashboard hits — better a partial answer than none.
+	// Config files (companion). This half is 21 of the 24 references to a
+	// typical id on a real instance, and its failure used to reach the caller
+	// only as a slog.Warn — so `ref scan <id> --json --timeout 2s` returned the
+	// three dashboard hits as a complete-looking array at exit 0 (#34).
 	if scan, scanErr := src.cc.RefScan(ctx, target); scanErr != nil {
-		slog.Warn("companion config scan failed; config files were not scanned", "error", scanErr)
+		scope.configErr = scanErr
 	} else {
+		scope.configSkipped = unreadConfigFiles(scan.Skipped)
 		for _, h := range scan.Hits {
 			rows = append(rows, refRow{"config", h.Location, h.Path})
 		}
@@ -181,18 +197,31 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	if err != nil {
 		return fmt.Errorf("listing dashboards: %w", err)
 	}
-	// `ref scan` answers "where is X?", so an unreadable dashboard is reported
-	// and the answer still stands (D-7). It never fails and never changes the
-	// --json shape — only `ref validate` claims the tree is clean.
-	hits, scope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
-	warnPartialDashboardScan(scope)
+	hits, dashScope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
+	scope.dash = dashScope
 	for _, h := range hits {
 		rows = append(rows, refRow{"dashboard", h.dashboard, h.path})
 	}
 
+	// `ref scan` answers "where is X?", so it still answers over what it could
+	// read — but it says so where the answer goes (D-7 as amended): in the body
+	// for a person, and by refusing under --json, where the document is a bare
+	// array with nowhere to put the caveat (H-10).
+	if gateErr := searchScopeGateError(scope, flagRefAllowPartial); gateErr != nil {
+		return gateErr
+	}
+	reportSweepScope(w, scope)
+
 	if len(rows) == 0 {
 		// Same D-10 rule as runDashGrep's miss: name the matching contract
-		// instead of claiming a verified negative for a query never run.
+		// instead of claiming a verified negative for a query never run. A
+		// partial scan is the purest form of a query never run, so it gets the
+		// honest sentence instead: on the reference instance this message
+		// claimed an id with two config references was referenced nowhere.
+		if scope.partial() {
+			return emitEmptyList(w, "no reference to "+target+" in what could be scanned "+
+				"(see the partial-sweep note above — the rest was not searched)")
+		}
 		return emitEmptyList(w, target+": not referenced as an id in any config file or dashboard "+
 			"(scan matches ids, not free text — for term discovery: "+
 			"hactl ent ls --pattern '*"+target+"*')")
@@ -221,6 +250,18 @@ type dashReplacePlan struct {
 // switches as explicit parameters, so a composing command (`ent rename`) can
 // drive the rewrite half without mutating another command's flag globals.
 func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal string, confirm, allowPartial bool) error {
+	// Both sides before anything is contacted: `ref replace . X` planned 2747
+	// rewrites of real config files on the reference instance, because `\b.\b`
+	// matches the dot inside every id. The client refuses this too — this is the
+	// same rule, called early so the refusal costs no connection (H-2: the
+	// preview refuses exactly what --confirm would).
+	if err := companion.RefTargetError(oldVal); err != nil {
+		return err
+	}
+	if err := companion.RefTargetError(newVal); err != nil {
+		return err
+	}
+
 	src, err := connectRefSources(ctx)
 	if err != nil {
 		return err
@@ -266,6 +307,23 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 	if err != nil {
 		return fmt.Errorf("companion ref replace (use `hactl dash replace` for dashboard-only renames): %w", err)
 	}
+	// The same failure one level in: the companion answers 200 and names, in
+	// `skipped`, each file the walk could not read. A file that keeps the old id
+	// is a dangling pointer left behind a success message — the companion's own
+	// docstring says so.
+	//
+	// The DRY RUN refuses, and that is the gate that matters: a first --confirm
+	// is refused non-interactively (confirmGuard), so the preview is what a
+	// caller sees first, and it refuses with nothing written anywhere. A
+	// confirmed run cannot refuse here — the companion has already written the
+	// files it could read — so it says what it did and what it could not, and
+	// never that nothing was renamed.
+	cfgSkipped := sweepScope{configSkipped: unreadConfigFiles(cfgResp.Skipped)}
+	if cfgSkipped.partial() && !allowPartial && !confirm {
+		return fmt.Errorf("%s could not be read (%v), so this rename cannot claim to cover every "+
+			"reference and nothing was renamed. Re-run with --allow-partial to rename in what could be read",
+			cfgSkipped.configHalfName(), cfgSkipped.configReason())
+	}
 
 	total := len(cfgResp.Changes)
 	for _, p := range plans {
@@ -294,6 +352,15 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 	// same refusal — after rendering the plan, so the caller sees what is stuck.
 	if !confirm && skippedHits > 0 && !allowPartial {
 		return yamlHitsError(skippedHits, skippedLabels, oldVal)
+	}
+	// A confirmed run over a config half with an unread file is a partial rename
+	// that already happened. It cannot be undone by refusing, so the report
+	// stands and the error names the files that kept the old id — the one thing
+	// a success message must not swallow.
+	if confirm && cfgSkipped.partial() {
+		return fmt.Errorf("renamed what could be read, but %s could not be read (%v) and may still "+
+			"reference %q; fix those files and re-run `hactl ref replace %q %q --confirm` (idempotent)",
+			cfgSkipped.configHalfName(), cfgSkipped.configReason(), oldVal, oldVal, newVal)
 	}
 	// A confirmed run whose dashboard saves failed is a partial rename: the
 	// config half is written, so say so loudly. Re-running is idempotent (the
@@ -480,12 +547,24 @@ type danglingRef struct {
 }
 
 // danglingRefsError makes `ref validate --exit-code` exit non-zero when
-// references are found, without treating the finding as a command failure
-// (the report is still printed normally before this is returned).
-type danglingRefsError struct{ n int }
+// references are found, without treating the finding as a command failure. The
+// report is printed before this is returned, and — since the entry point stopped
+// discarding the buffer on the error path — actually reaches stdout.
+//
+// It carries BOTH counts because it used to carry one and name the other: the
+// message said "%d dangling reference(s) found" and was constructed with
+// `len(uniq)`, the deduplicated ENTITY count. On the reference instance the same
+// run's report body said "429 dangling reference(s) to 318 entity(ies)" while
+// the summary said "318 dangling reference(s) found" — H-11's reconciliation
+// clause, broken between two outputs of one command (#36).
+type danglingRefsError struct{ refs, entities int }
 
-func (e *danglingRefsError) Error() string {
-	return fmt.Sprintf("%d dangling reference(s) found", e.n)
+func (e *danglingRefsError) Error() string { return danglingSummary(e.refs, e.entities) }
+
+// danglingSummary is the one sentence both outputs use, so the two numbers
+// cannot drift into disagreeing about which is which.
+func danglingSummary(refs, entities int) string {
+	return fmt.Sprintf("%d dangling reference(s) to %d entity(ies)", refs, entities)
 }
 func (e *danglingRefsError) ExitCode() int { return 1 }
 
@@ -521,7 +600,7 @@ func validateAnswersAMachine() bool { return flagRefExitCode || flagJSON }
 //
 // What IS universal — the rule a source added later must satisfy, and the one
 // the registry broke — is one line down: every source is recorded in
-// validateScope, so it reaches the reader through reportValidateScanScope. The
+// sweepScope, so it reaches the reader through reportSweepScope. The
 // registry sat outside both, warning to a channel no machine reads. Take this
 // gate too, unless the source is unusable-in-kind the way live states are; if it
 // is, refuse where you read it and say why there, as liveEntitySet does.
@@ -534,41 +613,139 @@ func validateScanGateError(half string, cause error, answersAMachine, allowParti
 		"could be read", half, cause)
 }
 
-// validateScope is what one `ref validate` sweep actually covered: which halves
-// of the live entity set could be read, whether the config half could be read at
-// all, and which dashboards could. EVERY source the sweep reads is carried here
-// and reported by the same code, because they are the same law — a half nobody
-// could read makes the whole answer partial, whichever half it was.
+// sweepScope is what one sweep over the instance actually covered: which halves
+// of the live entity set could be read, how much of the config half the
+// companion could read, and which dashboards. EVERY source a sweep reads is
+// carried here and reported by the same code, because they are the same law — a
+// source nobody could read makes the whole answer partial, whichever it was.
 //
 // The registry was the half that proved the point: it degraded the live set at
 // slog.Warn and reached neither the gate nor the report, so `--json --exit-code`
-// certified a tree against an entity set it knew was incomplete.
-type validateScope struct {
-	registryErr error // non-nil when the entity registry could not be listed
-	statesErr   error // non-nil when /api/states could not be read (only reachable with --allow-partial)
-	configErr   error // non-nil when the companion could not scan config files
-	dash        dashboardScanScope
+// certified a tree against an entity set it knew was incomplete. configSkipped
+// is the same lesson one layer along: the config half is ONE wire call over N
+// files, so a 200 with a non-empty `skipped` is a partial answer that looks
+// complete. D-7 recorded that as a known limit until the companion released the
+// field; it has, hactl has decoded it since the v2026.7.9 spec sync, and this is
+// the change that reads it.
+//
+// It is shared by the search commands (`ref scan`, `dash grep`) and the
+// certifying ones (`ref validate`, `ref replace`), because "which sources went
+// unread" is one question — only what a command DOES about it differs.
+type sweepScope struct {
+	registryErr   error // non-nil when the entity registry could not be listed
+	statesErr     error // non-nil when /api/states could not be read (only reachable with --allow-partial)
+	configErr     error // non-nil when the companion could not be asked at all
+	configSkipped []companion.SkippedFile
+	dash          dashboardScanScope
 }
 
-func (s validateScope) partial() bool {
-	return s.registryErr != nil || s.statesErr != nil || s.configErr != nil || s.dash.partial()
+func (s sweepScope) partial() bool {
+	return s.registryErr != nil || s.statesErr != nil || s.configErr != nil ||
+		len(s.configSkipped) > 0 || s.dash.partial()
 }
 
-// reportValidateScanScope states a partial sweep where the caller will actually
-// see it: in the report body. A skip that only reaches slog is invisible in the
-// answer, which is how a partial validate could read as a clean tree (D-7).
+// unreadConfigFiles keeps the skips that actually hide references. Every site
+// that records a companion walk's `skipped` array goes through it, so "a target
+// that is not there is not a target that went unread" is one rule rather than
+// four — see companion.SkippedFile.HidesReferences for why the distinction is
+// load-bearing.
+func unreadConfigFiles(skipped []companion.SkippedFile) []companion.SkippedFile {
+	var out []companion.SkippedFile
+	for i := range skipped {
+		if skipped[i].HidesReferences() {
+			out = append(out, skipped[i])
+		}
+	}
+	return out
+}
+
+// configReason is the config half's failure as one error, whether the companion
+// could not be asked at all or answered over fewer files than the config has.
+// Both mean the same thing to a caller: references in what went unread are
+// unknown.
+func (s sweepScope) configReason() error {
+	if s.configErr != nil {
+		return s.configErr
+	}
+	if len(s.configSkipped) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(s.configSkipped))
+	for _, f := range s.configSkipped {
+		parts = append(parts, fmt.Sprintf("%s: %s", f.Location, f.Reason))
+	}
+	return errors.New(strings.Join(parts, "; "))
+}
+
+// configHalfName is what a refusal calls the config half, which is not the same
+// sentence in the two shapes: the companion could not be asked at all, or it
+// answered without some of the files.
+func (s sweepScope) configHalfName() string {
+	if s.configErr != nil {
+		return "config files"
+	}
+	return fmt.Sprintf("%d config file(s)", len(s.configSkipped))
+}
+
+// unreadSources names each source of this sweep that went unread, in the words
+// a refusal has to use. It is what makes one gate able to speak for all of them.
+func (s sweepScope) unreadSources() []string {
+	var out []string
+	if s.registryErr != nil {
+		out = append(out, "the entity registry")
+	}
+	if s.statesErr != nil {
+		out = append(out, "live states")
+	}
+	if s.configErr != nil || len(s.configSkipped) > 0 {
+		out = append(out, s.configHalfName())
+	}
+	if s.dash.partial() {
+		out = append(out, fmt.Sprintf("%d of %d dashboard(s)", len(s.dash.unscanned), s.dash.total()))
+	}
+	return out
+}
+
+// searchScopeGateError is the search half of D-7 as amended by WP7.
+//
+// A search command ("where is X?") answers over what it could read and states
+// the scope beside the answer — that is still right, and it is what a person
+// sees. Under --json it is not: the document is a bare array of rows, clause (1)
+// of H-10 forbids a note beside it, and the caller receives a short list that
+// parses perfectly. On the reference instance that was three dashboard hits out
+// of twenty-four references, at exit 0; for an id whose references are all in
+// config files it was `[]`, which reads as "not referenced anywhere" — a
+// verified negative for a query that never ran.
+//
+// So when the medium cannot carry the caveat, the answer refuses and prints
+// nothing, exactly as `ref validate` does — and --allow-partial is the
+// acknowledgement, in the same words, on the same flag.
+func searchScopeGateError(scope sweepScope, allowPartial bool) error {
+	if !scope.partial() || allowPartial || !flagJSON {
+		return nil
+	}
+	return fmt.Errorf("this answer would be incomplete — %s could not be read — and --json is a bare array "+
+		"of rows with nowhere to say so, so nothing was printed. Re-run with --allow-partial to search "+
+		"what could be read, or without --json to see the scope beside the hits",
+		strings.Join(scope.unreadSources(), " and "))
+}
+
+// reportSweepScope states a partial sweep where the caller will actually see
+// it: in the report body. A skip that only reaches slog is invisible in the
+// answer, which is how a partial validate could read as a clean tree (D-7) and
+// how a partial scan could read as three hits out of twenty-four (#34).
 //
 // Under --json the scope goes to slog instead, because the document's shape is
 // a machine contract (H-10) — and a machine can only reach a partial answer by
 // passing --allow-partial, which is itself the acknowledgement.
-func reportValidateScanScope(w io.Writer, scope validateScope) {
+func reportSweepScope(w io.Writer, scope sweepScope) {
 	if !scope.partial() {
 		return
 	}
 	if flagJSON {
 		slog.Warn("partial sweep (--allow-partial): references in what could not be read are unknown",
 			"registry_error", scope.registryErr, "states_error", scope.statesErr,
-			"config_error", scope.configErr, "dashboards_scanned", scope.dash.scanned,
+			"config_error", scope.configReason(), "dashboards_scanned", scope.dash.scanned,
 			"dashboards_total", scope.dash.total(), "dashboards_unscanned", scope.dash.unscanned)
 		return
 	}
@@ -585,6 +762,16 @@ func reportValidateScanScope(w io.Writer, scope validateScope) {
 	if scope.configErr != nil {
 		_, _ = fmt.Fprintf(w, "partial sweep: config files could not be scanned, so references in them "+
 			"are unknown:\n  %v\n", scope.configErr)
+	}
+	// A 200 that skipped files is the case that looks complete: the companion
+	// answered, over fewer files than the config has. Named one per line, the
+	// way unread dashboards are, because the reader's next question is which.
+	if len(scope.configSkipped) > 0 {
+		_, _ = fmt.Fprintf(w, "partial sweep: %d config file(s) could not be read, so references in them "+
+			"are unknown:\n", len(scope.configSkipped))
+		for _, f := range scope.configSkipped {
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Location, f.Reason)
+		}
 	}
 	if scope.dash.partial() {
 		_, _ = fmt.Fprintf(w, "partial sweep: %d of %d dashboard(s) scanned; %d could not be read, "+
@@ -603,7 +790,7 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 	defer src.close()
 
 	var refs []danglingRef
-	var scope validateScope
+	var scope sweepScope
 	answersAMachine := validateAnswersAMachine()
 
 	// The live entity set (registry ∪ states). A states failure has already
@@ -623,18 +810,25 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 
 	// Config files (companion). A companion failure is a warning, not fatal —
 	// a partial validate over dashboards alone still has value.
+	//
+	// A 200 is not automatically a whole answer: the walk names every file it
+	// could not read in `skipped` (a renamed !include target, a file the path
+	// guard refuses), and references in those are unknown, so the same gate
+	// applies to both shapes of the same fact.
 	if resp, entErr := src.cc.RefEntities(ctx); entErr != nil {
-		if gateErr := validateScanGateError("config files", entErr, answersAMachine, flagRefAllowPartial); gateErr != nil {
-			return gateErr
-		}
 		scope.configErr = entErr
 		slog.Warn("companion config entity scan failed; config files were not validated", "error", entErr)
 	} else {
+		scope.configSkipped = unreadConfigFiles(resp.Skipped)
 		for _, e := range resp.Entities {
 			if configEntityKeys[e.Key] {
 				refs = append(refs, danglingRef{"config", e.Location, e.Path, e.MatchedValue})
 			}
 		}
+	}
+	if gateErr := validateScanGateError(scope.configHalfName(), scope.configReason(),
+		answersAMachine, flagRefAllowPartial); gateErr != nil {
+		return gateErr
 	}
 
 	// Dashboards (WS). A dashboard hactl could not read holds unknown
@@ -664,7 +858,7 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 
 	// The scope prefixes the findings: whatever follows — a table or a clean
 	// bill of health — is only as complete as this line says it is.
-	reportValidateScanScope(w, scope)
+	reportSweepScope(w, scope)
 
 	if len(dangling) == 0 {
 		if flagJSON {
@@ -681,13 +875,12 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 
 	uniq := uniqueDanglingEntities(dangling)
 	if !flagJSON {
-		_, _ = fmt.Fprintf(w, "\n%d dangling reference(s) to %d entity(ies): %s\n",
-			len(dangling), len(uniq), strings.Join(uniq, ", "))
+		_, _ = fmt.Fprintf(w, "\n%s: %s\n", danglingSummary(len(dangling), len(uniq)), strings.Join(uniq, ", "))
 		_, _ = fmt.Fprintln(w, "rename each with `hactl ref replace <old> <new>`")
 	}
 
 	if flagRefExitCode {
-		return &danglingRefsError{len(uniq)}
+		return &danglingRefsError{refs: len(dangling), entities: len(uniq)}
 	}
 	return nil
 }
@@ -715,7 +908,7 @@ func runRefValidate(ctx context.Context, w io.Writer) error {
 // through validateScanGateError — deliberately, for the reason set out in that
 // function's note. What both halves do share is scope: whichever one degraded is
 // recorded there, so it reaches the reader.
-func liveEntitySet(ctx context.Context, src *refSources, scope *validateScope) (map[string]bool, error) {
+func liveEntitySet(ctx context.Context, src *refSources, scope *sweepScope) (map[string]bool, error) {
 	live := make(map[string]bool)
 
 	reg, regErr := src.ws.EntityRegistryList(ctx)

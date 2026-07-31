@@ -183,6 +183,11 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		// `dash grep`'s is structural — its argument is a search value, so there
 		// is nothing for it to resolve and nothing that would remove it.
 		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/dash.go:runDashGrep"}},
+		// runRefScan reads BOTH partial-capable sources — the companion's config
+		// walk and the dashboard walk — so it is the site that would survive
+		// either derivation pass breaking on its own, and the one #34 was
+		// reported against.
+		{"partialscope", surfaceaudit.PartialScopeSurface, []string{"internal/cmd/ref.go:runRefScan"}},
 		{"invariant", surfaceaudit.InvariantSurface, []string{"H-17"}},
 		// format.Clip is the one shortening the product is supposed to have, so
 		// an extractor that stopped matching would take the whole surface with

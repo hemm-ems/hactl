@@ -19,6 +19,14 @@
 #ceiling 0
 
 internal/cmd/dash.go:runDashGrep = exempt: the argument is a search string, not an identifier; "not referenced as a whole value in any dashboard" (with the ent ls --pattern routing, D-10) is the correct answer for a value that appears nowhere
-internal/cmd/ref.go:runRefScan = exempt: the argument is a search value rather than an identifier, so there is nothing for it to resolve to
+#
+# `internal/cmd/ref.go:runRefScan` left this surface in WP7 and its line is gone
+# rather than exempted: the target is still a search value with nothing to
+# resolve to, but the command now REFUSES one the matcher cannot honour (a
+# target that does not start and end on a word character — `ref scan .` matched
+# the dot inside every id and returned 2747 hits) before it writes anything, so
+# the extractor no longer counts it as printing ahead of its argument's first
+# chance to fail. `dash grep` stays: its whole-value match has no such
+# precondition, which is why the machinery test anchors on it.
 
 internal/cmd/cache.go:runCacheRefresh = exempt: the category is an enum, not an identifier; an unrecognised value is now refused before any work, so there is no target left to resolve

@@ -640,6 +640,7 @@ hactl dash delete my-dash --confirm
 hactl dash resources                               # list custom card/CSS resources
 
 hactl dash grep sensor.wp_vl                       # where is this string used, across all dashboards
+hactl dash grep sensor.wp_vl --allow-partial       # answer from the dashboards that could be read
 hactl dash replace sensor.old sensor.new my-dash   # dry-run: rename within one dashboard
 hactl dash replace sensor.old sensor.new my-dash --confirm  # apply
 ```
@@ -682,7 +683,11 @@ is whole-value, so a mention *inside* a longer sentence is not a hit, and map
 keys are never matched or rewritten. Output is `dashboard` + `path`
 (`views[0].cards[1].content`); a miss says "not referenced **as a whole
 value**" and routes term discovery to `ent ls --pattern`, exit 0 — it is a
-verified negative only for the exact value asked about.
+verified negative only for the exact value asked about, and only when every
+dashboard could be read: a dashboard whose config does not fetch puts a `partial
+sweep: …` line above the answer, makes the miss read "in the dashboards that
+could be read", and makes `--json` refuse until you pass `--allow-partial` (see
+References, below).
 
 `dash replace` takes one dashboard (omit `url_path` for the default dashboard),
 is dry-run until `--confirm`, and rewrites every matching value at once. A
@@ -703,6 +708,7 @@ dashboards in a single pass, use `ref replace`.
 
 ```bash
 hactl ref scan sensor.wp_vl                    # every reference, config files + dashboards
+hactl ref scan sensor.wp_vl --allow-partial    # answer from what could be read when a source is unavailable
 hactl ref validate                             # dangling references: pointers to entities that are gone
 hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
 hactl ref validate --exit-code --allow-partial  # gate on what could be read when a half is unavailable
@@ -723,6 +729,15 @@ never finding one inside a dashboard's. Reports `source` (`config` |
 `dashboard`), `location` (file name or dashboard), and `path`
 (`[1].trigger[0].entity_id`).
 
+**The target must be a whole token**: it has to start and end on a letter, digit
+or underscore, because the config half matches it with a word boundary at each
+end. `scan`/`replace` refuse anything else before contacting Home Assistant —
+`.` would otherwise match the dot inside every entity_id and every service name
+(2747 hits on a real instance, and `ref replace . X` a plan to rewrite all of
+them). Display names are fine (`Wozi TV`, `Küche`); pasted syntax is not
+(`'sensor.x'`, `.turn_on`, `{{`). For term discovery use the name search under
+"Filtering & discovery".
+
 To rename a **live** entity and its references in one step, use `ent rename`
 (registry rename + this replace pass); `ref replace` alone is the tool when
 only the references must move — e.g. onto an already-existing entity.
@@ -739,30 +754,46 @@ false positives: **entities inside templates** (`{{ states('sensor.x') }}`) and
 entities under non-standard custom-card keys. `validate` reports; it never
 fixes — rename with `ref replace`.
 
-**A partial sweep never passes as a clean tree.** `validate` reads four sources
-— entity registry, live states, config files, dashboards — and states its scope
-when one is unreadable: in plain text it still answers, with one `partial
-sweep: …` line per unread source; under `--exit-code` or `--json` it **refuses**
-with a non-zero exit, because those modes feed a CI gate or a parser that cannot
-see a stderr warning, and certifying a half-read tree would make the gate
-vacuous. `--allow-partial` proceeds over whatever could be read, in any mode,
-scope stated. One source is stricter: missing **live states** refuse in every
-mode (the registry alone holds no state-only entities — most reports would be
-false positives); an unread config file or dashboard risks the opposite, false
-negatives — references that were never checked. A dashboard Home Assistant holds
-**no config for is not a partial sweep** — the auto-generated default, and
-equally a dashboard created but not yet saved: HA holds nothing, so zero
-references there is the complete truth. `--exit-code` stays green on a fresh
-instance, and one unsaved dashboard does not make `validate` refuse to certify
-the tree.
+**A partial sweep never passes as a clean tree — and never as a short answer.**
+`validate` reads four sources — entity registry, live states, config files,
+dashboards — and states its scope when one is unreadable: in plain text it still
+answers, with one `partial sweep: …` line per unread source; under `--exit-code`
+or `--json` it **refuses** with a non-zero exit, because those modes feed a CI
+gate or a parser that cannot see a stderr warning, and certifying a half-read
+tree would make the gate vacuous. `--allow-partial` proceeds over whatever could
+be read, in any mode, scope stated. One source is stricter: missing **live
+states** refuse in every mode (the registry alone holds no state-only entities —
+most reports would be false positives); an unread config file or dashboard risks
+the opposite, false negatives — references that were never checked. A dashboard
+Home Assistant holds **no config for is not a partial sweep** — the
+auto-generated default, and equally a dashboard created but not yet saved: HA
+holds nothing, so zero references there is the complete truth. `--exit-code`
+stays green on a fresh instance, and one unsaved dashboard does not make
+`validate` refuse to certify the tree.
+
+**`scan` and `dash grep` take the same rule, one step softer.** They answer
+"where is X?", so they still report what they found — with the same `partial
+sweep: …` lines above the table, in the body where you can see them. Under
+`--json` they **refuse** instead: that document is a bare array of rows with
+nowhere to say the search was incomplete, and a short list parses exactly like a
+complete one. Both take `--allow-partial` to get the partial array. An empty
+result never claims more than it tested either: after a partial sweep the miss
+reads `no reference to X in what could be scanned`, not `not referenced`.
+
+The **config half can be short without failing**: the companion reports files
+its walk could not read (a renamed `!include` target, a file it may not open),
+and every `ref` command treats that as partial — `scan` says so, `validate`
+refuses to certify, `replace` refuses in dry run and, if a confirmed run hits
+it, names the files that may still hold the old id instead of reporting a
+completed rename.
 
 **A missing companion is not a degraded source, and `--allow-partial` does not
 cover it** — the companion is the transport for the config half, so every `ref`
 command aborts in every mode when its discovery fails. Without the add-on (HA
 Container, HA Core) `ref` does not run at all; `dash grep` still works over the
 WebSocket API alone, but it answers "where is this value?", not "is the tree
-clean?" — like `ref scan`, it prints the hits it found with exit 0 and warns on
-stderr about unreadable dashboards.
+clean?" — like `ref scan`, it prints the hits it found with exit 0 and states any
+unread dashboard above them.
 
 `replace` is dry-run until `--confirm` and aborts before writing anything if
 the companion cannot be reached — a rename that silently skips config files is

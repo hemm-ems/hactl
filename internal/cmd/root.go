@@ -288,6 +288,30 @@ func Execute() error {
 		writeStats(os.Stderr, int64(capBuf.Len()))
 	}
 
+	// An error ENDS the command; it does not ERASE what the command already
+	// printed. This flush used to sit on the success path only, so every site
+	// that renders an answer and then returns an error lost the answer: `ref
+	// validate --exit-code` (the verdict IS the error — a real instance with 429
+	// dangling references printed one line of stderr and zero bytes of stdout),
+	// and `ref replace`'s two post-report refusals, whose own comments say the
+	// report is rendered first "so the caller sees what is stuck".
+	//
+	// The manual's promise for bad input — exit 1, stderr, empty stdout — is
+	// unaffected, because a refusal refuses BEFORE it renders: there is nothing
+	// in the buffer to flush. It was never the entry point deleting output that
+	// kept that promise. RunWithOutputContext, the path the MCP server and the
+	// integration tier take, has always flushed on both paths, so the CLI was
+	// the one of the two entry points that answered differently.
+	if capBuf.Len() > 0 {
+		cmdPath := rootCmd.CommandPath()
+		if executed != nil {
+			// The leaf path, so truncationHint can give command-specific
+			// advice (rootCmd.CommandPath() is always just "hactl").
+			cmdPath = executed.CommandPath()
+		}
+		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// Name the instance the failing command was talking to — with
@@ -297,16 +321,6 @@ func Execute() error {
 			fmt.Fprintf(os.Stderr, "instance: %s\n", dir)
 		}
 		return err
-	}
-
-	if capBuf.Len() > 0 {
-		cmdPath := rootCmd.CommandPath()
-		if executed != nil {
-			// The leaf path, so truncationHint can give command-specific
-			// advice (rootCmd.CommandPath() is always just "hactl").
-			cmdPath = executed.CommandPath()
-		}
-		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
 
 	return nil
@@ -438,6 +452,7 @@ func resetSubcommandFlags() {
 	flagRefConfirm = false
 	flagRefExitCode = false
 	flagRefAllowPartial = false
+	flagDashAllowPartial = false
 	// Reset all cobra internal flags (including --help) on every command
 	// to prevent stale flag state between repeated Execute() calls.
 	resetCobraFlags(rootCmd)

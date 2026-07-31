@@ -99,6 +99,19 @@ func TestTargetSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestPartialScopeSurfaceIsClosed — every command body that reads a source
+// which can come back incomplete says what it does about a short read.
+//
+// D-7 is the law, and it has been written twice over a set that was prose in
+// one command's doc comment. Both times the set was one source short: first the
+// entity registry beneath the dashboards, then the whole config half of
+// `ref scan`, which returned three of twenty-four references at exit 0 with the
+// failure at slog.Warn (#34).
+func TestPartialScopeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.PartialScopeSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestInvariantSurfaceIsClosed — every law in INVARIANTS.md declares whether a
 // gate quantifies over its set or whether it is enforced by an enumeration.
 func TestInvariantSurfaceIsClosed(t *testing.T) {
