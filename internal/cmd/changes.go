@@ -17,6 +17,7 @@ import (
 
 var changesCmd = &cobra.Command{
 	Use:   "changes",
+	Args:  takesNone(),
 	Short: "Show recent state changes",
 	Long:  "Display recent logbook entries (state changes, automations fired, etc.).",
 	RunE: func(cmd *cobra.Command, args []string) error {

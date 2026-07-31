@@ -21,17 +21,18 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var configCmd = &cobra.Command{
+var configCmd = family(&cobra.Command{
 	Use:        "config",
 	SuggestFor: []string{"integrations", "integration", "entries"},
 	Short:      "Manage config entries and flows",
 	Long:       "List config entries and start, step through, and inspect config entry options flows and config flows.",
-}
+})
 
 var flagConfigDomain string
 
 var configEntriesCmd = &cobra.Command{
 	Use:   "entries",
+	Args:  takesNone(),
 	Short: "List config entries",
 	Long:  "List all config entries. Use --domain to filter by integration domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -51,7 +52,7 @@ var configShowCmd = &cobra.Command{
 		"diagnostics platform, pass --probe-options-flow to read current values " +
 		"from a transient options flow (started and immediately aborted); without " +
 		"the flag no options flow is started. Read-only; requires an admin token.",
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -61,7 +62,7 @@ var configOptionsCmd = &cobra.Command{
 	Use:   "options <entry_id>",
 	Short: "Start an options flow for a config entry (dry-run by default)",
 	Long:  "Start an options flow for an existing config entry. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigOptions(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -73,7 +74,7 @@ var configDeleteCmd = &cobra.Command{
 	Use:   "delete <entry_id>",
 	Short: "Delete a config entry (dry-run by default)",
 	Long:  "Delete a config entry by ID. Dry-run by default — use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -83,7 +84,7 @@ var configFlowStartCmd = &cobra.Command{
 	Use:   "flow-start <domain>",
 	Short: "Start a config flow for an integration (dry-run by default)",
 	Long:  "Start a new config flow for a domain/integration. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStart(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -104,7 +105,7 @@ Without --options, the step is sent to the config flow endpoint
 
 Dry-run by default: previews the data that would be submitted (a step may complete
 the flow and create a config entry); use --confirm to submit.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStep(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -117,7 +118,7 @@ var configFlowInspectCmd = &cobra.Command{
 
 Use --options when inspecting an options flow (started via 'config options <entry_id>').
 Without --options, the inspect reads from the config flow endpoint instead of the options flow endpoint.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowInspect(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -127,6 +128,7 @@ var flagConfigFileRaw bool
 
 var configFilesCmd = &cobra.Command{
 	Use:   "files",
+	Args:  takesNone(),
 	Short: "List config files",
 	Long:  "List configuration.yaml and its !include'd files (via the companion).",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -138,7 +140,7 @@ var configFileCmd = &cobra.Command{
 	Use:   "file <path>",
 	Short: "Print a config file as YAML",
 	Long:  "Print the contents of a config file. Use --raw to leave !include directives unresolved.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFile(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -150,7 +152,7 @@ var configBlockCmd = &cobra.Command{
 	Long: "Print a single block from a config file: matched by 'id:' or 'alias:' on the direct items " +
 		"of a top-level list (automations.yaml), or by top-level key (scripts.yaml). template.yaml " +
 		"blocks carry neither — read those with 'tpl cat <unique_id>'.",
-	Args:  cobra.ExactArgs(2),
+	Args:  takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigBlock(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},

@@ -26,7 +26,7 @@ and emits a per-event table plus a counts summary.
 Resolving user UUIDs to names requires an admin long-lived token; when
 the token lacks admin scope, raw UUIDs are shown and the rest of the
 attribution (automations/scripts/devices) still works.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntWho(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

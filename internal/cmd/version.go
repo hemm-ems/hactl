@@ -26,6 +26,7 @@ const (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
+	Args:  takesNone(),
 	Short: "Print hactl version",
 	Run: func(cmd *cobra.Command, args []string) {
 		printVersion(cmd.OutOrStdout())

@@ -17,17 +17,17 @@ import (
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
-var traceCmd = &cobra.Command{
+var traceCmd = family(&cobra.Command{
 	Use:   "trace",
 	Short: "Inspect automation traces",
 	Long:  "View condensed or full trace details for automation and script runs.",
-}
+})
 
 var traceShowCmd = &cobra.Command{
 	Use:   "show <trace-id>",
 	Short: "Show trace details",
 	Long:  "Display a condensed or full trace. Use stable IDs (e.g. trc:a7) or run IDs.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTraceShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

@@ -25,6 +25,7 @@ var (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
+	Args:  takesNone(),
 	Short: "First-time setup — creates .env in the current directory",
 	Long: "Guides you through connecting hactl to a Home Assistant instance.\n\n" +
 		"Non-interactive (for scripts and agents): pass both --url and --token.\n" +

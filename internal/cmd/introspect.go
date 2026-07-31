@@ -17,13 +17,20 @@ func FindCommandPath(args []string) (string, error) {
 
 // LeafCommandPaths returns the canonical path of every runnable leaf command,
 // e.g. "hactl ent ls". Group commands that only hold subcommands are omitted;
-// groups with their own Run (none today) would be included.
+// groups with their own Run (`hactl log`) are included.
+//
+// A family group is runnable — `family` gives it a RunE that prints its help,
+// because cobra will not validate the arguments of a command it considers
+// help-only and an unknown subcommand would exit 0 (H-22). That RunE is not a
+// command anybody calls, so this walk asks the annotation rather than
+// Runnable(): without it every family would arrive at the MCP gate as a
+// command to classify.
 func LeafCommandPaths() []string {
 	var paths []string
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		children := c.Commands()
-		if len(children) == 0 || c.Runnable() {
+		if (len(children) == 0 || c.Runnable()) && !isFamilyGroup(c) {
 			paths = append(paths, c.CommandPath())
 		}
 		for _, child := range children {

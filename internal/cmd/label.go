@@ -19,14 +19,15 @@ var flagLabelIcon string
 var flagLabelDesc string
 var flagLabelConfirm bool
 
-var labelCmd = &cobra.Command{
+var labelCmd = family(&cobra.Command{
 	Use:   "label",
 	Short: "Discover and manage labels",
 	Long:  "List, create, and inspect Home Assistant labels.",
-}
+})
 
 var labelLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List all labels",
 	Long:  "Show all labels registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -38,7 +39,7 @@ var labelCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new label",
 	Long:  "Create a label in the Home Assistant label registry.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLabelCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -48,7 +49,7 @@ var labelDeleteCmd = &cobra.Command{
 	Use:   "delete <label_id>",
 	Short: "Delete a label (dry-run by default)",
 	Long:  "Delete a label from the Home Assistant label registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLabelDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

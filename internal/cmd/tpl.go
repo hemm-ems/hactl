@@ -72,18 +72,18 @@ var flagTplFile string
 var flagTplConfirm bool
 var flagTplDomain string
 
-var tplCmd = &cobra.Command{
+var tplCmd = family(&cobra.Command{
 	Use:        "tpl",
 	SuggestFor: []string{"template", "templates"},
 	Short:      "Manage templates (eval, create, delete)",
 	Long:       "Evaluate Jinja2 templates and manage template sensor definitions.",
-}
+})
 
 var tplEvalCmd = &cobra.Command{
 	Use:   "eval [template]",
 	Short: "Evaluate a template",
 	Long:  "Evaluate an inline template string or a template from a file (-f).",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplEval(cmd.Context(), cmd.OutOrStdout(), args)
 	},
@@ -93,7 +93,7 @@ var tplCatCmd = &cobra.Command{
 	Use:   "cat <unique_id>",
 	Short: "Print a template sensor's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of a template sensor (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -126,6 +126,7 @@ func runTplCat(ctx context.Context, w io.Writer, uniqueID string) error {
 
 var tplCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new template entry (dry-run by default)",
 	Long: `Create a new template entry from a YAML file via the companion. Use --confirm to apply.
 
@@ -160,7 +161,7 @@ var tplDeleteCmd = &cobra.Command{
 	Use:   "delete <unique_id>",
 	Short: "Delete a template sensor (dry-run by default)",
 	Long:  "Delete a template sensor from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},

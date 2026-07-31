@@ -34,15 +34,16 @@ var flagAutoFile string
 var flagAutoConfirm bool
 var flagAutoRestored bool
 
-var autoCmd = &cobra.Command{
+var autoCmd = family(&cobra.Command{
 	Use:        "auto",
 	SuggestFor: []string{"automation", "automations"},
 	Short:      "Manage and inspect automations",
 	Long:       "List, filter, inspect, diff, and apply Home Assistant automations.",
-}
+})
 
 var autoLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List automations",
 	Long:  "Show automations table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,7 +55,7 @@ var autoShowCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show automation details and recent traces",
 	Long:  "Display automation summary and the last 5 trace runs.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -64,7 +65,7 @@ var autoCatCmd = &cobra.Command{
 	Use:   "cat <id>",
 	Short: "Print an automation's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of an automation (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -74,7 +75,7 @@ var autoDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote automation config",
 	Long:  "Compare a local YAML file (-f) against the current HA automation config.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoDiff(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -84,7 +85,7 @@ var autoApplyCmd = &cobra.Command{
 	Use:   "apply <id>",
 	Short: "Apply a local YAML config to HA (dry-run by default)",
 	Long:  "Validate and write automation config. Use --confirm to actually write + reload.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoApply(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -92,6 +93,7 @@ var autoApplyCmd = &cobra.Command{
 
 var autoCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new automation from YAML (dry-run by default)",
 	Long:  "Create a new automation from a local YAML file via the companion. Use --confirm to apply.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -103,7 +105,7 @@ var autoDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an automation (dry-run by default)",
 	Long:  "Delete an automation from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -1177,6 +1179,17 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 // The H-21 ordering fix does not make this unnecessary: the fetch can still
 // fail on network, on auth, or on a genuinely degenerate payload.
 func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (automationEntity, bool, error) {
+	// A blank reference matches nothing, and saying so here is not redundant
+	// with the H-22 argument contract: the four comparisons below are equality
+	// tests, a restored ghost legitimately carries an empty config id and an
+	// empty friendly_name, and `"" == ""` made the first such ghost the answer
+	// to every empty reference. `auto delete ''` planned the deletion of a real
+	// automation nobody had named. The contract refuses the empty string at the
+	// CLI boundary; this refuses it at the site where the wrong match was made,
+	// so a future caller that reaches the resolver another way cannot revive it.
+	if strings.TrimSpace(ref) == "" {
+		return automationEntity{}, false, nil
+	}
 	autos, err := fetchAutomations(ctx, client)
 	if err != nil {
 		return automationEntity{}, false, err

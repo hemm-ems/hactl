@@ -35,15 +35,16 @@ var (
 	flagEntRestored bool
 )
 
-var entCmd = &cobra.Command{
+var entCmd = family(&cobra.Command{
 	Use:        "ent",
 	SuggestFor: []string{"entity", "entities", "states", "sensor", "sensors"},
 	Short:      "Browse and inspect entities",
 	Long:       "List, inspect, and analyze Home Assistant entities and their history.",
-}
+})
 
 var entLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List entities",
 	Long:  "Show entities table, optionally filtered by glob pattern.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -55,7 +56,7 @@ var entShowCmd = &cobra.Command{
 	Use:   "show <entity_id>",
 	Short: "Show entity profile",
 	Long:  "Display entity current state, attributes, and last change.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -65,7 +66,7 @@ var entHistCmd = &cobra.Command{
 	Use:   "hist <entity_id>",
 	Short: "Show entity history",
 	Long:  "Display entity time series, auto-resampled to ~50 points by default.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntHist(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -75,7 +76,7 @@ var entAnomaliesCmd = &cobra.Command{
 	Use:   "anomalies <entity_id>",
 	Short: "Detect entity anomalies",
 	Long:  "Find gaps, stuck values, and spikes in entity history.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntAnomalies(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -85,7 +86,7 @@ var entRelatedCmd = &cobra.Command{
 	Use:   "related <entity_id>",
 	Short: "Show entities related to the given entity",
 	Long:  "Spider automations, device siblings, and area neighbors to find related entities.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntRelated(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -95,7 +96,7 @@ var entSetLabelCmd = &cobra.Command{
 	Use:   "set-label <entity_id> <label>...",
 	Short: "Assign labels to an entity (dry-run by default)",
 	Long:  "Set one or more labels on an entity via the HA entity registry. Dry-run by default: previews the merged label set; use --confirm to apply.",
-	Args:  cobra.MinimumNArgs(2),
+	Args:  takesAtLeast(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
@@ -105,7 +106,7 @@ var entSetAreaCmd = &cobra.Command{
 	Use:   "set-area <entity_id> <area>",
 	Short: "Assign an area to an entity (dry-run by default)",
 	Long:  "Set the area (room) for an entity via the HA entity registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(2),
+	Args:  takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},
@@ -1292,7 +1293,7 @@ var entRenameCmd = &cobra.Command{
 		"preview resolves the old id against the registry, pre-checks the new id for collisions, and " +
 		"counts the references a confirmed run would rewrite. Requires hactl-companion (it rewrites " +
 		"the config half). A dashboard that cannot be scanned refuses the run unless --allow-partial.",
-	Args: cobra.ExactArgs(2),
+	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntRename(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},

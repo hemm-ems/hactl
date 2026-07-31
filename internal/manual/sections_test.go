@@ -46,10 +46,18 @@ func TestFamiliesListMatchesMap(t *testing.T) {
 
 // The core block is the per-session cold-start budget (~1.4k tokens). Fail if
 // manual edits push it well outside that envelope.
+//
+// The upper bound moved from 8192 to 8704 when H-22's contract line was added
+// (the core sat 4 bytes under the old bound, so any core edit at all would have
+// tripped it). It is one sentence and it is in the core deliberately: it states
+// the exit-code contract for a class of caller mistakes that used to exit 0
+// with a plausible wrong answer, which is exactly what an agent scripts
+// against. Raising this number is a decision with an author, the same way
+// dev/surfaces ceilings are — not something to do to fit a paragraph.
 func TestCoreTextSize(t *testing.T) {
 	n := len(CoreText())
-	if n < 4096 || n > 8192 {
-		t.Errorf("CoreText() is %d bytes, want 4096..8192 (~1-2k tokens)", n)
+	if n < 4096 || n > 8704 {
+		t.Errorf("CoreText() is %d bytes, want 4096..8704 (~1-2k tokens)", n)
 	}
 }
 

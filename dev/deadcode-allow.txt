@@ -19,6 +19,7 @@
 internal/cmd/root.go RunWithOutput            # harness: the entry point every CLI test drives the cobra tree through
 internal/cmd/introspect.go LeafCommandPaths   # harness: enumerates the cobra tree for the H-10 command-tree walk
 internal/mcpserver/gate.go ClassifiedPaths    # harness: enumerates the write-gate classification for its sweep tests
+internal/cmd/args.go isFamilyGroup            # harness: reads the family-group annotation for the three tree walks (MCP gate, --json sweep, manual guardrail) that must not count a group made runnable by H-22 as a command
 
 # --- orphan ------------------------------------------------------------------
 # The trace/log disk cache (internal/cache.Store) is written and read by nothing

@@ -43,5 +43,8 @@ func TestMain(m *testing.M) {
 	if deviceWriteHA != nil {
 		deviceWriteHA.Stop()
 	}
+	if idlessHA != nil {
+		idlessHA.Stop()
+	}
 	os.Exit(exitCode)
 }

@@ -831,6 +831,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 - **Timestamps:** short form in your local zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so the short string survives and numbers come back as strings (`"runs_24h": "0"`).
 - **No decoration:** no emojis, no color.
 - **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`). Dry-run previews return `{"dry_run":true,"action","details","hint"}`.
+- **Bad input is refused, not absorbed** (exit 1, stderr, empty stdout): a blank identifier (an empty string is never a wildcard), an argument a command does not take (`ent ls sensor` → `--domain sensor`), or an unknown subcommand in any family. Nothing mistyped ever exits 0 with help.
 - **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A family's **first `--confirm`** is refused non-interactively (how-to on stderr, exit 1): dry-run first, then repeat.
 - **`--stats`:** raw response size + estimated token count on stderr, after any command including a failing one.
 

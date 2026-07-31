@@ -18,14 +18,15 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var ccCmd = &cobra.Command{
+var ccCmd = family(&cobra.Command{
 	Use:   "cc",
 	Short: "Inspect custom components",
 	Long:  "List and inspect custom (third-party) components installed in HA.",
-}
+})
 
 var ccLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List custom components",
 	Long:  "Show installed custom components with version and domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,7 +38,7 @@ var ccShowCmd = &cobra.Command{
 	Use:   "show <name>",
 	Short: "Show custom component details",
 	Long:  "Display details for a specific custom component.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCCShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -47,7 +48,7 @@ var ccLogsCmd = &cobra.Command{
 	Use:   "logs <name>",
 	Short: "Show logs for a custom component",
 	Long:  "Display error log entries related to a specific custom component.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCCLogs(cmd.Context(), cmd.OutOrStdout(), args[0], cmd.Flags().Changed("since"))
 	},

@@ -27,19 +27,19 @@ var (
 	flagRefAllowPartial bool
 )
 
-var refCmd = &cobra.Command{
+var refCmd = family(&cobra.Command{
 	Use:   "ref",
 	Short: "Find and rename entity references across config files and dashboards",
 	Long: "Scan and rewrite literal entity_id references everywhere they appear — YAML config files " +
 		"(via the companion, following !include) and Lovelace dashboards (via the WebSocket API) — in one pass.",
-}
+})
 
 var refScanCmd = &cobra.Command{
 	Use:   "scan <target>",
 	Short: "Find every reference to a value across config and dashboards",
 	Long: "Scan all YAML config files (following !include) and every dashboard for an exact string " +
 		"(typically an entity_id) and report the source, location, and path of each reference.",
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runRefScan(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -53,7 +53,7 @@ var refReplaceCmd = &cobra.Command{
 		"config. Dry-run by default; use --confirm to apply. References in YAML-mode dashboards " +
 		"cannot be rewritten over the API, and a dashboard that cannot be scanned leaves the rename " +
 		"unverifiable — both refuse loudly unless --allow-partial is given.",
-	Args: cobra.ExactArgs(2),
+	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return refReplaceWithOptions(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], flagRefConfirm, flagRefAllowPartial)
 	},
@@ -91,7 +91,7 @@ var refValidateCmd = &cobra.Command{
 		"over, and validate connects to it before it reads anything at all, so a discovery failure " +
 		"aborts the command in every mode — on an install without the add-on (HA Container, HA Core) " +
 		"validate does not run.",
-	Args: cobra.NoArgs,
+	Args: takesNone(),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runRefValidate(cmd.Context(), cmd.OutOrStdout())
 	},
