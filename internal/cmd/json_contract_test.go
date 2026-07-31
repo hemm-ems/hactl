@@ -804,10 +804,23 @@ func assertNoRenderedClock(t *testing.T, v any, path, raw string) {
 // renderedPlaceholders are the strings hactl's table renderers put in a cell
 // that stands for a value the wire did not carry, or for a value a machine
 // should receive typed.
+//
+// The list read `-`, `yes`, `no` until WP5, and that is how `dash ls --json`
+// shipped `"admin": "false"` past a gate written to catch exactly this
+// (finding #59): the vocabulary was the two renderers the PREVIOUS fix had
+// touched, so `strconv.FormatBool`'s own output was outside a check whose
+// stated principle is "the shape of the value, never a list of columns". A
+// value gate can only ever hold a list of values, which is why the structural
+// half — `dev/surfaces/boolcell.manifest`, every bool that becomes a cell —
+// exists beside it. That half also covers the one this can never see:
+// `boolCell` renders false as `""`, and an empty string is legitimately empty
+// everywhere.
 var renderedPlaceholders = map[string]string{
-	"-":   "dashIfEmpty's stand-in for an empty string — a machine reads it as a value",
-	"yes": "yesNo's rendering of true — a machine wants the bool",
-	"no":  "yesNo's rendering of false — non-empty, so it reads as true",
+	"-":     "dashIfEmpty's stand-in for an empty string — a machine reads it as a value",
+	"yes":   "yesNo's rendering of true — a machine wants the bool",
+	"no":    "yesNo's rendering of false — non-empty, so it reads as true",
+	"true":  "strconv.FormatBool's rendering of true — a machine wants the bool",
+	"false": "strconv.FormatBool's rendering of false — non-empty, so it reads as true",
 }
 
 // passedThroughJSONField names the fields whose value hactl copies from Home

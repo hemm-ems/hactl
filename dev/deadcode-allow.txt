@@ -40,7 +40,6 @@ internal/companion/client.go Client.ListTemplates       # orphan: no command rou
 internal/companion/client.go Client.WriteTemplate       # orphan: no command routes here
 internal/companion/client.go Client.ListScriptDefs      # orphan: no command routes here
 internal/companion/client.go Client.ListAutomationDefs  # orphan: no command routes here
-internal/companion/client.go Client.WriteAutomationDef  # orphan: no command routes here
 internal/companion/client.go Client.UpdateHelper        # orphan: no command routes here
 internal/companion/client.go Client.ReloadDomain        # orphan: no command routes here
 
@@ -49,3 +48,5 @@ internal/haapi/flow.go Client.StartConfigFlow    # orphan: `flow start` routes t
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
 internal/cmd/companion_cmd.go formatCompanionStatusLine  # orphan: companion status renders its own lines
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
+internal/haapi/client.go Client.GetAutomationConfig  # gate: H-12's independent read path — the Docker tiers verify an automation write by reading it out of HA's OWN config API, which is the whole point ("reading back through hactl does not count"); no product command may route here, and since #128 none does
+internal/haapi/client.go Client.ServiceExists  # gate: the companion tier's rig setup probes whether a reload service exists before asserting a reload happened; a product command that branched on this would be guessing where it can ask

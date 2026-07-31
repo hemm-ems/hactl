@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "The DEFAULT dashboard's stored config, in its pre-migration location.",
+    "",
+    "This file is the seed for a shape hactl believed impossible. Home Assistant 2026.x",
+    "migrates a stored default into the dashboards collection at boot",
+    "(_async_migrate_default_config, storage mode only): it creates an entry with url_path",
+    "`lovelace` and mode `storage`, moves this file to .storage/lovelace.lovelace, and deletes",
+    "this one. So after the first boot lovelace/dashboards/list reports the default — under a",
+    "url_path a user-created dashboard cannot take, with mode `storage`.",
+    "",
+    "hactl read `the default is listed` as `the default is YAML-mode`, because the only",
+    "instance state that had ever produced a listed default was the YAML one",
+    "(internal/integration/lovelace_oracle_test.go, captured before this migration existed).",
+    "`dash save` and `dash replace` therefore refused the default on the reference instance,",
+    "citing a `lovelace: mode: yaml` line its configuration.yaml does not contain.",
+    "",
+    "HA performs the migration itself from this file, which is the whole reason the fixture",
+    "seeds the OLD location: if a future HA stops migrating, the rig stops carrying the shape",
+    "and TestRigFixtureDefaultDashboardIsListedAsStorage says so instead of quietly passing."
+  ],
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace",
+  "data": {
+    "config": {
+      "views": [
+        {
+          "title": "Rig Default",
+          "path": "rig-default",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "The rig's default dashboard, stored rather than auto-generated."
+            },
+            {
+              "type": "entities",
+              "entities": ["input_boolean.guest_mode"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

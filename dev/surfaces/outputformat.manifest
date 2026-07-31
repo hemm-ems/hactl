@@ -1,0 +1,19 @@
+# outputformat — a command declaring an output-format flag beside the global
+# `--json` refuses the combination rather than silently picking a winner.
+#
+# `dash show pg-w6-dash --raw --yaml` printed compact JSON and said nothing
+# about --yaml; `--json --yaml` printed YAML (finding #60). The precedence was
+# the order of three if-statements, documented nowhere, and a caller who asked
+# for YAML got JSON at exit 0 — a shape a machine consumer cannot detect.
+#
+# Naming the winner in the output is not an available fix: under `--json` a
+# note on stdout breaks H-10's "it parses, with nothing else on stdout".
+#
+# The surface counts only a command's OWN format flags. `--json` is the one
+# every command has, so a command carrying nothing else has no conflict to
+# resolve; the day a second one is added, the command joins this file.
+#ceiling 0
+
+hactl dash show = proven: TestDashShowRefusesConflictingOutputFormats
+
+hactl config file = exempt: `config file --raw` names WHAT is in the output ("leave !include directives unresolved"), not the format of it — it composes with --json rather than competing with it, and the two together are a meaningful request

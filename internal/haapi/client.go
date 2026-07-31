@@ -99,11 +99,6 @@ func (c *Client) RenderTemplate(ctx context.Context, template string) (string, e
 	return string(data), nil
 }
 
-// UpdateAutomationConfig calls POST /api/config/automation/config/<id> with the given config.
-func (c *Client) UpdateAutomationConfig(ctx context.Context, automationID string, config any) error {
-	_, err := c.doPost(ctx, "/api/config/automation/config/"+automationID, config)
-	return err
-}
 
 // ServiceDomain is one entry of GET /api/services: a domain and the services
 // it registers, keyed by service name.

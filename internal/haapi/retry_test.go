@@ -60,9 +60,6 @@ func TestNonIdempotentWritesAreIssuedOnce(t *testing.T) {
 			_, err := c.CallServiceWithResponse(context.Background(), "calendar", "get_events", nil)
 			return err
 		}},
-		{"UpdateAutomationConfig", func(c *Client) error {
-			return c.UpdateAutomationConfig(context.Background(), "auto1", map[string]any{"alias": "x"})
-		}},
 		{"RenderTemplate", func(c *Client) error {
 			_, err := c.RenderTemplate(context.Background(), "{{ 1 }}")
 			return err

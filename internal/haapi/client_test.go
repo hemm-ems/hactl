@@ -306,25 +306,6 @@ func TestGetAutomationConfig(t *testing.T) {
 	}
 }
 
-func TestUpdateAutomationConfig(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/config/automation/config/climate_schedule" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, `{}`)
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "tok")
-	config := map[string]any{"id": "climate_schedule", "alias": "Updated"}
-	if err := c.UpdateAutomationConfig(context.Background(), "climate_schedule", config); err != nil {
-		t.Fatalf("UpdateAutomationConfig: %v", err)
-	}
-}
 
 func TestCallService(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

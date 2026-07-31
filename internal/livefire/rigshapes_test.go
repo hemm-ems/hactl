@@ -771,3 +771,153 @@ func TestRigServesEveryEnergySourceTypeItConfigures(t *testing.T) {
 		}
 	})
 }
+
+// TestRigFixtureCarriesTheDashboardShapes is R12's claim half: the three
+// dashboard states a real instance has, and three flat YAML files could not.
+//
+// Every dash defect in WP5 needed one of them. `dash show --view` on a
+// dashboard with no views was unreachable while every fixture dashboard had
+// views; "Home Assistant holds no config for this dashboard" was unreachable
+// while no fixture registered a dashboard without saving one; and the premise
+// that a listed default is a YAML-mode default was unfalsifiable while the only
+// fixture with a listed default was the YAML one.
+func TestRigFixtureCarriesTheDashboardShapes(t *testing.T) {
+	var collection struct {
+		Data struct {
+			Items []struct {
+				ID      string `json:"id"`
+				URLPath string `json:"url_path"`
+				Mode    string `json:"mode"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	readFixtureJSON(t, filepath.Join(".storage", "lovelace_dashboards"), &collection)
+
+	seeded := map[string]string{}
+	for _, item := range collection.Data.Items {
+		seeded[item.URLPath] = item.ID
+	}
+	for _, urlPath := range []string{"map", "rig-unsaved"} {
+		if seeded[urlPath] == "" {
+			t.Errorf("the dashboards collection registers no %q; R12's shapes start here", urlPath)
+		}
+	}
+	if _, listed := seeded["lovelace"]; listed {
+		t.Error("the fixture registers the default itself — the shape only proves anything when " +
+			"Home Assistant's own migration produces it from .storage/lovelace")
+	}
+
+	// A strategy dashboard's config has no `views` key AT ALL. Giving it an
+	// empty `views: []` would look equivalent and would not be: the document
+	// hactl parses is what decides, and the reference instance's map dashboard
+	// carries exactly {"strategy":{"type":"map"}}.
+	var mapConfig struct {
+		Data struct {
+			Config map[string]any `json:"config"`
+		} `json:"data"`
+	}
+	readFixtureJSON(t, filepath.Join(".storage", "lovelace."+seeded["map"]), &mapConfig)
+	if _, hasViews := mapConfig.Data.Config["views"]; hasViews {
+		t.Error("the map dashboard's stored config carries a `views` key; the shape is a document " +
+			"with none, which is what makes len(cfg.Views) == 0 reachable")
+	}
+	if _, hasStrategy := mapConfig.Data.Config["strategy"]; !hasStrategy {
+		t.Error("the map dashboard's stored config carries no `strategy`; then its zero views are " +
+			"an empty dashboard rather than a generated one, and they are different answers")
+	}
+
+	// The registered-but-unsaved shape is an ABSENT file. Asserting it is the
+	// only way the shape survives someone helpfully adding a config for it.
+	if _, err := os.Stat(filepath.Join(fixtureDir(t), ".storage", "lovelace."+seeded["rig-unsaved"])); err == nil {
+		t.Error("rig-unsaved has a stored config; the shape is a dashboard Home Assistant answers " +
+			"config_not_found for, so this file must not exist")
+	}
+
+	// The default's config in its PRE-migration location, so HA performs the
+	// migration and the rig carries whatever HA's migration currently produces.
+	var defaultConfig struct {
+		Data struct {
+			Config map[string]any `json:"config"`
+		} `json:"data"`
+	}
+	readFixtureJSON(t, filepath.Join(".storage", "lovelace"), &defaultConfig)
+	if defaultConfig.Data.Config == nil {
+		t.Error(".storage/lovelace holds no config, so _async_migrate_default_config returns at " +
+			"its second step and the default is never listed")
+	}
+}
+
+// TestRigServesTheDashboardShapes is R12's served half. The fixture is a claim;
+// Home Assistant answering these four questions is the evidence.
+//
+// It runs on both profiles because the reference instance carries every one of
+// them — a migrated storage-mode default under the reserved `lovelace` slug, a
+// strategy-only `map` Home Assistant made during onboarding, and (WP5 keeps one
+// there deliberately) a registered dashboard with nothing saved.
+func TestRigServesTheDashboardShapes(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		var rows []struct {
+			URLPath string `json:"url_path"`
+			Mode    string `json:"mode"`
+		}
+		out := tgt.MustRead(t, "dash", "ls", "--json")
+		if err := json.Unmarshal([]byte(out), &rows); err != nil {
+			t.Fatalf("dash ls --json: %v\n%s", err, truncate(out))
+		}
+		mode := map[string]string{}
+		for _, r := range rows {
+			mode[r.URLPath] = r.Mode
+		}
+
+		// The shape the code believed impossible: the default IS listed, and it
+		// is storage-mode. hactl read `listed` as `YAML-mode` and refused every
+		// write to the default on an instance that accepts them.
+		if got, listed := mode["lovelace"]; !listed || got != "storage" {
+			t.Errorf("the default dashboard is listed=%v mode=%q; R12's shape is listed with "+
+				"mode `storage` (Home Assistant's own migration produces it)", listed, got)
+		}
+
+		// A dashboard whose stored config has no views.
+		strategy := "map"
+		if mode[strategy] == "" {
+			t.Fatalf("no %q dashboard is served; dash ls reports %v", strategy, mode)
+		}
+		raw := tgt.MustRead(t, "dash", "show", strategy, "--raw")
+		var config map[string]any
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			t.Fatalf("dash show %s --raw is not JSON: %v\n%s", strategy, err, truncate(raw))
+		}
+		if _, hasViews := config["views"]; hasViews {
+			t.Errorf("%s's served config carries `views`; the shape is a document with none", strategy)
+		}
+
+		// A dashboard Home Assistant answers config_not_found for. The live
+		// profile's is pg-w5-fresh, created by WP5 and left in place on purpose:
+		// it is the only way the reference instance can be asked this question
+		// without saving a config over one of Jan's dashboards.
+		unsaved := "rig-unsaved"
+		if tgt.Profile == Live {
+			unsaved = "pg-w5-fresh"
+		}
+		if _, listed := mode[unsaved]; !listed {
+			t.Fatalf("no %q dashboard is registered; dash ls reports %v", unsaved, mode)
+		}
+		if _, err := tgt.Read(t, "dash", "show", unsaved, "--raw"); err == nil {
+			t.Errorf("%s has a stored config; the shape is a registered dashboard with none", unsaved)
+		}
+	})
+}
+
+// readFixtureJSON decodes a fixture file into v.
+func readFixtureJSON(tb testing.TB, rel string, v any) {
+	tb.Helper()
+	path := filepath.Join(fixtureDir(tb), rel)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: a path under this repo's testdata
+	if err != nil {
+		tb.Fatalf("reading %s: %v", rel, err)
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		tb.Fatalf("parsing %s: %v", rel, err)
+	}
+}

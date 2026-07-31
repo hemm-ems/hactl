@@ -22,11 +22,20 @@ import (
 // Best-effort: a snapshot failure is logged, never fatal. Refusing to save
 // because we couldn't back up would be worse than the asymmetry it fixes.
 func snapshotDashboardBeforeSave(ctx context.Context, ws *haapi.WSClient, urlPath string) {
-	prev, err := ws.DashboardConfigRaw(ctx, urlPath)
-	if err != nil {
+	state, prev, err := classifyDashboardConfig(ctx, ws, urlPath)
+	switch state {
+	case dashConfigAbsent:
+		// The first save for a dashboard that has none. There is nothing to
+		// snapshot and nothing to warn about: warning "could not fetch current
+		// dashboard config" here reported an absence as a failure, which is
+		// finding #3's class one command over.
+		slog.Debug("no stored dashboard config to snapshot", "url_path", urlPath)
+		return
+	case dashConfigUnclassifiable:
 		slog.Warn("could not fetch current dashboard config; overwriting without a snapshot",
 			"url_path", urlPath, "error", err)
 		return
+	case dashConfigStored:
 	}
 	path, err := writeDashboardSnapshot(flagDir, urlPath, prev)
 	if err != nil {

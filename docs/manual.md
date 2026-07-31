@@ -621,7 +621,7 @@ Every `config` command except `files`/`file`/`block` uses HA's REST API directly
 ```bash
 hactl dash ls                                      # list all dashboards (url_path, title, mode)
 hactl dash ls --json                               # structured JSON for all dashboards
-hactl dash show                                    # default dashboard: views summary, or an honest auto-generated report
+hactl dash show                                    # default dashboard: views summary, or an honest no-stored-config report
 hactl dash show my-dashboard                       # views summary by url_path (from `dash ls`, NOT a view path)
 hactl dash show my-dashboard --json                # pretty-printed full config JSON
 hactl dash show my-dashboard --raw                 # raw HA JSON (for round-trip editing)
@@ -641,19 +641,33 @@ hactl dash replace sensor.old sensor.new my-dash --confirm  # apply
 
 **LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API. `--view` scopes inspection output only; do not feed a single-view object to `dash save`.
 
-**The default dashboard has three states, and `dash show` (no argument) reports
-them honestly.** With a stored config (someone saved it, e.g. via the UI editor
-or `dash save --confirm`) you get the views summary; the same holds when
-configuration.yaml pins the default to YAML mode (the config is read from
-`ui-lovelace.yaml`). When the default is **auto-generated** — HA builds it at
-view time and holds no config, the state of every fresh instance — `dash show`
-says exactly that and points to `dash ls`; it never fabricates a rendering of
-what HA would generate. Under `--json` the auto-generated answer is an object
-with `"state": "auto-generated"` (a stored answer is the config document
-itself, which carries `views` and no `state` key — check for `state` to tell
-them apart). `--raw`/`--yaml` refuse in the auto-generated state: there is no
-stored document to round-trip. To make an auto-generated default editable,
-store a config for it with `dash save --confirm`.
+**`dash show` reports what Home Assistant holds, for any dashboard.** With a
+stored config you get the views summary; the same holds when configuration.yaml
+pins the default to YAML mode (the config is read from `ui-lovelace.yaml`).
+Three answers are not a views summary, and each says which it is:
+
+- **No stored config.** HA holds nothing for this dashboard. For the **default**
+  that means HA builds it at view time — the state of every fresh instance —
+  and `dash show` says so and points to `dash ls`; it never fabricates a
+  rendering of what HA would generate. For a **named** dashboard it is the state
+  between `dash create` and its first `dash save`. Under `--json` the answer is
+  an object carrying `"state": "auto-generated"` or `"state":
+  "no-stored-config"` (a stored answer is the config document itself, which
+  carries `views` and no `state` key — check for `state` to tell them apart);
+  `--raw`/`--yaml` refuse, because there is no document to round-trip. Store one
+  with `dash save <url_path> --confirm`.
+- **Strategy-generated.** The stored config carries a `strategy` and no views —
+  HA's own `map` dashboard is one — so `dash show` names the strategy and says
+  the frontend builds the views at view time. `--raw` shows the stored document.
+- **A `--view` that does not exist** is an error at exit 1, whatever the
+  dashboard's shape, including a dashboard with no views at all.
+
+A url_path that names no dashboard is an error, never one of the answers above.
+
+**One output format per invocation.** `--raw`, `--yaml` and `--json` each name
+a format and `dash show` refuses more than one rather than silently picking:
+`--raw` is the stored document verbatim, `--json` the same document indented,
+`--yaml` the same document as YAML.
 
 **`grep` and `replace` work on string values, not on entity fields.** Both walk
 each dashboard's JSON and match any string **equal to** the argument, wherever it
@@ -665,13 +679,17 @@ keys are never matched or rewritten. Output is `dashboard` + `path`
 value**" and routes term discovery to `ent ls --pattern`, exit 0 — it is a
 verified negative only for the exact value asked about.
 
-`dash replace` takes one dashboard (omit `url_path` for the default dashboard,
-which fails with `config_not_found` when the default is HA's auto-generated one),
-is dry-run until `--confirm`, and rewrites every matching value at once. Writes
-to a YAML-mode dashboard are refused up front — preview and `--confirm` alike —
-because HA's save API answers "Not supported" for them; the same applies to
-`dash save` and `dash delete` (a YAML dashboard is removed from
-configuration.yaml, not over the API). To rename across config files *and*
+`dash replace` takes one dashboard (omit `url_path` for the default dashboard),
+is dry-run until `--confirm`, and rewrites every matching value at once. A
+dashboard with no stored config contains no occurrences of anything, so it
+reports zero and writes nothing; a url_path that names no dashboard is refused.
+Writes to a YAML-mode dashboard are refused up front — preview and `--confirm`
+alike — because HA's save API answers "Not supported" for them; the same applies
+to `dash save` and `dash delete` (a YAML dashboard is removed from
+configuration.yaml, not over the API). Whether the **default** is YAML-mode is
+read from its own `mode` in `dash ls`, not from whether it is listed: recent
+Home Assistant migrates a stored default into the dashboard list under url_path
+`lovelace`, in `storage` mode, and that one is writable. To rename across config files *and*
 dashboards in a single pass, use `ref replace`.
 
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
@@ -726,10 +744,12 @@ vacuous. `--allow-partial` proceeds over whatever could be read, in any mode,
 scope stated. One source is stricter: missing **live states** refuse in every
 mode (the registry alone holds no state-only entities — most reports would be
 false positives); an unread config file or dashboard risks the opposite, false
-negatives — references that were never checked. An **auto-generated default
-dashboard is not a partial sweep**: HA holds no config for it, so zero
-references there is the complete truth, and `--exit-code` stays green on a
-fresh instance.
+negatives — references that were never checked. A dashboard Home Assistant holds
+**no config for is not a partial sweep** — the auto-generated default, and
+equally a dashboard created but not yet saved: HA holds nothing, so zero
+references there is the complete truth. `--exit-code` stays green on a fresh
+instance, and one unsaved dashboard does not make `validate` refuse to certify
+the tree.
 
 **A missing companion is not a degraded source, and `--allow-partial` does not
 cover it** — the companion is the transport for the config half, so every `ref`
@@ -913,7 +933,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 - **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--full` removes it too, unless you pass `--tokensmax` yourself. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `completion`, `--help`.
 - **Tables:** one header line, one row per item; `…+N more` for overflow, capped by `--top`.
 - **Stable IDs:** `trc:a7` (`auto`/`script show`), `log:f2` (`log` incl. `--unique`, `cc logs`) — kept in `cache/ids.json` until `cache clear`; `ent anomalies` mints none.
-- **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included (whose other cells stay strings: `"runs_24h":"0"`).
+- **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included. Boolean columns are JSON booleans (`"admin": true`); numeric cells stay strings (`"runs_24h": "0"`) — parse them, never test them for truthiness.
 - **No decoration:** no emojis, no color.
 - **JSON mode:** `--json` extracts fields; filter first on large datasets. The verbatim commands above ignore it, as do `auto|script diff` and `tpl eval`. Previews return `{"dry_run":true,"action","details","hint"}`, a confirmed write `{"dry_run":false,"ok":true,"action","details"}` (+`"warnings"`) — read `dry_run`, not your flags.
 - **Bad input is refused, not absorbed** (exit 1, stderr, empty stdout): a blank identifier (an empty string is never a wildcard), an argument a command does not take (`ent ls sensor` → `--domain sensor`), or an unknown subcommand in any family. Nothing mistyped ever exits 0 with help.

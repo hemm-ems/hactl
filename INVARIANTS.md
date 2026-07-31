@@ -519,6 +519,23 @@ machine value with `format.Table.SetMachine`.** The gate is clause (5) of the
 per-field exemption that states its reason — `state` is HA's own payload, and an
 input_select may honestly hold `yes`.
 
+**And a gate against a rendering is only as wide as its vocabulary.** The
+paragraph above was written when `yesNo` and `dashIfEmpty` were fixed, and
+clause (5) was built from those two renderers' output — `-`, `yes`, `no`. It
+says of itself that it checks "the SHAPE of the value ... a list of column names
+is the enumeration that forgets whichever column is added next", and it was
+right about columns and wrong about values: `strconv.FormatBool` renders `true`
+and `false`, neither of which was in the list, so `dash ls --json` answered
+`"admin": "false"` for two years past a gate built to catch precisely that
+(finding #59). Three more sites — `ent ls` and `auto ls`'s `restored`, and one
+more inside `config` — were in the same state, and no report named any of them.
+The vocabulary now covers `strconv`'s pair too, and that is still the weaker
+half: `boolCell` renders false as `""`, which no value check can ever
+distinguish from a string that is honestly empty. The structural half is
+`dev/surfaces/boolcell.manifest` — every place a bool becomes a table cell,
+derived from the typed source and each one dispositioned — so a cell whose
+wording nothing recognises is still a site nobody may leave silent.
+
 **And neither is a rendered abbreviation.** The third instance of the same
 mechanism, in the same table, and the widest: six functions in five files each
 did their own `if len(msg) > 60 { msg = msg[:57] + "..." }` while ASSEMBLING the
@@ -587,6 +604,19 @@ with filters — and a command declares itself a document with
 `markStructuredOutput`.** Prose is still capped, which is the control the
 exemption has to keep passing.
 
+**Two flags naming one format is a question with no answer.** Clause (1) is why
+`dash show x --raw --yaml` cannot be fixed by noting which flag won: under
+`--json` a note on stdout breaks "it parses, with nothing else on stdout", and a
+note on stderr is the same silence one stream over. So the combination is
+refused — the only answer that also stays true when a fourth format arrives.
+`--raw` beat `--yaml` beat `--json` by the order of three if-statements,
+documented nowhere, and a caller who asked for YAML got compact JSON at exit 0
+(finding #60). The set of format flags lives in one place
+(`outputFormatFlagNames`), read by both the runtime check and the closure gate
+over `dev/surfaces/outputformat.manifest`, so a command that grows a second way
+to spell its output format is a site somebody has to disposition rather than a
+new silent precedence rule.
+
 - Enforced by: `internal/format/format_test.go` (`TestRenderJSON_TopN` —
   inverted from asserting the truncation bug as correct to asserting `--top`
   has no effect on `--json`), `internal/cmd/json_contract_test.go`
@@ -619,6 +649,13 @@ exemption has to keep passing.
   `TestSweepLogTextIsOneRowPerLine`,
   `TestSweepLogJSONComponentIsWhatTheFilterMatched`,
   `TestSweepLogFamilyAgreesOnItsSchema`),
+  `internal/cmd/boolcell_test.go` (`TestBooleanColumnsRenderAsJSONBooleans` —
+  every bool column across five commands, each asserted true AND false so a
+  constant column cannot satisfy it) with
+  `internal/cmd/surface_boolcell_test.go` (`TestBoolCellSurfaceIsClosed`) as its
+  closure half,
+  `internal/cmd/surface_outputformat_test.go`
+  (`TestOutputFormatSurfaceIsClosed`, `TestDashShowRefusesConflictingOutputFormats`),
   `internal/cmd/json_confirm_contract_test.go` (`TestJSONConfirmContract` — the
   write half: every `--confirm`-gated command the fixture can answer is driven
   through BOTH branches and must report `dry_run`, `action` and `ok`; a write in
@@ -817,6 +854,24 @@ submitted through `config options --confirm` + `flow-step --options --confirm`,
 then read straight back from a fresh options flow's HA-seeded form default.
 Stubbing `StartConfigFlowOnce`/`StepFlow`/`DeleteConfigEntry`/`StartOptionsFlow`
 to canned success fails these at the read-back.
+
+**A write that Home Assistant reports as FAILED claims nothing either.** The
+clause above is one direction of the rule and it shipped without the other. On a
+url_path long enough that `.storage/lovelace.<id>` passes the filesystem's
+255-byte filename limit, HA removes the dashboard from its collection and *then*
+fails unlinking the file — from a listener that runs after the removal — so the
+websocket answers `Unknown error` about an object that is already gone
+(`OSError: [Errno 36]`, traceback captured on the reference instance
+2026-07-31). `dash delete --confirm` reported that as a plain failure at exit 1,
+which tells a caller the dashboard still exists; a retry then fails with "not
+found", and a script gating on the exit code takes the wrong branch either way.
+Whether the object changed is a question the error does not answer, and the only
+thing that answers it is a read-back: `runDashDelete` re-resolves the url_path
+before it decides what to say, reports the delete as done when it is gone, and
+carries HA's own error into `warnings` so the failure is not swallowed on the
+way. The general rule is that a confirmed write's *outcome* is a fact about the
+instance, not about the last call's return value — and that fact is free to
+disagree with it in either direction.
 
 **A flow preview resolves the domain the way the confirmed run does.** `config
 flow-start`'s dry run validated the domain against `manifest/list` — the

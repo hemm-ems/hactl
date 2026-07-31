@@ -251,7 +251,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 
 	headers := []string{"entity_id", "state", "area", "labels", "last_changed"}
 	if anyRestored {
-		headers = append(headers, "restored")
+		headers = append(headers, restoredColumn)
 	}
 	tbl := &format.Table{
 		Headers: headers,
@@ -279,6 +279,9 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		}
 		if anyRestored {
 			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
+			// boolCell is a rendering for a person — see its doc comment. The
+			// machine gets the boolean (finding #59, one command over).
+			tbl.SetMachine(i, restoredColumn, isRestoredAttr(s.Attributes))
 		}
 		tbl.Rows[i] = row
 		// The cell above is the reader's short clock; a machine gets the
@@ -1169,8 +1172,22 @@ func isRestoredAttr(attrs map[string]any) bool {
 	return b
 }
 
+// restoredColumn is the header of the ghost column `ent ls` and `auto ls` add
+// under --restored. It is a constant because the header and the SetMachine key
+// beside it must be the same string: SetMachine on a header that does not exist
+// adds a NEW json key instead of overriding the cell, silently, and the reader
+// of a `restored` field would never learn there was a `restred` one too.
+const restoredColumn = "restored"
+
 // boolCell renders a boolean for table output: "yes" when true, empty otherwise
 // (so the compact renderer keeps the majority of rows quiet).
+//
+// A cell it fills is a HUMAN rendering, so a table that reaches --json must
+// pair it with format.Table.SetMachine carrying the bool itself — the same rule
+// yesNo carries, for the same reason. "yes" and "" happen to be truthy and
+// falsy in most languages, which made this the quiet half of finding #59: the
+// type is wrong, a consumer comparing against `true` reads every ghost as not
+// a ghost, and nothing about the output says so.
 func boolCell(b bool) string {
 	if b {
 		return "yes"

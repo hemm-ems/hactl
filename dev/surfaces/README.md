@@ -78,6 +78,8 @@ not an act at all. That asymmetry is the whole design.
 | `result` | the same entrypoints, the other branch | a confirmed write reports its outcome through a renderer that honours `--json`, never as unconditional prose (H-10) |
 | `lsfilter` | every leaf command named `ls` in the live cobra tree — with or without a filter flag | a listing narrows by an identifier filter (`--pattern`, D-1), or its row states why there is nothing to narrow |
 | `positional` | the live cobra tree | every command declares its positional contract, so a blank identifier, an unexpected positional and an unknown subcommand are all refused before the command runs (H-22) |
+| `boolcell` | every bool-to-cell rendering in the typed source — a call into the renderer vocabulary, or a variable a function assigns two of its words | a boolean rendered into a table cell reaches `--json` as a JSON boolean (`SetMachine`), never as its human wording (H-10) |
+| `outputformat` | the live cobra tree | a command declaring an output-format flag beside `--json` refuses the combination rather than silently picking a winner (H-10) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

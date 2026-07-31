@@ -365,17 +365,17 @@ func yamlHitsError(n int, labels []string, oldVal string) error {
 // recording which are writable, and returns the scope the walk covered.
 //
 // It reads dashboards through the one shared walk (walkDashboardConfigs), so
-// the default dashboard is classified rather than fetched blindly (D-6): a
-// stored config joins the plan as writable; the auto-generated state holds no
-// config and therefore no references — a complete answer of zero hits, not a
-// failure; any other failure, on the default or on a listed dashboard, lands in
-// the scope's unscanned list for the caller to surface. A YAML-mode default
-// appears in the listed set itself (url_path "lovelace", see
-// dashboardScanTargets) with mode "yaml", so it is scanned once and never
-// writable.
+// every dashboard is classified rather than fetched blindly (D-6): a stored
+// config joins the plan as writable; a dashboard HA holds no config for has no
+// references either — a complete answer of zero hits, not a failure; any other
+// failure lands in the scope's unscanned list for the caller to surface.
 //
-// Only the stored default can reach the visitor under the "" pseudo-target, so
-// the empty url_path is exactly the writable-default case.
+// A LISTED default (url_path "lovelace", see dashboardScanTargets) is scanned
+// once, under its own entry, and its writability comes from that entry's mode:
+// `yaml` when configuration.yaml pins it, `storage` when HA's own migration
+// moved a stored default into the collection. Only an UNLISTED default reaches
+// the visitor under the "" pseudo-target, and nothing but storage mode produces
+// an unlisted default — so the empty url_path is exactly the writable case.
 func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboards []haapi.LovelaceDashboard, oldVal, newVal string) (plans []dashReplacePlan, scope dashboardScanScope) {
 	modeByPath := make(map[string]string, len(dashboards))
 	for _, d := range dashboards {
@@ -392,7 +392,7 @@ func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboar
 			urlPath:  t.urlPath,
 			result:   result,
 			changed:  changed,
-			writable: t.urlPath == "" || modeByPath[t.urlPath] == "storage",
+			writable: t.urlPath == "" || modeByPath[t.urlPath] == dashboardStorageMode,
 		})
 	})
 	return plans, scope

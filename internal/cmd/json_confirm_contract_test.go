@@ -56,7 +56,15 @@ func confirmDriven(f *confirmFixture) map[string][]string {
 		"dash create":      {"--url-path", "new-dash", "--title", "New Dash"},
 		"dash delete":      {"main"},
 		"dash save":        {"main", "--file", f.dashConfigFile},
-		"dash replace":     {"main", "light.kitchen", "light.pantry"},
+		// <old> <new> [url_path], in that order. This row read
+		// {"main", "light.kitchen", "light.pantry"} until WP5 — replacing the
+		// value "main" with "light.kitchen" in a dashboard called
+		// "light.pantry" — and it passed, because `dash replace` did not
+		// resolve its url_path and the fetch for a dashboard that does not
+		// exist came back as "nothing matched". The sweep drove the command
+		// with its arguments transposed for as long as the command could not
+		// tell.
+		"dash replace": {"light.kitchen", "light.pantry", "main"},
 		"config delete":    {"entry1"},
 		"tpl create":       {"--file", f.tplFile},
 		"tpl delete":       {"room_temp"},

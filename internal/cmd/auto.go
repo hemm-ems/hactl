@@ -300,7 +300,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 
 	headers := []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"}
 	if anyRestored {
-		headers = append(headers, "restored")
+		headers = append(headers, restoredColumn)
 	}
 	tbl := &format.Table{
 		Headers: headers,
@@ -318,6 +318,9 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		}
 		if anyRestored {
 			row = append(row, boolCell(r.restored))
+			// boolCell is a rendering for a person — see its doc comment. The
+			// machine gets the boolean (finding #59, one command over).
+			tbl.SetMachine(i, restoredColumn, r.restored)
 		}
 		tbl.Rows[i] = row
 	}

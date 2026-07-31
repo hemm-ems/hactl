@@ -38,6 +38,7 @@ internal/cmd/rtfm.go:runRTFMFamilies = exempt: groups aliases per family and sor
 internal/degeneracy/degeneracy.go:(*collector).err = exempt: collects the missing-field keys and sort.Strings them before composing the error text
 internal/manual/families.go:FamilyMembers = exempt: collects the aliases pointing at one family and sort.Strings-es the slice before returning it, so the name every banner and refusal interpolates is fixed (TestFamilyMembersCoversTheAliasesPointingAtIt asserts sortedness directly)
 internal/hatest/recorder.go:knownSchemaVersions = exempt: collects the schema versions and sort.Ints them before joining into the message
+internal/surfaceaudit/boolcell.go:handRolledBoolWords = exempt: collects the identifiers assigned more than one bool word and sort.Strings-es the slice before returning it, so the site keys a manifest is written against never move
 internal/jsonwalk/jsonwalk.go:sortedKeys = exempt: this IS a canonicalizer — it collects keys and sort.Strings them so every YAML/JSON walk visits children in one order
 internal/surfaceaudit/surface.go:Check = exempt: the stale-entry sweep appends to a slice that is sort.Strings-ed before the report renders
 internal/testaudit/assertions.go:scanDir = exempt: ScanRepo sorts the combined tests by file and line before any caller reads them
