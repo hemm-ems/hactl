@@ -563,6 +563,17 @@ each substituted something *plausible* for the real signal:
   custom. `manifest/list`'s `is_built_in` is now the sole source that can
   nominate a domain; an `update.*` entity can only enrich a domain manifest/
   list already confirmed non-built-in, never add one.
+- `cc show`'s `entities: N` counted only the registry rows HA also holds a
+  state for, and said nothing about the rest. The filter was documented as
+  removing stale rows for removed devices; measured against a real instance it
+  removes nothing but DISABLED entities — 243 of `homematicip_local`'s 402, 56
+  of `dwd_weather`'s 75, and across all 5524 registry rows there not one row
+  without a live state for any other reason. A caller checking the number
+  against the registry saw 159 where HA says 402, with nothing naming the
+  difference. `entity_count`, `disabled_count` and `registry_count` are
+  reported together now, and a row in neither list is still in the total —
+  so a genuinely stale row, the case the filter claimed to handle, shows up as
+  the three numbers failing to add up rather than as a silent subtraction.
 
 A fifth command fabricated *fields*, not rows: `log show` resolved any ID
 `pkg/ids.Registry` recognized regardless of prefix, so a `trc:` or `anom:` ID
@@ -594,7 +605,9 @@ entries, and `Resolve` accepts any prefix.
   `internal/cmd/whoresolve_test.go` (`TestTriggerLabel` precedence cases),
   `internal/cmd/ws_cmd_test.go` (`TestRunCCLs_ExcludesBuiltInUpdateEntities`,
   `TestRunCCShow_RejectsBuiltInDomain`, `TestRunLogShow_RejectsForeignNamespace`,
-  `TestRunLogShow_JSON`, `TestRunCCShow_JSON`),
+  `TestRunLogShow_JSON`, `TestRunCCShow_JSON`,
+  `TestRunCCShow_ReconcilesWithTheRegistry`,
+  `TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted`),
   `internal/cmd/ent_anomalies_id_test.go` (`TestEntAnomaliesMintsNoIdentifier`
   — the D-5 standing gate, watched red against the re-introduced minting),
   `internal/integration/oracle_diagnostics_test.go` (all tests, checked

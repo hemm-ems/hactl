@@ -2115,6 +2115,143 @@ func TestRunCCShow_JSON(t *testing.T) {
 	}
 }
 
+// TestRunCCShow_ReconcilesWithTheRegistry is the second half of finding #15,
+// and it exists because the live oracle owed for the first half turned it up.
+//
+// Comparing `cc show` against the entity registry for all fourteen custom
+// components on the reference instance: eleven agree exactly (ovms 467,
+// powercalc 218) and three do not — dwd_weather 19 against 75, hacs 19 against
+// 38, homematicip_local 159 against 402. Every entity in every difference is
+// DISABLED, and across all 5524 registry rows on that instance there is not one
+// that lacks a live state for any other reason.
+//
+// So the live-state filter never did what its comment said ("a stale registry
+// row for a removed device does not inflate the answer"); what it removed was
+// entities the integration owns and somebody turned off, silently, up to 60% of
+// them. Both counts are reported now, which is H-11: a count reconciles with
+// the count its source reported.
+func TestRunCCShow_ReconcilesWithTheRegistry(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.watch_alpha", "state": "1", "attributes": map[string]any{}},
+		{"entity_id": "sensor.watch_beta", "state": "2", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": []map[string]any{
+			{"domain": "shapewatch", "name": "Shape Watch", "is_built_in": false},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.watch_alpha", "platform": "shapewatch", "unique_id": "a"},
+			{"entity_id": "sensor.watch_beta", "platform": "shapewatch", "unique_id": "b"},
+			// Owned by the integration, disabled by it, so HA holds no state.
+			{"entity_id": "sensor.watch_gamma", "platform": "shapewatch", "unique_id": "c",
+				"disabled_by": "integration"},
+			// Owned by the integration, disabled by the user.
+			{"entity_id": "sensor.watch_delta", "platform": "shapewatch", "unique_id": "d",
+				"disabled_by": "user"},
+			// A different integration's entity in the same entity domain: the
+			// control that keeps the join honest.
+			{"entity_id": "sensor.somebody_else", "platform": "other", "unique_id": "e"},
+		},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runCCShow(context.Background(), &buf, "shapewatch"); err != nil {
+		t.Fatalf("runCCShow --json failed: %v", err)
+	}
+	var got struct {
+		EntityCount       int      `json:"entity_count"`
+		EntityIDs         []string `json:"entity_ids"`
+		DisabledCount     int      `json:"disabled_count"`
+		DisabledEntityIDs []string `json:"disabled_entity_ids"`
+		RegistryCount     int      `json:"registry_count"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+
+	if got.EntityCount != 2 {
+		t.Errorf("entity_count = %d, want 2 (the entities HA holds a state for)", got.EntityCount)
+	}
+	if got.DisabledCount != 2 {
+		t.Errorf("disabled_count = %d, want 2 — a disabled entity is owned by the integration "+
+			"and was being subtracted with nothing naming it", got.DisabledCount)
+	}
+	if got.RegistryCount != 4 {
+		t.Errorf("registry_count = %d, want 4 — the count the registry itself reports for this "+
+			"platform, which is what the other two have to reconcile against (H-11)", got.RegistryCount)
+	}
+	for _, id := range got.EntityIDs {
+		if strings.Contains(id, "somebody_else") {
+			t.Errorf("entity_ids carries %q, owned by another integration", id)
+		}
+	}
+	if len(got.DisabledEntityIDs) != 2 {
+		t.Errorf("disabled_entity_ids = %v, want both disabled entities named — a count a caller "+
+			"cannot expand into ids is a number they have to take on trust", got.DisabledEntityIDs)
+	}
+}
+
+// TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted — a registry row that is
+// neither live nor disabled is the case the old filter SAID it was handling. It
+// is counted in registry_count and named nowhere else, so the three numbers stop
+// adding up and say so, instead of the row being quietly removed.
+func TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.watch_alpha", "state": "1", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": []map[string]any{
+			{"domain": "shapewatch", "name": "Shape Watch", "is_built_in": false},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.watch_alpha", "platform": "shapewatch", "unique_id": "a"},
+			{"entity_id": "sensor.watch_ghost", "platform": "shapewatch", "unique_id": "g"},
+		},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runCCShow(context.Background(), &buf, "shapewatch"); err != nil {
+		t.Fatalf("runCCShow --json failed: %v", err)
+	}
+	var got struct {
+		EntityCount   int `json:"entity_count"`
+		DisabledCount int `json:"disabled_count"`
+		RegistryCount int `json:"registry_count"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.EntityCount != 1 || got.DisabledCount != 0 || got.RegistryCount != 2 {
+		t.Errorf("entity_count=%d disabled_count=%d registry_count=%d; want 1/0/2 — "+
+			"the stale row is in the registry total and in neither list, which is how it stays "+
+			"visible", got.EntityCount, got.DisabledCount, got.RegistryCount)
+	}
+}
+
 // --- formatSyncAge additional cases ---
 
 func TestFormatSyncAge_Recent(t *testing.T) {

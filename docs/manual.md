@@ -736,6 +736,16 @@ hactl cc show hacs                        # CC details + entity count
 hactl cc logs hacs --unique               # CC-specific errors, deduplicated
 ```
 
+`cc show` attributes entities through the entity registry's `platform` field,
+which names the integration that created them — never through the entity_id,
+whose first segment is the *entity* domain (`powercalc` publishes `sensor.*`).
+`entities: N` counts the entities HA holds a state for. When the registry
+attributes more than that to the component, the line says so and names the
+usual reason — `entities: 159 (registry: 402, of which 243 disabled)` — because
+a disabled entity is one the integration owns and somebody turned off, not one
+that does not exist. `--json` carries `entity_count`, `disabled_count` and
+`registry_count` with the ids behind each; `--full` lists both sets.
+
 Log source: WS `system_log/list` (structured, preferred) with automatic fallback to REST `/api/error_log`.
 
 HA's system log is a fixed-size in-memory buffer, not a time-indexed store, so

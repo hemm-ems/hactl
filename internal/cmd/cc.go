@@ -136,19 +136,22 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("custom component %q not found", name)
 	}
 
-	entityIDs, err := componentEntityIDs(ctx, cfg, client, found.Domain)
+	owned, err := componentEntityIDs(ctx, cfg, client, found.Domain)
 	if err != nil {
 		return err
 	}
 
 	if flagJSON {
 		out := map[string]any{
-			"domain":       found.Domain,
-			"name":         found.Name,
-			"version":      found.Version,
-			"is_built_in":  false,
-			"entity_count": len(entityIDs),
-			"entity_ids":   entityIDs,
+			"domain":              found.Domain,
+			"name":                found.Name,
+			"version":             found.Version,
+			"is_built_in":         false,
+			"entity_count":        len(owned.Live),
+			"entity_ids":          owned.Live,
+			"disabled_count":      len(owned.Disabled),
+			"disabled_entity_ids": owned.Disabled,
+			"registry_count":      owned.Registry,
 		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
@@ -160,11 +163,26 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 		_, _ = fmt.Fprintf(w, "name:     %s\n", found.Name)
 	}
 	_, _ = fmt.Fprintf(w, "version:  %s\n", found.Version)
-	_, _ = fmt.Fprintf(w, "entities: %d\n", len(entityIDs))
+	// The registry total is stated only when it disagrees with the live count,
+	// because when they agree the number already reconciles and a second one
+	// would be noise. When they disagree, the difference is the whole point:
+	// `homematicip_local` owns 402 entities and 159 of them have a state.
+	if owned.Registry == len(owned.Live) {
+		_, _ = fmt.Fprintf(w, "entities: %d\n", len(owned.Live))
+	} else {
+		_, _ = fmt.Fprintf(w, "entities: %d (registry: %d, of which %d disabled)\n",
+			len(owned.Live), owned.Registry, len(owned.Disabled))
+	}
 
-	if flagFull && len(entityIDs) > 0 {
+	if flagFull && len(owned.Live) > 0 {
 		_, _ = fmt.Fprintln(w, "entity_ids:")
-		for _, id := range entityIDs {
+		for _, id := range owned.Live {
+			_, _ = fmt.Fprintf(w, "  %s\n", id)
+		}
+	}
+	if flagFull && len(owned.Disabled) > 0 {
+		_, _ = fmt.Fprintln(w, "disabled_entity_ids:")
+		for _, id := range owned.Disabled {
 			_, _ = fmt.Fprintf(w, "  %s\n", id)
 		}
 	}
@@ -324,7 +342,20 @@ func enrichVersionsFromUpdateEntities(
 	return nil
 }
 
-// componentEntityIDs returns the entity_ids an integration owns.
+// componentEntities is what the registry attributes to one integration, split
+// by whether Home Assistant currently holds a state for it.
+//
+// The split is reported rather than applied, because it is the difference
+// between two true answers to different questions and a caller cannot tell
+// which one they got from a single number (H-11: a count reconciles with the
+// count its source reported).
+type componentEntities struct {
+	Live     []string // in the registry AND in /api/states
+	Disabled []string // in the registry, disabled, so never in /api/states
+	Registry int      // every row the registry attributes to the domain
+}
+
+// componentEntityIDs returns the entities an integration owns.
 //
 // The join is the entity registry's `platform` field, which names the
 // integration that created the entity. It used to be a prefix match on the
@@ -341,25 +372,32 @@ func enrichVersionsFromUpdateEntities(
 // (a platform that never registers a unique_id) therefore cannot be attributed
 // at all, and are not guessed at — an undercount that names its reason beats a
 // count assembled from a rule that does not hold.
-func componentEntityIDs(ctx context.Context, cfg *config.Config, client *haapi.Client, domain string) ([]string, error) {
+//
+// The live-state filter used to be applied silently, with the reason given as
+// "so a stale registry row for a removed device does not inflate the answer".
+// Running the fix against a real instance is what showed that is not what it
+// does: of 5524 registry rows there, every single row without a live state is
+// a DISABLED one — an entity the integration owns and somebody turned off, not
+// a leftover. It cost `homematicip_local` 243 of its 402 entities and
+// `dwd_weather` 56 of 75, with nothing in the output naming the gap. Both
+// numbers are now reported.
+func componentEntityIDs(ctx context.Context, cfg *config.Config, client *haapi.Client, domain string) (componentEntities, error) {
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if err := ws.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("entity attribution needs the entity registry: %w", err)
+		return componentEntities{}, fmt.Errorf("entity attribution needs the entity registry: %w", err)
 	}
 	entries, err := ws.EntityRegistryList(ctx)
 	_ = ws.Close()
 	if err != nil {
-		return nil, fmt.Errorf("listing the entity registry: %w", err)
+		return componentEntities{}, fmt.Errorf("listing the entity registry: %w", err)
 	}
 
-	// Only entities HA currently holds a state for are counted, so a stale
-	// registry row for a removed device does not inflate the answer.
 	live := map[string]bool{}
 	if states, statesErr := client.GetStates(ctx); statesErr == nil {
 		var allStates []entityState
 		if jsonErr := json.Unmarshal(states, &allStates); jsonErr == nil {
 			if degErr := degeneracy.Check("/api/states", &allStates); degErr != nil {
-				return nil, degErr
+				return componentEntities{}, degErr
 			}
 			for _, s := range allStates {
 				live[s.EntityID] = true
@@ -367,16 +405,28 @@ func componentEntityIDs(ctx context.Context, cfg *config.Config, client *haapi.C
 		}
 	}
 
-	var ids []string
+	var owned componentEntities
 	for _, e := range entries {
 		if e.Platform != domain {
 			continue
 		}
-		if len(live) > 0 && !live[e.EntityID] {
-			continue
+		owned.Registry++
+		switch {
+		case len(live) == 0 || live[e.EntityID]:
+			// An empty state set means /api/states could not be read at all;
+			// every registry row then counts as live rather than none, which is
+			// the same posture the filter has always had.
+			owned.Live = append(owned.Live, e.EntityID)
+		case e.DisabledBy != "":
+			owned.Disabled = append(owned.Disabled, e.EntityID)
 		}
-		ids = append(ids, e.EntityID)
+		// A row that is neither live nor disabled falls through deliberately:
+		// it is counted in Registry and appears in no list, so `entity_count +
+		// disabled_count < registry_count` is how a stale row — the thing the
+		// filter was originally described as removing — becomes visible instead
+		// of being quietly subtracted.
 	}
-	sort.Strings(ids)
-	return ids, nil
+	sort.Strings(owned.Live)
+	sort.Strings(owned.Disabled)
+	return owned, nil
 }
