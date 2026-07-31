@@ -1,69 +1,113 @@
-# confirm — a preview fails exactly where --confirm would: the target resolves
-# and the input file parses before a plan is printed (INVARIANTS.md H-2).
+# confirm — a preview fails exactly where --confirm would (INVARIANTS.md H-2),
+# asked as the TWO questions the rule actually contains:
 #
-# The surface is the live cobra tree: every command carrying a --confirm flag,
-# walked by TestConfirmSurfaceIsClosed. H-2 states the rule as a universal and
-# lists thirteen commands as its enforcement. The tree carries thirty-four.
-# Nothing connected the two numbers until this file existed, which is how
-# `auto apply` came to be neither proven nor knowingly excluded.
+#   [target]  does the identifier the command writes to resolve, before a plan?
+#   [value]   is everything else the caller supplied judged, before a plan?
+#
+# The surface is the live cobra tree, walked by TestConfirmSurfaceIsClosed, two
+# sites per --confirm command. It carried ONE site per command until 2026-07-31,
+# and that is how two commands shipped as `proven` while accepting values Home
+# Assistant refuses: `svc call` was proven by a test that resolves the SERVICE
+# while `--data '{"target":{…}}'` reached HA unexamined and answered 400, and
+# `ent rename`'s one malformed-id case was `nodomain` while five other shapes HA
+# refuses previewed as "would rename … references: 2" at exit 0. Neither row was
+# false. Both answered one of two questions under a key that asked both.
 #
 # `proven` is claimed only where a test asserts the *refusal* — an unresolvable
-# target or an unusable input ending the command. A test that only asserts the
-# preview does not write proves the other half of H-2, not this one.
+# target, or a value the confirmed run cannot use, ending the command. A test
+# that only asserts the preview does not write proves the other half of H-2.
 #
 # The ceiling is the number of sites known to be unproven. It may fall without
 # ceremony and may only rise by editing this line on purpose.
-#ceiling 11
+#ceiling 30
 
-# --- proven: a named test asserts the preview refuses -----------------------
-hactl auto delete = proven: TestAutoDeleteDryRunRefusesUnresolvable
-hactl script delete = proven: TestScriptDeleteDryRunRefusesUnresolvable
-hactl tpl delete = proven: TestTplDeleteDryRunRefusesUnresolvable
-hactl helper delete = proven: TestHelperDeleteDryRunRefusesUnresolvable
-hactl area delete = proven: TestRegistryDeleteDryRunResolvesTarget
-hactl floor delete = proven: TestRegistryDeleteDryRunResolvesTarget
-hactl label delete = proven: TestRegistryDeleteDryRunResolvesTarget
-hactl config delete = proven: TestConfigDeleteDryRunRefusesUnknownEntry
-hactl dash delete = proven: TestDashDeleteAgreesOnUnknownDashboard
-hactl script create = proven: TestCreateDryRunRejectsUnusableInput
-hactl helper create = proven: TestCreateDryRunRejectsUnusableInput
-hactl script apply = proven: TestE2EDryRunRejectsFabricatedTargetCLI
-hactl auto create = proven: TestAutoCreate_MalformedYAMLRefused_DryRun
-hactl script run = proven: TestRunScriptRun_NotFound
-hactl auto apply = proven: TestAutoApplyDryRunRefusesUnresolvableTarget
-hactl svc call = proven: TestSvcCallDryRunRefusesAServiceHADoesNotHave
-hactl dash create = proven: TestRunDashCreate_DryRunResolvesItsInput
-hactl device set-area = proven: TestDeviceSetAreaDryRunRefusesUnresolvable
-hactl device set-label = proven: TestDeviceSetLabelDryRunRefusesUnresolvable
-hactl ent rename = proven: TestEntRenameDryRunRefusesUnresolvable
-hactl area create = proven: TestRegistryCreateRefusesABlankName
-hactl floor create = proven: TestRegistryCreateRefusesABlankName
-hactl label create = proven: TestRegistryCreateRefusesABlankName
+# --- targets: a named test asserts the preview refuses an unresolvable one ----
+hactl auto delete [target] = proven: TestAutoDeleteDryRunRefusesUnresolvable
+hactl script delete [target] = proven: TestScriptDeleteDryRunRefusesUnresolvable
+hactl tpl delete [target] = proven: TestTplDeleteDryRunRefusesUnresolvable
+hactl helper delete [target] = proven: TestHelperDeleteDryRunRefusesUnresolvable
+hactl area delete [target] = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl floor delete [target] = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl label delete [target] = proven: TestRegistryDeleteDryRunResolvesTarget
+hactl config delete [target] = proven: TestConfigDeleteDryRunRefusesUnknownEntry
+hactl dash delete [target] = proven: TestDashDeleteAgreesOnUnknownDashboard
+hactl script apply [target] = proven: TestE2EDryRunRejectsFabricatedTargetCLI
+hactl script run [target] = proven: TestRunScriptRun_NotFound
+hactl auto apply [target] = proven: TestAutoApplyDryRunRefusesUnresolvableTarget
+hactl svc call [target] = proven: TestSvcCallDryRunRefusesAServiceHADoesNotHave
+hactl device set-area [target] = proven: TestDeviceSetAreaDryRunRefusesUnresolvable
+hactl device set-label [target] = proven: TestDeviceSetLabelDryRunRefusesUnresolvable
+hactl ent rename [target] = proven: TestEntRenameDryRunRefusesUnresolvable
+hactl helper create [target] = proven: TestHelperCreatePreviewAgreesWithConfirmOnEveryLayout
 
-# The three creates above were exempt here until 2026-07-30, on the reading
-# that "the argument names something that does not exist yet, so there is no
-# target to resolve". True, and beside the point: H-2 has two halves, and the
-# second one — the INPUT is judged before the plan is printed — applies to a
-# create exactly as it applies to `script create`'s file. `area create ""
+# --- values: a named test asserts the preview refuses an unusable one ---------
+hactl script create [value] = proven: TestCreateDryRunRejectsUnusableInput
+hactl helper create [value] = proven: TestCreateDryRunRejectsUnusableInput
+hactl auto create [value] = proven: TestAutoCreate_MalformedYAMLRefused_DryRun
+hactl area create [value] = proven: TestRegistryCreateRefusesABlankName
+hactl floor create [value] = proven: TestRegistryCreateRefusesABlankName
+hactl label create [value] = proven: TestRegistryCreateRefusesABlankName
+hactl dash create [value] = proven: TestRunDashCreate_DryRunResolvesItsInput
+hactl svc call [value] = proven: TestUnknownFieldsRefusesWhatHomeAssistantRefuses
+hactl ent rename [value] = proven: TestEntRenameDryRunRefusesUnresolvable
+hactl auto apply [value] = proven: TestWriter_ApplyWritesTheBytesTheDiffShowed
+
+# The three registry creates were exempt from this surface entirely until
+# 2026-07-30, on the reading that "the argument names something that does not
+# exist yet, so there is no target to resolve". True of the [target] half, and
+# beside the point: H-2's other half judges the VALUE, and `area create ""
 # --confirm` then created a real area with a blank area_id on a production
-# instance and took down every `area` command until a raw WebSocket call
-# removed it. An exemption argued from one half of a rule is how a rule's other
-# half goes unenforced.
+# instance and took down every `area` command until a raw WebSocket call removed
+# it. Splitting the surface is that lesson made structural — an exemption argued
+# from one half of a rule is how the other half goes unenforced.
 
-# --- exempt: nothing for the preview to resolve -----------------------------
-hactl companion wireguard config = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
-hactl companion wireguard up = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
-hactl companion wireguard down = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+# --- exempt: the question does not arise here --------------------------------
+hactl companion wireguard config [target] = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+hactl companion wireguard up [target] = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+hactl companion wireguard down [target] = exempt: operates on the add-on the companion runs in and takes no caller-supplied identifier
+hactl companion wireguard up [value] = exempt: brings the tunnel the add-on already holds up; there is no caller-supplied value to judge
+hactl companion wireguard down [value] = exempt: takes the tunnel the add-on already holds down; there is no caller-supplied value to judge
+hactl script create [target] = exempt: a create names nothing yet — the id is derived from the file, whose refusal is the [value] row above
+hactl auto create [target] = exempt: a create names nothing yet — the id comes out of the candidate, whose refusal is the [value] row above
+hactl dash create [target] = exempt: a create names nothing yet — the url_path is a flag, judged on the [value] row above
+hactl area create [target] = exempt: a create names nothing yet; the name it will mint is judged on the [value] row above
+hactl floor create [target] = exempt: a create names nothing yet; the name it will mint is judged on the [value] row above
+hactl label create [target] = exempt: a create names nothing yet; the name it will mint is judged on the [value] row above
+hactl auto delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl script delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl tpl delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl helper delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl area delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl floor delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl label delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl config delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl dash delete [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl script run [value] = exempt: takes an identifier and nothing else — every caller-supplied value here IS the target
+hactl auto rollback [value] = exempt: takes an optional identifier and nothing else; what is restored comes from the backup directory, not from the caller
+hactl rollback [value] = exempt: same path as auto rollback and the same absence of a caller-supplied value
 
-# --- debt: the rule applies and nothing proves it ---------------------------
-hactl tpl create = debt: classifyTemplate hard-errors on unparseable YAML, a top-level list and an empty file before the plan (read 2026-07-26); a mapping with no recognised key still previews as an entity item and nothing asserts what --confirm does with it
-hactl auto rollback = debt: PlanRollback errors via findLatestBackup before the plan (read 2026-07-26); no test asserts it, and the raw "reading backup dir" message leaks when backups/ is absent
-hactl rollback = debt: same path as auto rollback and the same gap; no test asserts the refusal
-hactl config flow-start = debt: the dry run is proven to preview a domain that has a flow handler, but nothing asserts what it does with a domain that has none
-hactl config flow-step = debt: InspectFlow refuses an expired or never-started flow id before the plan (read 2026-07-26); no test asserts it
-hactl config options = debt: resolveConfigEntry errors on an unknown entry and on one with no options flow, both before the plan (read 2026-07-26); no test asserts it
-hactl dash save = debt: the JSON is validated and findDashboard resolves the url_path before the plan (read 2026-07-26), with a deliberate exception for the default empty path; no test asserts it
-hactl dash replace = debt: TestRunDashReplace_NotFound asserts the message for a value that is absent and exits zero; nothing asserts an unresolvable dashboard is refused
-hactl ent set-area = debt: the area and the registry entry are both resolved before the plan (read 2026-07-26); no test asserts it
-hactl ent set-label = debt: every label and the entity are resolved before the plan (read 2026-07-26); no test asserts it
-hactl ref replace = debt: nothing asserts what the preview reports when the value to replace appears nowhere, or when the replacement is malformed
+# --- debt: the rule applies and nothing proves it ----------------------------
+hactl tpl create [target] = debt: a create names nothing yet, but the unique_id it mints must not collide, and nothing asserts what the preview does when it does
+hactl tpl create [value] = debt: classifyTemplate hard-errors on unparseable YAML, a top-level list and an empty file before the plan (read 2026-07-26); a mapping with no recognised key still previews as an entity item and nothing asserts what --confirm does with it
+hactl auto rollback [target] = debt: PlanRollback errors via findLatestBackup before the plan (read 2026-07-26); no test asserts it, and the raw "reading backup dir" message leaks when backups/ is absent
+hactl rollback [target] = debt: same path as auto rollback and the same gap; no test asserts the refusal
+hactl config flow-start [target] = debt: the dry run is proven to preview a domain that has a flow handler, but nothing asserts what it does with a domain that has none
+hactl config flow-start [value] = debt: takes only the domain today; if it grows an initial-data flag the preview owes it the same judgement, and nothing would say so
+hactl config flow-step [target] = debt: InspectFlow refuses an expired or never-started flow id before the plan (read 2026-07-26); no test asserts it
+hactl config flow-step [value] = debt: --data is checked against the step's own schema fields, and nothing asserts what the preview does with a key the schema does not carry
+hactl config options [target] = debt: resolveConfigEntry errors on an unknown entry and on one with no options flow, both before the plan (read 2026-07-26); no test asserts it
+hactl config options [value] = debt: the options a caller sets are validated by HA on submit, and nothing asserts the preview refuses a value it will reject
+hactl dash save [target] = debt: the JSON is validated and findDashboard resolves the url_path before the plan (read 2026-07-26), with a deliberate exception for the default empty path; no test asserts it
+hactl dash save [value] = debt: --file is parsed before the plan; nothing asserts what the preview does with valid JSON that is not a Lovelace config
+hactl dash replace [target] = debt: TestRunDashReplace_NotFound asserts the message for a value that is absent and exits zero; nothing asserts an unresolvable dashboard is refused
+hactl dash replace [value] = debt: nothing asserts what the preview reports when <old> appears in no dashboard, or when <new> is malformed
+hactl ent set-area [target] = debt: the area and the registry entry are both resolved before the plan (read 2026-07-26); no test asserts it
+hactl ent set-area [value] = debt: the area name is the value HA judges, and the resolution above is the only thing standing in for that assertion
+hactl ent set-label [target] = debt: every label and the entity are resolved before the plan (read 2026-07-26); no test asserts it
+hactl ent set-label [value] = debt: the label names are the values HA judges, and the resolution above is the only thing standing in for that assertion
+hactl ref replace [target] = debt: nothing asserts what the preview reports when the value to replace appears nowhere
+hactl ref replace [value] = debt: nothing asserts what the preview does with a replacement that is not a valid entity id, which is the shape ent rename now refuses
+hactl device set-area [value] = debt: the area is resolved by the same call the [target] row cites; nothing asserts a well-formed but unusable area value separately
+hactl device set-label [value] = debt: the labels are resolved by the same call the [target] row cites; nothing asserts a well-formed but unusable label value separately
+hactl script apply [value] = debt: TestE2ECreateDryRunValidatesInputCLI covers `script create`'s file; nothing asserts that `script apply` refuses a candidate the companion's dry-run write rejects
+hactl companion wireguard config [value] = debt: --file is the tunnel config the add-on will install; nothing asserts the preview refuses a file it cannot parse

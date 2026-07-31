@@ -4,6 +4,9 @@ package livefire
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,13 +33,13 @@ func TestSweepEntRenameRefusesWhatHomeAssistantRefuses(t *testing.T) {
 		}
 		domain, _, _ := strings.Cut(source, ".")
 		for _, bad := range []string{
-			domain + ".pg w5 bad",   // a space
-			domain + ".PG_w5_Bad!",  // uppercase and punctuation
+			domain + ".pg w5 bad",  // a space
+			domain + ".PG_w5_Bad!", // uppercase and punctuation
 			domain + ".pg_w5_🔥bad", // a multi-byte character
-			domain + ".pg.w5.bad",   // more than one dot
-			domain + ".pg__w5",      // a doubled underscore
-			domain + ".pg_w5_",      // a trailing underscore
-			"switch.pg_w5_renamed",  // a different domain
+			domain + ".pg.w5.bad",  // more than one dot
+			domain + ".pg__w5",     // a doubled underscore
+			domain + ".pg_w5_",     // a trailing underscore
+			"switch.pg_w5_renamed", // a different domain
 		} {
 			out, err := tgt.Read(t, "ent", "rename", source, bad)
 			if err == nil {
@@ -217,6 +220,117 @@ func pgInputBoolean(t *testing.T, tgt Target) string {
 	}
 	for _, row := range rows {
 		if id, ok := row["entity_id"].(string); ok && pgPrefix.MatchString(id) {
+			return id
+		}
+	}
+	return ""
+}
+
+// Finding #93: `auto apply --confirm` reordered the edited automation's nested
+// keys on disk — `(platform, entity_id, to)` becoming alphabetical — and the
+// preview showed those lines as unchanged, because both sides of its diff had
+// been marshalled through a Go map. Finding #94: the `changed_lines` it
+// reported for a one-line edit was 14.
+//
+// Read-only on both profiles. The write half is proven where a write can be
+// proven byte for byte — internal/companiontest's
+// TestE2EAutoApplyWritesOnlyItsOwnEntryCLI, against a real HA and a real
+// companion. What belongs HERE is the property that made #93 invisible: the
+// preview must render the automation in the same key order the family prints
+// it in, and must count only what changes.
+func TestSweepAutoDiffSpeaksTheOrderAutoCatPrints(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		requireCompanion(t, tgt)
+		autoID := pgAutomation(t, tgt)
+		if autoID == "" {
+			t.Skip("no pg_ automation on this profile")
+		}
+
+		stored := tgt.MustRead(t, "auto", "cat", autoID)
+		lines := strings.Split(strings.TrimRight(stored, "\n"), "\n")
+		if len(lines) < 3 {
+			t.Fatalf("`auto cat %s` returned %d lines; nothing to diff:\n%s", autoID, len(lines), stored)
+		}
+
+		// Edit exactly one line — the description if there is one, else the
+		// alias — and write it beside the instance dir.
+		edited, changedLine := editOneLine(lines)
+		candidate := filepath.Join(t.TempDir(), "candidate.yaml")
+		if err := os.WriteFile(candidate, []byte(edited), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		out := tgt.MustRead(t, "auto", "diff", autoID, "--file", candidate)
+		// The diff's context lines are lines of the stored document. Under the
+		// old map round trip they were a re-sorted rendering of it, which is
+		// how a confirmed write could move a line the diff called unchanged.
+		for line := range strings.SplitSeq(out, "\n") {
+			if !strings.HasPrefix(line, " ") {
+				continue
+			}
+			context := strings.TrimSpace(line)
+			if context == "" || strings.HasPrefix(context, "…") {
+				continue
+			}
+			if !strings.Contains(stored, context) {
+				t.Errorf("`auto diff` shows %q as an unchanged line of %s, and `auto cat` does not contain it",
+					context, autoID)
+			}
+		}
+		if !strings.Contains(out, "-"+changedLine) {
+			t.Errorf("the diff does not show the line that changed (%q):\n%s", changedLine, out)
+		}
+
+		plan := tgt.MustRead(t, "auto", "apply", autoID, "--file", candidate, "--json")
+		var preview struct {
+			Details struct {
+				ChangedLines int `json:"changed_lines"`
+			} `json:"details"`
+			DryRun bool `json:"dry_run"`
+		}
+		if err := json.Unmarshal([]byte(plan), &preview); err != nil {
+			t.Fatalf("auto apply --json does not parse: %v\n%s", err, truncate(plan))
+		}
+		if !preview.DryRun {
+			t.Error("a run without --confirm reported dry_run: false")
+		}
+		if preview.Details.ChangedLines != 2 {
+			t.Errorf("changed_lines = %d for a one-line edit, want 2 — it used to count context lines too",
+				preview.Details.ChangedLines)
+		}
+	})
+}
+
+// editOneLine changes the value of the first `key: value` line that is safe to
+// touch, and returns the document plus the original line.
+func editOneLine(lines []string) (edited, original string) {
+	for i, line := range lines {
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "-") {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "alias", "description":
+			out := slices.Clone(lines)
+			out[i] = key + ": " + strings.Trim(value, `"'`) + " wp4probe"
+			return strings.Join(out, "\n") + "\n", line
+		}
+	}
+	return strings.Join(lines, "\n") + "\n", ""
+}
+
+// pgAutomation finds a pg_-namespaced automation on the target, by the config
+// id `auto ls` prints.
+func pgAutomation(t *testing.T, tgt Target) string {
+	t.Helper()
+	out := tgt.MustRead(t, "auto", "ls", "--pattern", "pg_", "--json")
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("auto ls --json is not an array: %v\n%s", err, truncate(out))
+	}
+	for _, row := range rows {
+		if id, ok := row["id"].(string); ok && pgPrefix.MatchString(id) {
 			return id
 		}
 	}

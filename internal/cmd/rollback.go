@@ -89,7 +89,7 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 	}
 
 	if !flagRollbackConfirm {
-		plan, planErr := writer.New(client, nil, backupDir).PlanRollback(automationID)
+		plan, planErr := writer.New(client, nil, nil, backupDir).PlanRollback(automationID)
 		if planErr != nil {
 			return planErr
 		}
@@ -109,7 +109,11 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		defer func() { _ = ws.Close() }()
 	}
 
-	wr := writer.New(client, wsClient, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, wsClient, cc, backupDir)
 
 	result, err := wr.Rollback(ctx, automationID)
 	if err != nil {
@@ -120,6 +124,8 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		with("automation", result.AutomationID).
 		with("from_backup", result.BackupPath).
 		with("reloaded", result.Reloaded).
+		withIf(result.ReloadError != "", "reload_error", result.ReloadError).
+		withIf(result.Reformatted, "reformatted", true).
 		text("rolled back: %s", result.AutomationID).
 		text("from backup: %s", result.BackupPath)
 	if result.Reloaded {
@@ -131,6 +137,12 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		// has not read is the state the operator most needs told — and under
 		// --json it was not told at all, because the whole result was prose.
 		res = res.warn("config restored but HA did not confirm reload — it is still running the previous configuration")
+	}
+	// C-14: the companion says when it could not splice, and a whole-file
+	// rewrite that reads as a surgical one is the thing this route exists to
+	// stop. Knowing it and telling nobody is the D45 mistake.
+	if result.Reformatted {
+		res = res.warn("the whole file was re-serialized (the entry could not be spliced), so formatting of other entries may have changed")
 	}
 	return res.render(w)
 }

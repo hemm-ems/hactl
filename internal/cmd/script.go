@@ -665,7 +665,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	res := done("apply script").
 		with("script", candidate.ID).
 		with("validation", scriptValidation).
-		with("changed_lines", len(diff)).
+		with("changed_lines", writer.ChangedLines(diff)).
 		with("backup", backupPath).
 		with("reloaded", reloaded).
 		text("applied: %s", candidate.ID).
@@ -781,12 +781,7 @@ func scriptConfigDiff(remote, local string) []string {
 }
 
 func scriptDiffHasChanges(lines []string) bool {
-	for _, line := range lines {
-		if len(line) > 0 && (line[0] == '+' || line[0] == '-') {
-			return true
-		}
-	}
-	return false
+	return writer.HasChanges(lines)
 }
 
 func validateScriptCandidate(ctx context.Context, cfg *config.Config, candidate map[string]any) (bool, error) {

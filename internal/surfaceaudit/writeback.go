@@ -3,6 +3,7 @@ package surfaceaudit
 import (
 	"errors"
 	"sort"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,19 @@ func WriteBackSurface(confirm []Site) (Surface, error) {
 		Name: "writeback",
 		Rule: "a write is proven by reading it back from Home Assistant directly — never through hactl, which would only prove hactl consistent with itself",
 	}
+	// The confirm census asks H-2's two questions separately, so it carries two
+	// sites per command ("… [target]", "… [value]"). H-12 has one question per
+	// WRITE, and there is one write, so the suffix is dropped and the pair
+	// collapses back to the command. Deriving the set a second time from the
+	// tree would give the two ledgers a chance to disagree about which commands
+	// exist, which is the failure this package exists to remove.
+	seen := map[string]bool{}
 	for _, site := range confirm {
+		site.Key = strings.TrimSuffix(strings.TrimSuffix(site.Key, " [target]"), " [value]")
+		if seen[site.Key] {
+			continue
+		}
+		seen[site.Key] = true
 		site.Note = "mutates HA when --confirm is passed"
 		s.Sites = append(s.Sites, site)
 	}

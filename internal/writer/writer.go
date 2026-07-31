@@ -2,58 +2,70 @@ package writer
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-// parseRemoteAutomationConfig decodes the document
-// GET /api/config/automation/config/<id> returned. A document that decodes to
-// nothing — `{}`, `null` — is reported as UNPARSED rather than used (H-7):
-// HA validates every stored automation against a schema that requires triggers
-// and actions, so a real config is never empty, and an empty decode means the
-// endpoint's shape moved. The config decodes into a bare map, so no struct tag
-// can drift here; the whole document going empty is this seam's only degenerate
-// shape, and without the guard it renders as a fictitious full-file diff or as
-// a backup of nothing standing in for the user's only undo.
-func parseRemoteAutomationConfig(data []byte, automationID string) (map[string]any, error) {
-	var cfg map[string]any
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing remote config: %w", err)
-	}
-	if len(cfg) == 0 {
-		return nil, fmt.Errorf(
-			"GET /api/config/automation/config/%s returned %s data: the document decoded to nothing, "+
-				"which a real automation config never is (HA's schema requires triggers and actions): %w",
-			automationID, degeneracy.Marker, degeneracy.ErrDegenerate)
-	}
-	return cfg, nil
-}
-
 // Writer handles automation config writes with backup, validation, and rollback.
+//
+// The write goes through the companion's single-entry route, not Home
+// Assistant's `POST /api/config/automation/config/<id>`. Two defects came out
+// of that endpoint and neither was fixable behind it (D-14, issue #128):
+//
+//   - HA's storage collection loads the whole automations.yaml, applies the one
+//     change and re-dumps the file with its own serializer, so a confirmed
+//     apply on one automation came back having reformatted every other one.
+//   - hactl reached it through `map[string]any` and `encoding/json.Marshal`,
+//     which sorts keys — so a confirmed write also silently alphabetized the
+//     edited automation's nested keys, `(trigger, entity_id, to)` becoming
+//     `(entity_id, to, trigger)` on disk. The diff could not show it, because
+//     BOTH sides of the comparison went through the same normalization: the
+//     change was invisible to the tool performing it (finding #93).
+//
+// The companion takes the entry as YAML TEXT and splices it into the file, so
+// what a caller previewed is what lands, byte for byte. Both halves of this
+// type therefore work on text: the diff compares the file the caller edited
+// against the companion's rendering of the stored entry, which is the same
+// document the write replaces.
 type Writer struct {
 	client    *haapi.Client
 	wsClient  *haapi.WSClient
+	cc        *companion.Client
 	backupDir string
 }
 
-// New creates a Writer for the given HA instance.
-func New(client *haapi.Client, wsClient *haapi.WSClient, backupDir string) *Writer {
+// New creates a Writer for the given HA instance. cc may be nil for the paths
+// that never write (PlanRollback, ValidateCandidate); every write path returns
+// ErrNoCompanion without it rather than falling back to HA's endpoint, because
+// a silent fallback is exactly the whole-file rewrite this route exists to
+// stop.
+func New(client *haapi.Client, wsClient *haapi.WSClient, cc *companion.Client, backupDir string) *Writer {
 	return &Writer{
 		client:    client,
 		wsClient:  wsClient,
+		cc:        cc,
 		backupDir: backupDir,
 	}
 }
+
+// ErrNoCompanion is returned by the write paths when no companion is
+// configured. `auto create` and `auto delete` have had this dependency since
+// they moved to the same route; apply and rollback are the family's last two.
+var ErrNoCompanion = errors.New("this command writes through hactl-companion, which is not configured for this instance " +
+	"(hactl companion status); Home Assistant's own config endpoint re-serializes the whole automations.yaml, " +
+	"so hactl does not fall back to it")
 
 // DiffResult holds the result of comparing local vs remote automation config.
 type DiffResult struct {
@@ -63,69 +75,115 @@ type DiffResult struct {
 	HasChanges bool
 }
 
+// ChangedLines counts the lines of d that actually change.
+func (d *DiffResult) ChangedLines() int { return ChangedLines(d.Lines) }
+
+// isChange reports whether a diff line is an addition or a removal. Every
+// question this package answers about a diff — does it change anything, how
+// many lines change — goes through this one predicate, because it was written
+// out three times and one of the three counted something else.
+func isChange(line string) bool {
+	return len(line) > 0 && (line[0] == '+' || line[0] == '-')
+}
+
+// ChangedLines counts the `+`/`-` lines of a diff.
+//
+// It exists because `changed_lines` was `len(diff.Lines)` — the whole diff,
+// context lines and "… N unchanged lines …" markers included — so a one-line
+// alias edit reported `changed_lines: 14` (finding #94). A field's name is a
+// claim about what it counts, and both `auto apply` and `script apply` made it.
+func ChangedLines(lines []string) int {
+	n := 0
+	for _, line := range lines {
+		if isChange(line) {
+			n++
+		}
+	}
+	return n
+}
+
+// unifiedDiffChangedLines counts the real changes in a unified diff — the
+// `+`/`-` lines that are not the `---`/`+++` file headers, which start with the
+// same characters and are not changes to anything.
+func unifiedDiffChangedLines(diff string) int {
+	n := 0
+	for line := range strings.SplitSeq(diff, "\n") {
+		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+			continue
+		}
+		if isChange(line) {
+			n++
+		}
+	}
+	return n
+}
+
+// HasChanges reports whether a diff contains any change at all.
+func HasChanges(lines []string) bool {
+	return slices.ContainsFunc(lines, isChange)
+}
+
 // ApplyResult holds the result of applying a config change.
 type ApplyResult struct {
 	BackupPath   string
 	AutomationID string
-	Reloaded     bool
-	DryRun       bool
+	// ReloadError carries the companion's reason when Reloaded is false.
+	ReloadError string
+	Reloaded    bool
+	DryRun      bool
 	// Validated is true when the candidate config passed HA's
 	// validate_config check (false when validation was unavailable).
 	Validated bool
+	// WriterChangedLines is how many lines the WRITER's own dry run says will
+	// change — the companion diffs its serialization of the stored entry
+	// against its serialization of the candidate, which is what lands on disk.
+	// It can exceed the diff hactl shows: the candidate's own indentation and
+	// quoting are the caller's, and the entry is written in the companion's
+	// canonical style. Zero when the companion answered no diff.
+	WriterChangedLines int
+	// Reformatted is true when the companion could not splice this entry and
+	// re-serialized the whole file instead, so formatting elsewhere may have
+	// changed (companion C-14). Surfaced rather than swallowed: the difference
+	// between "your entry changed" and "the file was rewritten" is the whole
+	// point of routing the write here.
+	Reformatted bool
 }
 
-// Diff compares a local YAML file against the current HA automation config.
+// Diff compares a local YAML file against the stored automation entry.
+//
+// Both sides are TEXT: the file as the caller wrote it, and the companion's
+// rendering of the entry as it sits in automations.yaml — which is the same
+// document `auto cat` prints and the same one the write replaces. The previous
+// implementation marshalled both sides from `map[string]any`, which sorts, so
+// every ordering difference was normalized away on both sides at once and a
+// confirmed write could change lines the diff had shown as unchanged.
 func (w *Writer) Diff(ctx context.Context, automationID string, localPath string) (*DiffResult, error) {
-	localData, err := os.ReadFile(filepath.Clean(localPath))
-	if err != nil {
-		return nil, fmt.Errorf("reading local file: %w", err)
-	}
-
-	var localConfig map[string]any
-	if unmarshalErr := yaml.Unmarshal(localData, &localConfig); unmarshalErr != nil {
-		return nil, fmt.Errorf("parsing local YAML: %w", unmarshalErr)
-	}
-
-	remoteData, err := w.client.GetAutomationConfig(ctx, automationID)
-	if err != nil {
-		return nil, fmt.Errorf("fetching remote config: %w", err)
-	}
-
-	remoteConfig, err := parseRemoteAutomationConfig(remoteData, automationID)
+	localText, _, err := readLocalAutomation(localPath)
 	if err != nil {
 		return nil, err
 	}
 
-	localYAML, _ := yaml.Marshal(localConfig)
-	remoteYAML, _ := yaml.Marshal(remoteConfig)
-
-	lines := diffLines(string(remoteYAML), string(localYAML))
-
-	hasChanges := false
-	for _, l := range lines {
-		if len(l) > 0 && (l[0] == '+' || l[0] == '-') {
-			hasChanges = true
-			break
-		}
+	remoteText, err := w.remoteEntry(ctx, automationID)
+	if err != nil {
+		return nil, err
 	}
+
+	lines := diffLines(remoteText, localText)
 
 	return &DiffResult{
 		AutomationID: automationID,
-		HasChanges:   hasChanges,
+		HasChanges:   HasChanges(lines),
 		Lines:        lines,
 	}, nil
 }
 
-// Apply writes an automation config to HA. If confirm is false, only validates and shows diff (dry-run).
+// Apply writes an automation entry through the companion. If confirm is false
+// it validates the candidate and asks the companion to rehearse the same write
+// (H-2: a preview fails exactly where --confirm would).
 func (w *Writer) Apply(ctx context.Context, automationID, localPath string, confirm bool) (*ApplyResult, error) {
-	localData, err := os.ReadFile(filepath.Clean(localPath))
+	localText, localConfig, err := readLocalAutomation(localPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading local file: %w", err)
-	}
-
-	var localConfig map[string]any
-	if unmarshalErr := yaml.Unmarshal(localData, &localConfig); unmarshalErr != nil {
-		return nil, fmt.Errorf("parsing local YAML: %w", unmarshalErr)
+		return nil, err
 	}
 
 	result := &ApplyResult{
@@ -140,7 +198,19 @@ func (w *Writer) Apply(ctx context.Context, automationID, localPath string, conf
 	}
 	result.Validated = validated
 
+	if w.cc == nil {
+		return nil, ErrNoCompanion
+	}
+
 	if !confirm {
+		// The same route, rehearsed: the companion resolves the entry and
+		// parses the body exactly as it would on the real write, so a preview
+		// cannot succeed where --confirm fails.
+		resp, dryErr := w.cc.WriteAutomationDef(ctx, automationID, localText, true)
+		if dryErr != nil {
+			return nil, fmt.Errorf("dry-run automation write check: %w", dryErr)
+		}
+		result.WriterChangedLines = unifiedDiffChangedLines(resp.Diff)
 		return result, nil
 	}
 
@@ -154,16 +224,18 @@ func (w *Writer) Apply(ctx context.Context, automationID, localPath string, conf
 	}
 	result.BackupPath = backupPath
 
-	// Write via Config API
-	if err := w.client.UpdateAutomationConfig(ctx, automationID, localConfig); err != nil {
-		return nil, fmt.Errorf("writing automation config: %w", err)
+	resp, writeErr := w.cc.WriteAutomationDef(ctx, automationID, localText, false)
+	if writeErr != nil {
+		return nil, fmt.Errorf("writing automation config: %w", writeErr)
 	}
-
-	// Reload automations
-	if _, reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
-		slog.Warn("reload failed, config was written but not activated", "error", reloadErr)
-	} else {
-		result.Reloaded = true
+	// The companion reloads the domain itself and reports what happened, so
+	// there is no second reload call to disagree with it.
+	result.Reloaded = resp.Reloaded
+	result.ReloadError = resp.ReloadError
+	result.Reformatted = resp.Reformatted
+	if !resp.Reloaded {
+		slog.Warn("the entry was written but Home Assistant did not confirm the reload",
+			"automation", automationID, "reason", resp.ReloadError)
 	}
 
 	return result, nil
@@ -183,8 +255,8 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	}
 
 	var config map[string]any
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing backup YAML: %w", err)
+	if parseErr := yaml.Unmarshal(data, &config); parseErr != nil {
+		return nil, fmt.Errorf("parsing backup YAML: %w", parseErr)
 	}
 	if len(config) == 0 {
 		// backup() can no longer write an empty file, so an empty decode here
@@ -200,7 +272,15 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 		automationID = extractAutoIDFromBackup(backupFile)
 	}
 
-	if err := w.client.UpdateAutomationConfig(ctx, automationID, config); err != nil {
+	if w.cc == nil {
+		return nil, ErrNoCompanion
+	}
+	// The backup's own bytes go back, so an undo restores what was taken —
+	// which is only true while the write path is byte-preserving in both
+	// directions. Restoring the parsed map through HA's endpoint would have
+	// rewritten the file the rollback exists to put back.
+	resp, err := w.cc.WriteAutomationDef(ctx, automationID, string(data), false)
+	if err != nil {
 		return nil, fmt.Errorf("restoring config: %w", err)
 	}
 
@@ -209,16 +289,17 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	// whose reload failed printed "reload: ok" — telling the operator the old
 	// config was live at the exact moment Home Assistant was still running the
 	// broken one. Apply, forty lines up, always reported it correctly.
-	reloaded := true
-	if _, reloadErr := w.client.CallService(ctx, "automation", "reload", nil); reloadErr != nil {
-		slog.Warn("reload failed after rollback; the restored config is on disk but HA has not read it", "error", reloadErr)
-		reloaded = false
+	if !resp.Reloaded {
+		slog.Warn("reload failed after rollback; the restored config is on disk but HA has not read it",
+			"automation", automationID, "reason", resp.ReloadError)
 	}
 
 	return &ApplyResult{
 		AutomationID: automationID,
 		BackupPath:   backupFile,
-		Reloaded:     reloaded,
+		Reloaded:     resp.Reloaded,
+		ReloadError:  resp.ReloadError,
+		Reformatted:  resp.Reformatted,
 	}, nil
 }
 
@@ -249,6 +330,45 @@ func (w *Writer) PlanRollback(automationID string) (*ApplyResult, error) {
 // when HA rejects a section.
 func (w *Writer) ValidateCandidate(ctx context.Context, cfg map[string]any) (bool, error) {
 	return w.validateCandidate(ctx, cfg)
+}
+
+// remoteEntry fetches the stored entry as the companion renders it, refusing a
+// document that decodes to nothing (H-7: an automation config is never empty,
+// so an empty one means the route's shape moved, and diffing against it would
+// render as a fictitious whole-file change).
+func (w *Writer) remoteEntry(ctx context.Context, automationID string) (string, error) {
+	if w.cc == nil {
+		return "", ErrNoCompanion
+	}
+	resp, err := w.cc.GetAutomationDef(ctx, automationID)
+	if err != nil {
+		return "", fmt.Errorf("fetching remote config: %w", err)
+	}
+	var stored map[string]any
+	if unmarshalErr := yaml.Unmarshal([]byte(resp.Content), &stored); unmarshalErr != nil {
+		return "", fmt.Errorf("parsing remote config: %w", unmarshalErr)
+	}
+	if len(stored) == 0 {
+		return "", fmt.Errorf(
+			"GET /v1/config/automation?id=%s returned %s data: the document decoded to nothing, "+
+				"which a real automation config never is (HA's schema requires triggers and actions): %w",
+			automationID, degeneracy.Marker, degeneracy.ErrDegenerate)
+	}
+	return resp.Content, nil
+}
+
+// readLocalAutomation reads the candidate the caller wrote, returning both its
+// exact text (what will be written) and its parsed form (what is validated).
+func readLocalAutomation(localPath string) (string, map[string]any, error) {
+	localData, err := os.ReadFile(filepath.Clean(localPath))
+	if err != nil {
+		return "", nil, fmt.Errorf("reading local file: %w", err)
+	}
+	var localConfig map[string]any
+	if unmarshalErr := yaml.Unmarshal(localData, &localConfig); unmarshalErr != nil {
+		return "", nil, fmt.Errorf("parsing local YAML: %w", unmarshalErr)
+	}
+	return string(localData), localConfig, nil
 }
 
 // validateCandidate checks the automation's trigger/condition/action blocks
@@ -289,26 +409,19 @@ func (w *Writer) validateCandidate(ctx context.Context, cfg map[string]any) (boo
 	return true, nil
 }
 
-// backup saves the current remote config to the backups directory.
+// backup saves the current entry to the backups directory, as the bytes that
+// are on disk rather than as a re-serialization of them. A backup that
+// normalizes what it saves cannot restore what it took.
 func (w *Writer) backup(ctx context.Context, automationID string) (string, error) {
 	if err := os.MkdirAll(w.backupDir, 0o750); err != nil {
 		return "", fmt.Errorf("creating backup dir: %w", err)
 	}
 
-	remoteData, err := w.client.GetAutomationConfig(ctx, automationID)
+	remoteText, err := w.remoteEntry(ctx, automationID)
 	if err != nil {
 		return "", fmt.Errorf("fetching current config for backup: %w", err)
 	}
-
-	remoteConfig, err := parseRemoteAutomationConfig(remoteData, automationID)
-	if err != nil {
-		return "", err
-	}
-
-	yamlData, err := yaml.Marshal(remoteConfig)
-	if err != nil {
-		return "", fmt.Errorf("marshaling backup: %w", err)
-	}
+	yamlData := []byte(remoteText)
 
 	ts := time.Now().Format("2006-01-02T15-04-05")
 	filename := fmt.Sprintf("%s_%s.yaml", ts, automationID)

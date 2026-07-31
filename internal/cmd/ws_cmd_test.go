@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -137,6 +138,60 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 	ts.srv = srv
 	ts.dir = dir
 	return ts
+}
+
+// withCompanionEntry adds the companion's single-entry automation route to a
+// cmd rig and points the instance's .env at it.
+//
+// `auto diff`/`apply`/`rollback` write through that route rather than through
+// Home Assistant's own config endpoint (D-14, issue #128), so a rig that
+// serves only HA describes an instance where these commands cannot run at all.
+// entry is YAML TEXT — what the route serves and what the diff compares.
+// The returned pointer receives the body of a confirmed write, so a test can
+// assert on the bytes that would land rather than on what was printed.
+func withCompanionEntry(t *testing.T, entry string, ids ...string) (handlers map[string]http.HandlerFunc, written *string) {
+	t.Helper()
+	var mu sync.Mutex
+	body := new(string)
+	// The route holds ONE entry and 404s for anything else, as the real one
+	// does. A stub answering every id turns "the preview resolves its target"
+	// into a claim nothing can falsify.
+	holds := func(id string) bool {
+		if len(ids) == 0 {
+			return true
+		}
+		return slices.Contains(ids, id)
+	}
+	return map[string]http.HandlerFunc{
+		"/v1/config/automation": func(w http.ResponseWriter, r *http.Request) {
+			if !holds(r.URL.Query().Get("id")) {
+				http.Error(w, "Automation not found: "+r.URL.Query().Get("id"), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				payload, _ := json.Marshal(map[string]string{"id": r.URL.Query().Get("id"), "content": entry})
+				_, _ = w.Write(payload)
+			case http.MethodPut:
+				raw, _ := io.ReadAll(r.Body)
+				if r.URL.Query().Get("dry_run") != "true" {
+					mu.Lock()
+					*body = string(raw)
+					mu.Unlock()
+				}
+				_, _ = fmt.Fprint(w, `{"status":"applied","reloaded":true}`)
+			default:
+				http.Error(w, "not found", http.StatusNotFound)
+			}
+		},
+	}, body
+}
+
+// pointAtCompanion rewrites the rig's .env so the companion is the same server.
+func pointAtCompanion(t *testing.T, ts *cmdTestServer) {
+	t.Helper()
+	writeRefEnv(t, ts.dir, ts.srv.URL, ts.srv.URL)
 }
 
 func (ts *cmdTestServer) commandCount(cmdType string) int {
@@ -1843,17 +1898,9 @@ func withCCLogsUnique(t *testing.T, unique bool) {
 // --- runRollback (HTTP) ---
 
 func TestRunRollback_WithBackup(t *testing.T) {
-	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-		"/api/services/automation/reload": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
-		},
-	})
+	handlers, written := withCompanionEntry(t, "alias: Current\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	// Create backup dir in the flagDir
@@ -1877,6 +1924,11 @@ func TestRunRollback_WithBackup(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "rolled back") {
 		t.Errorf("output missing 'rolled back': %q", out)
+	}
+	// An undo restores what was taken: the backup's own bytes go back, not a
+	// re-serialization of them.
+	if want := "alias: Backup\ntrigger: []\ncondition: []\naction: []\n"; *written != want {
+		t.Errorf("rollback wrote %q, want the backup file verbatim %q", *written, want)
 	}
 }
 
@@ -3720,18 +3772,23 @@ func TestReadLine(t *testing.T) {
 // --- runAutoDiff (HTTP) ---
 
 func TestRunAutoDiff_NoChanges(t *testing.T) {
-	remoteJSON := `{"alias":"Climate Schedule","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/climate_schedule": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	const stored = "alias: Climate Schedule\ntrigger: []\ncondition: []\naction: []\n"
+	handlers, _ := withCompanionEntry(t, stored)
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
-	// Create local file matching remote
+	// The local file IS the stored entry — the `auto cat > file` round trip the
+	// manual teaches. That is what "no changes" means now.
+	//
+	// It used to mean something weaker and wrong. This case fed the same keys
+	// in a DIFFERENT order and asserted "no changes", with a comment claiming
+	// "the whole point of the diff is that key order is not a change". Key
+	// order is exactly what a confirmed write puts on disk (finding #93): the
+	// diff was silent about it because both of its sides had been sorted, and
+	// this test pinned that silence as correct.
 	localFile := filepath.Join(ts.dir, "climate_schedule.yaml")
-	if err := os.WriteFile(localFile, []byte("alias: Climate Schedule\naction: []\ncondition: []\ntrigger: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(localFile, []byte(stored), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3743,24 +3800,30 @@ func TestRunAutoDiff_NoChanges(t *testing.T) {
 	if err := runAutoDiff(context.Background(), &buf, "climate_schedule"); err != nil {
 		t.Fatalf("runAutoDiff failed: %v", err)
 	}
-	// The local YAML says the same thing as the remote JSON, only with the keys
-	// in a different order. The whole point of the diff is that key order is
-	// not a change, so the answer is a single "no changes" line naming the
-	// automation — not a diff hunk, and not silence.
 	out := buf.String()
 	if out != "climate_schedule: no changes\n" {
 		t.Errorf("output = %q, want %q", out, "climate_schedule: no changes\n")
 	}
+
+	// The other half of the correction: a file that says the same thing in a
+	// different order IS a change, because a confirmed write would land it.
+	reordered := "trigger: []\nalias: Climate Schedule\naction: []\ncondition: []\n"
+	if err := os.WriteFile(localFile, []byte(reordered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := runAutoDiff(context.Background(), &buf, "climate_schedule"); err != nil {
+		t.Fatalf("runAutoDiff on the reordered file: %v", err)
+	}
+	if strings.Contains(buf.String(), "no changes") {
+		t.Errorf("a reordered file reports no changes; the confirmed write would reorder the entry on disk:\n%s", buf.String())
+	}
 }
 
 func TestRunAutoDiff_WithChanges(t *testing.T) {
-	remoteJSON := `{"alias":"Old Name","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/my_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	handlers, _ := withCompanionEntry(t, "alias: Old Name\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "my_auto.yaml")
@@ -3785,13 +3848,9 @@ func TestRunAutoDiff_WithChanges(t *testing.T) {
 // --- runAutoApply (HTTP, no WS needed for dry-run) ---
 
 func TestRunAutoApply_DryRun(t *testing.T) {
-	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	handlers, _ := withCompanionEntry(t, "alias: Current\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "test_auto.yaml")
@@ -3817,35 +3876,14 @@ func TestRunAutoApply_DryRun(t *testing.T) {
 }
 
 func TestRunAutoApply_Confirm(t *testing.T) {
-	remoteJSON := `{"alias":"Old","trigger":[],"condition":[],"action":[]}`
-	// Record what was actually pushed and whether HA was told to reload: an
-	// apply that prints "applied" without writing the new config, or writes it
-	// and never reloads, is the failure this test exists to catch.
-	var mu sync.Mutex
-	var written []byte
-	reloads := 0
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			if r.Method == http.MethodGet {
-				_, _ = fmt.Fprint(w, remoteJSON)
-			} else {
-				body, _ := io.ReadAll(r.Body)
-				mu.Lock()
-				written = body
-				mu.Unlock()
-				w.WriteHeader(http.StatusOK)
-				_, _ = fmt.Fprint(w, `{}`)
-			}
-		},
-		"/api/services/automation/reload": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			reloads++
-			mu.Unlock()
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
-		},
-	})
+	// Record what was actually written: an apply that prints "applied" without
+	// putting the caller's file on the wire is the failure this test exists to
+	// catch. The reload is the companion's now — it reloads the domain as part
+	// of the same route and reports what happened, so a second reload call from
+	// hactl would be a second opinion nobody asked for.
+	handlers, written := withCompanionEntry(t, "alias: Old\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "the_auto.yaml")
@@ -3865,23 +3903,14 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 		t.Fatalf("runAutoApply confirm failed: %v (output: %q)", err, buf.String())
 	}
 
-	mu.Lock()
-	pushed, reloadCount := string(written), reloads
-	mu.Unlock()
-
-	// What reached HA matters more than what was printed.
+	// What reached the instance matters more than what was printed — and it is
+	// the caller's own bytes, not a re-serialization of them (finding #93).
+	pushed := *written
 	if pushed == "" {
-		t.Fatal("confirmed apply never wrote the automation config to HA")
+		t.Fatal("confirmed apply never wrote the automation entry")
 	}
-	var pushedCfg map[string]any
-	if err := json.Unmarshal([]byte(pushed), &pushedCfg); err != nil {
-		t.Fatalf("pushed body is not JSON: %v\n%s", err, pushed)
-	}
-	if pushedCfg["alias"] != "New" {
-		t.Errorf("pushed alias = %v, want \"New\" (the local file's alias)", pushedCfg["alias"])
-	}
-	if reloadCount != 1 {
-		t.Errorf("automation.reload called %d times, want exactly 1", reloadCount)
+	if want := "alias: New\ntrigger: []\ncondition: []\naction: []\n"; pushed != want {
+		t.Errorf("wrote %q, want the local file verbatim %q", pushed, want)
 	}
 
 	out := buf.String()

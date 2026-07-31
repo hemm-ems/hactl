@@ -201,12 +201,19 @@ This exists because stubbing `haapi.Client.UpdateAutomationConfig` to
 the whole integration package green. The prior test asserted only that the
 automation still existed after each step, which is true either way.
 
-Comparison folds HA's legacy singular keys (`trigger`/`condition`/`action`,
-and `service` within a step) onto the modern plural ones, because writing
-through the Config API migrates the schema; everything else must match exactly.
+The comparison used to fold HA's legacy singular keys (`trigger`/`condition`/
+`action`, and `service` within a step) onto the modern plural ones, because
+writing through the Config API migrated the schema and a faithful round trip
+still came back different. The write goes through the companion's single-entry
+route now (D-14, issue #128), which splices the caller's own bytes, so nothing
+migrates and the comparison is exact — the entry after a rollback is byte-identical
+to the entry before the apply, and so is every other entry in the file.
 
-- Enforced by: `internal/integration/write_roundtrip_test.go`
-  (`TestAutoApplyRollbackRoundTrip`, `make test-int`)
+- Enforced by: `internal/companiontest/auto_write_e2e_test.go`
+  (`TestE2EAutoApplyWritesOnlyItsOwnEntryCLI`, `make test-companion`), with
+  `internal/integration/write_test.go`
+  (`TestAutoWritesRefuseWithoutACompanion`, `make test-int`) pinning that there
+  is no fallback to the endpoint that rewrites the file
 
 ## H-5 — No automation write without a successful backup
 
@@ -820,8 +827,9 @@ where the confirmed run worked, the inverse of the H-2 contract, and it broke
 the command's whole purpose. It now resolves against HA's `flow_handlers` list
 (the authority on what `StartConfigFlow` accepts), so preview and confirm agree.
 
-- Enforced by: `internal/integration/write_roundtrip_test.go`
-  (`TestAutoApplyRollbackRoundTrip`, the original H-4 case),
+- Enforced by: `internal/companiontest/auto_write_e2e_test.go`
+  (`TestE2EAutoApplyWritesOnlyItsOwnEntryCLI`, the original H-4 case, now
+  reading automations.yaml back as bytes),
   `internal/integration/write_entity_test.go` (`TestEntSetLabelRoundTrip`
   incl. merge-not-replace and label-deletion detachment,
   `TestEntSetAreaRoundTrip` incl. resolution by name and HA's own

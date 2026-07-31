@@ -947,7 +947,11 @@ func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 	backupDir := filepath.Join(cfg.Dir, "backups")
-	wr := writer.New(client, nil, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, nil, cc, backupDir)
 
 	configID, err := resolveAutomationConfigID(ctx, client, autoID)
 	if err != nil {
@@ -992,7 +996,11 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		defer func() { _ = ws.Close() }()
 	}
 
-	wr := writer.New(client, wsClient, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, wsClient, cc, backupDir)
 
 	configID, err := resolveAutomationConfigID(ctx, client, autoID)
 	if err != nil {
@@ -1050,12 +1058,23 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		// One object under --json rather than a prose line and then an object.
 		// `validation: ok` used to be Fprintf'd straight to w ahead of the
 		// preview, which made stdout unparseable on a successful command.
-		return dryRun("apply automation").
+		plan := dryRun("apply automation").
 			with("automation", autoID).
 			with("config_id", configID).
 			with("validation", validation).
-			with("changed_lines", len(diff.Lines)).
-			render(w)
+			with("changed_lines", diff.ChangedLines())
+		// The diff above compares the caller's file with the stored entry. The
+		// WRITER re-serializes the entry in its own canonical style, so a
+		// hand-formatted candidate can move more lines on disk than the diff
+		// shows — the same "what you previewed is not what happens" shape as
+		// finding #93, one layer down, and the companion's own dry run is the
+		// only thing that knows. Other entries are untouched either way.
+		if extra := result.WriterChangedLines; extra > diff.ChangedLines() {
+			plan = plan.with("formatting", fmt.Sprintf(
+				"%d lines change on disk, not %d: this entry is rewritten in the companion's canonical "+
+					"style (start from `hactl auto cat %s` to see your file in it)", extra, diff.ChangedLines(), autoID))
+		}
+		return plan.render(w)
 	}
 
 	if !flagJSON {
@@ -1065,8 +1084,10 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		with("automation", autoID).
 		with("config_id", configID).
 		with("validation", validation).
-		with("changed_lines", len(diff.Lines)).
+		with("changed_lines", diff.ChangedLines()).
 		with("reloaded", result.Reloaded).
+		withIf(result.ReloadError != "", "reload_error", result.ReloadError).
+		withIf(result.Reformatted, "reformatted", true).
 		withIf(result.BackupPath != "", "backup", result.BackupPath).
 		text("applied: %s", autoID)
 	if result.BackupPath != "" {
@@ -1076,6 +1097,12 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		res = res.text("reload:  ok")
 	} else {
 		res = res.warn("written but HA did not confirm reload")
+	}
+	// C-14: the companion reports a splice it could not perform. Dropping the
+	// flag would leave a whole-file rewrite reading exactly like the surgical
+	// write this route exists to guarantee.
+	if result.Reformatted {
+		res = res.warn("the whole file was re-serialized (the entry could not be spliced), so formatting of other entries may have changed")
 	}
 	return res.render(w)
 }
@@ -1120,7 +1147,7 @@ func validateAutoCreateCandidate(ctx context.Context, data []byte) (string, erro
 		defer func() { _ = ws.Close() }()
 	}
 
-	validated, err := writer.New(client, wsClient, "").ValidateCandidate(ctx, candidate)
+	validated, err := writer.New(client, wsClient, nil, "").ValidateCandidate(ctx, candidate)
 	if err != nil {
 		return "", err
 	}

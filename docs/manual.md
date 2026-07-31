@@ -384,7 +384,11 @@ hactl auto rollback climate_schedule --confirm         # undo specific automatio
 
 ```
 
-**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
+**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write.
+
+**What the diff means, and what a write changes.** Both sides of the diff are the YAML text: the stored entry as `auto cat` prints it, and the file you pass. A confirmed apply writes **that file's bytes** into `automations.yaml` and leaves every other entry byte-identical — so key order and formatting are part of the diff, because they are part of what lands. Start from `hactl auto cat <id> > new.yaml` and edit; a hand-written file in a different style diffs as changed, and honestly so. `changed_lines` counts the `+`/`-` lines. If the entry cannot be spliced, the response says `reformatted: true` and the run warns that other entries' formatting may have moved.
+
+Both commands need **hactl-companion**: they write through its single-entry route. HA's own automation endpoint re-serializes the entire `automations.yaml` on every write, so there is deliberately no fallback — without a companion these two commands refuse rather than reformat the file.
 
 ### Write path (scripts)
 

@@ -17,20 +17,18 @@ import (
 // millisecond timestamp for `id:` and derives the entity_id from the alias.
 func autoApplyRig(t *testing.T) (localFile string) {
 	t.Helper()
-	const configID = "1712345678901"
-	remoteJSON := `{"id":"1712345678901","alias":"Climate Schedule","trigger":[],"condition":[],"action":[]}`
 	states := `[{"entity_id":"automation.climate_schedule","state":"on","attributes":{"id":"1712345678901","friendly_name":"Climate Schedule"}}]`
 
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/" + configID: func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, states)
-		},
-	})
+	// The stored entry, as the companion serves it — and NOT in the order a map
+	// marshal would produce, so a Writer that went back to normalizing both
+	// sides would show a diff here where there is none.
+	handlers, _ := withCompanionEntry(t, "id: '1712345678901'\nalias: Climate Schedule\ntrigger: []\ncondition: []\naction: []\n", "1712345678901")
+	handlers["/api/states"] = func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, states)
+	}
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile = filepath.Join(ts.dir, "new.yaml")
