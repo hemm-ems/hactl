@@ -82,20 +82,6 @@ func TestMatchPattern_GlobStillWorks(t *testing.T) {
 	}
 }
 
-func TestTruncateState_Short(t *testing.T) {
-	if got := truncateState("on"); got != "on" {
-		t.Errorf("truncateState('on') = %q, want 'on'", got)
-	}
-}
-
-func TestTruncateState_Long(t *testing.T) {
-	long := "this is a very long state value that exceeds twenty characters"
-	got := truncateState(long)
-	if len(got) > 20 {
-		t.Errorf("truncateState result length = %d, want <= 20", len(got))
-	}
-}
-
 func TestParseEntityDomain(t *testing.T) {
 	tests := []struct {
 		input string

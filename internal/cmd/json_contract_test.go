@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -221,6 +223,17 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			"attributes": map[string]any{},
 		},
 		{
+			// A state wider than the column `ent ls` renders it in. Without one,
+			// clause (6) passes over every listing in this sweep for the reason
+			// the whole 2026-07-30 report was about: the condition it tests for
+			// cannot occur. 76 of the reference instance's 4486 entities hold a
+			// timestamp state exactly like this one, and `ent ls --json`
+			// answered "2026-07-31T03:13:..." for every one of them.
+			"entity_id": "sensor.next_scheduled_backup", "state": "2026-08-01T03:33:44+00:00",
+			"last_changed": "2026-01-01T04:00:00+00:00", "last_updated": "2026-01-01T04:00:00+00:00",
+			"attributes": map[string]any{"friendly_name": "Next Scheduled Backup", "device_class": "timestamp"},
+		},
+		{
 			"entity_id": "automation.morning", "state": "on",
 			"last_changed": "2026-01-01T08:00:00+00:00", "last_updated": "2026-01-01T08:00:00+00:00",
 			"attributes": map[string]any{
@@ -283,9 +296,18 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, logbookJSON)
 		},
+		// Two records, and the long one is load-bearing: with a four-character
+		// "boom" the log family's clause (6) passes without ever reaching the
+		// width it exists to police, which is the green-by-construction shape
+		// this whole sweep is built against. The dotted logger name is the other
+		// half — the displayed segment has to be able to differ from the
+		// matched one (finding #16).
 		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, "2026-01-01 05:00:00.000 ERROR (MainThread) [mydomain.sensor] boom\n")
+			_, _ = fmt.Fprint(w, "2026-01-01 05:00:00.000 ERROR (MainThread) [mydomain.sensor] boom\n"+
+				"2026-01-01 05:01:00.000 ERROR (MainThread) [homeassistant.components.mydomain.config] "+
+				"could not reach the configured endpoint after three attempts; the collector stays "+
+				"degraded until the next successful poll\n")
 		},
 		"/api/config": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -551,6 +573,9 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 
 	// (5) no rendered absence placeholder anywhere in the document.
 	assertNoRenderedPlaceholder(t, parsedSmall, "", small)
+
+	// (6) no display truncation anywhere in the document.
+	assertNoDisplayTruncation(t, parsedSmall, "", small)
 
 	// (2) --top must not remove a single element from JSON output (defeats
 	// defect A generically).
@@ -820,5 +845,145 @@ func assertNoRenderedPlaceholder(t *testing.T, v any, path, raw string) {
 				"underlying field directly.\noutput:\n%s",
 				strings.TrimPrefix(path, "."), node, why, raw)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (6): a display truncation never reaches a machine.
+//
+// The third instance of the pole clauses (4) and (5) set. Every log-family
+// renderer cut its message to 60 bytes while BUILDING the row — before the cell
+// reached format.Table, the only thing that knows whether it is writing for a
+// person — so `log --json --full --tokensmax 0` returned messages of exactly 60
+// characters for entries whose true text was a multi-kilobyte traceback, and no
+// combination of flags could recover them (finding #14). `ent ls --json`
+// answered `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's
+// 4486 entities while `ent show --json` answered the whole instant for the same
+// field — the sibling disagreement clause (5) is also about.
+//
+// The check is on the SHAPE of the value: format.TruncationMarker is a single
+// rune emitted by exactly one function, format.Clip, and only ever for a text
+// table. A `…` in a machine document therefore means a cell escaped, whichever
+// column it is and whenever it was added. The old marker was "..." and Home
+// Assistant's own messages are full of those, which is the other half of why
+// the marker is what it is.
+// ---------------------------------------------------------------------------
+
+// assertNoDisplayTruncation walks a decoded --json document and fails on any
+// string carrying the text renderer's truncation marker.
+//
+// Unlike clause (5), this one has NO field exemption, and `state` is the reason
+// it must not: `ent ls` truncated the state column, and skipping it here would
+// leave the check blind to the exact site — 76 of the reference instance's 4486
+// entities — that made this clause worth writing. Clause (5) exempts `state`
+// because an input_select may honestly hold "yes"; the equivalent worry here is
+// a state that legitimately contains "…", and there is not one on the reference
+// instance: zero of 4486 rows carry the character anywhere (measured
+// 2026-07-31). An exemption inherited from the neighbouring clause without
+// re-asking whether it applies is how a gate ends up covering everything but
+// the defect.
+func assertNoDisplayTruncation(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			assertNoDisplayTruncation(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoDisplayTruncation(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		if strings.Contains(node, format.TruncationMarker) {
+			t.Errorf("--json carries a display truncation at %s: %q ends in the text table's "+
+				"marker.\nA column too wide to print declares its width with "+
+				"format.Table.SetWidth, which only renderText consults — never shorten a value "+
+				"while building the row.\noutput:\n%s",
+				strings.TrimPrefix(path, "."), node, raw)
+		}
+	}
+}
+
+// TestLogJSON_CarriesTheWholeMessage is clause (6)'s positive half, and the
+// direct regression test for finding #14.
+//
+// The sweep above proves no swept document CONTAINS a truncation; this proves
+// the value that used to be truncated is present in full, which a document that
+// simply dropped the column would also satisfy.
+func TestLogJSON_CarriesTheWholeMessage(t *testing.T) {
+	const long = "Shape watch probe could not reach the configured endpoint at 192.0.2.41:8443 " +
+		"after 3 attempts; the collector stays degraded until the next successful poll"
+	// A first line under the display budget, so the old LENGTH test let it
+	// through untouched and its newline reached the table cell.
+	const multiline = "loader skipped 2 sources\n  alpha: unparseable manifest\n  beta: no reader"
+
+	ts := startCmdServer(t, map[string]any{
+		"system_log/list": []map[string]any{
+			{"name": "custom_components.shapewatch.diagnostics.probe", "message": []string{long},
+				"level": "ERROR", "timestamp": 1.7e9, "count": 1},
+			{"name": "custom_components.shapewatch.helpers.loader", "message": []string{multiline},
+				"level": "WARNING", "timestamp": 1.7e9, "count": 1},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	withLogFlags(t, false, "", false)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runLog(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runLog: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rows); err != nil {
+		t.Fatalf("log --json is not a JSON array: %v\n%s", err, buf.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("log --json returned %d rows, want 2:\n%s", len(rows), buf.String())
+	}
+	got := map[string]string{}
+	for _, row := range rows {
+		component, _ := row["component"].(string)
+		message, _ := row["message"].(string)
+		got[component] = message
+	}
+	// The component field is the FULL logger name — the value --component
+	// matched against (finding #16). The table's last-segment form is
+	// display-only.
+	for component, want := range map[string]string{
+		"custom_components.shapewatch.diagnostics.probe": long,
+		"custom_components.shapewatch.helpers.loader":    multiline,
+	} {
+		if got[component] != want {
+			t.Errorf("log --json: component %q carries\n got %q\nwant %q", component, got[component], want)
+		}
+	}
+}
+
+// TestLogText_ComponentIsTheLastSegment is the control for the case above: the
+// machine value moved, and the reader's column must not have. A fix that made
+// both audiences read the full dotted name would satisfy clause (6) and widen
+// every log table by 30 characters.
+func TestLogText_ComponentIsTheLastSegment(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"system_log/list": []map[string]any{
+			{"name": "homeassistant.components.template.config", "message": []string{"bad template"},
+				"level": "ERROR", "timestamp": 1.7e9, "count": 1},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	withLogFlags(t, false, "", false)
+
+	var buf bytes.Buffer
+	if err := runLog(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runLog: %v", err)
+	}
+	if strings.Contains(buf.String(), "homeassistant.components.template.config") {
+		t.Errorf("the text table prints the whole logger name:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "config") {
+		t.Errorf("the text table lost the component column:\n%s", buf.String())
 	}
 }

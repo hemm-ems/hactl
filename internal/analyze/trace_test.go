@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestCondense_PassingTrace(t *testing.T) {
@@ -390,11 +391,30 @@ func TestStepHasError_NoError(t *testing.T) {
 	}
 }
 
+// The cap counts RUNES, not bytes, and the difference is the point: the
+// shortening this replaced sliced bytes, so a two-byte character on the cut
+// left invalid UTF-8. The marker itself is a three-byte rune, which is why the
+// old byte-count assertion here fails against the correct implementation.
 func TestShortenError_Long(t *testing.T) {
 	long := "TemplateError: some long complex: inner message that is definitely over forty characters long"
 	got := shortenError(long)
-	if len(got) > 40 {
-		t.Errorf("shortenError: result = %q (len %d), want <= 40 chars", got, len(got))
+	if n := utf8.RuneCountInString(got); n > 40 {
+		t.Errorf("shortenError: result = %q (%d runes), want <= 40", got, n)
+	}
+}
+
+// TestStepOutcomeKeepsTheWholeError is the other half, and it is the defect:
+// the shortening used to happen in stepOutcome, so CondensedStep.Reason — which
+// `trace show --json` serialises — carried the last forty characters of an
+// error and nothing could ask for the rest (H-10).
+func TestStepOutcomeKeepsTheWholeError(t *testing.T) {
+	long := "TemplateError: some long complex: inner message that is definitely over forty characters long"
+	result, reason := stepOutcome(RawTraceRun{Error: long})
+	if result != StepFail {
+		t.Errorf("stepOutcome result = %q, want %q", result, StepFail)
+	}
+	if reason != long {
+		t.Errorf("stepOutcome dropped part of the error:\n got %q\nwant %q", reason, long)
 	}
 }
 

@@ -90,12 +90,13 @@ func runLabelLs(ctx context.Context, w io.Writer) error {
 		Headers: []string{"label_id", "name", "color", "description"},
 		Rows:    make([][]string, len(labels)),
 	}
+	tbl.SetWidth("description", 40)
 	for i, l := range labels {
 		tbl.Rows[i] = []string{
 			l.LabelID,
 			l.Name,
 			l.Color,
-			truncateStr(l.Description, 40),
+			l.Description,
 		}
 	}
 
@@ -194,15 +195,6 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 		with("name", entry.Name).
 		text("deleted label %q", labelID).
 		render(w)
-}
-
-func truncateStr(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen-1]) + "…"
 }
 
 // fetchRegistryContext fetches entity registry, areas, labels, floors, and

@@ -24,21 +24,38 @@ import (
 type logProbe struct {
 	level   string // as passed to system_log.write
 	logger  string // full dotted logger name
-	message string // kept short: the renderer truncates at 60 chars
+	message string // long enough that the table has to shorten it (see TestLogFullMessageReachesJSON)
 }
 
-// component is what hactl's table shows for this probe: the logger's last
-// dot-segment (cmd/log.go: shortComponent).
-func (p logProbe) component() string {
-	if idx := strings.LastIndex(p.logger, "."); idx >= 0 {
-		return p.logger[idx+1:]
-	}
-	return p.logger
-}
+// component is what hactl's --json reports for this probe: the FULL logger
+// name, because that is the value --component matches against.
+//
+// It used to shorten the name to its last dot-segment, and the helper's own
+// comment cited cmd/log.go's shortComponent as the reason — a test written from
+// the code's model rather than from the source of truth beside it. HA's
+// system_log/list reports `hactl.assertfloor.errsite`; hactl reported
+// `errsite`; and this file's own haLogNames() had HA's answer in hand and
+// shortened it to match (finding #16).
+func (p logProbe) component() string { return p.logger }
 
+// The error probe's message is 87 bytes with a two-byte character at offsets 56
+// and 57 — where a `msg[:57]` cut lands. Both properties are load-bearing and
+// neither is obvious from reading the sentence: under 60 bytes and
+// TestLogFullMessageReachesJSON passes against the very defect it exists for,
+// and with the umlaut anywhere else the byte slice never splits a character.
+// The reference instance is German and produces this shape on its own; the rig
+// carries it deliberately (capability R6).
 var (
-	errProbe  = logProbe{level: "error", logger: "hactl.assertfloor.errsite", message: "assertion floor error probe"}
-	warnProbe = logProbe{level: "warning", logger: "hactl.assertfloor.warnsite", message: "assertion floor warning probe"}
+	errProbe = logProbe{
+		level:   "error",
+		logger:  "hactl.assertfloor.errsite",
+		message: "assertion floor error probe, long enough to be cut, and über die 60-Byte-Grenze hinaus",
+	}
+	warnProbe = logProbe{
+		level:   "warning",
+		logger:  "hactl.assertfloor.warnsite",
+		message: "assertion floor warning probe, also long enough that the display cap has to shorten it",
+	}
 )
 
 // writeLogProbes injects both probes and returns once HA's own system_log/list
@@ -153,9 +170,57 @@ func TestLog(t *testing.T) {
 		}
 	}
 	for name := range before {
-		if !got[lastSegment(name)] {
-			t.Errorf("log omitted HA logger %q (component %q); hactl printed %v",
-				name, lastSegment(name), keys(got))
+		if !got[name] {
+			t.Errorf("log omitted HA logger %q; hactl printed %v", name, keys(got))
+		}
+	}
+}
+
+// TestLogTextShowsTheLastSegment is the control for the case above: the machine
+// value became the full logger name, and the reader's column must not have.
+// A fix that showed both audiences the whole dotted name would satisfy every
+// assertion in TestLog and widen the table by thirty characters per row.
+func TestLogTextShowsTheLastSegment(t *testing.T) {
+	writeLogProbes(t, ha)
+
+	out := runHactl(t, "log", "--top", "1000")
+	if strings.Contains(out, errProbe.logger) {
+		t.Errorf("the text table prints the whole logger name %q:\n%s", errProbe.logger, out)
+	}
+	if !strings.Contains(out, lastSegment(errProbe.logger)) {
+		t.Errorf("the text table lost the component column (%q):\n%s", lastSegment(errProbe.logger), out)
+	}
+}
+
+// TestLogFullMessageReachesJSON is finding #14 against a real Home Assistant.
+//
+// Every list renderer in the family cut the message to 60 bytes while building
+// the row, so `--json --full --tokensmax 0` still answered 60 characters and
+// `log show <id>` was the only way to read a message hactl had received whole.
+// The probe below is longer than the cut on purpose; a short one makes this
+// case pass against the defect.
+func TestLogFullMessageReachesJSON(t *testing.T) {
+	writeLogProbes(t, ha)
+
+	if len(errProbe.message) <= 60 {
+		t.Fatalf("the probe message is %d bytes, which the 60-byte cut never reaches — "+
+			"this case would pass against the defect it exists for", len(errProbe.message))
+	}
+	for _, args := range [][]string{{"log"}, {"log", "--unique"}} {
+		rows := logRows(t, args...)
+		var found bool
+		for _, r := range rows {
+			if r.Component != errProbe.logger {
+				continue
+			}
+			found = true
+			if r.Message != errProbe.message {
+				t.Errorf("%v --json carries a shortened message:\n got %q\nwant %q",
+					args, r.Message, errProbe.message)
+			}
+		}
+		if !found {
+			t.Errorf("%v --json does not hold the probe at all; rows: %+v", args, rows)
 		}
 	}
 }
@@ -193,14 +258,10 @@ func lastSegment(name string) string {
 	return name
 }
 
-// componentOf reports whether any logger name in names shortens to component.
+// componentOf reports whether hactl's reported component names a logger HA
+// reported. It is now an exact lookup, because both sides carry the same value.
 func componentOf(names map[string]bool, component string) bool {
-	for name := range names {
-		if lastSegment(name) == component {
-			return true
-		}
-	}
-	return false
+	return names[component]
 }
 
 func keys(m map[string]bool) []string {

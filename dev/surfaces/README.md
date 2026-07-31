@@ -70,6 +70,7 @@ not an act at all. That asymmetry is the whole design.
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
 | `autoref` | `internal/cmd` entrypoints taking an automation reference | the reference reaches `resolveAutomation`, so every command accepts every identifier form the family prints (D-1, H-17) |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
+| `truncation` | every `<something> + <ellipsis>` in the source | a value shortened to fit a display is shortened by the renderer, never on the way in (H-10) |
 | `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
 | `decode` | every decode site the H-14 json sweep cannot see — yaml, decoder constructions, websocket `ReadJSON`, json outside `degeneracy.WirePackages` | a decode that yields nothing never renders as success (H-7) |
 | `domaindecode` | the three legs of the rule, from the typed source: every non-map `json:"attributes"` schema, every read of the whole `/api/states` document, every join between them | a domain-specific attribute schema is applied only to the entities the command renders (H-21) |

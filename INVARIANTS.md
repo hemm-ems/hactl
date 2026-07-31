@@ -474,6 +474,48 @@ machine value with `format.Table.SetMachine`.** The gate is clause (5) of the
 per-field exemption that states its reason — `state` is HA's own payload, and an
 input_select may honestly hold `yes`.
 
+**And neither is a rendered abbreviation.** The third instance of the same
+mechanism, in the same table, and the widest: six functions in five files each
+did their own `if len(msg) > 60 { msg = msg[:57] + "..." }` while ASSEMBLING the
+row, so the value reached `format.Table` already cut and `--json`, `--full` and
+`--tokensmax 0` were all downstream of a decision nothing could undo. `hactl log
+--json --full --tokensmax 0` answered messages of exactly 60 characters for
+entries whose real text was a multi-kilobyte Python traceback — 43 of the
+reference instance's 54 — and `log show <id>` was the only way to read a message
+hactl had received in full. The report named that one site. Of the five it did
+not, two reached a machine: `ent ls --json` answered `"state":
+"2026-07-31T03:13:..."` for 76 of 4486 entities while `ent show --json` answered
+`"2026-08-01T03:33:44+00:00"` for the same field of the same entity, and `trace
+show --json` carried the last forty characters of a step's error. The pole is
+the clock rule's, one level up: **a column too wide to print declares its width
+with `format.Table.SetWidth`, which only `renderText` consults** — so the cap is
+a property of the column rather than a step in building the value, `--full`
+lifts it because that is what the flag says it does, and there is one
+implementation of "shorten a string" (`format.Clip`) rather than six.
+
+Three things were wrong in those six lines and only one was reported. The cut
+was a **length** test, so a message whose first line was under the budget passed
+through untouched and put its newline in a table cell: the reference instance
+printed 58 lines for 54 rows plus a header, three rows split, the continuation
+carrying no columns at all — a row per line is what makes a table a table, and
+every line-oriented consumer downstream depends on it. And the cut sliced
+**bytes**, so a two-byte character straddling offset 57 was left in half; that
+instance's messages are German, and the invalid UTF-8 survives into `--json`,
+where the encoder writes U+FFFD. `format.Clip` counts runes and
+`format.Table.displayRows` folds a cell onto one line, marking the fold.
+
+**The same table, one column further: a value must be reported as the value it
+was matched against.** `--component` matches the full dotted logger name and
+`shortComponent` cut it to its last segment — for display, said its own comment,
+except that a table cell IS the JSON value. `log --component template --json`
+answered rows whose component read `config`, `state` and `trigger`, none of
+which contains the filter term, while their real names were
+`homeassistant.components.template.config` and two siblings; a caller could
+neither audit the match nor grep the answer for their own filter, and `log show
+--json` reported the full name for the same field of the same entry. The
+machine value is the matched value (`SetMachine("component", …)`), the last
+segment stays the reader's column.
+
 **A number hactl re-emits is the number Home Assistant sent.** H-21 was reported
 as a decode defect and fixed as one; the encode half shipped standing.
 `encoding/json` decodes every JSON number into `float64` for a `map[string]any`
@@ -508,8 +550,30 @@ exemption has to keep passing.
   properties on every non-mutating, non-meta, non-verbatim-by-design leaf it
   can exercise against a fake HA, and — clause (4) — fails on any string value
   anywhere in any swept document shaped like `clock.Short`/`ShortSeconds`
-  output; `TestRootHelp_NeverTokenTruncated`, `TestVersionJSON_Shape`,
-  `TestScriptShowJSON_Shape`),
+  output; and — clause (6) — on any string value carrying
+  `format.TruncationMarker`, with NO field exemption: `state` is exempt from
+  clause (5) and is precisely where `ent ls` truncated, so inheriting that
+  exemption would have left the check blind to the site it was written for;
+  `TestRootHelp_NeverTokenTruncated`, `TestVersionJSON_Shape`,
+  `TestScriptShowJSON_Shape`, `TestLogJSON_CarriesTheWholeMessage` as clause
+  (6)'s positive half — a document that simply dropped the column satisfies the
+  sweep — and `TestLogText_ComponentIsTheLastSegment` as its control, since a
+  fix that showed the whole logger name to the reader too satisfies the
+  positive half),
+  `internal/format/format_test.go` (`TestSetWidth_JSONCarriesTheWholeValue`,
+  `TestSetWidth_FullLiftsTheCap`, `TestSetWidth_ACellIsOneLine`,
+  `TestSetWidth_TextCapsTheColumn` as the control that the cap did not become
+  "nothing is capped", `TestClip_NeverCutsARuneInHalf` over every width),
+  `internal/analyze/trace_test.go` (`TestStepOutcomeKeepsTheWholeError` — the
+  condensed step keeps Home Assistant's whole error and `FormatCondensed`
+  shortens it),
+  `internal/livefire/log_honesty_test.go` (the two-profile sweep, against the
+  reference instance as well as the rig: `TestSweepLogJSONCarriesTheWholeMessage`
+  — which also fails when the longest message on the instance is too short to
+  reach the cut, so the case cannot pass vacuously —
+  `TestSweepLogTextIsOneRowPerLine`,
+  `TestSweepLogJSONComponentIsWhatTheFilterMatched`,
+  `TestSweepLogFamilyAgreesOnItsSchema`),
   `internal/cmd/json_confirm_contract_test.go` (`TestJSONConfirmContract` — the
   write half: every `--confirm`-gated command the fixture can answer is driven
   through BOTH branches and must report `dry_run`, `action` and `ok`; a write in
@@ -543,7 +607,12 @@ exemption has to keep passing.
   of confirmed-write result renderings is derived from the source, mirroring
   `TestPreviewSurfaceIsClosed` one branch over, and is empty by design;
   `TestResultExtractorFlagsProseOnConfirm` feeds it a known-bad function so an
-  extractor that stopped matching cannot pass while proving nothing)
+  extractor that stopped matching cannot pass while proving nothing;
+  `TestTruncationSurfaceIsClosed` over `dev/surfaces/truncation.manifest` — the
+  set is every `<something> + <ellipsis>` in the source, so a seventh site
+  written from memory is red the day it appears. It is the surface finding #14
+  needed: the report named one of six, and nothing in the tree could have said
+  how many there were)
 
 ## H-11 — hactl never invents an identifier, and every count it reports reconciles with the count its source reported
 

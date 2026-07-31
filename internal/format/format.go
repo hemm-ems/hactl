@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strings"
+	"unicode/utf8"
 )
 
 // Table holds tabular data for compact rendering.
@@ -22,6 +24,32 @@ type Table struct {
 	// header. Text rendering never consults it. Nil for the common table
 	// whose cells mean the same thing to both audiences.
 	Machine []map[string]any
+	// Widths[header] caps how wide that column renders AS TEXT. Nil for the
+	// common table whose cells are short by nature. See SetWidth.
+	Widths map[string]int
+}
+
+// SetWidth declares that a column is too wide to print and how wide it may be.
+//
+// The cap belongs here rather than at the call site, and that is the whole
+// point. Every log-family renderer used to do `if len(msg) > 60 { msg =
+// msg[:57] + "..." }` while ASSEMBLING the row, so the message reached this
+// type already cut: `--json`, `--full` and `--tokensmax 0` could not undo it
+// because by then there was nothing left to undo, and `log show <id>` was the
+// only way to read a message hactl had itself received in full (finding #14).
+// `ent ls --json` reported `"state": "2026-07-31T03:13:..."` for 76 entities
+// on the reference instance while `ent show --json` reported the whole instant
+// for the same field — the same defect one command over, which no report named.
+//
+// A width is a property of a COLUMN in a text table, so only renderText
+// consults it: the machine contract carries the value the caller was handed
+// (H-10), and `--full` lifts the cap for the reader too, which is what the
+// flag's own documentation ("show full output") says it does.
+func (t *Table) SetWidth(header string, runes int) {
+	if t.Widths == nil {
+		t.Widths = make(map[string]int, len(t.Headers))
+	}
+	t.Widths[header] = runes
 }
 
 // SetMachine records the value row i's `header` cell carries in JSON output,
@@ -102,17 +130,21 @@ func (t *Table) renderJSON(w io.Writer, opts RenderOpts) error {
 }
 
 func (t *Table) renderText(w io.Writer, opts RenderOpts) error {
-	rows := t.visibleRows(opts)
+	rows := t.displayRows(t.visibleRows(opts), opts.Full)
 	remaining := len(t.Rows) - len(rows)
 
+	// Runes, not bytes: fmt's `%-*s` pads to a rune count, so measuring a cell
+	// in bytes over-pads every column holding a non-ASCII value. The reference
+	// instance's log messages are German, and the fixture now carries one
+	// (capability R6), so this is reachable on both profiles.
 	widths := make([]int, len(t.Headers))
 	for i, h := range t.Headers {
-		widths[i] = len(h)
+		widths[i] = utf8.RuneCountInString(h)
 	}
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < len(widths) && len(cell) > widths[i] {
-				widths[i] = len(cell)
+			if n := utf8.RuneCountInString(cell); i < len(widths) && n > widths[i] {
+				widths[i] = n
 			}
 		}
 	}
@@ -133,6 +165,93 @@ func (t *Table) renderText(w io.Writer, opts RenderOpts) error {
 	}
 
 	return nil
+}
+
+// TruncationMarker ends a cell a text table had to shorten.
+//
+// It is one rune, and one rune that nothing else in hactl's output produces —
+// which is what lets the H-10 sweep say "this document carries a display
+// truncation" as a statement about the SHAPE of a value rather than as a list
+// of the columns known to truncate today. The old marker was "..." and Home
+// Assistant's own messages are full of those.
+const TruncationMarker = "…"
+
+// displayRows applies the columns' text-only rendering: a cell is one line, and
+// no wider than its column declared.
+//
+// Both halves are display rules and neither may reach renderJSON. The width is
+// finding #14. The single line is the half of #14 the report did not name: the
+// old cut was a LENGTH test, so a message whose first line was under 60 bytes
+// passed through it untouched and put its newline in a table cell — the
+// reference instance printed 58 lines for 54 rows plus a header, three of them
+// split, with the continuation carrying no columns at all. A row per line is
+// what makes a table a table.
+func (t *Table) displayRows(rows [][]string, full bool) [][]string {
+	if len(t.Widths) == 0 {
+		return rows
+	}
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		cells := make([]string, len(row))
+		copy(cells, row)
+		for j, h := range t.Headers {
+			width, capped := t.Widths[h]
+			if !capped || j >= len(cells) {
+				continue
+			}
+			cells[j] = displayCell(cells[j], width, full)
+		}
+		out[i] = cells
+	}
+	return out
+}
+
+// displayCell renders one cell of a width-capped column.
+func displayCell(s string, width int, full bool) string {
+	s = flattenLines(s)
+	if full || width <= 1 {
+		return s
+	}
+	return Clip(s, width)
+}
+
+// flattenLines folds a multi-line value onto the single line a table row is.
+//
+// The break is shown rather than swallowed: a message whose remaining lines
+// have simply vanished reads as a complete short message, which is the same
+// class of lie as a silent truncation. ⏎ says there was more, and `--json` and
+// `log show <id>` both carry it.
+func flattenLines(s string) string {
+	if !strings.ContainsAny(s, "\r\n") {
+		return strings.TrimSpace(s)
+	}
+	fields := strings.FieldsFunc(s, func(r rune) bool { return r == '\n' || r == '\r' })
+	parts := make([]string, 0, len(fields))
+	for _, line := range fields {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, " ⏎ ")
+}
+
+// Clip shortens s to at most width runes, marker included.
+//
+// It counts RUNES. The call sites this replaced sliced bytes — `msg[:57]` —
+// and the reference instance's messages are German: a two-byte character
+// straddling offset 57 is cut in half, and the invalid UTF-8 that leaves
+// survives all the way into `--json`, where an encoder writes it as U+FFFD.
+// The rig reproduces it on demand (capability R6).
+//
+// Exported for the one shortening that is not a table cell: the condensed trace
+// renders its own text, and a second implementation of this rule is how the
+// clock surface came to hold five renderers that disagreed.
+func Clip(s string, width int) string {
+	if utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	runes := []rune(s)
+	return strings.TrimRight(string(runes[:width-1]), " ") + TruncationMarker
 }
 
 // textPrinter handles column-aligned text output.

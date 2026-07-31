@@ -1,0 +1,41 @@
+# truncation — a value shortened to fit a display is shortened by the renderer
+# that knows who is reading, never on the way in.
+#
+# The surface is derived by internal/surfaceaudit.TruncationSurface: any
+# function containing `<something> + <ellipsis>`. Sites are keyed by the
+# enclosing function.
+#
+# Finding #14 reported one site — the log family's message column. There were
+# six, in five files, each written from memory in the same shape:
+#
+#     if len(msg) > 60 { msg = msg[:57] + "..." }
+#
+# and each doing it while ASSEMBLING a format.Table row, so `--json`, `--full`
+# and `--tokensmax 0` were all downstream of the cut and could not undo it. Two
+# of the five the report did not name reached a machine: `ent ls --json`
+# answered `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's
+# 4486 entities while `ent show --json` answered the whole instant for the same
+# field, and `trace show --json` carried the last forty characters of a step's
+# error. Nothing in the tree could have said how many sites there were.
+#
+# Routing through format.Clip is how a site leaves this surface, which is why
+# the list is four functions rather than ten: the columns that need a width
+# DECLARE one now (format.Table.SetWidth) instead of applying it. That is the
+# same reduction the clock surface made when five renderers became three.
+#
+# What this surface does NOT see: a shortening that drops characters without
+# marking the cut. It is invisible here and invisible to the H-10 sweep's
+# clause (6), which is also written against the marker — and it is a strictly
+# worse defect than the one this exists for, since a silently short value reads
+# as complete. There is none in the tree today; the honest statement is that
+# nothing would catch one.
+#
+# The ceiling is the number of sites known to be unproven. It may fall without
+# ceremony and may only rise by editing this line on purpose.
+#ceiling 0
+
+internal/format/format.go:Clip = proven: TestClip_NeverCutsARuneInHalf
+
+internal/cmd/whoresolve.go:truncateUUID = exempt: builds the "who" LABEL for a changes row, not a value; the whole context_user_id is a sibling field of the same JSON object, so nothing the shortening drops is unreachable
+internal/haapi/client.go:NewHTTPStatusError = exempt: caps a response body inside an error message, and an error is written to stderr rather than into a document a machine parses
+internal/surfaceaudit/invariants.go:truncate = exempt: shortens an invariant's title inside a surface report a developer reads; not product output and never rendered as an answer

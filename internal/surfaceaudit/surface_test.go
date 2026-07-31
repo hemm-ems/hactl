@@ -238,3 +238,16 @@ func TestResultSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.ResultSurface(repoRoot(t))
 	runGate(t, s, err)
 }
+
+// TestTruncationSurfaceIsClosed — every place that shortens a string for a
+// reader is dispositioned.
+//
+// Finding #14 named one of six such sites. The other five did the same thing in
+// the same shape, and two of them put the result straight into `--json`:
+// `ent ls` reported `"state": "2026-07-31T03:13:..."` for 76 of the reference
+// instance's 4486 entities, and `trace show`'s condensed step carried the last
+// forty characters of a failure. Nothing could have said how many there were.
+func TestTruncationSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.TruncationSurface(repoRoot(t))
+	runGate(t, s, err)
+}

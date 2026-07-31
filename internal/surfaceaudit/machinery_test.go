@@ -177,8 +177,17 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		wantKeys []string
 	}{
 		{"clock", surfaceaudit.ClockSurface, []string{"internal/clock/render.go:Short"}},
-		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/cc.go:runCCShow"}},
+		// runDashGrep, not runCCShow: `cc show` was the anchor until it grew a
+		// real resolver (finding #18) and correctly left the surface. An anchor
+		// has to be a site the surface holds for a durable reason, and
+		// `dash grep`'s is structural — its argument is a search value, so there
+		// is nothing for it to resolve and nothing that would remove it.
+		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/dash.go:runDashGrep"}},
 		{"invariant", surfaceaudit.InvariantSurface, []string{"H-17"}},
+		// format.Clip is the one shortening the product is supposed to have, so
+		// an extractor that stopped matching would take the whole surface with
+		// it and still look green (it would report "nothing shortens anything").
+		{"truncation", surfaceaudit.TruncationSurface, []string{"internal/format/format.go:Clip"}},
 		// The named site is the one the maprange surface exists for: the walk
 		// that rendered one arbitrary entry of a map for a whole release.
 		{"maprange", surfaceaudit.MapRangeSurface, []string{"internal/cmd/wireguard_cmd.go:writeWireguardMonitor"}},

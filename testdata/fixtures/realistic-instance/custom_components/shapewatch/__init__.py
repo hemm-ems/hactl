@@ -21,10 +21,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers.typing import ConfigType
 
+from . import logshapes
+
 DOMAIN = "shapewatch"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the component and hand its sensor platform to HA."""
+    # Rig capability R6 — see logshapes.py. Home Assistant's system_log handler
+    # is installed long before a custom component is set up, so writing the
+    # records here is enough to put them in the buffer `hactl log` reads, and
+    # they survive a `homeassistant.restart` because setup runs again.
+    logshapes.emit()
     hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
     return True

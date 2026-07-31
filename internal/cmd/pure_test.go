@@ -175,38 +175,54 @@ func TestFormatLogAsText_Empty(t *testing.T) {
 	}
 }
 
-// --- renderLogEntriesSimple ---
+// --- renderLogEntries ---
+//
+// `cc logs <name>` used to have its own renderer with its own schema (no id
+// column, the full logger name where its two siblings show the last segment).
+// It routes through renderLogEntries now — finding #17 — so these cases cover
+// both commands.
 
-func TestRenderLogEntriesSimple_Basic(t *testing.T) {
+func TestRenderLogEntries_Basic(t *testing.T) {
 	entries := []analyze.LogEntry{
-		{Timestamp: "2026-01-01 10:00:00.000", Level: "ERROR", Component: "recorder", Message: "Short message"},
+		{Timestamp: "2026-01-01 10:00:00.000", Level: "ERROR", Component: "homeassistant.components.recorder", Message: "Short message"},
 		{Timestamp: "2026-01-01 10:01:00.000", Level: "WARNING", Component: "mqtt", Message: "This is a message that is definitely longer than sixty characters so it should be truncated"},
 	}
 
+	cfg := &config.Config{Dir: t.TempDir()}
 	var buf bytes.Buffer
-	if err := renderLogEntriesSimple(&buf, entries); err != nil {
-		t.Fatalf("renderLogEntriesSimple failed: %v", err)
+	if err := renderLogEntries(&buf, cfg, entries); err != nil {
+		t.Fatalf("renderLogEntries failed: %v", err)
 	}
 	out := buf.String()
+	// The table shows the logger's last segment; the machine value carries the
+	// whole name (finding #16), which json_contract_test.go asserts end to end.
 	if !strings.Contains(out, "recorder") {
 		t.Errorf("output missing component 'recorder': %q", out)
 	}
 	if !strings.Contains(out, "ERROR") {
 		t.Errorf("output missing level 'ERROR': %q", out)
 	}
+	if !strings.Contains(out, "log:") {
+		t.Errorf("output carries no log id, so a row cannot be drilled into: %q", out)
+	}
+	// A row per line, whatever the message contained.
+	if lines := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; lines != len(entries)+1 {
+		t.Errorf("rendered %d lines for %d entries plus a header:\n%s", lines, len(entries), out)
+	}
 }
 
-// TestRenderLogEntriesSimple_Empty pins what "nothing to show" looks like: the
+// TestRenderLogEntries_Empty pins what "nothing to show" looks like: the
 // column header and not one line more. A renderer that emitted a blank data row
 // for an empty slice reads to a caller as one log entry with no content, which
 // is the degenerate answer H-7 exists to forbid — and it returns nil either way,
 // so the old body could not tell the two apart.
-func TestRenderLogEntriesSimple_Empty(t *testing.T) {
+func TestRenderLogEntries_Empty(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
 	var buf bytes.Buffer
-	if err := renderLogEntriesSimple(&buf, nil); err != nil {
-		t.Fatalf("renderLogEntriesSimple(nil) failed: %v", err)
+	if err := renderLogEntries(&buf, cfg, nil); err != nil {
+		t.Fatalf("renderLogEntries(nil) failed: %v", err)
 	}
-	assertHeaderOnly(t, buf.String(), "time", "level", "component", "message")
+	assertHeaderOnly(t, buf.String(), "id", "time", "level", "component", "message")
 }
 
 // assertHeaderOnly requires out to be exactly one line, naming every column.

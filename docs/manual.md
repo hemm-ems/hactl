@@ -737,12 +737,30 @@ hactl log --warnings                      # WARNING-level entries only (operatio
 hactl log --errors --warnings --unique    # both levels, deduplicated, sorted by count
 hactl log --component zha                 # filter by component name (substring)
 hactl log --errors --since 2h             # only entries from the last 2 hours
+hactl log --json                          # whole messages, whole logger names
+hactl log --full                          # whole messages in the text table too
 hactl log show log:f2                     # full detail: timestamp, component, message
 
 hactl cc ls                               # installed custom components + versions
 hactl cc show hacs                        # CC details + entity count
 hactl cc logs hacs --unique               # CC-specific errors, deduplicated
 ```
+
+The message column is shortened **for the text table only** — `--json` carries
+the message Home Assistant sent, tracebacks and all, and `--full` shows it in
+the table too. A cell always renders as one line; where a message had more, the
+table marks the fold with `⏎` and `log show <id>` prints the whole thing.
+
+The `component` column works the same way, in the other direction: `--component`
+matches the **full dotted logger name**, the table shows its last segment, and
+`--json` carries the full name — so `log --component template --json` reports
+`homeassistant.components.template.config`, the value the match was made
+against, not `config`. All four views (`log`, `log --unique`, `cc logs`,
+`cc logs --unique`) carry `id`, so any row can be drilled into with `log show`.
+
+`cc logs <name>` takes the name of an **installed custom component** — the ones
+`cc ls` prints — and refuses anything else, like `cc show`. "no log entries for
+X" therefore means X is installed and quiet, never that X was a typo.
 
 `cc show` attributes entities through the entity registry's `platform` field,
 which names the integration that created them — never through the entity_id,

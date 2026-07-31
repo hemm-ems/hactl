@@ -545,10 +545,26 @@ const errorLogFixture = "2026-01-01 10:00:00.000 ERROR (Main) [homeassistant.com
 // missing.
 func startErrorLogServer(t *testing.T) *cmdTestServer {
 	t.Helper()
-	return startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+	return startCmdServer(t, map[string]any{
+		// `cc logs <name>` resolves the name against HA's own component
+		// inventory before it reads a line of log (finding #18), so the two
+		// components the fixture logs for have to exist as far as HA is
+		// concerned. `log` itself never asks.
+		"manifest/list": []map[string]any{
+			{"domain": "alpha", "name": "Alpha", "is_built_in": false},
+			{"domain": "beta", "name": "Beta", "is_built_in": false},
+		},
+	}, map[string]http.HandlerFunc{
 		"/api/error_log": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = fmt.Fprint(w, errorLogFixture)
+		},
+		// fetchCustomComponents enriches a confirmed component's version from
+		// its update.* entity; there is none here, and an unstubbed /api/states
+		// would fail the command before the resolution it is stubbed for.
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"entity_id":"sensor.probe","state":"1"}]`)
 		},
 	})
 }
@@ -1122,46 +1138,6 @@ func TestRunConfigShow_ProbeAbortsOnParseFailure(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "could not parse options flow") {
 		t.Errorf("note should report the parse failure: %q", buf.String())
-	}
-}
-
-// --- truncateStr ---
-
-func TestTruncateStr_Short(t *testing.T) {
-	got := truncateStr("hello", 10)
-	if got != "hello" {
-		t.Errorf("truncateStr short = %q, want 'hello'", got)
-	}
-}
-
-func TestTruncateStr_Long(t *testing.T) {
-	got := truncateStr("this is a very long description that exceeds the limit", 20)
-	// The function appends a multi-byte ellipsis, so byte length may exceed maxLen.
-	// Verify the string was actually truncated and ends with an ellipsis character.
-	if got == "this is a very long description that exceeds the limit" {
-		t.Error("truncateStr long: string was not truncated")
-	}
-	if strings.HasSuffix(got, " ") {
-		t.Errorf("truncateStr long should end with ellipsis, got: %q", got)
-	}
-	// Result must be shorter than the input
-	if len(got) >= len("this is a very long description that exceeds the limit") {
-		t.Errorf("truncateStr long: result not shorter than input: %q", got)
-	}
-}
-
-func TestTruncateStr_Exact(t *testing.T) {
-	s := "exactly-ten!"
-	got := truncateStr(s, len(s))
-	if got != s {
-		t.Errorf("truncateStr exact = %q, want %q", got, s)
-	}
-}
-
-func TestTruncateStr_Whitespace(t *testing.T) {
-	got := truncateStr("  trim me  ", 20)
-	if strings.HasPrefix(got, " ") || strings.HasSuffix(got, " ") {
-		t.Errorf("truncateStr should trim whitespace: %q", got)
 	}
 }
 

@@ -124,16 +124,9 @@ func runCCShow(ctx context.Context, w io.Writer, name string) error {
 		return err
 	}
 
-	var found *ccInfo
-	for i, cc := range components {
-		if cc.Domain == name {
-			found = &components[i]
-			break
-		}
-	}
-
-	if found == nil {
-		return fmt.Errorf("custom component %q not found", name)
+	found, err := findCustomComponent(components, name)
+	if err != nil {
+		return err
 	}
 
 	owned, err := componentEntityIDs(ctx, cfg, client, found.Domain)
@@ -196,53 +189,67 @@ func runCCLogs(ctx context.Context, w io.Writer, name string, sinceSet bool) err
 		return err
 	}
 
+	// The name is resolved before the log is read, not used as a bare filter
+	// string. `cc logs totally_bogus_xyz` answered "no log entries for
+	// totally_bogus_xyz" at exit 0 — byte for byte the answer a real, installed,
+	// error-free component gets — while the sibling `cc show` refuses the same
+	// name at exit 1. A typo was indistinguishable from a quiet component
+	// (finding #18), which is H-22's rule at the boundary and D-19 in
+	// docs/decisions.md: within a family that resolves a name, every member
+	// resolves it.
+	client := haapi.New(cfg.URL, cfg.Token)
+	components, err := fetchCustomComponents(ctx, cfg, client)
+	if err != nil {
+		return err
+	}
+	found, err := findCustomComponent(components, name)
+	if err != nil {
+		return err
+	}
+
 	entries, err := fetchLogEntries(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("fetching logs: %w", err)
 	}
 
-	entries = analyze.FilterByComponent(entries, name)
+	entries = analyze.FilterByComponent(entries, found.Domain)
 
 	if entries, err = applyLogSince(entries, sinceSet); err != nil {
 		return err
 	}
 
 	if len(entries) == 0 {
-		return emitEmptyList(w, "no log entries for "+name)
+		return emitEmptyList(w, "no log entries for "+found.Domain)
 	}
 
 	if flagCCLogsUnique {
 		return renderDedupedLogs(w, cfg, entries)
 	}
 
-	return renderLogEntriesSimple(w, entries)
+	// The same renderer `log` uses, not a third one. `cc logs <name>` had its
+	// own table with its own schema — no `id` column, and the full logger name
+	// where both siblings show its last segment — so the default view was the
+	// one place in the family where a shortened message could not be traced
+	// back to `log show <id>`, the route the manual prescribes (finding #17).
+	// Three renderers for one record type is the condition; a fourth would
+	// inherit it.
+	return renderLogEntries(w, cfg, entries)
 }
 
-func renderLogEntriesSimple(w io.Writer, entries []analyze.LogEntry) error {
-	tbl := &format.Table{
-		Headers: []string{"time", "level", "component", "message"},
-		Rows:    make([][]string, len(entries)),
-	}
-	for i, e := range entries {
-		msg := e.Message
-		if len(msg) > 60 {
-			msg = msg[:57] + "..."
+// findCustomComponent resolves a component name against what HA reports.
+//
+// One function for both `cc show` and `cc logs`, because two of them is how the
+// family came to have two answers for an unknown name. The message names the
+// command that lists the valid ones (D-18: an error names what the reader needs
+// to do next); the instance is appended by the root error printer.
+func findCustomComponent(components []ccInfo, name string) (*ccInfo, error) {
+	for i := range components {
+		if components[i].Domain == name {
+			return &components[i], nil
 		}
-		tbl.Rows[i] = []string{
-			analyze.FormatShortTimestamp(e.Timestamp),
-			e.Level,
-			e.Component,
-			msg,
-		}
-		tbl.SetMachine(i, "time", analyze.FormatMachineTimestamp(e.Timestamp))
 	}
-
-	return tbl.Render(w, format.RenderOpts{
-		Top:     flagTop,
-		Full:    flagFull,
-		JSON:    flagJSON,
-		Compact: true,
-	})
+	return nil, fmt.Errorf("custom component %q not found among the %d installed "+
+		"(hactl cc ls lists them)", name, len(components))
 }
 
 // fetchCustomComponents returns the custom (non-built-in) integrations HA

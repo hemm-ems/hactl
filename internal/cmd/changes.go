@@ -126,13 +126,11 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		Headers: []string{"time", "entity_id", "state", "who", "message"},
 		Rows:    make([][]string, len(entries)),
 	}
+	tbl.SetWidth("message", 50)
 	for i, e := range entries {
 		msg := e.Message
 		if msg == "" {
 			msg = e.Name
-		}
-		if len(msg) > 50 {
-			msg = msg[:47] + "..."
 		}
 		tbl.Rows[i] = []string{
 			formatShortTime(e.When),

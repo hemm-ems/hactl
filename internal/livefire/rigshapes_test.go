@@ -514,6 +514,91 @@ func TestRigBackfilledHistoryCanDisagreeWithAFlooredBucketCount(t *testing.T) {
 	}
 }
 
+// logShapeBudget is the width the log family's message column renders to. The
+// shapes below are stated relative to it because that is what makes them
+// shapes: a message is "long" only against the budget that cuts it.
+const logShapeBudget = 60
+
+// TestRigFixtureCarriesTheErrorLogShapes is rig capability R6's fixture half.
+//
+// A freshly booted container logs short, single-line, ASCII messages from
+// loggers one segment deep, and every one of those words is a reason findings
+// #14 and #16 could not fail here. The custom component's logshapes.py writes
+// four records that are each the negation of one of them; this case is what
+// keeps them written, because a fixture edit that softens a message is
+// invisible to every proof standing on it.
+func TestRigFixtureCarriesTheErrorLogShapes(t *testing.T) {
+	path := filepath.Join(fixtureDir(t), "custom_components", "shapewatch", "logshapes.py")
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: a path under this repo's testdata
+	if err != nil {
+		t.Fatalf("the fixture emits no log records: %v", err)
+	}
+	src := string(raw)
+
+	// The logger name is the whole of #16. `--component shapewatch` matches the
+	// full dotted name and the table shows the last segment, so the shape needs
+	// the filter term to be an INNER segment: a logger called `shapewatch`
+	// would match and display the same string, and the defect would have had a
+	// passing test.
+	for _, logger := range []string{
+		"custom_components.shapewatch.diagnostics.probe",
+		"custom_components.shapewatch.helpers.loader",
+	} {
+		if !strings.Contains(src, logger) {
+			t.Errorf("logshapes.py no longer registers %q", logger)
+			continue
+		}
+		segments := strings.Split(logger, ".")
+		if len(segments) < 3 {
+			t.Errorf("%q is too shallow: the displayed segment has to be able to differ from the "+
+				"matched one", logger)
+		}
+		if segments[len(segments)-1] == "shapewatch" {
+			t.Errorf("%q ends in the filter term, so the displayed value contains it by accident "+
+				"and finding #16 cannot fail here", logger)
+		}
+	}
+
+	// Each constant carries one property. Reading them out of the Python is
+	// what ties this manifest to the file that is actually mounted, rather than
+	// to a Go copy of it that can drift.
+	shapes := map[string]struct {
+		want string
+		why  string
+	}{
+		"LONG_SINGLE_LINE": {
+			want: "longer than the display budget with no newline in it",
+			why:  "the plain case of #14; without it nothing is ever cut",
+		},
+		"SHORT_FIRST_LINE": {
+			want: "a first line under the budget and more lines after it",
+			why: "the length test #14 is about never fires, so the newline reaches the cell and " +
+				"breaks the table's column alignment — a merely long message cannot show that",
+		},
+		"RUNE_AT_THE_BOUNDARY": {
+			want: "a two-byte character straddling the byte a slice would cut at",
+			why:  "a byte slice there yields invalid UTF-8, and the reference instance is German",
+		},
+	}
+	for name, shape := range shapes {
+		if !strings.Contains(src, name+" = ") {
+			t.Errorf("logshapes.py no longer defines %s (%s) — %s", name, shape.want, shape.why)
+		}
+	}
+	if !strings.Contains(src, ".exception(") {
+		t.Error("logshapes.py logs no exception, so no entry carries a traceback in Home " +
+			"Assistant's separate `exception` field — the multi-kilobyte shape #14 is about")
+	}
+	// The byte offset is the shape, and a reworded sentence silently loses it.
+	// The Python asserts it at import; this says the assertion is still there,
+	// because a fixture that stops checking itself is a fixture that has
+	// stopped carrying the property.
+	if !strings.Contains(src, "[56:58]") {
+		t.Errorf("logshapes.py no longer pins where the multi-byte character sits, so a reworded "+
+			"message can move it off the %d-byte cut without failing anything", logShapeBudget)
+	}
+}
+
 // rigCapabilityDebt records the capabilities in FIXPLAN-livefire.md §4 the rig
 // has NOT been taught, each with the reason.
 //
@@ -522,10 +607,7 @@ func TestRigBackfilledHistoryCanDisagreeWithAFlooredBucketCount(t *testing.T) {
 // from a shape nobody has thought of, and the second is how a suite acquires a
 // blind spot it cannot report. Delete a row when the shape lands.
 var rigCapabilityDebt = map[string]string{
-	"R6": "HA's error log seeded with long messages and dotted logger names — the log family's " +
-		"honesty cases (#14 #16 #17 #18) need entries this fixture cannot produce on demand; " +
-		"WP3 builds it",
-	"R7": "config entries with options flows and selector-typed schemas — the rig's entries come " +
+	"R7":"config entries with options flows and selector-typed schemas — the rig's entries come " +
 		"from default_config and none of them has an options flow, so #82 #83 #84 have no " +
 		"shape to fail against; WP9 builds it",
 	"R8": "two writers against one target — needs drivers, not a fixture, so it is harness work " +

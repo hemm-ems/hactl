@@ -257,6 +257,13 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		Headers: headers,
 		Rows:    make([][]string, len(states)),
 	}
+	// A state wider than the column is shortened for the reader only. It used
+	// to be shortened here, so `ent ls --json` answered
+	// `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's 4486
+	// entities while `ent show --json` answered `"2026-08-01T03:33:44+00:00"`
+	// for the same field of the same entity (H-10, the class behind finding
+	// #14).
+	tbl.SetWidth("state", entStateWidth)
 	for i, s := range states {
 		var areaName, lblNames string
 		if rc != nil {
@@ -265,7 +272,7 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		}
 		row := []string{
 			s.EntityID,
-			truncateState(s.State),
+			s.State,
 			areaName,
 			lblNames,
 			formatShortTime(s.LastChanged),
@@ -1243,12 +1250,10 @@ func matchGlob(s, pattern string) bool {
 	return len(s) == 0
 }
 
-func truncateState(state string) string {
-	if len(state) > 20 {
-		return state[:17] + "..."
-	}
-	return state
-}
+// entStateWidth is how wide the state column renders for a reader; the machine
+// contract carries what Home Assistant sent. See the SetWidth call in
+// writeEntListing.
+const entStateWidth = 20
 
 // parseEntityDomain extracts the domain from an entity ID (e.g. "sensor" from "sensor.temperature").
 func parseEntityDomain(entityID string) string {
