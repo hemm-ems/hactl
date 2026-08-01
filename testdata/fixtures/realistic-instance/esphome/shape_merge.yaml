@@ -1,0 +1,29 @@
+# A merge key whose value is a TAG, and the reason this file is under esphome/.
+#
+# `<<: !include` appears 20+ times on the reference instance, every one of them
+# in this directory. Home Assistant never parses esphome/ — ESPHome does, and
+# ESPHome's loader resolves the include before the merge. Home Assistant's does
+# not, and refuses the document outright:
+#
+#   expected a mapping or list of mappings for merging, but found scalar
+#
+# (probed 2026-08-01 against HA 2026.7.4; the instance boots into recovery
+# mode). PyYAML flattens a merge key BEFORE constructing the node it points at,
+# so at that moment the value is still a tagged scalar rather than the mapping
+# the merge requires.
+#
+# So the shape is carried where the instance carries it: on disk, inside the
+# config directory, reachable by anything that walks files — and named by no
+# `!include` anywhere, because wiring it into configuration.yaml would stop the
+# rig booting rather than test a resolver. hactl's `config file` and the
+# companion's YamlResolver reach it by path, which is the route that has never
+# been asked to handle one.
+esphome:
+  name: shape-node
+  <<: !include shape_merge_defaults.yaml
+
+sensor:
+  - platform: template
+    name: "Shape Node Uptime"
+    <<: !include shape_merge_defaults.yaml
+    update_interval: 60s

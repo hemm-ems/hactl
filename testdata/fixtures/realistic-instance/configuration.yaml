@@ -43,6 +43,14 @@ template: !include template.yaml
 input_boolean: !include input_boolean.yaml
 sensor: !include sensor.yaml
 
+# An include that resolves to NOTHING. light.yaml is nine lines of comments,
+# blank lines and trailing whitespace — the reference instance's own
+# `light: !include light.yaml` points at exactly that, and Home Assistant loads
+# it as `light: null` without complaint. Three answers a reader has to keep
+# apart meet here: a domain that is not configured, a file that could not be
+# read, and a file that was read and said nothing.
+light: !include light.yaml
+
 # ...and domains written out here, which is the shape a tool that reads
 # configuration.yaml and stops there will find.
 input_number:

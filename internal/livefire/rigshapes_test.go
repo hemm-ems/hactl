@@ -5,7 +5,9 @@ package livefire
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -263,6 +265,218 @@ func TestRigFixtureTemplateFileHasASharedBlock(t *testing.T) {
 		t.Errorf("template.yaml has %d trigger-keyed blocks; more than one is what stops a writer "+
 			"that finds \"the\" trigger block from being right by accident", triggerKeyed)
 	}
+}
+
+// TestRigFixtureCarriesTheEdgeCasesOfTheIncludeGraph is §11's last three YAML
+// rows, and each one is a state a file can be in that nothing here could
+// express.
+//
+//   - INCLUDED AND EMPTY. `light: !include light.yaml` where light.yaml is nine
+//     lines of comments and blank space. It resolves to nothing, and "nothing"
+//     is a value a reader has to distinguish from "a file I could not read" and
+//     from "a domain that is not configured".
+//   - ON DISK AND INCLUDED BY NOTHING. The instance has two, one of them zero
+//     bytes. Anything that enumerates config files finds them; anything that
+//     walks the include graph does not. Which of those `config ls` should do is
+//     a question that cannot even be asked without one.
+//   - A MERGE KEY WHOSE VALUE IS A TAG. `<<: !include defaults.yaml`, 20+ times
+//     on the instance.
+//
+// The third one carries an oracle answer, and it is why the file it lives in is
+// not included: **Home Assistant's own loader refuses it.** Probed 2026-08-01
+// against 2026.7.4 — `expected a mapping or list of mappings for merging, but
+// found scalar`, and the instance boots into recovery mode. PyYAML flattens a
+// merge key before constructing it, so at that moment the value is still a
+// tagged scalar and not the mapping the merge needs. Every one of the
+// instance's sites is under `esphome/`, which HA never parses and ESPHome's own
+// loader does, and this fixture mirrors that exactly. Wiring it into
+// configuration.yaml would not test a resolver; it would stop the rig booting.
+func TestRigFixtureCarriesTheEdgeCasesOfTheIncludeGraph(t *testing.T) {
+	reachable := includeGraph(t)
+
+	var empty, orphan, merge []string
+	err := filepath.WalkDir(fixtureDir(t), func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || filepath.Ext(path) != ".yaml" {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(fixtureDir(t), path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		raw, readErr := os.ReadFile(path) //nolint:gosec // G304: this repo's testdata
+		if readErr != nil {
+			return readErr
+		}
+		// A document with no content: zero bytes, `{}`, or nothing but comments
+		// and blank lines. All three exist on the instance.
+		var body any
+		if yaml.Unmarshal(raw, &body) == nil && isEmptyDocument(body) && reachable[rel] {
+			empty = append(empty, rel)
+		}
+		if rel == theOrphan {
+			orphan = append(orphan, rel)
+		}
+		if mergeKeyWithATag.Match(raw) {
+			merge = append(merge, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the fixture: %v", err)
+	}
+
+	if len(empty) == 0 {
+		t.Error("no included file resolves to an empty document — `light: !include light.yaml` " +
+			"pointing at nine lines of comments is a shape the instance has and this fixture cannot " +
+			"express, so a reader that conflates it with an unreadable file passes here")
+	}
+	// The orphan is NAMED rather than searched for, and that is the difference
+	// between an assertion and a coincidence. Searched for, this passed before
+	// the shape existed: secrets.yaml is outside the include graph because Home
+	// Assistant reads it by convention, and the blueprint is outside it because
+	// `use_blueprint` names it by path. Both are referenced; neither is an
+	// orphan. Only a file nothing mentions at all is.
+	if len(orphan) == 0 {
+		t.Errorf("%s is gone — a file on disk that nothing in the tree names is what separates "+
+			"enumerating a directory from walking an include graph, and the instance has two",
+			theOrphan)
+	}
+	for _, rel := range orphan {
+		if reachable[rel] {
+			t.Errorf("%s has been wired into the include graph; it is the fixture's orphan and "+
+				"the shape is that nothing reaches it", rel)
+		}
+	}
+	if mentions := mentionsOf(t, theOrphan); len(mentions) > 0 {
+		t.Errorf("%s is named by %v — an orphan referenced from somewhere is just a file", theOrphan, mentions)
+	}
+	if len(merge) == 0 {
+		t.Error("no file carries a `<<:` whose value is a tag — the instance has 20+ and no " +
+			"resolver here has ever been asked to handle one")
+	}
+	// And it stays out of the graph, because Home Assistant refuses it. This is
+	// the assertion that stops somebody wiring the shape in to "make it count".
+	for _, rel := range merge {
+		if reachable[rel] {
+			t.Errorf("%s carries a `<<: !include` AND is reachable from configuration.yaml — "+
+				"Home Assistant's loader refuses that (probed 2026-08-01 against 2026.7.4: "+
+				"`expected a mapping or list of mappings for merging, but found scalar`) and the "+
+				"rig will boot into recovery mode", rel)
+		}
+	}
+	t.Logf("include graph: %d files reachable, %d empty-but-included, %d orphaned, %d carrying a tagged merge key",
+		len(reachable), len(empty), len(orphan), len(merge))
+}
+
+// mergeKeyWithATag matches `<<: !anything`, the shape ESPHome's loader resolves
+// and Home Assistant's refuses.
+var mergeKeyWithATag = regexp.MustCompile(`(?m)^[ \t]*<<:[ \t]*!`)
+
+// theOrphan is the fixture's deliberately unreferenced file: zero bytes, like
+// the instance's own energy.yaml.
+const theOrphan = "energy.yaml"
+
+// yamlFilesIn returns the .yaml files a directory include reaches, and fails
+// the case if the directory is not there — an include naming a directory that
+// does not exist is a fixture that boots by luck.
+func yamlFilesIn(tb testing.TB, from, tag, dir string) []string {
+	tb.Helper()
+	entries, err := os.ReadDir(filepath.Join(fixtureDir(tb), dir))
+	if err != nil {
+		tb.Errorf("%s: %s %s names a directory that is not there: %v", from, tag, dir, err)
+		return nil
+	}
+	var out []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".yaml" {
+			out = append(out, path.Join(dir, entry.Name()))
+		}
+	}
+	return out
+}
+
+// mentionsOf returns every fixture file whose bytes contain the given file's
+// name — the check that turns "not in the include graph" into "referenced by
+// nothing".
+func mentionsOf(tb testing.TB, rel string) []string {
+	tb.Helper()
+	var found []string
+	err := filepath.WalkDir(fixtureDir(tb), func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		self, relErr := filepath.Rel(fixtureDir(tb), p)
+		if relErr != nil || filepath.ToSlash(self) == rel {
+			return relErr
+		}
+		raw, readErr := os.ReadFile(p) //nolint:gosec // G304: this repo's testdata
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(raw), path.Base(rel)) {
+			found = append(found, filepath.ToSlash(self))
+		}
+		return nil
+	})
+	if err != nil {
+		tb.Fatalf("searching the fixture for references to %s: %v", rel, err)
+	}
+	return found
+}
+
+// isEmptyDocument reports whether a parsed YAML document carries nothing —
+// zero bytes, `{}`, or only comments.
+func isEmptyDocument(body any) bool {
+	switch v := body.(type) {
+	case nil:
+		return true
+	case map[string]any:
+		return len(v) == 0
+	case []any:
+		return len(v) == 0
+	}
+	return false
+}
+
+// includeGraph returns every fixture-relative path reachable from
+// configuration.yaml by following the include family transitively.
+//
+// Transitively, and that is not decoration: a file included by an included file
+// is reachable, and treating only configuration.yaml's own keys as the graph
+// would call template.yaml's neighbours orphans.
+func includeGraph(tb testing.TB) map[string]bool {
+	tb.Helper()
+	reachable := map[string]bool{"configuration.yaml": true}
+	queue := []string{"configuration.yaml"}
+
+	visit := func(target string) {
+		if !reachable[target] {
+			reachable[target] = true
+			queue = append(queue, target)
+		}
+	}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		doc := parseFixtureFile(tb, current)
+		dir := path.Dir(current)
+
+		for _, target := range tagValues(doc, "!include") {
+			visit(path.Join(dir, target))
+		}
+		for _, tag := range []string{"!include_dir_list", "!include_dir_merge_list",
+			"!include_dir_named", "!include_dir_merge_named"} {
+			for _, target := range tagValues(doc, tag) {
+				full := path.Join(dir, target)
+				reachable[full] = true
+				for _, child := range yamlFilesIn(tb, current, tag, full) {
+					visit(child)
+				}
+			}
+		}
+	}
+	return reachable
 }
 
 // TestRigFixtureAutomationsAreAtInstanceScale is §11's automations.yaml row.
