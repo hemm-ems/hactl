@@ -145,10 +145,18 @@ func TestWriteCompanionLogs(t *testing.T) {
 	}
 }
 
+// TestWriteCompanionLogs_Empty — the renderer writes rows and nothing else.
+//
+// It used to print "(no log entries)" itself, which is why `companion logs
+// --component <nothing logs under it>` reported the same six words whether the
+// add-on had no records at all or the caller's filter had removed them all
+// (live-fire #28's class, one command over). The empty answer is composed by
+// the caller now, from the narrowings it applied — see runCompanionLogs and
+// TestEveryNarrowedListingSaysWhatNarrowedIt.
 func TestWriteCompanionLogs_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	writeCompanionLogs(&buf, &companion.LogsResponse{}, false)
-	if !strings.Contains(buf.String(), "(no log entries)") {
-		t.Errorf("expected empty marker, got: %s", buf.String())
+	if buf.String() != "" {
+		t.Errorf("the row renderer wrote something for zero rows: %q", buf.String())
 	}
 }

@@ -1,0 +1,14 @@
+# A package, reached through `packages: !include_dir_named packages` in
+# configuration.yaml's homeassistant: block.
+#
+# Packages are the fourth way a domain gets into HA, and the sneakiest: the
+# entity below belongs to `input_text:`, a domain that appears nowhere in
+# configuration.yaml at all. Anything that answers "where is this helper
+# defined?" by searching the files it knows about will not find it, and
+# anything that writes a helper by appending to configuration.yaml will
+# produce a duplicate-key merge instead of an edit.
+input_text:
+  package_note:
+    name: Package Note
+    initial: defined-in-a-package
+    max: 64

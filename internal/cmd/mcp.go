@@ -26,7 +26,7 @@ your client provides hactl://manual itself.
 Example client registration:
 
   claude mcp add hactl -- hactl mcp --dir ~/.hactl/default`,
-	Args: cobra.NoArgs,
+	Args: takesNone(),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Never write to cmd.OutOrStdout() here: Execute() echoes captured
 		// command output to stdout afterwards, which would corrupt the

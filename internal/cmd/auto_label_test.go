@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -81,7 +81,7 @@ func TestRunAutoLs_LabelsComeFromEntityRegistry(t *testing.T) {
 	withAutoLsFlags(t, "")
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs failed: %v", err)
 	}
 	out := buf.String()
@@ -100,7 +100,7 @@ func TestRunAutoLs_LabelFilterMatchesRegistryLabel(t *testing.T) {
 	withAutoLsFlags(t, "batteries")
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs --label failed: %v", err)
 	}
 	out := buf.String()
@@ -137,7 +137,7 @@ func TestRunAutoLs_LabelFilterWarnsWhenRegistryUnavailable(t *testing.T) {
 	logBuf := captureDefaultLogger(t)
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs failed: %v", err)
 	}
 	if strings.Contains(buf.String(), "victron_charge") {

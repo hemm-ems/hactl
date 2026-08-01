@@ -83,8 +83,8 @@
 # auto apply / auto rollback: reads GetAutomationConfig from HA's REST API before
 # and after, asserts the trigger (a field the command never prints) as the
 # witness, and compares the whole canonicalised document after the rollback.
-hactl auto apply = proven: TestAutoApplyRollbackRoundTrip
-hactl auto rollback = proven: TestAutoApplyRollbackRoundTrip
+hactl auto apply = proven: TestE2EAutoApplyWritesOnlyItsOwnEntryCLI
+hactl auto rollback = proven: TestE2EAutoApplyWritesOnlyItsOwnEntryCLI
 #
 # script create/apply/delete + tpl create/delete + helper create/delete: drive
 # the real binary and read HA's own /api/states for the entity, with `icon` /
@@ -147,7 +147,7 @@ hactl config options = proven: TestConfigOptionsRoundTrip
 hactl companion wireguard config = exempt: writes a .conf onto the add-on's /data through the companion; the tunnel is not HA state and HA's API holds no record of it to read back
 hactl companion wireguard up = exempt: starts an interface inside the add-on container; the only oracle is the companion's own wireguard status, and HA never learns of it
 hactl companion wireguard down = exempt: stops that interface; same absence of any HA-side record, so there is no HA read-back this rule could ask for
-hactl rollback = exempt: deprecated alias that dispatches to the same runRollback and the same --confirm flag variable as auto rollback, whose write TestAutoApplyRollbackRoundTrip reads back from HA; there is one write path, not two
+hactl rollback = exempt: deprecated alias that dispatches to the same runRollback and the same --confirm flag variable as auto rollback, whose write TestE2EAutoApplyWritesOnlyItsOwnEntryCLI reads back from the instance; there is one write path, not two
 
 # --- debt: the rule applies and the read-back does not meet it ---------------
 hactl auto create = debt: TestE2EAutoCreateCLI asserts hactl's own "created automation" and the entity_id line it prints from the reload confirmation; nothing reads the new automation out of HA's states or its config API, and no witness field is checked

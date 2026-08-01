@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "minor_version": 3,
+  "key": "core.floor_registry",
+  "_comment": [
+    "Rig capability: floors, labels and area anchoring \u2014 the registries the rig had NO FILE FOR at all.",
+    "",
+    "The run-level Integrity census is what turned this up. It reads `floor ls` and `label ls` and",
+    "refuses a listing of zero rows, because a census that reads nothing cannot detect damage (H-14).",
+    "On the rig both read zero, and the reason was not that the fixture had chosen to have no floors:",
+    "it had no floor registry at all, so nothing about floors was expressible here. The reference",
+    "instance has both, and every command that reports a floor or a label was rig-untestable.",
+    "",
+    "The shape is Home Assistant's own. These bytes were produced by booting the rig, running",
+    "`floor create` / `label create` / `area create` through hactl, waiting out HA's delayed save and",
+    "reading the files back out of the container \u2014 rather than written from memory, which is how the",
+    "`aliases` and `minimum` KeyErrors of SPEC-realdata-fixture.md 6 Q1 happened. Timestamps are",
+    "frozen so the fixture does not change every time it is regenerated."
+  ],
+  "data": {
+    "floors": [
+      {
+        "aliases": [],
+        "floor_id": "ground_floor",
+        "icon": "mdi:home-floor-g",
+        "level": 0,
+        "name": "Ground Floor",
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "upper_floor",
+        "icon": null,
+        "level": 1,
+        "name": "Upper Floor",
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      }
+    ]
+  }
+}

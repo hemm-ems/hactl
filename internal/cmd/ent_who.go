@@ -26,7 +26,7 @@ and emits a per-event table plus a counts summary.
 Resolving user UUIDs to names requires an admin long-lived token; when
 the token lacks admin scope, raw UUIDs are shown and the rest of the
 attribution (automations/scripts/devices) still works.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntWho(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -89,7 +89,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 			})
 		}
 		_, _ = fmt.Fprintf(w, "no changes for %s in the last %s (source: %s)\n",
-			entityID, flagSince, actorSourceLogbook)
+			entityID, sinceWindow(), actorSourceLogbook)
 		return nil
 	}
 
@@ -233,7 +233,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 
 	// Summary table.
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintf(w, "summary (%s):\n", flagSince)
+	_, _ = fmt.Fprintf(w, "summary (%s):\n", sinceWindow())
 	sumTbl := &format.Table{
 		Headers: []string{"changed_by", "count"},
 		Rows:    make([][]string, len(summary)),

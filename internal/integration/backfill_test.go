@@ -41,7 +41,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -515,31 +514,37 @@ func entAnomalies(t *testing.T, inst *hatest.Instance, entityID string) []anomal
 	return rows
 }
 
-// shortTimeForms renders a timestamp the two ways hactl's table can show it.
-// Which one it picks depends on whether the sample falls on today's date, a
-// decision hactl makes against the wall clock at render time; accepting either
-// keeps a midnight rollover between hactl's call and this assertion from being a
-// flake, while still pinning the timestamp to the minute.
+// reportedInstant parses a timestamp out of `--json` output.
 //
-// The plan's instants are UTC, because that is what the recorder stores, but
-// hactl renders timestamps in the zone of the person reading them. Comparing
-// against the UTC wall-clock would assert the bug fixed in `formatShortTime`,
-// and in the empty-bucket check it silently produced a *false positive*: a
-// point legitimately rendered at 06:56 local matched a forbidden set built from
-// 06:56 UTC — two different instants that print the same string.
-func shortTimeForms(ts time.Time) []string {
-	local := ts.Local() //nolint:gosmopolitan // Mirrors hactl's own rendering; the host's zone is the reader's.
-
-	return []string{local.Format("15:04"), local.Format("01-02 15:04")}
+// These assertions used to compare against the SHORT rendered form — "15:04",
+// or "01-02 15:04" for a sample that is not from today — because that is what
+// `--json` carried: the table cell string, reused verbatim as the machine
+// value. That made this test a pin on the defect H-10 clause (4) names, and it
+// had already cost the assertions their precision twice over: two forms had to
+// be accepted so a midnight rollover between hactl's call and this comparison
+// would not flake, and the empty-bucket check could produce a false positive,
+// since 06:56 local and 06:56 UTC are two instants that print one string.
+//
+// `--json` now carries the full instant with its offset, so an instant is
+// compared with an instant and both problems disappear.
+func reportedInstant(t *testing.T, what, got string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339Nano, got)
+	if err != nil {
+		t.Fatalf("%s: --json timestamp %q is not RFC3339-with-offset: %v", what, got, err)
+	}
+	return ts
 }
 
-func assertRenderedTime(t *testing.T, what string, got string, want time.Time) {
+// assertReportedInstant requires a --json timestamp to name the instant the
+// plan injected, to the minute — the resolution the recorder rig plans at.
+func assertReportedInstant(t *testing.T, what, got string, want time.Time) {
 	t.Helper()
-	if slices.Contains(shortTimeForms(want), got) {
+	gotTS := reportedInstant(t, what, got)
+	if gotTS.Truncate(time.Minute).Equal(want.Truncate(time.Minute)) {
 		return
 	}
-	t.Errorf("%s: reported at %q, want %s (rendered %q or %q)",
-		what, got, want.Format(time.RFC3339), shortTimeForms(want)[0], shortTimeForms(want)[1])
+	t.Errorf("%s: reported at %s, want %s", what, gotTS.Format(time.RFC3339), want.Format(time.RFC3339))
 }
 
 func rowsOfType(rows []anomalyRow, typ string) []anomalyRow {
@@ -564,7 +569,7 @@ func assertInjectedGapFound(t *testing.T, inst *hatest.Instance, plan backfillPl
 		t.Fatalf("ent anomalies %s: found %d gaps, want exactly 1 (a single 3h hole was injected into an "+
 			"otherwise 5-minute-dense 26h series)\nall rows: %+v", entGap, len(gaps), rows)
 	}
-	assertRenderedTime(t, "injected gap", gaps[0].Time, plan.GapFrom)
+	assertReportedInstant(t, "injected gap", gaps[0].Time, plan.GapFrom)
 	if want := "no data for 3h0m0s"; !strings.Contains(gaps[0].Detail, want) {
 		t.Errorf("gap detail = %q, want it to report %q (the hole runs %s → %s)",
 			gaps[0].Detail, want, plan.GapFrom.Format(time.RFC3339), plan.GapTo.Format(time.RFC3339))
@@ -592,7 +597,7 @@ func assertInjectedStuckRunFound(t *testing.T, inst *hatest.Instance, plan backf
 			entStuck, len(stuck), plan.StuckValue,
 			plan.StuckFrom.Format(time.RFC3339), plan.StuckTo.Format(time.RFC3339), rows)
 	}
-	assertRenderedTime(t, "injected stuck run", stuck[0].Time, plan.StuckFrom)
+	assertReportedInstant(t, "injected stuck run", stuck[0].Time, plan.StuckFrom)
 	want := fmt.Sprintf("stuck at %.2f for 6h0m0s", plan.StuckValue)
 	if !strings.Contains(stuck[0].Detail, want) {
 		t.Errorf("stuck detail = %q, want it to contain %q", stuck[0].Detail, want)
@@ -617,7 +622,7 @@ func assertInjectedSpikeFound(t *testing.T, inst *hatest.Instance, plan backfill
 			"series that otherwise stays within 200±2)\nall rows: %+v",
 			entSpike, len(spikes), plan.SpikeValue, plan.SpikeAt.Format(time.RFC3339), rows)
 	}
-	assertRenderedTime(t, "injected spike", spikes[0].Time, plan.SpikeAt)
+	assertReportedInstant(t, "injected spike", spikes[0].Time, plan.SpikeAt)
 	if want := fmt.Sprintf("value=%.2f", plan.SpikeValue); !strings.Contains(spikes[0].Detail, want) {
 		t.Errorf("spike detail = %q, want it to contain %q", spikes[0].Detail, want)
 	}
@@ -769,14 +774,37 @@ func assertLongWindowBucketing(t *testing.T, inst *hatest.Instance, plan backfil
 			entClean, gotMean, raw.Mean, math.Abs(gotMean-raw.Mean))
 	}
 
-	// 4. --resample honours the bucket width against HA's actual span, rather
-	//    than the nominal --since window.
+	// 4. --resample buckets are the width the caller asked for, and there are
+	//    enough of them to cover HA's actual span rather than the nominal
+	//    --since window.
+	//
+	//    This clause used to expect `int(span / time.Hour)` — the floor — and
+	//    that expectation WAS the defect (live-fire finding #39): the last
+	//    partial bucket was dropped and every remaining bucket widened to
+	//    span/count to cover the ground it had held, so `--resample 10m` over
+	//    an hour answered five points twelve minutes apart. The count was the
+	//    only thing checked, and the count is the one thing a wrong width can
+	//    still get right, so the assertion is now on the spacing first.
 	span := raw.Last.Sub(raw.First)
 	wantBuckets := int(span / time.Hour)
+	if span%time.Hour != 0 {
+		wantBuckets++
+	}
 	hourly := entHist(t, inst, entClean, "--resample", "1h")
 	if len(hourly) != wantBuckets {
-		t.Errorf("ent hist %s --resample 1h rendered %d points; HA's series spans %s, so %d one-hour buckets",
+		t.Errorf("ent hist %s --resample 1h rendered %d points; HA's series spans %s, which needs "+
+			"%d one-hour buckets to cover",
 			entClean, len(hourly), span.Truncate(time.Minute), wantBuckets)
+	}
+	for i := 1; i < len(hourly); i++ {
+		prev := reportedInstant(t, "ent hist point", hourly[i-1].Time)
+		at := reportedInstant(t, "ent hist point", hourly[i].Time)
+		if gap := at.Sub(prev); gap != time.Hour {
+			t.Errorf("ent hist %s --resample 1h put points %d and %d %s apart, want exactly 1h — "+
+				"the series is a uniform 5-minute grid with no holes, so every bucket is populated "+
+				"and the spacing IS the bucket width the caller asked for",
+				entClean, i-1, i, gap)
+		}
 	}
 }
 
@@ -806,16 +834,14 @@ func assertLongWindowDropsEmptyBuckets(t *testing.T, inst *hatest.Instance, plan
 	// edges legitimately carry samples from outside it.
 	bucket := raw.Last.Sub(raw.First) / time.Duration(histResampleTarget)
 	from, to := plan.GapFrom.Add(bucket), plan.GapTo.Add(-bucket)
-	forbidden := map[string]bool{}
-	for ts := from; !ts.After(to); ts = ts.Add(time.Minute) {
-		for _, form := range shortTimeForms(ts) {
-			forbidden[form] = true
-		}
-	}
+	// An interval test on instants, not a set of rendered strings: --json now
+	// carries the instant, and the string set could match a point that merely
+	// printed the same wall clock in another zone.
 	for i, r := range rows {
-		if forbidden[r.Time] {
+		at := reportedInstant(t, "ent hist point", r.Time)
+		if at.After(from) && at.Before(to) {
 			t.Errorf("ent hist %s point %d is at %s, inside the injected %s → %s hole where the recorder "+
-				"holds nothing", entGap, i, r.Time,
+				"holds nothing", entGap, i, at.Format(time.RFC3339),
 				plan.GapFrom.Format(time.RFC3339), plan.GapTo.Format(time.RFC3339))
 		}
 	}

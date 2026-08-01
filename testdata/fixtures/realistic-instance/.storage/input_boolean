@@ -1,0 +1,242 @@
+{
+  "data": {
+    "items": [
+      {
+        "icon": "mdi:lightbulb-night-outline",
+        "id": "airlock_pantry",
+        "name": "Loft Schedule"
+      },
+      {
+        "icon": "mdi:bed",
+        "id": "airlock_setpoint_m",
+        "name": "Utility Limit Loft"
+      },
+      {
+        "icon": "mdi:walk",
+        "id": "annex_vestibule",
+        "name": "Cellar Interval"
+      },
+      {
+        "icon": "mdi:battery",
+        "id": "annex_window_scullery",
+        "name": "Vestibule Window Hall"
+      },
+      {
+        "icon": "mdi:beach",
+        "id": "cellar",
+        "name": "Pantry"
+      },
+      {
+        "icon": "mdi:power",
+        "id": "cistern_counter_land",
+        "name": "Annex Interval Airlo"
+      },
+      {
+        "icon": "mdi:fireplace-off",
+        "id": "cistern_counter_workshop_an",
+        "name": "Öffnung Cellar Setpoint Ann"
+      },
+      {
+        "icon": "mdi:bed",
+        "id": "cistern_pantry_vest",
+        "name": "Workshop Limit Gant"
+      },
+      {
+        "icon": "mdi:power-socket-it",
+        "id": "counter_gantry_landin",
+        "name": "Workshop Latch Utilit"
+      },
+      {
+        "icon": "mdi:eye",
+        "id": "counter_gantry_mo",
+        "name": "Maß Boiler Offset"
+      },
+      {
+        "icon": "mdi:sprinkler",
+        "id": "gantry_cistern_meter_limit_latch",
+        "name": "Maß Loft Window Workshop Porch B"
+      },
+      {
+        "icon": "mdi:sun-thermometer-outline",
+        "id": "gantry_schedule_hallway_boiler_s",
+        "name": "Wärme Utility Target Annex Ciste"
+      },
+      {
+        "icon": "mdi:power-standby",
+        "id": "hallway_mode_hallw",
+        "name": "Vestibule Threshol"
+      },
+      {
+        "icon": "mdi:television",
+        "id": "landing_annex_cistern_workshop_work",
+        "name": "Workshop Latch Landing Loft Cellar"
+      },
+      {
+        "id": "landing_gantry_wor",
+        "name": "Vestibule Threshol"
+      },
+      {
+        "icon": "mdi:pressence",
+        "id": "landing_hallway",
+        "name": "Pantry Target Me"
+      },
+      {
+        "id": "landing_scullery_ha",
+        "name": "Porch Target Boiler"
+      },
+      {
+        "icon": "mdi:battery",
+        "id": "latch_latch_gantry_w",
+        "name": "Gantry Schedule Hall"
+      },
+      {
+        "icon": "mdi:test-tube",
+        "id": "latch_worksho",
+        "name": "Utility Schedu"
+      },
+      {
+        "icon": "mdi:ev-plug-tesla",
+        "id": "limit_cellar_boi",
+        "name": "Scullery Mode Ha"
+      },
+      {
+        "icon": "mdi:lightbulb-auto",
+        "id": "limit_window_mete",
+        "name": "Scullery Counter"
+      },
+      {
+        "icon": "mdi:router-network",
+        "id": "loft_cistern_counter",
+        "name": "Süd Hallway Sensor L"
+      },
+      {
+        "icon": "mdi:bed",
+        "id": "loft_cistern_loft",
+        "name": "Cellar Interval Ga"
+      },
+      {
+        "icon": "mdi:bell-alert",
+        "id": "loft_pantry_cistern_gantry_porch_gantry",
+        "name": "Porch Setpoint Vestibule Landing Loft P"
+      },
+      {
+        "icon": "mdi:fan-alert",
+        "id": "meter_counter",
+        "name": "Cellar Sensor"
+      },
+      {
+        "icon": "mdi:alarm-light-off-outline",
+        "id": "meter_threshold_utility_por",
+        "name": "Utility Target Cellar Cella"
+      },
+      {
+        "icon": "mdi:eye",
+        "id": "mode_mode_counter",
+        "name": "Süd Landing Windo"
+      },
+      {
+        "icon": "mdi:heat-wave",
+        "id": "mode_schedule_latch",
+        "name": "Übergabe Pantry Set"
+      },
+      {
+        "icon": "mdi:radiator",
+        "id": "mode_threshold_gantry",
+        "name": "Übergabe Cistern Targe"
+      },
+      {
+        "icon": "mdi:battery",
+        "id": "mode_vestibule_thr",
+        "name": "Hallway Offset Cel"
+      },
+      {
+        "icon": "mdi:air-purifier",
+        "id": "pantry_mete",
+        "name": "Boiler Thre"
+      },
+      {
+        "icon": "mdi:home-account",
+        "id": "schedule_ut",
+        "name": "Porch Sched"
+      },
+      {
+        "icon": "mdi:patio-heater",
+        "id": "scullery_annex_landing_annex",
+        "name": "Zähler Cellar Setpoint Worksh"
+      },
+      {
+        "icon": "mdi:wifi",
+        "id": "scullery_limit_util",
+        "name": "Scullery Target Met"
+      },
+      {
+        "icon": "mdi:bike",
+        "id": "setpoint_boiler_scull",
+        "name": "Boiler Mode Porch Scu"
+      },
+      {
+        "icon": "mdi:heating-coil",
+        "id": "setpoint_mode_counter",
+        "name": "Boiler Schedule Loft Uti"
+      },
+      {
+        "icon": "mdi:heating-coil",
+        "id": "setpoint_thre",
+        "name": "Airlock Inter"
+      },
+      {
+        "icon": "mdi:radiator",
+        "id": "threshold_lo",
+        "name": "Loft Offset U"
+      },
+      {
+        "icon": "mdi:bed",
+        "id": "threshold_meter",
+        "name": "Annex Window Hal"
+      },
+      {
+        "icon": "mdi:alarm",
+        "id": "threshold_mode_gantry_hallway_cellar_cistern",
+        "name": "Scullery Schedule Gantry Vestibule Boiler Lo"
+      },
+      {
+        "icon": "mdi:check",
+        "id": "utility_airlock_cell",
+        "name": "Meter Target Utility"
+      },
+      {
+        "icon": "mdi:fridge",
+        "id": "vestibule_boiler_worksh",
+        "name": "Maß Annex Counter Vesti"
+      },
+      {
+        "icon": "mdi:robot",
+        "id": "window_boiler_latch_scu",
+        "name": "Wärme Scullery Sensor B"
+      },
+      {
+        "icon": "mdi:party-popper",
+        "id": "window_hallway",
+        "name": "Landing Thresh"
+      },
+      {
+        "icon": "mdi:account-network",
+        "id": "window_latch_se",
+        "name": "Airlock Target"
+      },
+      {
+        "icon": "mdi:battery",
+        "id": "window_mode_workshop",
+        "name": "Scullery Interval An"
+      },
+      {
+        "icon": "mdi:bike",
+        "id": "workshop_meter_ves",
+        "name": "Porch Mode Porch V"
+      }
+    ]
+  },
+  "key": "input_boolean",
+  "minor_version": 1,
+  "version": 1
+}

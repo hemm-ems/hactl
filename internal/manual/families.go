@@ -1,6 +1,10 @@
 package manual
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // CoreHeadings, FamilySections, and the alias map are ported verbatim from
 // integrations/llm/tools.py (_CORE_HEADINGS/_GROUP_SECTIONS/_GROUP_ALIASES);
@@ -119,6 +123,44 @@ func FamilyFor(top string) (string, bool) {
 	return "", false
 }
 
+// FamilyMembers returns every top-level command a family's sections cover —
+// the family's own name plus every alias pointing at it — in stable order.
+//
+// It is derived from the same two tables FamilyFor resolves against, so a new
+// alias cannot leave the user-facing naming behind (`area` and `floor` were
+// aliased onto `label` and the prose kept saying "label" for years).
+func FamilyMembers(family string) []string {
+	members := make([]string, 0, 3)
+	if _, ok := FamilySections[family]; ok {
+		members = append(members, family)
+	}
+	for alias, f := range Aliases {
+		if f == family {
+			members = append(members, alias)
+		}
+	}
+	sort.Strings(members)
+	return members
+}
+
+// FamilyLabel names a family the way a caller can act on it.
+//
+// A family that covers one command is named after it. A family that covers
+// several is named after all of them, because naming it after one states
+// something false about the other two: label/area/floor share a single manual
+// section keyed "label", and both the how-to banner and the --confirm refusal
+// interpolated that internal key — an agent that had never typed `label` was
+// told this was its "first label command", which it can act on by running the
+// wrong command. Same shape on trace/rollback (keyed "auto"), cc (keyed "log")
+// and changes/issues (keyed "health").
+func FamilyLabel(family string) string {
+	members := FamilyMembers(family)
+	if len(members) == 0 {
+		return family
+	}
+	return strings.Join(members, "/")
+}
+
 // Families returns the family names in stable order (map iteration is not).
 func Families() []string {
 	return []string{
@@ -137,18 +179,20 @@ const CoreNote = "[hactl manual core — delivered once with your first hactl " 
 	"family arrive automatically with the result of your first command from " +
 	"that family. Every write command is dry-run by default; repeat it with " +
 	"--confirm only after the user explicitly confirms the plan — the " +
-	"original request is not that confirmation. A --confirm on your first " +
-	"command of a family is refused: dry-run first.]"
+	"original request is not that confirmation. A --confirm is refused unless " +
+	"the same command ran without it first: dry-run, then confirm.]"
 
 // FullNote precedes the whole manual in full mode.
 const FullNote = "[hactl manual — delivered once with your first hactl " +
 	"command of this session. Use it for every subsequent command, flag, and " +
 	"workflow decision.]"
 
-// FamilyNote precedes a family how-to block.
+// FamilyNote precedes a family how-to block. It names every command the block
+// covers (FamilyLabel), never just the internal key the sections are filed
+// under — see FamilyLabel for what that cost.
 func FamilyNote(family string) string {
 	return fmt.Sprintf("[hactl manual — '%[1]s' family how-to, delivered "+
 		"with your first %[1]s command. Use it for every subsequent %[1]s "+
 		"call. Complete the routing-table sequence for the user's question "+
-		"before drilling into anything from this section.]", family)
+		"before drilling into anything from this section.]", FamilyLabel(family))
 }

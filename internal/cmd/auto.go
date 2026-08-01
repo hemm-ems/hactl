@@ -34,19 +34,20 @@ var flagAutoFile string
 var flagAutoConfirm bool
 var flagAutoRestored bool
 
-var autoCmd = &cobra.Command{
+var autoCmd = family(&cobra.Command{
 	Use:        "auto",
 	SuggestFor: []string{"automation", "automations"},
 	Short:      "Manage and inspect automations",
 	Long:       "List, filter, inspect, diff, and apply Home Assistant automations.",
-}
+})
 
 var autoLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List automations",
 	Long:  "Show automations table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAutoLs(cmd.Context(), cmd.OutOrStdout())
+		return runAutoLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -54,7 +55,7 @@ var autoShowCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show automation details and recent traces",
 	Long:  "Display automation summary and the last 5 trace runs.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -64,7 +65,7 @@ var autoCatCmd = &cobra.Command{
 	Use:   "cat <id>",
 	Short: "Print an automation's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of an automation (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -74,7 +75,7 @@ var autoDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote automation config",
 	Long:  "Compare a local YAML file (-f) against the current HA automation config.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoDiff(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -84,7 +85,7 @@ var autoApplyCmd = &cobra.Command{
 	Use:   "apply <id>",
 	Short: "Apply a local YAML config to HA (dry-run by default)",
 	Long:  "Validate and write automation config. Use --confirm to actually write + reload.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoApply(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -92,6 +93,7 @@ var autoApplyCmd = &cobra.Command{
 
 var autoCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new automation from YAML (dry-run by default)",
 	Long:  "Create a new automation from a local YAML file via the companion. Use --confirm to apply.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -103,7 +105,7 @@ var autoDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an automation (dry-run by default)",
 	Long:  "Delete an automation from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAutoDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -138,6 +140,7 @@ func init() {
 // turns "hactl could not read the instance" into the companion's "automation
 // not found".
 func runAutoCat(ctx context.Context, w io.Writer, automationID string) error {
+	markStructuredOutput()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -203,7 +206,8 @@ type autoRow struct {
 	restored bool
 }
 
-func runAutoLs(ctx context.Context, w io.Writer) error {
+func runAutoLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -233,7 +237,7 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -247,6 +251,8 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 	}
 
 	rows := buildAutoRows(autos, traces, fires, cutoff)
+	// Before any filter runs — see emptyListing.
+	total := len(rows)
 
 	// Enrich with area/labels from registry. Labels only exist in the entity
 	// registry — /api/states never carries them — so --label depends on this.
@@ -274,13 +280,14 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 
 	if flagAutoFailing {
 		rows = filterFailing(rows)
-		if len(rows) == 0 {
-			return emitEmptyList(w, failingEmptyHint())
-		}
 	}
 
 	if flagAutoRestored {
 		rows = filterAutosRestored(rows)
+	}
+
+	if len(rows) == 0 {
+		return emptyListing(cmd, w, "automations", total, failingHints(flagAutoFailing)...)
 	}
 
 	// #54: HA marks an automation `restored: true` when its state was resurrected
@@ -295,9 +302,9 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		}
 	}
 
-	headers := []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"}
+	headers := []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"}
 	if anyRestored {
-		headers = append(headers, "restored")
+		headers = append(headers, restoredColumn)
 	}
 	tbl := &format.Table{
 		Headers: headers,
@@ -315,6 +322,9 @@ func runAutoLs(ctx context.Context, w io.Writer) error {
 		}
 		if anyRestored {
 			row = append(row, boolCell(r.restored))
+			// boolCell is a rendering for a person — see its doc comment. The
+			// machine gets the boolean (finding #59, one command over).
+			tbl.SetMachine(i, restoredColumn, r.restored)
 		}
 		tbl.Rows[i] = row
 	}
@@ -438,6 +448,8 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 		Headers: []string{"id", "time", "result", "last_step"},
 		Rows:    make([][]string, len(recent)),
 	}
+	// The cell carries the instant; the column decides its shape (#71).
+	tbl.SetTimeColumn("time")
 	res.Traces = make([]autoShowTrace, len(recent))
 	for i, tr := range recent {
 		traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
@@ -445,7 +457,7 @@ func runAutoShow(ctx context.Context, w io.Writer, autoID string) error {
 
 		tbl.Rows[i] = []string{
 			shortID,
-			formatShortTime(tr.Timestamp.Start),
+			tr.Timestamp.Start,
 			traceResult(tr),
 			tr.LastStep,
 		}
@@ -765,10 +777,18 @@ func filterAutosByTag(rows []autoRow, tag string) []autoRow {
 	return result
 }
 
-// failingEmptyHint returns the hint printed when --failing yields no rows.
-func failingEmptyHint() string {
-	return "# no failing automations in recent traces\n" +
-		"# (try: hactl log --errors --unique to check the error log)"
+// failingHints is the extra line `--failing` offers when nothing failed: the
+// traces it reads are bounded, so "none" is a statement about recent traces
+// rather than about the instance, and the error log is where the rest is.
+//
+// It used to be the whole message, returned from an early exit inside the
+// --failing branch, which meant `auto ls --pattern zzz --failing` reported one
+// of the two narrowings the caller had typed and silently dropped the other.
+func failingHints(failing bool) []string {
+	if !failing {
+		return nil
+	}
+	return []string{"# --failing reads recent traces only; try: hactl log --errors --unique for the error log"}
 }
 
 func filterFailing(rows []autoRow) []autoRow {
@@ -857,6 +877,25 @@ func formatShortTime(isoTime string) string {
 	return clock.Short(isoTime)
 }
 
+// formatMachineTime is formatShortTime's counterpart for --json: the full
+// instant with its UTC offset, in the reader's zone.
+//
+// The two exist as a pair because a table cell used to serve both audiences.
+// format.Table renders the same cells as text and as JSON, so every command
+// that put formatShortTime's output in a row also put it in its machine
+// contract — `ent ls --json` answered `"last_changed": "06:31"` while
+// `ent show --json` answered the full instant for the same field. A cell whose
+// text form is a human rendering pairs this with format.Table.SetMachine.
+//
+// The empty placeholder is "" rather than formatShortTime's "-": a machine
+// consumer reads "-" as a value, and "no timestamp" is an absence.
+func formatMachineTime(isoTime string) string {
+	if isoTime == "" {
+		return ""
+	}
+	return clock.ISO(isoTime)
+}
+
 // compactDiffContext is how many unchanged context lines the compact diff
 // renderer keeps on each side of a changed hunk. Unchanged runs longer than
 // this collapse to a single "… N unchanged lines …" marker so the real +/-
@@ -925,7 +964,11 @@ func runAutoDiff(ctx context.Context, w io.Writer, autoID string) error {
 
 	client := haapi.New(cfg.URL, cfg.Token)
 	backupDir := filepath.Join(cfg.Dir, "backups")
-	wr := writer.New(client, nil, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, nil, cc, backupDir)
 
 	configID, err := resolveAutomationConfigID(ctx, client, autoID)
 	if err != nil {
@@ -970,7 +1013,11 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		defer func() { _ = ws.Close() }()
 	}
 
-	wr := writer.New(client, wsClient, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, wsClient, cc, backupDir)
 
 	configID, err := resolveAutomationConfigID(ctx, client, autoID)
 	if err != nil {
@@ -998,8 +1045,16 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		return diffErr
 	}
 	if !diff.HasChanges {
-		_, _ = fmt.Fprintf(w, "no changes detected\n")
-		return nil
+		// A no-op is still an outcome a machine caller has to be able to read:
+		// under --json this used to be the prose line "no changes detected" and
+		// exit 0, indistinguishable from a crash that printed nothing.
+		return done("apply automation").
+			with("automation", autoID).
+			with("config_id", configID).
+			with("changed_lines", 0).
+			text("no changes detected").
+			asPreview(!flagAutoConfirm).
+			render(w)
 	}
 	if !flagJSON {
 		_, _ = fmt.Fprintf(w, "diff:\n")
@@ -1020,27 +1075,53 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		// One object under --json rather than a prose line and then an object.
 		// `validation: ok` used to be Fprintf'd straight to w ahead of the
 		// preview, which made stdout unparseable on a successful command.
-		return dryRun("apply automation").
+		plan := dryRun("apply automation").
 			with("automation", autoID).
 			with("config_id", configID).
 			with("validation", validation).
-			with("changed_lines", len(diff.Lines)).
-			render(w)
+			with("changed_lines", diff.ChangedLines())
+		// The diff above compares the caller's file with the stored entry. The
+		// WRITER re-serializes the entry in its own canonical style, so a
+		// hand-formatted candidate can move more lines on disk than the diff
+		// shows — the same "what you previewed is not what happens" shape as
+		// finding #93, one layer down, and the companion's own dry run is the
+		// only thing that knows. Other entries are untouched either way.
+		if extra := result.WriterChangedLines; extra > diff.ChangedLines() {
+			plan = plan.with("formatting", fmt.Sprintf(
+				"%d lines change on disk, not %d: this entry is rewritten in the companion's canonical "+
+					"style (start from `hactl auto cat %s` to see your file in it)", extra, diff.ChangedLines(), autoID))
+		}
+		return plan.render(w)
 	}
 
 	if !flagJSON {
 		_, _ = fmt.Fprintf(w, "\nvalidation: %s\n", validation)
 	}
-	_, _ = fmt.Fprintf(w, "applied: %s\n", autoID)
+	res := done("apply automation").
+		with("automation", autoID).
+		with("config_id", configID).
+		with("validation", validation).
+		with("changed_lines", diff.ChangedLines()).
+		with("reloaded", result.Reloaded).
+		withIf(result.ReloadError != "", "reload_error", result.ReloadError).
+		withIf(result.Reformatted, "reformatted", true).
+		withIf(result.BackupPath != "", "backup", result.BackupPath).
+		text("applied: %s", autoID)
 	if result.BackupPath != "" {
-		_, _ = fmt.Fprintf(w, "backup:  %s\n", result.BackupPath)
+		res = res.text("backup:  %s", result.BackupPath)
 	}
 	if result.Reloaded {
-		_, _ = fmt.Fprintf(w, "reload:  ok\n")
+		res = res.text("reload:  ok")
 	} else {
-		_, _ = fmt.Fprintf(w, "warning: written but HA did not confirm reload\n")
+		res = res.warn("written but HA did not confirm reload")
 	}
-	return nil
+	// C-14: the companion reports a splice it could not perform. Dropping the
+	// flag would leave a whole-file rewrite reading exactly like the surgical
+	// write this route exists to guarantee.
+	if result.Reformatted {
+		res = res.warn("the whole file was re-serialized (the entry could not be spliced), so formatting of other entries may have changed")
+	}
+	return res.render(w)
 }
 
 // validateAutoCreateCandidate runs HA's validate_config against a
@@ -1083,7 +1164,7 @@ func validateAutoCreateCandidate(ctx context.Context, data []byte) (string, erro
 		defer func() { _ = ws.Close() }()
 	}
 
-	validated, err := writer.New(client, wsClient, "").ValidateCandidate(ctx, candidate)
+	validated, err := writer.New(client, wsClient, nil, "").ValidateCandidate(ctx, candidate)
 	if err != nil {
 		return "", err
 	}
@@ -1139,19 +1220,25 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating automation: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created automation %q\n", resp.ID)
+	res := done("create automation").
+		with("config_id", resp.ID).
+		with("reloaded", resp.Reloaded).
+		withIf(validation != "", "validation", validation).
+		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
+		text("created automation %q", resp.ID)
 	switch {
 	case !resp.Reloaded:
-		_, _ = fmt.Fprintln(w, "warning: automation written but HA did not confirm reload")
+		res = res.warn("automation written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
 	case resp.EntityID == "":
-		_, _ = fmt.Fprintln(w, "warning: automation reloaded but its live entity_id could not be confirmed")
+		res = res.warn("automation reloaded but its live entity_id could not be confirmed")
 	default:
-		_, _ = fmt.Fprintf(w, "entity_id: %s\n", resp.EntityID)
+		res = res.text("entity_id: %s", resp.EntityID)
 		if resp.EntityID != resp.ID {
-			_, _ = fmt.Fprintf(w, "note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id\n", resp.EntityID, resp.ID)
+			res = res.text("note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id", resp.EntityID, resp.ID)
 		}
 	}
-	return nil
+	res = warnIfReformatted(res, resp.Reformatted)
+	return res.render(w)
 }
 
 // resolveAutomation resolves a config id, entity object id, full entity_id,
@@ -1177,6 +1264,17 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 // The H-21 ordering fix does not make this unnecessary: the fetch can still
 // fail on network, on auth, or on a genuinely degenerate payload.
 func resolveAutomation(ctx context.Context, client *haapi.Client, ref string) (automationEntity, bool, error) {
+	// A blank reference matches nothing, and saying so here is not redundant
+	// with the H-22 argument contract: the four comparisons below are equality
+	// tests, a restored ghost legitimately carries an empty config id and an
+	// empty friendly_name, and `"" == ""` made the first such ghost the answer
+	// to every empty reference. `auto delete ''` planned the deletion of a real
+	// automation nobody had named. The contract refuses the empty string at the
+	// CLI boundary; this refuses it at the site where the wrong match was made,
+	// so a future caller that reaches the resolver another way cannot revive it.
+	if strings.TrimSpace(ref) == "" {
+		return automationEntity{}, false, nil
+	}
 	autos, err := fetchAutomations(ctx, client)
 	if err != nil {
 		return automationEntity{}, false, err
@@ -1305,13 +1403,16 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 		return fmt.Errorf("deleting automation: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted automation %q\n", autoID)
-
 	if hadLiveEntity {
 		removeOrphanedEntity(ctx, cfg, liveEntityID)
 	}
 
-	return nil
+	return done("delete automation").
+		with("id", autoID).
+		withIf(hadLiveEntity && liveAuto.Attributes.ID != "", "config_id", liveAuto.Attributes.ID).
+		withIf(hadLiveEntity, "entity_id", liveEntityID).
+		text("deleted automation %q", autoID).
+		render(w)
 }
 
 // connectCompanion discovers and connects to the hactl-companion.
@@ -1321,25 +1422,24 @@ func connectCompanion(ctx context.Context) (*companion.Client, error) {
 		return nil, err
 	}
 
-	var wsClient *haapi.WSClient
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if connectErr := ws.Connect(ctx); connectErr != nil {
 		slog.Debug("could not connect WebSocket for companion discovery", "error", connectErr)
-	} else {
-		wsClient = ws
-		// Intentionally leak the WS connection: the returned client uses it
-		// for IngressSession on every Companion call. The OS closes it when
-		// the CLI process exits.
 	}
+	// On success the WS connection is intentionally leaked: the returned client
+	// uses it for IngressSession on every Companion call, and the OS closes it
+	// when the CLI process exits. On failure the client is still handed to
+	// Discover — it carries the reason it could not connect, which is the
+	// discovery reason (#75).
 
-	companionURL, err := companion.Discover(ctx, cfg, wsClient)
+	companionURL, err := companion.Discover(ctx, cfg, ws)
 	if err != nil {
 		return nil, fmt.Errorf("companion discovery: %w", err)
 	}
 
 	cc := companion.New(companionURL, cfg.CompanionToken)
-	if wsClient != nil {
-		cc = cc.WithIngressAuth(wsClient)
+	if ws.Connected() {
+		cc = cc.WithIngressAuth(ws)
 	}
 	return cc, nil
 }

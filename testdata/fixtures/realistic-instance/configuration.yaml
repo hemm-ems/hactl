@@ -1,0 +1,108 @@
+# The rig's answer to "someone else's config".
+#
+# Every other fixture in this tree is three flat files, which is why a build
+# with 90 findings against a real instance passed this tier: the shapes the
+# defects lived in could not be expressed here. This one exists to carry those
+# shapes — see FIXPLAN-livefire.md §4 for the capability backlog it works
+# through.
+#
+# The layout is deliberately mixed, because a real configuration.yaml is mixed:
+# some domains are written out here, others are pulled in from their own file,
+# one arrives through a package, and the secrets sit in secrets.yaml. A tool
+# that only ever meets the inline form will be surprised by all three others.
+homeassistant:
+  name: Realistic Home
+  unit_system: metric
+  time_zone: Europe/Berlin
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+  packages: !include_dir_named packages
+
+default_config:
+
+# Explicit system_log so WS system_log/list works
+system_log:
+  max_entries: 50
+
+# Explicit logger with component-level control (generates log entries)
+logger:
+  default: warning
+  logs:
+    homeassistant.components.automation: info
+    homeassistant.components.sensor: warning
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+
+# Domains that live in their own file. `template:` is the one that matters
+# most: its top-level blocks are shared containers, and where a new entry is
+# appended decides which unrelated entities it can take down with it
+# (finding #89).
+template: !include template.yaml
+input_boolean: !include input_boolean.yaml
+sensor: !include sensor.yaml
+
+# An include that resolves to NOTHING. light.yaml is nine lines of comments,
+# blank lines and trailing whitespace — the reference instance's own
+# `light: !include light.yaml` points at exactly that, and Home Assistant loads
+# it as `light: null` without complaint. Three answers a reader has to keep
+# apart meet here: a domain that is not configured, a file that could not be
+# read, and a file that was read and said nothing.
+light: !include light.yaml
+
+# ...and domains written out here, which is the shape a tool that reads
+# configuration.yaml and stops there will find.
+input_number:
+  outdoor_temperature:
+    name: Simulated Outdoor Temp
+    min: -20
+    max: 45
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    initial: 18.5
+  indoor_humidity:
+    name: Simulated Indoor Humidity
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+    initial: 55
+  power_consumption:
+    name: Simulated Power
+    min: 0
+    max: 5000
+    step: 0.1
+    unit_of_measurement: "W"
+    icon: mdi:flash
+    initial: 350
+
+input_select:
+  house_mode:
+    name: House Mode
+    options:
+      - home
+      - away
+      - sleep
+      - party
+    initial: home
+    icon: mdi:home
+
+# A custom YAML tag that is not !include. Resolving a config file means keeping
+# this a tag: rewriting it as the string '!secret shape_api_token' produces a
+# document HA would reject, and does so silently (finding #20). rest_command is
+# used because it is never called unless a service call asks for it, so the
+# secret is carried without the fixture reaching the network.
+# The custom component under custom_components/shapewatch/. Its integration
+# domain is `shapewatch` and the entities it publishes are `sensor.*` — the
+# gap finding #15 fell into.
+shapewatch:
+
+rest_command:
+  shape_probe:
+    url: http://127.0.0.1:1/unused
+    method: post
+    headers:
+      Authorization: !secret shape_api_token

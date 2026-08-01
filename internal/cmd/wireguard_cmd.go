@@ -21,7 +21,7 @@ var (
 	flagWGConfirm  bool
 )
 
-var wireguardCmd = &cobra.Command{
+var wireguardCmd = family(&cobra.Command{
 	Use:   "wireguard",
 	Short: "Manage the companion WireGuard tunnel (remote lifeline)",
 	Long: "Configure, bring up/down, and inspect the companion's WireGuard tunnel.\n\n" +
@@ -29,10 +29,11 @@ var wireguardCmd = &cobra.Command{
 		"Ingress-only; this command handles the Supervisor Ingress session auth\n" +
 		"automatically (a plain bearer-token request gets 401). Mutations are dry-run\n" +
 		"by default — pass --confirm to apply.",
-}
+})
 
 var wireguardStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  takesNone(),
 	Short: "Show WireGuard tunnel status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runWireguardStatus(cmd.Context(), cmd.OutOrStdout())
@@ -41,6 +42,7 @@ var wireguardStatusCmd = &cobra.Command{
 
 var wireguardConfigCmd = &cobra.Command{
 	Use:   "config",
+	Args:  takesNone(),
 	Short: "Push a WireGuard .conf to the companion (persisted on /data)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runWireguardConfig(cmd.Context(), cmd.OutOrStdout())
@@ -49,6 +51,7 @@ var wireguardConfigCmd = &cobra.Command{
 
 var wireguardUpCmd = &cobra.Command{
 	Use:   "up",
+	Args:  takesNone(),
 	Short: "Bring the tunnel up",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runWireguardUp(cmd.Context(), cmd.OutOrStdout())
@@ -57,6 +60,7 @@ var wireguardUpCmd = &cobra.Command{
 
 var wireguardDownCmd = &cobra.Command{
 	Use:   "down",
+	Args:  takesNone(),
 	Short: "Bring the tunnel down",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runWireguardDown(cmd.Context(), cmd.OutOrStdout())

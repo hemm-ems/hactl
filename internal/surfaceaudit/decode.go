@@ -62,8 +62,8 @@ func codecOf(importPath string) codecClass {
 	if importPath == "encoding/json" {
 		return codecJSON
 	}
-	base := path.Base(importPath)          // "gopkg.in/yaml.v3" → "yaml.v3"
-	base, _, _ = strings.Cut(base, ".")    // → "yaml"
+	base := path.Base(importPath)       // "gopkg.in/yaml.v3" → "yaml.v3"
+	base, _, _ = strings.Cut(base, ".") // → "yaml"
 	if base == "yaml" || base == "xml" || base == "toml" || strings.Contains(base, "json") {
 		return codecOther
 	}

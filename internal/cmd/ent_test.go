@@ -82,20 +82,6 @@ func TestMatchPattern_GlobStillWorks(t *testing.T) {
 	}
 }
 
-func TestTruncateState_Short(t *testing.T) {
-	if got := truncateState("on"); got != "on" {
-		t.Errorf("truncateState('on') = %q, want 'on'", got)
-	}
-}
-
-func TestTruncateState_Long(t *testing.T) {
-	long := "this is a very long state value that exceeds twenty characters"
-	got := truncateState(long)
-	if len(got) > 20 {
-		t.Errorf("truncateState result length = %d, want <= 20", len(got))
-	}
-}
-
 func TestParseEntityDomain(t *testing.T) {
 	tests := []struct {
 		input string
@@ -103,12 +89,16 @@ func TestParseEntityDomain(t *testing.T) {
 	}{
 		{"sensor.temperature", "sensor"},
 		{"binary_sensor.door", "binary_sensor"},
-		{"nodomain", "nodomain"},
+		// A dotless string is not an entity_id and has no domain. The old
+		// cmd-local helper answered "nodomain" here — harmless for the domain
+		// FILTERS that call it, and wrong for the rename check, which asks the
+		// same question to decide whether HA would refuse the move.
+		{"nodomain", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {
-		if got := parseEntityDomain(tt.input); got != tt.want {
-			t.Errorf("parseEntityDomain(%q) = %q, want %q", tt.input, got, tt.want)
+		if got := haapi.EntityIDDomain(tt.input); got != tt.want {
+			t.Errorf("EntityIDDomain(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -155,6 +145,38 @@ func TestParseHistoryResponse_NonNumeric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if len(points) != 0 {
+		t.Fatalf("expected 0 numeric points, got %d", len(points))
+	}
+}
+
+// Finding #38: a present-but-empty `state` is a legitimate Home Assistant
+// answer, and the degeneracy guard read it as a renamed or removed wire field.
+//
+// The payload below is the shape the reference instance actually served for
+// `sensor.strompreis_kategorie` — 62 of 407 records over a 400-day window
+// carried `"state": ""`, every one of them with the key present. The premise
+// this test exists to kill was written as a comment on entityState.Identity():
+// "HA rejects an empty state string ... so a blank one means the payload, not
+// the entity, is empty." Home Assistant does no such thing. A second entity on
+// the same instance carries the same shape, so it is a class and not one
+// entity's quirk.
+//
+// The whole command died on it: `ent hist` and `ent anomalies` exited 1 with
+// empty stdout, because fetchHistoryPoints checks before it filters.
+func TestParseHistoryResponse_PresentButEmptyState(t *testing.T) {
+	data := []byte(`[[
+		{"entity_id":"sensor.strompreis_kategorie","state":"normal","last_changed":"2026-07-26T18:22:40.815951+00:00"},
+		{"entity_id":"sensor.strompreis_kategorie","state":"","last_changed":"2026-07-26T19:22:40.815951+00:00"},
+		{"entity_id":"sensor.strompreis_kategorie","state":"guenstig","last_changed":"2026-07-26T20:22:40.815951+00:00"}
+	]]`)
+
+	points, err := parseHistoryResponse(data)
+	if err != nil {
+		t.Fatalf("a legitimately empty state was read as a missing wire field: %v", err)
+	}
+	// None of the three is numeric, so none becomes a point. The assertion that
+	// matters is the one above: the command got an answer instead of an error.
 	if len(points) != 0 {
 		t.Fatalf("expected 0 numeric points, got %d", len(points))
 	}
@@ -300,7 +322,7 @@ func TestFilterEntitiesByDomain(t *testing.T) {
 		t.Fatalf("expected 3 sensor entities, got %d", len(result))
 	}
 	for _, s := range result {
-		if parseEntityDomain(s.EntityID) != "sensor" {
+		if haapi.EntityIDDomain(s.EntityID) != "sensor" {
 			t.Errorf("non-sensor entity in result: %s", s.EntityID)
 		}
 	}

@@ -97,7 +97,17 @@ func (p *dryRunPlan) render(w io.Writer) error {
 		}
 	}
 	for _, k := range p.keys {
-		_, _ = fmt.Fprintf(&b, "  %-*s %v\n", width+1, k+":", p.details[k])
+		// A nil detail is how a plan says "this becomes nothing" — `set-area
+		// --clear` sets new_area to nil so that --json renders the null a
+		// machine needs. %v spells that `<nil>`, which is Go's word for it and
+		// not anyone else's, so the human line says it in words while the JSON
+		// keeps the null. Handled once here rather than at each call site: the
+		// next plan with a nil detail gets it right without knowing to.
+		value := p.details[k]
+		if value == nil {
+			value = "(none)"
+		}
+		_, _ = fmt.Fprintf(&b, "  %-*s %v\n", width+1, k+":", value)
 	}
 	b.WriteString(p.hint + "\n")
 	_, err := io.WriteString(w, b.String())

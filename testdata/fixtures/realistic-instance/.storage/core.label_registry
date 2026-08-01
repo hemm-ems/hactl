@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "minor_version": 2,
+  "key": "core.label_registry",
+  "_comment": [
+    "Labels, in Home Assistant's own storage shape (see the note in core.floor_registry).",
+    "",
+    "Two, not one, and they are attached to DIFFERENT holders below: H-27's unmake cases assert the",
+    "PARTIAL property \u2014 that removing one label from one entity leaves another holder alone \u2014 and a",
+    "registry with a single label cannot tell a partial removal from a total one."
+  ],
+  "data": {
+    "labels": [
+      {
+        "color": "green",
+        "description": null,
+        "icon": "mdi:leaf",
+        "label_id": "energy",
+        "name": "Energy",
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      },
+      {
+        "color": null,
+        "description": null,
+        "icon": null,
+        "label_id": "comfort",
+        "name": "Comfort",
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      }
+    ]
+  }
+}

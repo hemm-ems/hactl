@@ -17,14 +17,15 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var cacheCmd = &cobra.Command{
+var cacheCmd = family(&cobra.Command{
 	Use:   "cache",
 	Short: "Manage local cache",
 	Long:  "View status, refresh, or clear the local trace, log, and entity-history cache.",
-}
+})
 
 var cacheStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  takesNone(),
 	Short: "Show cache status",
 	Long:  "Display cache age, size, and item counts.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,7 +37,7 @@ var cacheRefreshCmd = &cobra.Command{
 	Use:   "refresh [traces|logs]",
 	Short: "Refresh cache data",
 	Long:  "Fetch fresh data from HA and update the cache. Optionally specify which category.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		category := ""
 		if len(args) > 0 {
@@ -48,6 +49,7 @@ var cacheRefreshCmd = &cobra.Command{
 
 var cacheClearCmd = &cobra.Command{
 	Use:   "clear",
+	Args:  takesNone(),
 	Short: "Clear all cached data",
 	Long:  "Remove all cached traces, logs, and entity history samples.",
 	RunE: func(cmd *cobra.Command, args []string) error {

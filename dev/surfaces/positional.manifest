@@ -1,0 +1,39 @@
+# positional — every command declares its positional contract, so a blank
+# identifier, an unexpected positional and an unknown subcommand are all
+# refused before the command runs (INVARIANTS.md H-22).
+#
+# A VIOLATION surface: internal/cmd's undeclaredPositionalSites lists only the
+# commands whose `Args` is not one of the five constructors in
+# internal/cmd/args.go. Empty is the goal, and it is empty. The extractor is
+# guarded against silently matching nothing by
+# TestPositionalExtractorFlagsAnUndeclaredCommand, which feeds it a tree
+# containing a command with no Args and a command with a bare cobra validator
+# and requires both to be flagged — not by a non-empty check, which a surface
+# whose whole purpose is to reach zero can never have.
+#
+# It was not empty. Cobra decided the contract for every command that did not
+# state one, and its defaults are all permissive in the same direction:
+#
+#   - `Args == nil` is ArbitraryArgs, so `ent ls sensor` returned the same
+#     unfiltered listing as `ent ls` and dropped the argument in silence — the
+#     most plausible mistake an LLM caller makes with that command.
+#   - `ExactArgs(1)` counts the argument without looking at it, so `auto show ''`
+#     and `auto delete ''` reached a resolver whose four equality tests a
+#     restored ghost satisfies with its own empty config id. The `auto delete`
+#     dry run printed a plan to delete a real automation nobody had named; one
+#     `--confirm` from a destructive write against the wrong object. `device
+#     show ''` and `area create ''` were the same defect one registry over.
+#   - `legacyArgs` refuses an unknown command for the root and returns nil for
+#     every other group, and cobra answers a group with no Run by printing help
+#     and exiting 0 — so `hactl helper set` and `hactl dash frobnicate` told a
+#     caller checking $? that they had worked. Setting Args on a help-only group
+#     does not fix it: `execute` returns flag.ErrHelp before ValidateArgs runs,
+#     which is why `family` installs a RunE as well.
+#
+# Two behavioural gates quantify the same rule over the live tree without a
+# ledger, because their failures are never debt: TestNoCommandAcceptsABlankPositional
+# (every command, one/two/three blank arguments) and
+# TestEveryFamilyRefusesAnUnknownSubcommand (every command that holds
+# subcommands). This file exists for the structural half — a command that
+# declares no contract at all — which is the one that can be added silently.
+#ceiling 0

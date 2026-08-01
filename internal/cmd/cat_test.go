@@ -287,3 +287,95 @@ func TestRunConfigBlock(t *testing.T) {
 		t.Errorf("content mismatch: %q", buf.String())
 	}
 }
+
+// TestConfigBlockRedirectsToTplCat is finding #24: `config block template.yaml
+// posclock_jan` — a real unique_id in a real file — answered `Block not found:
+// posclock_jan`, byte for byte what a typo gets, while the command's own
+// --help promised "template.yaml blocks carry neither [id: nor alias:] — read
+// those with 'tpl cat <unique_id>'".
+//
+// The referral is earned by asking the companion whether the id resolves as a
+// template, not by matching the filename: a template split into its own file
+// still gets it, and a typo inside template.yaml still does not.
+func TestConfigBlockRedirectsToTplCat(t *testing.T) {
+	const knownTemplate = "posclock_jan"
+
+	companionEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/config/block":
+			// The id is deliberately NOT echoed back: the companion's real
+			// message carries it, but reflecting a request parameter into a
+			// response body is what gosec's taint analysis exists to stop, and
+			// nothing here asserts on it.
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error": {"code": 404, "message": "Block not found"}}`)
+		case "/v1/config/template":
+			if r.URL.Query().Get("id") != knownTemplate {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = fmt.Fprint(w, `{"error": {"code": 404, "message": "Template not found"}}`)
+				return
+			}
+			jsonResp(w, map[string]string{"unique_id": knownTemplate, "content": "name: Clock\n"})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	})
+
+	t.Run("an addressable unique_id is named with the command that reads it", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := runConfigBlock(context.Background(), &buf, "template.yaml", knownTemplate)
+		if err == nil {
+			t.Fatal("expected an error: template.yaml blocks carry no id or alias")
+		}
+		if !strings.Contains(err.Error(), "tpl cat "+knownTemplate) {
+			t.Errorf("error does not steer to the command that can answer:\n%s", err.Error())
+		}
+		if !strings.Contains(err.Error(), "template.yaml") {
+			t.Errorf("error does not name the file that was searched:\n%s", err.Error())
+		}
+		if buf.Len() != 0 {
+			t.Errorf("a failed block read wrote to stdout: %q", buf.String())
+		}
+	})
+
+	t.Run("a genuine typo keeps the original error", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := runConfigBlock(context.Background(), &buf, "template.yaml", "posclock_jam")
+		if err == nil {
+			t.Fatal("expected an error for an id that exists nowhere")
+		}
+		if strings.Contains(err.Error(), "tpl cat") {
+			t.Errorf("an id that resolves nowhere was sent to tpl cat anyway:\n%s", err.Error())
+		}
+		if !strings.Contains(err.Error(), "reading config block") {
+			t.Errorf("the original failure was replaced rather than kept:\n%s", err.Error())
+		}
+	})
+}
+
+// TestConfigBlockDoesNotRedirectOnANonNotFound keeps the probe off every other
+// failure: a 500 from the block route is not evidence about an id, and a
+// referral there would be an invented explanation for an unrelated outage.
+func TestConfigBlockDoesNotRedirectOnANonNotFound(t *testing.T) {
+	var templateProbes int
+	companionEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/config/block":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case "/v1/config/template":
+			templateProbes++
+			jsonResp(w, map[string]string{"unique_id": "anything", "content": "name: X\n"})
+		}
+	})
+	var buf bytes.Buffer
+	err := runConfigBlock(context.Background(), &buf, "template.yaml", "anything")
+	if err == nil {
+		t.Fatal("expected the 500 to fail the command")
+	}
+	if strings.Contains(err.Error(), "tpl cat") {
+		t.Errorf("a 500 was reported as an addressing problem:\n%s", err.Error())
+	}
+	if templateProbes != 0 {
+		t.Errorf("the template route was probed %d time(s) for a failure that says nothing about the id", templateProbes)
+	}
+}

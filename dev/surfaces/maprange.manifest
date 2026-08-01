@@ -27,6 +27,8 @@ internal/cmd/ent.go:findAreaNeighbors = proven: TestDedupeAndSortRelated_Canonic
 internal/cmd/ent.go:findDeviceSiblings = proven: TestDedupeAndSortRelated_Canonical
 internal/cmd/flow.go:sortedKeys = proven: TestRenderFlowResult_ErrorsAreDeterministic
 internal/haapi/flow.go:parseMenuOptions = proven: TestRenderFlowResult_MenuStep
+internal/haapi/servicedata.go:(*ServiceDescriptor).AcceptedFields = proven: TestAcceptedFieldsFlattensSectionsAndIsSorted
+internal/haapi/servicedata.go:(*ServiceDescriptor).UnknownFields = proven: TestUnknownFieldsRefusesWhatHomeAssistantRefuses
 internal/cmd/wireguard_cmd.go:writeWireguardMonitor = proven: TestWriteWireguardStatus_ResolvedRenderIsDeterministic
 
 # --- walks whose order is destroyed before anything reads it ------------------
@@ -34,7 +36,9 @@ internal/cmd/ent.go:runEntShow = exempt: collects the unshown attribute keys int
 internal/cmd/ent_who.go:runEntWho = exempt: tallies trigger counts into summary rows sorted by a total order (count desc, then trigger asc) before rendering
 internal/cmd/rtfm.go:runRTFMFamilies = exempt: groups aliases per family and sort.Strings-es each family's slice before rendering; family order comes from the fixed Families() slice
 internal/degeneracy/degeneracy.go:(*collector).err = exempt: collects the missing-field keys and sort.Strings them before composing the error text
+internal/manual/families.go:FamilyMembers = exempt: collects the aliases pointing at one family and sort.Strings-es the slice before returning it, so the name every banner and refusal interpolates is fixed (TestFamilyMembersCoversTheAliasesPointingAtIt asserts sortedness directly)
 internal/hatest/recorder.go:knownSchemaVersions = exempt: collects the schema versions and sort.Ints them before joining into the message
+internal/surfaceaudit/boolcell.go:handRolledBoolWords = exempt: collects the identifiers assigned more than one bool word and sort.Strings-es the slice before returning it, so the site keys a manifest is written against never move
 internal/jsonwalk/jsonwalk.go:sortedKeys = exempt: this IS a canonicalizer — it collects keys and sort.Strings them so every YAML/JSON walk visits children in one order
 internal/surfaceaudit/surface.go:Check = exempt: the stale-entry sweep appends to a slice that is sort.Strings-ed before the report renders
 internal/testaudit/assertions.go:scanDir = exempt: ScanRepo sorts the combined tests by file and line before any caller reads them
@@ -48,8 +52,16 @@ internal/cmd/script.go:normalizeScriptYAML = exempt: entered only when len(top) 
 internal/manual/state.go:loadSession = exempt: TTL eviction deletes expired sessions during the walk; nothing renders and the surviving set is order-independent
 internal/mcpserver/gate.go:ClassifiedPaths = exempt: feeds the classification exhaustiveness tests, which compare membership in both directions; per-set slice order is never rendered
 internal/surfaceaudit/scan.go:callArgsMention = exempt: membership scan returning a bool; no order is observable in the answer
-internal/surfaceaudit/scan.go:targetAliases = exempt: fixpoint over a set of identifier aliases consumed by membership checks only
+internal/surfaceaudit/partialscope.go:calledNames = exempt: the names collected from the set are sorted before they are returned, so the site note is a function of the code rather than of map order
 internal/hatest/recorder.go:verifyRecorderSchema = exempt: presence check over required columns; which missing column aborts first may vary, but that is the test rig refusing to run, never a command's answer
 internal/testaudit/assertions.go:(*pkgScope).lookup = exempt: searches for a package-level func by name; Go allows one declaration per package, so every order finds the same answer
 internal/testaudit/assertions.go:mergeNames = exempt: set union consumed by membership checks only; no order is observable
 pkg/ids/ids.go:(*Registry).Load = exempt: rebuilds the reverse index; Mint refuses colliding short ids, so the pairs are unique and insertion order is immaterial
+
+internal/haapi/flow.go:parseSelector = exempt: the walk is guarded to a map of exactly one entry — HA's `selector` object is `{"<kind>": {…}}` and anything else is refused before it — so there is no order for a canonicalisation to fix
+internal/cmd/witness.go:loadWitness = exempt: the walk copies unexpired previews into a new map and feeds a key lookup, never an ordering; no output is derived from it
+internal/realdata/helpers.go:HelperDomains = exempt: the walk builds a slice that is sort.Strings'd before it is returned, so the order of the walk is unobservable to every caller
+internal/realdata/helpers.go:StorageCollections = exempt: the walk builds a map keyed by domain, one output file per key, and each file's item list is sorted by id before encoding — no output of this function is a function of the walk's order
+internal/realdata/leak.go:Contains = proven: TestLeakReportIsOrderedByLocationNotByMapWalk
+internal/realdata/configtext.go:ShapeDrift = proven: TestShapeDriftIsOrderedNotMapWalked
+internal/realdata/bootability.go:ExclusionReport = proven: TestExclusionReportIsOrderedNotMapWalked

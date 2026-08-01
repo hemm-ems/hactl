@@ -408,7 +408,15 @@ func seedConfigFiles() error {
 		return fmt.Errorf("seeding scripts.yaml: %w", err)
 	}
 
-	// Seed automations.yaml with a list (HA format)
+	// Seed automations.yaml with a list (HA format).
+	//
+	// TWO entries, hand-formatted: the second one is the bystander every write
+	// must leave byte-identical (D-14, issue #128), and its formatting is
+	// chosen to be everything a re-serializer would normalize — a block scalar,
+	// keys in neither the author's nor alphabetical order, a quoted number.
+	// A single-entry file cannot express "the write touched only its own
+	// entry", and a canonically-formatted one cannot express "and did not
+	// reformat it".
 	automationsYAML := `- id: "seeded_test_auto"
   alias: "Seeded Test Automation"
   mode: single
@@ -417,6 +425,17 @@ func seedConfigFiles() error {
       at: "12:00:00"
   action:
     - delay: "00:00:01"
+- id: "seeded_bystander_auto"
+  alias: "Seeded Bystander"
+  description: >-
+    A folded block scalar that any whole-file re-dump
+    rewrites, which is exactly why it is here.
+  trigger:
+    - platform: time
+      at: "13:00:00"
+  mode: 'single'
+  action:
+    - delay: "00:00:02"
 `
 	if _, err := testClient.WriteConfigFile(ctx, "automations.yaml", automationsYAML, false); err != nil {
 		return fmt.Errorf("seeding automations.yaml: %w", err)

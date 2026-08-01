@@ -1,0 +1,27 @@
+{
+  "data": {
+    "items": [
+      {
+        "icon": "mdi:tournament",
+        "id": "airlock_boiler_workshop_setpoint",
+        "max": 100,
+        "min": 0,
+        "mode": "text",
+        "name": "Wärme Cellar Window Hallway Ciste",
+        "pattern": null
+      },
+      {
+        "icon": "mdi:account-clock",
+        "id": "cistern_pantry_mete",
+        "max": 100,
+        "min": 0,
+        "mode": "text",
+        "name": "Scullery Counter An",
+        "pattern": null
+      }
+    ]
+  },
+  "key": "input_text",
+  "minor_version": 1,
+  "version": 1
+}

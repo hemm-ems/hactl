@@ -27,7 +27,7 @@ func TestChangedBy_User_FromShow(t *testing.T) {
 	// via the state-set REST endpoint (no helper config needed) so this
 	// test runs against the shared "basic" HA. The state-set call carries
 	// the LL token's user_id in context.user_id.
-	if err := client.CallService(ctx, "homeassistant", "update_entity", map[string]any{
+	if _, err := client.CallService(ctx, "homeassistant", "update_entity", map[string]any{
 		"entity_id": "sun.sun",
 	}); err != nil {
 		t.Fatalf("trigger update_entity: %v", err)
@@ -79,7 +79,7 @@ func TestEntWho_TableAndSummary(t *testing.T) {
 	// Toggle once so there's at least one event in the last hour.
 	client := haapi.New(ha.URL(), ha.Token())
 	ctx := context.Background()
-	_ = client.CallService(ctx, "homeassistant", "update_entity", map[string]any{
+	_, _ = client.CallService(ctx, "homeassistant", "update_entity", map[string]any{
 		"entity_id": "sun.sun",
 	})
 	time.Sleep(500 * time.Millisecond)

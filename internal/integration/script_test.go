@@ -80,9 +80,15 @@ func TestScriptShowUnknown(t *testing.T) {
 	}
 }
 
+// TestScriptLsPattern — a filter that matches nothing says so, and says what it
+// searched (D-29). It used to assert the bare table header, which is the answer
+// an instance with no scripts at all gives: the two cases a caller most needs
+// to tell apart were byte-identical (live-fire #28, one family over).
 func TestScriptLsPattern(t *testing.T) {
 	out := runHactl(t, "script", "ls", "--pattern", "nonexistent_xyz")
-	assertContains(t, out, "id") // header should still appear
+	assertContains(t, out, "--pattern")
+	assertContains(t, out, "nonexistent_xyz")
+	assertContains(t, out, "scripts on this instance")
 }
 
 func TestScriptLsPatternSubstring(t *testing.T) {

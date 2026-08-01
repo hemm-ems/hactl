@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "The map dashboard's stored config, byte-for-byte what Home Assistant writes for it",
+    "(_create_map_dashboard: async_save({\"strategy\": {\"type\": \"map\"}}), HA 2026.7.4) and",
+    "byte-for-byte what the reference instance holds.",
+    "",
+    "No `views` key. That is the shape: a document that IS a dashboard config, parses",
+    "cleanly, and has zero views because the frontend builds them from the strategy at view",
+    "time. Every other fixture dashboard has views, so `len(cfg.Views) == 0` was unreachable."
+  ],
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace.map",
+  "data": {
+    "config": {
+      "strategy": {
+        "type": "map"
+      }
+    }
+  }
+}

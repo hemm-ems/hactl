@@ -1,0 +1,5 @@
+# The mapping the merge keys in shape_merge.yaml pull in. On its own it is an
+# ordinary document; the shape is the reference to it, not this.
+platform: esp32
+board: esp32dev
+accuracy_decimals: 2

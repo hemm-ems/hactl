@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -17,38 +18,47 @@ import (
 )
 
 var (
-	flagDevicePattern string
-	flagDeviceName    string
-	flagDeviceArea    string
-	flagDeviceLabel   string
+	flagDevicePattern     string
+	flagDeviceName        string
+	flagDeviceArea        string
+	flagDeviceLabel       string
+	flagDeviceRemoveLabel []string
+	flagDeviceAreaClear   bool
 )
 
 var flagDeviceConfirm bool
 
-var deviceCmd = &cobra.Command{
+var deviceCmd = family(&cobra.Command{
 	Use:   "device",
 	Short: "Browse, inspect, and place devices",
 	Long:  "List and inspect Home Assistant devices, and assign their area or labels.",
-}
+})
 
 var deviceSetAreaCmd = &cobra.Command{
-	Use:   "set-area <device> <area>",
-	Short: "Place a device in an area (dry-run by default)",
+	Use:   "set-area <device> [area]",
+	Short: "Place a device in an area, or clear it (dry-run by default)",
 	Long: "Assign a device to an area; the device may be given by ID or name, the area by name or ID. " +
 		"Every entity of the device without its own area_id inherits the device's area (H-8), so this " +
-		"is the one-command way to move a whole device. Use --confirm to apply.",
-	Args: cobra.ExactArgs(2),
+		"is the one-command way to move a whole device. Use --clear to remove the device's area instead " +
+		"of setting one — pass exactly one of <area> or --clear. Use --confirm to apply.",
+	Args: takesBetween(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+		var area string
+		if len(args) > 1 {
+			area = args[1]
+		}
+		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], area)
 	},
 }
 
 var deviceSetLabelCmd = &cobra.Command{
-	Use:   "set-label <device> <label>...",
-	Short: "Add label(s) to a device (dry-run by default)",
+	Use:   "set-label <device> [label...]",
+	Short: "Add or remove label(s) on a device (dry-run by default)",
 	Long: "Merge one or more labels (by name or ID) into a device's labels; the device may be given " +
-		"by ID or name. Use --confirm to apply.",
-	Args: cobra.MinimumNArgs(2),
+		"by ID or name. Use --remove <label> (repeatable) to take a label back off instead; it may " +
+		"combine with positional labels to add and remove in the same write, but a label cannot be " +
+		"named in both. Use --confirm to apply.",
+	Args: takesAtLeast(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
@@ -56,10 +66,11 @@ var deviceSetLabelCmd = &cobra.Command{
 
 var deviceLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List devices",
 	Long:  "Show devices from the Home Assistant device registry, with entity counts.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeviceLs(cmd.Context(), cmd.OutOrStdout())
+		return runDeviceLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -67,7 +78,7 @@ var deviceShowCmd = &cobra.Command{
 	Use:   "show <device>",
 	Short: "Show device profile",
 	Long:  "Display one device with its area, labels, and registered entities. The device argument may be an ID or name.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -79,7 +90,10 @@ func init() {
 	deviceLsCmd.Flags().StringVar(&flagDeviceArea, "area", "", "filter by area/room name or ID substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceLabel, "label", "", "filter by label name or ID substring")
 	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the area (default is dry-run)")
+	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceAreaClear, "clear", false, "remove the device's area instead of setting one")
 	deviceSetLabelCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the labels (default is dry-run)")
+	deviceSetLabelCmd.Flags().StringArrayVar(&flagDeviceRemoveLabel, "remove", nil,
+		"remove this label from the device instead of adding it (repeatable; use 'label ls' to see available labels)")
 	deviceCmd.AddCommand(deviceLsCmd, deviceShowCmd, deviceSetAreaCmd, deviceSetLabelCmd)
 	rootCmd.AddCommand(deviceCmd)
 }
@@ -88,7 +102,17 @@ func init() {
 // and the device before planning anything, so the dry run fails exactly where
 // --confirm would (H-2). The write is DeviceRegistryUpdate — per its doc
 // comment the only way to place an existing device into an area.
+//
+// --clear is finding #81 / H-27: `set-area` could set a device's area but had
+// no way to remove one short of `area delete`, which strips the area from
+// EVERY device, entity and area instance-wide. See validateAreaTarget and
+// clearAreaWireValue in ent.go, which this shares — including the probe that
+// established Home Assistant accepts `area_id: null` on the device registry too.
 func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) error {
+	if err := validateAreaTarget(area, flagDeviceAreaClear); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -104,9 +128,13 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 	if err != nil {
 		return fmt.Errorf("fetching areas: %w", err)
 	}
-	areaEntry, ok := resolveAreaEntry(areas, area)
-	if !ok {
-		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+	var areaEntry haapi.AreaEntry
+	if !flagDeviceAreaClear {
+		var ok bool
+		areaEntry, ok = resolveAreaEntry(areas, area)
+		if !ok {
+			return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+		}
 	}
 
 	devices, err := ws.DeviceRegistryList(ctx)
@@ -120,15 +148,32 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 	}
 
 	if !flagDeviceConfirm {
+		if flagDeviceAreaClear {
+			return dryRunDeviceClearAreaSummary(device, areas).render(w)
+		}
 		return dryRunDeviceSetAreaSummary(device, areaEntry, areas).render(w)
 	}
 
-	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID,
+		map[string]any{"area_id": clearAreaWireValue(flagDeviceAreaClear, areaEntry.AreaID)}); err != nil {
 		return fmt.Errorf("updating device area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", device.ID, areaEntry.AreaID)
-	return nil
+	if flagDeviceAreaClear {
+		return done("clear device area").
+			with("device_id", device.ID).
+			withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+			with("area_id", nil).
+			text("%s: area cleared", device.ID).
+			render(w)
+	}
+	return done("set device area").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		with("area_id", areaEntry.AreaID).
+		with("area_name", areaEntry.Name).
+		text("%s: area set to %s", device.ID, areaEntry.AreaID).
+		render(w)
 }
 
 func dryRunDeviceSetAreaSummary(device haapi.DeviceRegistryEntry, area haapi.AreaEntry, areas []haapi.AreaEntry) *dryRunPlan {
@@ -147,9 +192,33 @@ func dryRunDeviceSetAreaSummary(device haapi.DeviceRegistryEntry, area haapi.Are
 		withHint("use --confirm to apply (entities without an own area_id inherit the device's area)")
 }
 
+// dryRunDeviceClearAreaSummary mirrors dryRunEntClearAreaSummary one registry
+// over.
+func dryRunDeviceClearAreaSummary(device haapi.DeviceRegistryEntry, areas []haapi.AreaEntry) *dryRunPlan {
+	currentArea := device.AreaID
+	for _, a := range areas {
+		if a.AreaID == device.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+	return dryRun("clear device area").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", nil).
+		withHint("use --confirm to apply (entities without an own area_id keep inheriting whatever the device's area becomes)")
+}
+
 // runDeviceSetLabel mirrors runEntSetLabel: labels resolve by name or ID and
-// merge into the device's existing set, deduplicated.
+// merge into the device's existing set, deduplicated. --remove is finding
+// #81 / H-27 — see the doc comment on runEntSetLabel.
 func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, labels []string) error {
+	if len(labels) == 0 && len(flagDeviceRemoveLabel) == 0 {
+		return errors.New("no labels given: pass one or more labels to add, or --remove <label> to take one off " +
+			"(use 'label ls' to see available labels)")
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -165,18 +234,18 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	if err != nil {
 		return fmt.Errorf("fetching labels: %w", err)
 	}
-	labelIDs := make(map[string]string, len(existingLabels))
-	for _, l := range existingLabels {
-		labelIDs[strings.ToLower(l.Name)] = l.LabelID
-		labelIDs[l.LabelID] = l.LabelID
+	index := labelIndex(existingLabels)
+
+	toAdd, err := resolveLabelRefs(index, labels)
+	if err != nil {
+		return err
 	}
-	resolved := make([]string, 0, len(labels))
-	for _, lbl := range labels {
-		id, ok := labelIDs[strings.ToLower(lbl)]
-		if !ok {
-			return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", lbl)
-		}
-		resolved = append(resolved, id)
+	toRemove, err := resolveLabelRefs(index, flagDeviceRemoveLabel)
+	if err != nil {
+		return err
+	}
+	if overlapErr := refuseAddRemoveOverlap(toAdd, toRemove); overlapErr != nil {
+		return overlapErr
 	}
 
 	devices, err := ws.DeviceRegistryList(ctx)
@@ -187,21 +256,7 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	if err != nil {
 		return err
 	}
-
-	seen := make(map[string]bool, len(device.Labels)+len(resolved))
-	merged := make([]string, 0, len(device.Labels)+len(resolved))
-	for _, l := range device.Labels {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
-	for _, l := range resolved {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
+	final, removed := applyLabelDelta(device.Labels, toAdd, toRemove)
 
 	if !flagDeviceConfirm {
 		// Slices, not their %v rendering, so --json carries real arrays.
@@ -209,16 +264,28 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 			with("device_id", device.ID).
 			withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
 			with("current_labels", nonNil(device.Labels)).
-			with("new_labels", nonNil(merged)).
+			with("new_labels", nonNil(final)).
+			withIf(len(removed) > 0, "removed_labels", removed).
 			render(w)
 	}
 
-	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": merged}); err != nil {
+	// An empty `final` clears every label here exactly as it does on the entity
+	// registry — probed 2026-08-01 by TestClearWiresEmptyLabels/device, which
+	// asks the device registry its own question rather than inferring it from
+	// the entity one.
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating device labels: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", device.ID, merged)
-	return nil
+	// Slices, not their %v rendering, so --json carries real arrays — the same
+	// reason the preview above does it.
+	return done("set device labels").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		with("labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed).
+		text("%s: labels set to %v", device.ID, final).
+		render(w)
 }
 
 type deviceRegistryContext struct {
@@ -229,7 +296,8 @@ type deviceRegistryContext struct {
 	deviceByID map[string]haapi.DeviceRegistryEntry
 }
 
-func runDeviceLs(ctx context.Context, w io.Writer) error {
+func runDeviceLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -248,11 +316,11 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 
 	devices := filterDevices(rc.devices, rc)
 	if len(devices) == 0 {
-		return emitEmptyList(w, "no devices")
+		return emptyListing(cmd, w, "devices", len(rc.devices))
 	}
 
 	sort.Slice(devices, func(i, j int) bool {
-		return strings.ToLower(deviceDisplayName(devices[i])) < strings.ToLower(deviceDisplayName(devices[j]))
+		return strings.ToLower(deviceUserFacingName(devices[i])) < strings.ToLower(deviceUserFacingName(devices[j]))
 	})
 
 	tbl := &format.Table{
@@ -262,7 +330,7 @@ func runDeviceLs(ctx context.Context, w io.Writer) error {
 	for i, d := range devices {
 		tbl.Rows[i] = []string{
 			d.ID,
-			d.Name,
+			deviceUserFacingName(d),
 			deviceAreaName(d, rc),
 			deviceLabelNames(d, rc),
 			strconv.Itoa(len(rc.entityByID[d.ID])),
@@ -407,7 +475,7 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 		if flagDevicePattern != "" && !deviceMatchesPattern(d, flagDevicePattern) {
 			continue
 		}
-		if flagDeviceName != "" && !containsFold(deviceUserFacingName(d), flagDeviceName) {
+		if flagDeviceName != "" && !deviceMatchesName(d, flagDeviceName) {
 			continue
 		}
 		if flagDeviceArea != "" && !containsFold(d.AreaID, flagDeviceArea) && !containsFold(deviceAreaName(d, rc), flagDeviceArea) {
@@ -429,7 +497,7 @@ func filterDevices(devices []haapi.DeviceRegistryEntry, rc *deviceRegistryContex
 // honoured name_by_user since issue #72, and a --pattern that did not would be
 // the same defect one flag over.
 func deviceMatchesPattern(d haapi.DeviceRegistryEntry, pattern string) bool {
-	return matchPattern(d.ID, pattern) || matchPattern(deviceUserFacingName(d), pattern)
+	return matchPattern(d.ID, pattern) || matchPattern(d.NameByUser, pattern) || matchPattern(d.Name, pattern)
 }
 
 // deviceHasLabel matches via the same matchingLabelIDs substring rule ent.go's
@@ -448,7 +516,20 @@ func deviceHasLabel(d haapi.DeviceRegistryEntry, rc *deviceRegistryContext, labe
 	return false
 }
 
+// errNoDeviceGiven is what resolveDevice answers a blank reference with.
+var errNoDeviceGiven = errors.New("no device given (use 'device ls' to see available devices)")
+
 func resolveDevice(devices []haapi.DeviceRegistryEntry, ref string) (haapi.DeviceRegistryEntry, error) {
+	// A blank reference matches nothing. HA leaves a device's registry `name`
+	// empty in ordinary cases (a user-renamed device carries the override in
+	// name_by_user), so the exact-match pass below matched `""` and answered
+	// `device show ''` with an arbitrary real device. The H-22 contract refuses
+	// the empty string at the CLI boundary; this refuses it where the wrong
+	// match was made. `resolveRegistryTarget` has had the same guard since it
+	// was written — this resolver is the one that never got it.
+	if strings.TrimSpace(ref) == "" {
+		return haapi.DeviceRegistryEntry{}, errNoDeviceGiven
+	}
 	refLower := strings.ToLower(ref)
 	for _, d := range devices {
 		if strings.ToLower(d.ID) == refLower || strings.ToLower(d.Name) == refLower {
@@ -468,7 +549,7 @@ func resolveDevice(devices []haapi.DeviceRegistryEntry, ref string) (haapi.Devic
 	if len(matches) > 1 {
 		names := make([]string, len(matches))
 		for i, d := range matches {
-			names[i] = fmt.Sprintf("%s (%s)", deviceDisplayName(d), d.ID)
+			names[i] = fmt.Sprintf("%s (%s)", deviceUserFacingName(d), d.ID)
 		}
 		sort.Strings(names)
 		return haapi.DeviceRegistryEntry{}, fmt.Errorf("device %q is ambiguous: %s", ref, strings.Join(names, ", "))
@@ -550,14 +631,31 @@ func registryEntityLabelNames(e haapi.EntityRegistryEntry, rc *deviceRegistryCon
 	return strings.Join(names, ", ")
 }
 
-func deviceDisplayName(d haapi.DeviceRegistryEntry) string {
-	return firstNonEmpty(d.Name, d.ID)
+// deviceUserFacingName is the name HA's own UI shows: the user's override when
+// they set one, otherwise the name the integration supplied.
+//
+// There used to be a second function, deviceDisplayName, answering
+// firstNonEmpty(d.Name, d.ID) — and that split was the defect (live-fire
+// finding #30). The listing, the sort and the ambiguity report went through it
+// and rendered the registry name, so a device its owner had renamed appeared
+// under a name that exists nowhere in their house: 17 of 307 devices on the
+// reference instance, e.g. "Wozi-Yeelight10" for a lamp the owner calls
+// "Wohnzimmer Tisch Licht Pendelleuchte". One name, one function.
+func deviceUserFacingName(d haapi.DeviceRegistryEntry) string {
+	return firstNonEmpty(d.NameByUser, d.Name, d.ID)
 }
 
-// deviceUserFacingName returns the name a user searches for and sees in the
-// HA UI: the custom name_by_user when set, falling back to the registry name.
-func deviceUserFacingName(d haapi.DeviceRegistryEntry) string {
-	return firstNonEmpty(d.NameByUser, d.Name)
+// deviceMatchesName reports whether a search term matches EITHER name a device
+// carries.
+//
+// A renamed device has two, and matching one of them is what the code did in
+// both directions at once: the listing rendered `name` while `--name` matched
+// only `name_by_user`, so `--name Pendelleuchte` found the lamp and
+// `--name Yeelight10` — the name still printed on the device and in every
+// integration log — found nothing. Whichever of the two names a user knows is
+// the right one to search by, because HA keeps both.
+func deviceMatchesName(d haapi.DeviceRegistryEntry, term string) bool {
+	return containsFold(d.NameByUser, term) || containsFold(d.Name, term)
 }
 
 func firstNonEmpty(values ...string) string {

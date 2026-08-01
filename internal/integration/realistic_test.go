@@ -77,7 +77,7 @@ func seedHistory(t *testing.T, inst *hatest.Instance) {
 
 	// Simulate temperature readings over time
 	for _, temp := range seededTemperatures {
-		err := client.CallService(ctx, "input_number", "set_value", map[string]any{
+		_, err := client.CallService(ctx, "input_number", "set_value", map[string]any{
 			"entity_id": "input_number.outdoor_temperature",
 			"value":     temp,
 		})
@@ -90,7 +90,7 @@ func seedHistory(t *testing.T, inst *hatest.Instance) {
 	// Simulate power consumption with a spike (for anomaly detection)
 	powers := []float64{350, 400, 380, 4500, 360}
 	for _, p := range powers {
-		err := client.CallService(ctx, "input_number", "set_value", map[string]any{
+		_, err := client.CallService(ctx, "input_number", "set_value", map[string]any{
 			"entity_id": "input_number.power_consumption",
 			"value":     p,
 		})
@@ -102,7 +102,7 @@ func seedHistory(t *testing.T, inst *hatest.Instance) {
 
 	// Toggle guest mode to generate events, log entries, and binary_sensor.front_door timeline
 	for range 3 {
-		_ = client.CallService(ctx, "input_boolean", "toggle", map[string]any{
+		_, _ = client.CallService(ctx, "input_boolean", "toggle", map[string]any{
 			"entity_id": "input_boolean.guest_mode",
 		})
 		time.Sleep(500 * time.Millisecond)
@@ -110,7 +110,7 @@ func seedHistory(t *testing.T, inst *hatest.Instance) {
 
 	// Trigger automations to create traces for E2E trace testing
 	for _, autoID := range []string{"guest_welcome", "vacation_security"} {
-		err := client.CallService(ctx, "automation", "trigger", map[string]any{
+		_, err := client.CallService(ctx, "automation", "trigger", map[string]any{
 			"entity_id": "automation." + autoID,
 		})
 		if err != nil {

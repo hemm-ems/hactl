@@ -17,6 +17,7 @@ import (
 
 var changesCmd = &cobra.Command{
 	Use:   "changes",
+	Args:  takesNone(),
 	Short: "Show recent state changes",
 	Long:  "Display recent logbook entries (state changes, automations fired, etc.).",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,7 +57,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(entries) == 0 && !flagJSON {
-		_, _ = fmt.Fprintln(w, "no changes in the last "+flagSince)
+		_, _ = fmt.Fprintln(w, "no changes in the last "+sinceWindow())
 		return nil
 	}
 
@@ -125,16 +126,15 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		Headers: []string{"time", "entity_id", "state", "who", "message"},
 		Rows:    make([][]string, len(entries)),
 	}
+	tbl.SetWidth("message", 50)
+	tbl.SetTimeColumn("time")
 	for i, e := range entries {
 		msg := e.Message
 		if msg == "" {
 			msg = e.Name
 		}
-		if len(msg) > 50 {
-			msg = msg[:47] + "..."
-		}
 		tbl.Rows[i] = []string{
-			formatShortTime(e.When),
+			e.When,
 			e.EntityID,
 			e.State,
 			triggerLabel(e, users),

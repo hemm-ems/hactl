@@ -99,6 +99,33 @@ func TestTargetSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestTransportSurfaceIsClosed — every place a connection's bounds are decided
+// declares what decides them.
+//
+// The flag was documented and two of three transports honoured it. The third —
+// the WebSocket, in a package neither of the others is in — was a 5s constant
+// dial attempted twice behind a 10s constant handshake, so `companion status
+// --timeout 1s` came back after 10.02s (#73). Nothing enumerated the set of
+// transports, so a transport that ignored the flag looked exactly like one that
+// did not exist.
+func TestTransportSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.TransportSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
+// TestPartialScopeSurfaceIsClosed — every command body that reads a source
+// which can come back incomplete says what it does about a short read.
+//
+// D-7 is the law, and it has been written twice over a set that was prose in
+// one command's doc comment. Both times the set was one source short: first the
+// entity registry beneath the dashboards, then the whole config half of
+// `ref scan`, which returned three of twenty-four references at exit 0 with the
+// failure at slog.Warn (#34).
+func TestPartialScopeSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.PartialScopeSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestInvariantSurfaceIsClosed — every law in INVARIANTS.md declares whether a
 // gate quantifies over its set or whether it is enforced by an enumeration.
 func TestInvariantSurfaceIsClosed(t *testing.T) {
@@ -208,6 +235,24 @@ func TestMapRangeSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestSharedStateSurfaceIsClosed — every function in the module's non-test
+// sources that can destroy a file says whether the file was somebody else's.
+//
+// H-26 states the rule as a universal, and the live-fire run found it broken
+// in three places at once: the automation backup, the script backup and the
+// dashboard snapshot each named their file from a clock at one-second
+// resolution and wrote it with a call that truncates. Three sites, one defect,
+// and each would have been fixed alone in the place it was reported — the
+// exact shape of the four defects this package's doc comment opens with.
+//
+// The census is every destroyer rather than every destroyer under an instance
+// directory, because deciding which paths are "inside" one is a heuristic over
+// string building, and a heuristic that misses is silent.
+func TestSharedStateSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.SharedStateSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestAutomationRefSurfaceIsClosed — every command entrypoint that takes an
 // automation reference hands it to the one shared resolver, or is
 // dispositioned for not doing so.
@@ -222,5 +267,50 @@ func TestMapRangeSurfaceIsClosed(t *testing.T) {
 // watched red on internal/cmd/rollback.go:runRollback before the fix).
 func TestAutomationRefSurfaceIsClosed(t *testing.T) {
 	s, err := surfaceaudit.AutomationRefSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
+// TestResultSurfaceIsClosed — every --confirm-gated command declares whether
+// its confirmed OUTCOME is machine-readable.
+//
+// TestPreviewSurfaceIsClosed above is the same law one branch over, and the two
+// being separate tests is the point: the preview half was closed by a fix whose
+// scope was the word "preview", and the identical omission on the confirmed
+// path survived it in fourteen commands, including the flagship write. The
+// dry-run/confirm pair is one surface with two branches; a gate on one of them
+// is a gate on half a law.
+func TestResultSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.ResultSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
+// TestAttributedSurfaceIsClosed — every listing-row field filled from a Go
+// constant declares why that constant is not a claim about the object.
+//
+// Finding #104: `helper ls` reported a `source` column that described its own
+// control flow. Every row the companion's YAML read had not produced was
+// labelled `storage`, so on an instance configuring helpers inline in
+// configuration.yaml — where that read returns nothing — all 222 helpers were
+// announced as created in the Home Assistant UI. The wire had carried the
+// answer (`editable`) the whole time, in the same payload.
+//
+// Like TestResultSurfaceIsClosed this is a violation surface: zero sites is the
+// goal, so runGate's emptiness alarm is off and
+// TestAttributedExtractorFlagsAnInventedField guards the derivation instead.
+func TestAttributedSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.AttributedSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
+// TestTruncationSurfaceIsClosed — every place that shortens a string for a
+// reader is dispositioned.
+//
+// Finding #14 named one of six such sites. The other five did the same thing in
+// the same shape, and two of them put the result straight into `--json`:
+// `ent ls` reported `"state": "2026-07-31T03:13:..."` for 76 of the reference
+// instance's 4486 entities, and `trace show`'s condensed step carried the last
+// forty characters of a failure. Nothing could have said how many there were.
+func TestTruncationSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.TruncationSurface(repoRoot(t))
 	runGate(t, s, err)
 }

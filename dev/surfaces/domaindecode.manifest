@@ -59,7 +59,7 @@ internal/cmd/script.go:runScriptApply = exempt: best-effort echo of the one scri
 # --- whole-payload reads that impose no domain schema --------------------------
 internal/cmd/ent.go:runEntLs = proven: TestEntListingsStillSeeTheColliderIsTheControl
 internal/cmd/ent.go:runEntRelated = exempt: decodes the whole payload into entityState, whose attributes are map[string]any, and reads only entity_id and state off it — no domain's schema is imposed on anything
-internal/cmd/cc.go:runCCShow = exempt: decodes the whole payload into entityState, whose attributes are map[string]any, and keeps only the entity_ids of the component's own domain
+internal/cmd/cc.go:componentEntityIDs = exempt: decodes the whole payload into entityState, whose attributes are map[string]any, and reads only entity_id off it to learn which registry-attributed entities are live — no domain's schema is imposed on anything
 internal/cmd/cc.go:enrichVersionsFromUpdateEntities = exempt: decodes the whole payload into entityState and reads installed_version out of the map with a type assertion, so a foreign type is a missed enrichment rather than a failed command
 internal/cmd/helper.go:fetchStorageHelpers = exempt: decodes the whole payload into entityState, whose attributes are map[string]any; the helper rows are built from entity_id and state alone
 internal/cmd/ref.go:fetchStateEntityIDs = exempt: decodes the whole payload into entityState and returns entity_ids only, so no attribute of any entity is ever typed

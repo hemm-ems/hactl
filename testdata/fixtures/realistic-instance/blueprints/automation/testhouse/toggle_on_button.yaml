@@ -1,0 +1,37 @@
+# A blueprint, which is where `!input` lives.
+#
+# `entity_id: !input button_entity` is a TAG whose value HA substitutes when
+# the blueprint is instantiated. Re-serialising it as the string
+# `'!input button_entity'` — which is what a generic YAML load/dump does to a
+# tag it does not know — turns a working blueprint into one that tries to
+# trigger on an entity literally named "!input button_entity". The file is
+# still valid YAML afterwards, so nothing complains; it just stops meaning
+# what it said (finding #20).
+#
+# Note the file contains no !include at all: this corruption has nothing to do
+# with include resolution, which is the only thing resolved mode's own help
+# text claims to do.
+blueprint:
+  name: Toggle On Button
+  description: Toggle a helper whenever a button helper changes state.
+  domain: automation
+  input:
+    button_entity:
+      name: Button
+      selector:
+        entity:
+          domain: input_boolean
+    target_entity:
+      name: Target
+      selector:
+        entity:
+          domain: input_boolean
+
+triggers:
+  - trigger: state
+    entity_id: !input button_entity
+
+actions:
+  - action: input_boolean.toggle
+    target:
+      entity_id: !input target_entity

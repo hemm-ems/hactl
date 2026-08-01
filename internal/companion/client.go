@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,8 +38,12 @@ type IngressAuth interface {
 
 // Client talks to the hactl-companion add-on API.
 type Client struct {
-	httpClient   *http.Client
-	baseURL      string
+	httpClient *http.Client
+	baseURL    string
+	// basePath is baseURL's path component, the transport prefix every route
+	// is hung under. Kept so an error can name the route without the prefix —
+	// see route.
+	basePath     string
 	token        string
 	ingressAuth  IngressAuth
 	sessionMu    sync.Mutex
@@ -48,16 +52,21 @@ type Client struct {
 
 // New creates a new companion API client.
 func New(baseURL, token string) *Client {
+	trimmed := strings.TrimRight(baseURL, "/")
+	var basePath string
+	if u, err := url.Parse(trimmed); err == nil {
+		basePath = strings.TrimRight(u.Path, "/")
+	}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		httpClient: &http.Client{
-			Timeout: haapi.DefaultTimeout,
-			Transport: &http.Transport{
-				Proxy:       http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{Timeout: haapi.DialTimeout}).DialContext,
-			},
-		},
+		baseURL:  trimmed,
+		basePath: basePath,
+		token:    token,
+		// The same transport the HA REST client uses, for the same reasons:
+		// bounded by the caller's --timeout, and refusing a redirect that moves
+		// the origin (H-23). The companion is reached through Home Assistant's
+		// own Ingress, so it is behind the same reverse proxy and inherits the
+		// same scheme problem.
+		httpClient: haapi.HTTPClient(trimmed),
 	}
 }
 
@@ -197,6 +206,9 @@ func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool)
 // RefScan calls GET /v1/ref/scan?target=<target> and returns every literal
 // reference to target across the config file !include graph.
 func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, error) {
+	if err := RefTargetError(target); err != nil {
+		return nil, err
+	}
 	q := url.Values{"target": {target}}
 	data, err := c.doGet(ctx, "/v1/ref/scan", q)
 	if err != nil {
@@ -222,6 +234,17 @@ func (c *Client) RefEntities(ctx context.Context) (*RefEntitiesResponse, error) 
 // config file !include graph. With dryRun the companion reports the changes
 // without writing; otherwise it rewrites each owning file.
 func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun bool) (*RefReplaceResponse, error) {
+	// Both sides take the rule. The old value is the pattern, so a target that
+	// is not a whole token matches the interior of every id in the tree — `ref
+	// replace . X` planned 2747 rewrites of real config files. The new value is
+	// what lands in each of those positions, and a replacement that does not
+	// start and end on a word character glues itself to the text around it.
+	if err := RefTargetError(oldVal); err != nil {
+		return nil, err
+	}
+	if err := RefTargetError(newVal); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(map[string]any{"old": oldVal, "new": newVal, "dry_run": dryRun})
 	if err != nil {
 		return nil, fmt.Errorf("encoding ref replace body: %w", err)
@@ -412,6 +435,24 @@ func (c *Client) DeleteAutomationDef(ctx context.Context, id string) (*ConfigDel
 	return &r, decodeResponse("/v1/config/automation", data, &r)
 }
 
+// GetWiring calls GET /v1/config/wiring?domain=<domain>: whether a create for
+// that domain would reach a file HA reads, and if not, why not.
+//
+// The answer exists so a dry run can fail exactly where --confirm would (H-2)
+// without hactl re-deriving the companion's include-vs-inline resolution in Go.
+// Re-deriving it is the four-copy drift this seam already paid for once: the
+// rules would be restated in a second language, and the preview would explain
+// its refusal differently from the run it predicts.
+func (c *Client) GetWiring(ctx context.Context, domain string) (*WiringResponse, error) {
+	q := url.Values{"domain": {domain}}
+	data, err := c.doGet(ctx, "/v1/config/wiring", q)
+	if err != nil {
+		return nil, err
+	}
+	var r WiringResponse
+	return &r, decodeResponse("/v1/config/wiring", data, &r)
+}
+
 // --- Helper CRUD ---
 
 // ListHelpers calls GET /v1/config/helpers[?domain=<domain>].
@@ -569,6 +610,57 @@ func (c *Client) Logs(ctx context.Context, p LogsParams) (*LogsResponse, error) 
 	return &r, decodeResponse("/v1/logs", data, &r)
 }
 
+// route strips the transport prefix from a request path, leaving the companion
+// API route the caller actually asked for.
+//
+// Every failure used to be reported with the full URL path, which under
+// Ingress reads
+//
+//	reading config file: GET /api/hassio_ingress/<43 chars>/v1/config/file: 404 …
+//
+// The segment in the middle is the add-on's Supervisor ingress token: stable
+// across invocations, per install, and printed on every 404 a user might paste
+// into a bug report (finding #23). It also tells the reader nothing — the route
+// is `/v1/config/file` no matter how the request got there, and *that* is what
+// distinguishes one failure from another.
+//
+// Derived by trimming baseURL's own path rather than by matching
+// "/api/hassio_ingress/", so a companion reached through any other prefix — a
+// reverse proxy, a direct port, whatever comes next — is named the same way
+// without a second rule to remember. `companion status` still prints the full
+// URL: that command's question IS the transport, and a user debugging
+// discovery needs the address to curl.
+func (c *Client) route(p string) string {
+	if c.basePath == "" {
+		return p
+	}
+	if trimmed := strings.TrimPrefix(p, c.basePath); trimmed != p && trimmed != "" {
+		return trimmed
+	}
+	return p
+}
+
+// scrubTransportError rewrites the URL net/http embeds in its own error text.
+//
+// `*url.Error` renders as `Get "<the whole URL>": dial tcp …`, so a route-only
+// wrapper around it would have printed the route and then the prefix anyway.
+// The host stays — it is the address the caller configured and the useful part
+// of a connection failure — and only the path is reduced to the route.
+func (c *Client) scrubTransportError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	u, parseErr := url.Parse(ue.URL)
+	if parseErr != nil {
+		// Cannot rewrite what will not parse; drop the URL rather than print it.
+		return ue.Err
+	}
+	u.Path = c.route(u.Path)
+	u.RawQuery = ""
+	return &url.Error{Op: ue.Op, URL: u.String(), Err: ue.Err}
+}
+
 func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]byte, error) {
 	u := c.baseURL + path
 	if query != nil {
@@ -675,14 +767,17 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
+			return nil, fmt.Errorf("%s %s: %w", req.Method, c.route(req.URL.Path), err)
 		}
 		if status < 200 || status >= 300 {
-			return nil, fmt.Errorf("%s %s: %d %s: %s", req.Method, req.URL.Path, status, http.StatusText(status), string(respBody))
+			// Typed, not fmt.Errorf: the text is the same, but a caller can now
+			// ask haapi.HTTPStatus whether this was a 404 instead of matching
+			// on a message that embeds the companion's response body.
+			return nil, haapi.NewHTTPStatusError(req.Method, c.route(req.URL.Path), status, respBody)
 		}
 		return respBody, nil
 	}
-	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, req.URL.Path)
+	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, c.route(req.URL.Path))
 }
 
 // doOnce performs a single HTTP request attempt and returns the response
@@ -693,6 +788,12 @@ func (c *Client) doOnce(req *http.Request) ([]byte, int, error) {
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL is operator-provided config (SSRF by design for a CLI tool)
 	duration := time.Since(start)
 	if err != nil {
+		// Scrubbed here rather than at the call site: net/http's *url.Error
+		// carries the full request URL in its own message, so wrapping it with
+		// a clean route would have re-leaked the prefix one layer down — and
+		// the slog line below would have leaked it whether anything wrapped it
+		// or not.
+		err = c.scrubTransportError(err)
 		slog.Debug("companion request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // method is a Go HTTP constant
 		return nil, 0, err
 	}

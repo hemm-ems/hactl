@@ -26,7 +26,7 @@ var autoRollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Restore the most recent automation backup (dry-run by default)",
 	Long:  "Rollback to the last backed-up automation config. Optionally specify an automation ID. Dry-run by default: previews which backup would be restored; use --confirm to apply.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		autoID := ""
 		if len(args) > 0 {
@@ -41,7 +41,7 @@ var rollbackCmd = &cobra.Command{
 	Use:   "rollback [automation-id]",
 	Short: "Deprecated: use 'hactl auto rollback' instead",
 	Long:  "Rollback to the last backed-up automation config (dry-run by default; use --confirm to apply). Use 'hactl auto rollback' instead.",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(os.Stderr, rollbackDeprecationMsg())
 		autoID := ""
@@ -89,7 +89,7 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 	}
 
 	if !flagRollbackConfirm {
-		plan, planErr := writer.New(client, nil, backupDir).PlanRollback(automationID)
+		plan, planErr := writer.New(client, nil, nil, backupDir).PlanRollback(automationID)
 		if planErr != nil {
 			return planErr
 		}
@@ -109,23 +109,40 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		defer func() { _ = ws.Close() }()
 	}
 
-	wr := writer.New(client, wsClient, backupDir)
+	cc, err := connectCompanion(ctx)
+	if err != nil {
+		return err
+	}
+	wr := writer.New(client, wsClient, cc, backupDir)
 
 	result, err := wr.Rollback(ctx, automationID)
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(w, "rolled back: %s\n", result.AutomationID)
-	_, _ = fmt.Fprintf(w, "from backup: %s\n", result.BackupPath)
+	res := done("roll back automation").
+		with("automation", result.AutomationID).
+		with("from_backup", result.BackupPath).
+		with("reloaded", result.Reloaded).
+		withIf(result.ReloadError != "", "reload_error", result.ReloadError).
+		withIf(result.Reformatted, "reformatted", true).
+		text("rolled back: %s", result.AutomationID).
+		text("from backup: %s", result.BackupPath)
 	if result.Reloaded {
-		_, _ = fmt.Fprintf(w, "reload:      ok\n")
+		res = res.text("reload:      ok")
 	} else {
 		// Silence used to be the failure mode twice over: the field was
 		// hardcoded true, and even had it been honest, an absent line reads as
 		// "ok" to anyone who has only ever seen the happy path. A rollback HA
-		// has not read is the state the operator most needs told.
-		_, _ = fmt.Fprintf(w, "warning: config restored but HA did not confirm reload — it is still running the previous configuration\n")
+		// has not read is the state the operator most needs told — and under
+		// --json it was not told at all, because the whole result was prose.
+		res = res.warn("config restored but HA did not confirm reload — it is still running the previous configuration")
 	}
-	return nil
+	// C-14: the companion says when it could not splice, and a whole-file
+	// rewrite that reads as a surgical one is the thing this route exists to
+	// stop. Knowing it and telling nobody is the D45 mistake.
+	if result.Reformatted {
+		res = res.warn("the whole file was re-serialized (the entry could not be spliced), so formatting of other entries may have changed")
+	}
+	return res.render(w)
 }

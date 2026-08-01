@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/hemm-ems/hactl/internal/analyze"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -31,10 +33,20 @@ func surfaceRepoRoot(t *testing.T) string {
 	}
 }
 
-// filterFlags are the flags that narrow a listing by something a person read
-// off the screen. They are the flags where case is a question.
-var filterFlags = map[string]bool{
-	"pattern": true, "name": true, "area": true, "label": true,
+// caseQuestionFlag reports whether a flag is one where case is a question: it
+// narrows a listing (narrowsListing, derived from the flag's own declared
+// purpose) and it does so by a value a person typed.
+//
+// Both halves are derived, neither is named. This was `filterFlags`, four names
+// — pattern, name, area, label — typed into this file. The three `--domain`
+// filters (`ent ls`, `helper ls`, `config entries`) and both `--component`
+// filters were added afterwards, none of them was in the list, and so none of
+// them was ever asked the question D-2 had already answered. `ent ls --domain
+// SENSOR` returned 0 of 2 551 sensors on the reference instance and said
+// "verify the domain exists" while it did so (live-fire #28's second half).
+// A flag nobody listed was indistinguishable from a flag nobody needed to list.
+func caseQuestionFlag(f *pflag.Flag) bool {
+	return narrowsListing(f) && f.Value.Type() == "string"
 }
 
 // filterProbe drives one command's filter with one needle and reports which
@@ -113,6 +125,91 @@ var probes = map[string]filterProbe{
 	"hactl helper ls/name": func(n string) []string {
 		return helperRowIDs(filterHelperRowsByName(parityHelperRows(), n))
 	},
+	"hactl helper ls/domain": func(n string) []string {
+		return helperRowIDs(filterHelperRowsByDomain(parityHelperDomainRows(), n))
+	},
+	"hactl ent ls/domain": func(n string) []string {
+		return entityIDs(filterEntitiesByDomain(parityDomainEntities(), n))
+	},
+	"hactl config entries/domain": func(n string) []string {
+		out := make([]string, 0, 2)
+		for _, e := range filterConfigEntriesByDomain(parityConfigEntries(), n) {
+			out = append(out, e.EntryID)
+		}
+		return out
+	},
+	"hactl dash show/view": func(n string) []string {
+		if _, ok := selectView(parityViews(), n); !ok {
+			return nil
+		}
+		return []string{"wozi"}
+	},
+	"hactl log/component": func(n string) []string {
+		out := make([]string, 0, 2)
+		for _, e := range analyze.FilterByComponent(parityLogEntries(), n) {
+			out = append(out, e.Component)
+		}
+		return out
+	},
+}
+
+// forwardedFilters are the narrowing flags hactl does not apply. `companion
+// logs` sends --component and --level to the add-on as query parameters and
+// renders whatever comes back, so the case behaviour on the other side of that
+// wire is the companion's contract and this package holds no filter to probe.
+//
+// They are recorded rather than skipped: TestFilterSurfaceIsClosed treats an
+// entry here as a disposition, so a flag that is neither probed nor recorded
+// still fails the build — the property every surface in dev/surfaces has, that
+// no site can be silent.
+var forwardedFilters = map[string]string{
+	"hactl companion logs/component": "sent to the add-on as ?component= and applied there; " +
+		"the records that cross the wire are already filtered, so there is no local filter to hold to a pole",
+	"hactl companion logs/level": "sent to the add-on as ?level= and applied there as a minimum-level " +
+		"threshold, which is a comparison rather than a match on a value read off the screen",
+}
+
+// parityViews are two Lovelace views: one whose PATH carries the needle and one
+// whose TITLE does, so the probe covers both halves of selectView's match.
+func parityViews() []json.RawMessage {
+	return []json.RawMessage{
+		json.RawMessage(`{"path":"Wozi","title":"Wohnzimmer","cards":[]}`),
+		json.RawMessage(`{"path":"kueche","title":"Kitchen","cards":[]}`),
+	}
+}
+
+// parityHelperDomainRows differ in DOMAIN, which parityHelperRows cannot
+// express: its two rows differ in domain and in id at once, so a domain filter
+// and an id filter would be indistinguishable against them.
+func parityHelperDomainRows() []helperRow {
+	return []helperRow{
+		{ID: "mode_flag", Name: "Mode Flag", Domain: "Wozi", Source: "yaml"},
+		{ID: "kitchen_timer", Name: "Kitchen Timer", Domain: "timer", Source: "yaml"},
+	}
+}
+
+// parityDomainEntities carries one entity per domain so a --domain probe has a
+// domain to keep and a domain to drop. parityEntities' two rows differ in
+// domain AND in name, which a domain filter cannot tell apart.
+func parityDomainEntities() []entityState {
+	return []entityState{
+		{EntityID: "Wozi.ceiling", State: "on"},
+		{EntityID: "sensor.kitchen_temp", State: "21"},
+	}
+}
+
+func parityConfigEntries() []configEntry {
+	return []configEntry{
+		{EntryID: "entry_wozi", Domain: "Wozi", Title: "Wozi Integration"},
+		{EntryID: "entry_other", Domain: "kitchen", Title: "Kitchen Integration"},
+	}
+}
+
+func parityLogEntries() []analyze.LogEntry {
+	return []analyze.LogEntry{
+		{Component: "Wozi.controller", Message: "started"},
+		{Component: "kitchen.sensor", Message: "started"},
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -226,14 +323,32 @@ func entityIDs(states []entityState) []string {
 // filterDevices came to disagree with one another.
 func TestFilterSurfaceIsClosed(t *testing.T) {
 	var missing []string
+	for key := range walkCaseQuestionFlags() {
+		if probes[key] == nil && forwardedFilters[key] == "" {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	for _, k := range missing {
+		t.Errorf("filter %q has no probe — add one to `probes` in surface_filter_test.go, "+
+			"so its case behaviour is held to the D-2 pole alongside its siblings "+
+			"(or, if hactl forwards it to the companion rather than applying it, say so in "+
+			"`forwardedFilters` — the one thing it may not do is leave no trace)", k)
+	}
+	if len(probes) == 0 {
+		t.Fatal("no probes are registered — the case gate proves nothing")
+	}
+}
+
+// walkCaseQuestionFlags returns every "<command path>/<flag>" in the live tree
+// where case is a question, keyed the way `probes` is.
+func walkCaseQuestionFlags() map[string]*pflag.Flag {
+	out := map[string]*pflag.Flag{}
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
-			if !filterFlags[f.Name] {
-				return
-			}
-			if key := c.CommandPath() + "/" + f.Name; probes[key] == nil {
-				missing = append(missing, key)
+			if caseQuestionFlag(f) {
+				out[c.CommandPath()+"/"+f.Name] = f
 			}
 		})
 		for _, sub := range c.Commands() {
@@ -241,13 +356,79 @@ func TestFilterSurfaceIsClosed(t *testing.T) {
 		}
 	}
 	walk(rootCmd)
-	sort.Strings(missing)
-	for _, k := range missing {
-		t.Errorf("filter %q has no probe — add one to `probes` in surface_filter_test.go, "+
-			"so its case behaviour is held to the D-2 pole alongside its siblings", k)
+	return out
+}
+
+// TestNarrowingFlagsDeclareThemselves holds the tree to the convention
+// narrowsListing derives from: a flag that narrows a listing says so at the
+// FRONT of its help text ("filter by …", "show only …").
+//
+// The derivation is only as good as the convention, and a convention with no
+// gate is a comment. A flag whose help mentions filtering in the middle of a
+// sentence would read to a human as a filter and to narrowsListing as not one,
+// which is the exact failure mode the hand-written `filterFlags` had: silent
+// absence from a surface. Here it fails the build, and the fix is a five-word
+// edit to the help text.
+func TestNarrowingFlagsDeclareThemselves(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			usage := strings.ToLower(f.Usage)
+			if !strings.Contains(usage, "filter") || narrowsListing(f) {
+				return
+			}
+			t.Errorf("%s --%s says it filters (%q) but not at the front of its help, so "+
+				"narrowsListing does not see it: it would leave the case gate and its "+
+				"listing's empty answer would not name it. Reword the help to open with "+
+				"\"filter …\" or \"show only …\".", c.CommandPath(), f.Name, f.Usage)
+		})
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
 	}
-	if len(probes) == 0 {
-		t.Fatal("no probes are registered — the case gate proves nothing")
+	walk(rootCmd)
+}
+
+// TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints — D-28, over every
+// --pattern in the tree rather than the one command that reported it.
+//
+// `helper ls --pattern 'anwesen*'` matched nothing while `--pattern
+// anwesenheit` matched six, because the glob was anchored against the whole
+// printed id and helper ids are `input_boolean.anwesenheit_flur` (finding #29).
+// Every fixture below carries a record whose UNQUALIFIED name starts with the
+// needle, so a glob anchored only at the front of the qualified id fails here
+// exactly as it failed live.
+//
+// The set walked is the live tree's `--pattern` flags, so a listing that grows
+// one inherits the rule; a probe missing from `probes` is already a build
+// failure via TestFilterSurfaceIsClosed.
+func TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints(t *testing.T) {
+	anchored := 0
+	for key, f := range walkCaseQuestionFlags() {
+		if !strings.Contains(strings.ToLower(f.Usage), "glob") {
+			continue
+		}
+		probe := probes[key]
+		if probe == nil {
+			continue // TestFilterSurfaceIsClosed reports this
+		}
+		anchored++
+		substring := probe(parityNeedle)
+		if len(substring) == 0 {
+			t.Errorf("probe %q matches nothing as a substring — its fixture no longer exercises the filter", key)
+			continue
+		}
+		if got := probe(parityNeedle + "*"); !equalSets(got, substring) {
+			t.Errorf("%s: %q→%v but %q→%v.\n"+
+				"    D-28 (docs/decisions.md): a glob is anchored at every identifier form the\n"+
+				"    listing prints — the id as printed AND the part after the domain. Every\n"+
+				"    record here is named %[4]q…, so a glob that finds fewer than the substring\n"+
+				"    does is anchored against the domain prefix, not against the name.",
+				key, parityNeedle+"*", got, parityNeedle, substring)
+		}
+	}
+	if anchored == 0 {
+		t.Fatal("no glob-documented filter was walked — the extractor has stopped matching and this gate proves nothing")
 	}
 }
 

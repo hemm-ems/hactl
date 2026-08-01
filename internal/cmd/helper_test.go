@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -66,7 +66,7 @@ func TestRunHelperLs_UnionsStorageAndYAML(t *testing.T) {
 	companionBody := `{"helpers":[{"id":"guest_mode","name":"Guest Mode","domain":"input_boolean"}]}`
 	statesBody := `[
 		{"entity_id":"input_boolean.guest_mode","state":"off","attributes":{"friendly_name":"Guest Mode"}},
-		{"entity_id":"input_number.target_temp","state":"21","attributes":{"friendly_name":"Target Temp"}},
+		{"entity_id":"input_number.target_temp","state":"21","attributes":{"friendly_name":"Target Temp","editable":true}},
 		{"entity_id":"sensor.not_a_helper","state":"1","attributes":{}}
 	]`
 	dir := helperEnv(t, helperCompanionHandler(companionBody), helperStatesHandler(statesBody))
@@ -76,7 +76,7 @@ func TestRunHelperLs_UnionsStorageAndYAML(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs: %v", err)
 	}
 	out := buf.String()
@@ -109,8 +109,8 @@ func TestRunHelperLs_StorageOnly_NoLongerReportsNoHelpers(t *testing.T) {
 	// helpers".
 	companionBody := `{"helpers":[]}`
 	statesBody := `[
-		{"entity_id":"input_boolean.night_mode","state":"on","attributes":{"friendly_name":"Night Mode"}},
-		{"entity_id":"counter.laundry_loads","state":"3","attributes":{"friendly_name":"Laundry Loads"}},
+		{"entity_id":"input_boolean.night_mode","state":"on","attributes":{"friendly_name":"Night Mode","editable":true}},
+		{"entity_id":"counter.laundry_loads","state":"3","attributes":{"friendly_name":"Laundry Loads","editable":true}},
 		{"entity_id":"input_button.restart_router","state":"unknown","attributes":{"friendly_name":"Restart Router"}}
 	]`
 	dir := helperEnv(t, helperCompanionHandler(companionBody), helperStatesHandler(statesBody))
@@ -120,7 +120,7 @@ func TestRunHelperLs_StorageOnly_NoLongerReportsNoHelpers(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs: %v", err)
 	}
 	out := buf.String()
@@ -155,7 +155,7 @@ func TestRunHelperLs_DomainFilter_ReachesStorageOnlyDomain(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs --domain input_button: %v", err)
 	}
 	out := buf.String()
@@ -169,7 +169,7 @@ func TestRunHelperLs_DomainFilter_ReachesStorageOnlyDomain(t *testing.T) {
 
 func TestRunHelperLs_JSON_Mixed(t *testing.T) {
 	companionBody := `{"helpers":[{"id":"guest_mode","name":"Guest Mode","domain":"input_boolean"}]}`
-	statesBody := `[{"entity_id":"input_number.target_temp","state":"21","attributes":{"friendly_name":"Target Temp"}}]`
+	statesBody := `[{"entity_id":"input_number.target_temp","state":"21","attributes":{"friendly_name":"Target Temp","editable":true}}]`
 	dir := helperEnv(t, helperCompanionHandler(companionBody), helperStatesHandler(statesBody))
 	withFlagDir(t, dir)
 	withFlagJSON(t, true)
@@ -178,7 +178,7 @@ func TestRunHelperLs_JSON_Mixed(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON: %v", err)
 	}
 	v := assertValidJSON(t, buf.String())
@@ -203,6 +203,68 @@ func TestRunHelperLs_JSON_Mixed(t *testing.T) {
 	}
 }
 
+// TestRunHelperLs_SourceFollowsEditableNotTheCodePath — finding #104.
+//
+// The three arms are the whole rule, and the third is why this case exists at
+// all. `helper ls` used to label every row the companion had not returned
+// `storage`, so the column reported which of hactl's two reads had produced the
+// row. On an instance whose helper domains are written inline in
+// configuration.yaml the companion returns nothing, and all 222 helpers were
+// announced as created in the Home Assistant UI — 42 of them wrongly, and 10
+// unknowably.
+//
+// The fixture carries what a real HA sends, which is the reason the rig never
+// caught this: no fixture in this repository set `editable` on a helper, so
+// hactl's invented value was never contradicted by anything it read.
+func TestRunHelperLs_SourceFollowsEditableNotTheCodePath(t *testing.T) {
+	// No companion rows at all: the shape of an instance that configures its
+	// helper domains inline, which is the one the defect was found on.
+	companionBody := `{"helpers":[]}`
+	statesBody := `[
+		{"entity_id":"input_boolean.ui_made","state":"off","attributes":{"friendly_name":"UI Made","editable":true}},
+		{"entity_id":"input_number.inline_yaml","state":"21","attributes":{"friendly_name":"Inline YAML","editable":false}},
+		{"entity_id":"input_button.a_restored_ghost","state":"unavailable","attributes":{"friendly_name":"Ghost","restored":true}}
+	]`
+	dir := helperEnv(t, helperCompanionHandler(companionBody), helperStatesHandler(statesBody))
+	withFlagDir(t, dir)
+	withFlagJSON(t, true)
+	old := flagHelperDomain
+	flagHelperDomain = ""
+	defer func() { flagHelperDomain = old }()
+
+	var buf bytes.Buffer
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
+		t.Fatalf("runHelperLs: %v", err)
+	}
+	arr, ok := assertValidJSON(t, buf.String()).([]any)
+	if !ok {
+		t.Fatalf("output is not a JSON array: %s", buf.String())
+	}
+
+	got := map[string]string{}
+	for _, item := range arr {
+		row, isObj := item.(map[string]any)
+		if !isObj {
+			t.Fatalf("row is not an object: %v", item)
+		}
+		id, _ := row["id"].(string)
+		src, _ := row["source"].(string)
+		got[id] = src
+	}
+
+	for _, c := range []struct{ id, want, why string }{
+		{"input_boolean.ui_made", "storage", "editable:true is a storage collection"},
+		{"input_number.inline_yaml", "yaml", "editable:false is a YAML definition, wherever the file lives"},
+		{"input_button.a_restored_ghost", "", "a restored ghost carries no editable, and absent is not evidence"},
+	} {
+		if src, listed := got[c.id]; !listed {
+			t.Errorf("%s is missing from the listing entirely", c.id)
+		} else if src != c.want {
+			t.Errorf("%s: source=%q, want %q — %s", c.id, src, c.want, c.why)
+		}
+	}
+}
+
 func TestRunHelperLs_JSON_Empty(t *testing.T) {
 	dir := helperEnv(t, helperCompanionHandler(`{"helpers":[]}`), helperStatesHandler(`[]`))
 	withFlagDir(t, dir)
@@ -212,7 +274,7 @@ func TestRunHelperLs_JSON_Empty(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON empty: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -233,7 +295,7 @@ func TestRunHelperLs_JSON_Empty_HAUnreachable(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs JSON, HA unreachable: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -256,7 +318,7 @@ func TestRunHelperLs_PatternAndNameFilters(t *testing.T) {
 		defer func() { flagHelperPattern, flagHelperName = oldP, oldN }()
 		set()
 		var buf bytes.Buffer
-		if err := runHelperLs(context.Background(), &buf); err != nil {
+		if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 			t.Fatalf("runHelperLs: %v", err)
 		}
 		return buf.String()

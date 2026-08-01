@@ -3,13 +3,20 @@
 # nothing to narrow.
 #
 # The surface is the live cobra tree: every leaf command named `ls`, walked by
-# TestLsFilterSurfaceIsClosed — with or WITHOUT a filter flag. The other two
-# filter gates close over flags that exist (TestFilterSurfaceIsClosed demands
-# a probe per present flag; TestFilterFlagsAgreeOnCase holds each probe to the
-# D-2 pole), so a listing lacking --pattern never entered any walk and its
+# TestLsFilterSurfaceIsClosed — with or WITHOUT a filter flag. The other filter
+# gates close over flags that EXIST (TestFilterSurfaceIsClosed demands a probe
+# per narrowing flag; TestFilterFlagsAgreeOnCase holds each probe to the D-2
+# pole; TestEveryNarrowedListingSaysWhatNarrowedIt drives each until it finds
+# nothing), so a listing lacking --pattern never entered any walk and its
 # absence was indistinguishable from a decision. That is how `helper ls`
 # shipped filterless beside four filtered siblings (#108): a forgotten flag
 # left no trace anywhere. This ledger is where the trace lives now (#109).
+#
+# Those gates take their set from each flag's declared purpose (`narrowsListing`,
+# internal/cmd/listing.go) rather than from a list of flag names, which is what
+# `config entries --domain` and both `--component` filters escaped for as long
+# as the list existed — none of them is named `ls`, so this manifest would not
+# have caught them either.
 #
 # `proven` names the case gate that exercises the flag's probe — presence of
 # the probe itself is enforced by TestFilterSurfaceIsClosed, and

@@ -168,6 +168,100 @@ func TestLoad_MissingEnv_HasDiscoveryOrder(t *testing.T) {
 	}
 }
 
+// TestLoad_ExplicitDirNamesThePathItTried is findings #55/#77: an explicit
+// --dir or $HACTL_DIR that does not resolve printed the same generic four-step
+// discovery block as passing nothing at all, so the one message that knew a
+// path had been typed was the one that would not repeat it back.
+//
+// The oracle for "what should it look like" is the sibling error one branch
+// down: a .env that exists but is missing HA_TOKEN answers `no HA_TOKEN in
+// .env at <path>`. The last subtest pins that sibling here, because the whole
+// finding is a divergence between two errors from the same function and a test
+// that watches only one of them cannot see a divergence at all.
+func TestLoad_ExplicitDirNamesThePathItTried(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-an-instance")
+
+	for _, tc := range []struct {
+		name       string
+		wantSource string
+		load       func(t *testing.T) error
+	}{
+		{
+			name:       "--dir",
+			wantSource: "--dir",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("HACTL_DIR", "")
+				_, err := Load(missing)
+				return err
+			},
+		},
+		{
+			name:       "HACTL_DIR",
+			wantSource: "$HACTL_DIR",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("HACTL_DIR", missing)
+				_, err := Load("")
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.load(t)
+			if err == nil {
+				t.Fatal("expected an error for a directory with no .env")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, missing) {
+				t.Errorf("error does not name the path the caller gave (%s):\n%s", missing, msg)
+			}
+			if !strings.Contains(msg, tc.wantSource) {
+				t.Errorf("error does not say the path came from %s:\n%s", tc.wantSource, msg)
+			}
+			// The four-step block still follows — `hactl setup` is offered there
+			// and a typo'd --dir is exactly when it is wanted.
+			if !strings.Contains(msg, "hactl setup") {
+				t.Errorf("error dropped the quick-start hint:\n%s", msg)
+			}
+			// Exit code 2 is the contract for a configuration error and must
+			// survive the rewrite.
+			type exiter interface{ ExitCode() int }
+			var ec exiter
+			if !errors.As(err, &ec) || ec.ExitCode() != 2 {
+				t.Errorf("explicit-dir failure lost its exit code 2: %T", err)
+			}
+		})
+	}
+
+	// Discovery names nothing, because the caller named nothing.
+	t.Run("discovery keeps the generic headline", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("HACTL_DIR", "")
+		t.Chdir(t.TempDir())
+		_, err := Load("")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "no hactl instance configured") {
+			t.Errorf("discovery failure should keep the generic headline:\n%s", err.Error())
+		}
+	})
+
+	// The sibling this was harmonised toward.
+	t.Run("an incomplete .env already named its path", func(t *testing.T) {
+		dir := t.TempDir()
+		writeEnv(t, dir, "HA_URL="+testHAURL+"\n")
+		_, err := Load(dir)
+		if err == nil {
+			t.Fatal("expected an error for a .env with no HA_TOKEN")
+		}
+		if !strings.Contains(err.Error(), dir) {
+			t.Errorf("the sibling error stopped naming its path — the two have diverged again:\n%s", err.Error())
+		}
+	})
+}
+
 func TestLoad_MissingEnv_ExitCode(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir()) // isolate from a real ~/.hactl/default

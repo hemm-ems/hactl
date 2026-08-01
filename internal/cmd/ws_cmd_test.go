@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +35,7 @@ type cmdTestServer struct {
 	dir       string
 	mu        sync.Mutex
 	cmdCounts map[string]int
+	cmdParams map[string]map[string]any
 }
 
 // wsErrorResponse makes startCmdServer answer a WS command with success=false
@@ -50,7 +53,10 @@ type wsErrorResponse struct {
 func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[string]http.HandlerFunc) *cmdTestServer {
 	t.Helper()
 	mux := http.NewServeMux()
-	ts := &cmdTestServer{cmdCounts: make(map[string]int)}
+	ts := &cmdTestServer{
+		cmdCounts: make(map[string]int),
+		cmdParams: make(map[string]map[string]any),
+	}
 
 	mux.HandleFunc("/api/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := cmdWSUpgrader.Upgrade(w, r, nil)
@@ -73,6 +79,7 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 			cmdType, _ := cmd["type"].(string)
 			ts.mu.Lock()
 			ts.cmdCounts[cmdType]++
+			ts.cmdParams[cmdType] = cmd
 			ts.mu.Unlock()
 			respData, ok := wsResponses[cmdType]
 			if !ok {
@@ -134,10 +141,75 @@ func startCmdServer(t *testing.T, wsResponses map[string]any, httpHandlers map[s
 	return ts
 }
 
+// withCompanionEntry adds the companion's single-entry automation route to a
+// cmd rig and points the instance's .env at it.
+//
+// `auto diff`/`apply`/`rollback` write through that route rather than through
+// Home Assistant's own config endpoint (D-14, issue #128), so a rig that
+// serves only HA describes an instance where these commands cannot run at all.
+// entry is YAML TEXT — what the route serves and what the diff compares.
+// The returned pointer receives the body of a confirmed write, so a test can
+// assert on the bytes that would land rather than on what was printed.
+func withCompanionEntry(t *testing.T, entry string, ids ...string) (handlers map[string]http.HandlerFunc, written *string) {
+	t.Helper()
+	var mu sync.Mutex
+	body := new(string)
+	// The route holds ONE entry and 404s for anything else, as the real one
+	// does. A stub answering every id turns "the preview resolves its target"
+	// into a claim nothing can falsify.
+	holds := func(id string) bool {
+		if len(ids) == 0 {
+			return true
+		}
+		return slices.Contains(ids, id)
+	}
+	return map[string]http.HandlerFunc{
+		"/v1/config/automation": func(w http.ResponseWriter, r *http.Request) {
+			if !holds(r.URL.Query().Get("id")) {
+				http.Error(w, "Automation not found: "+r.URL.Query().Get("id"), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				payload, _ := json.Marshal(map[string]string{"id": r.URL.Query().Get("id"), "content": entry})
+				_, _ = w.Write(payload)
+			case http.MethodPut:
+				raw, _ := io.ReadAll(r.Body)
+				if r.URL.Query().Get("dry_run") != "true" {
+					mu.Lock()
+					*body = string(raw)
+					mu.Unlock()
+				}
+				_, _ = fmt.Fprint(w, `{"status":"applied","reloaded":true}`)
+			default:
+				http.Error(w, "not found", http.StatusNotFound)
+			}
+		},
+	}, body
+}
+
+// pointAtCompanion rewrites the rig's .env so the companion is the same server.
+func pointAtCompanion(t *testing.T, ts *cmdTestServer) {
+	t.Helper()
+	writeRefEnv(t, ts.dir, ts.srv.URL, ts.srv.URL)
+}
+
 func (ts *cmdTestServer) commandCount(cmdType string) int {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	return ts.cmdCounts[cmdType]
+}
+
+// lastParams returns the full envelope of the most recent WS command of that
+// type, so a test can assert on what hactl actually put on the wire rather than
+// on what it printed afterwards. A flag that is silently dropped before the
+// request is invisible to any assertion on hactl's own output — which is how
+// `floor create --level 0` shipped.
+func (ts *cmdTestServer) lastParams(cmdType string) map[string]any {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.cmdParams[cmdType]
 }
 
 // withFlagDir sets flagDir for the duration of a test and restores afterward.
@@ -431,7 +503,7 @@ func TestRunEntLs_WithStates(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs failed: %v", err)
 	}
 	out := buf.String()
@@ -463,7 +535,7 @@ func TestRunEntLs_DomainFilter(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs with domain filter failed: %v", err)
 	}
 	out := buf.String()
@@ -489,20 +561,26 @@ func TestRunEntLs_Empty(t *testing.T) {
 	defer func() { flagEntDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs empty failed: %v", err)
 	}
-	// An instance with no entities has to render as the header and nothing
-	// else. The two failure modes worth separating are a listing that invents
-	// rows and a listing that swallows the header along with the rows, so the
-	// caller cannot tell "no entities" from "the command printed nothing".
+	// An instance with no entities says so, in one line, and says nothing more:
+	// nothing narrowed this listing, so there is no narrowing to name and no
+	// count to report. The two failure modes worth separating are a listing
+	// that invents rows and a listing that prints nothing at all, leaving the
+	// caller unable to tell "no entities" from "the command produced no output".
+	//
+	// It used to answer with the bare table header. Honest, and mute: the same
+	// header is what `ent ls --pattern zzz` printed on an instance holding
+	// 4 486 entities, so the two answers a caller most needs to tell apart were
+	// byte-identical (live-fire #28).
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 1 {
-		t.Fatalf("empty /api/states rendered %d lines, want header only: %q", len(lines), out)
+		t.Fatalf("empty /api/states rendered %d lines, want one: %q", len(lines), out)
 	}
-	if !strings.Contains(lines[0], "entity_id") || !strings.Contains(lines[0], "last_changed") {
-		t.Errorf("header line = %q, want the entity_id..last_changed columns", lines[0])
+	if lines[0] != "no entities" {
+		t.Errorf("empty listing = %q, want %q", lines[0], "no entities")
 	}
 	// The `restored` column is conditional on at least one restored entity;
 	// with no entities at all it must not appear.
@@ -529,10 +607,26 @@ const errorLogFixture = "2026-01-01 10:00:00.000 ERROR (Main) [homeassistant.com
 // missing.
 func startErrorLogServer(t *testing.T) *cmdTestServer {
 	t.Helper()
-	return startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
+	return startCmdServer(t, map[string]any{
+		// `cc logs <name>` resolves the name against HA's own component
+		// inventory before it reads a line of log (finding #18), so the two
+		// components the fixture logs for have to exist as far as HA is
+		// concerned. `log` itself never asks.
+		"manifest/list": []map[string]any{
+			{"domain": "alpha", "name": "Alpha", "is_built_in": false},
+			{"domain": "beta", "name": "Beta", "is_built_in": false},
+		},
+	}, map[string]http.HandlerFunc{
 		"/api/error_log": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = fmt.Fprint(w, errorLogFixture)
+		},
+		// fetchCustomComponents enriches a confirmed component's version from
+		// its update.* entity; there is none here, and an unstubbed /api/states
+		// would fail the command before the resolution it is stubbed for.
+		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"entity_id":"sensor.probe","state":"1"}]`)
 		},
 	})
 }
@@ -562,7 +656,7 @@ func TestRunLog_HTTPFallback(t *testing.T) {
 	withLogFlags(t, false, "", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog HTTP fallback failed: %v", err)
 	}
 	out := buf.String()
@@ -615,7 +709,7 @@ func TestRunAutoLs_WithAutomations(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs failed: %v", err)
 	}
 	out := buf.String()
@@ -649,7 +743,7 @@ func TestRunConfigEntries_WithEntries(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries failed: %v", err)
 	}
 	out := buf.String()
@@ -681,7 +775,7 @@ func TestRunConfigEntries_DomainFilter(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries with filter failed: %v", err)
 	}
 	out := buf.String()
@@ -707,7 +801,7 @@ func TestRunConfigEntries_Empty(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries empty failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no config entries") {
@@ -1106,46 +1200,6 @@ func TestRunConfigShow_ProbeAbortsOnParseFailure(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "could not parse options flow") {
 		t.Errorf("note should report the parse failure: %q", buf.String())
-	}
-}
-
-// --- truncateStr ---
-
-func TestTruncateStr_Short(t *testing.T) {
-	got := truncateStr("hello", 10)
-	if got != "hello" {
-		t.Errorf("truncateStr short = %q, want 'hello'", got)
-	}
-}
-
-func TestTruncateStr_Long(t *testing.T) {
-	got := truncateStr("this is a very long description that exceeds the limit", 20)
-	// The function appends a multi-byte ellipsis, so byte length may exceed maxLen.
-	// Verify the string was actually truncated and ends with an ellipsis character.
-	if got == "this is a very long description that exceeds the limit" {
-		t.Error("truncateStr long: string was not truncated")
-	}
-	if strings.HasSuffix(got, " ") {
-		t.Errorf("truncateStr long should end with ellipsis, got: %q", got)
-	}
-	// Result must be shorter than the input
-	if len(got) >= len("this is a very long description that exceeds the limit") {
-		t.Errorf("truncateStr long: result not shorter than input: %q", got)
-	}
-}
-
-func TestTruncateStr_Exact(t *testing.T) {
-	s := "exactly-ten!"
-	got := truncateStr(s, len(s))
-	if got != s {
-		t.Errorf("truncateStr exact = %q, want %q", got, s)
-	}
-}
-
-func TestTruncateStr_Whitespace(t *testing.T) {
-	got := truncateStr("  trim me  ", 20)
-	if strings.HasPrefix(got, " ") || strings.HasSuffix(got, " ") {
-		t.Errorf("truncateStr should trim whitespace: %q", got)
 	}
 }
 
@@ -1589,7 +1643,7 @@ func TestRunDeviceLs(t *testing.T) {
 	defer func() { flagDeviceLabel = oldLabel }()
 
 	var buf bytes.Buffer
-	if err := runDeviceLs(context.Background(), &buf); err != nil {
+	if err := runDeviceLs(listingCmd(context.Background(), "device", "ls"), &buf); err != nil {
 		t.Fatalf("runDeviceLs failed: %v", err)
 	}
 	out := buf.String()
@@ -1851,17 +1905,9 @@ func withCCLogsUnique(t *testing.T, unique bool) {
 // --- runRollback (HTTP) ---
 
 func TestRunRollback_WithBackup(t *testing.T) {
-	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-		"/api/services/automation/reload": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
-		},
-	})
+	handlers, written := withCompanionEntry(t, "alias: Current\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	// Create backup dir in the flagDir
@@ -1885,6 +1931,11 @@ func TestRunRollback_WithBackup(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "rolled back") {
 		t.Errorf("output missing 'rolled back': %q", out)
+	}
+	// An undo restores what was taken: the backup's own bytes go back, not a
+	// re-serialization of them.
+	if want := "alias: Backup\ntrigger: []\ncondition: []\naction: []\n"; *written != want {
+		t.Errorf("rollback wrote %q, want the backup file verbatim %q", *written, want)
 	}
 }
 
@@ -2058,6 +2109,9 @@ func TestRunCCShow_JSON(t *testing.T) {
 
 	ts := startCmdServer(t, map[string]any{
 		"manifest/list": manifests,
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "update.hacs_update", "platform": "hacs_update", "unique_id": "u1"},
+		},
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -2093,6 +2147,143 @@ func TestRunCCShow_JSON(t *testing.T) {
 	}
 	if got.IsBuiltIn {
 		t.Errorf("is_built_in = true, want false (it was only returned because manifest/list said non-built-in)")
+	}
+}
+
+// TestRunCCShow_ReconcilesWithTheRegistry is the second half of finding #15,
+// and it exists because the live oracle owed for the first half turned it up.
+//
+// Comparing `cc show` against the entity registry for all fourteen custom
+// components on the reference instance: eleven agree exactly (ovms 467,
+// powercalc 218) and three do not — dwd_weather 19 against 75, hacs 19 against
+// 38, homematicip_local 159 against 402. Every entity in every difference is
+// DISABLED, and across all 5524 registry rows on that instance there is not one
+// that lacks a live state for any other reason.
+//
+// So the live-state filter never did what its comment said ("a stale registry
+// row for a removed device does not inflate the answer"); what it removed was
+// entities the integration owns and somebody turned off, silently, up to 60% of
+// them. Both counts are reported now, which is H-11: a count reconciles with
+// the count its source reported.
+func TestRunCCShow_ReconcilesWithTheRegistry(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.watch_alpha", "state": "1", "attributes": map[string]any{}},
+		{"entity_id": "sensor.watch_beta", "state": "2", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": []map[string]any{
+			{"domain": "shapewatch", "name": "Shape Watch", "is_built_in": false},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.watch_alpha", "platform": "shapewatch", "unique_id": "a"},
+			{"entity_id": "sensor.watch_beta", "platform": "shapewatch", "unique_id": "b"},
+			// Owned by the integration, disabled by it, so HA holds no state.
+			{"entity_id": "sensor.watch_gamma", "platform": "shapewatch", "unique_id": "c",
+				"disabled_by": "integration"},
+			// Owned by the integration, disabled by the user.
+			{"entity_id": "sensor.watch_delta", "platform": "shapewatch", "unique_id": "d",
+				"disabled_by": "user"},
+			// A different integration's entity in the same entity domain: the
+			// control that keeps the join honest.
+			{"entity_id": "sensor.somebody_else", "platform": "other", "unique_id": "e"},
+		},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runCCShow(context.Background(), &buf, "shapewatch"); err != nil {
+		t.Fatalf("runCCShow --json failed: %v", err)
+	}
+	var got struct {
+		EntityCount       int      `json:"entity_count"`
+		EntityIDs         []string `json:"entity_ids"`
+		DisabledCount     int      `json:"disabled_count"`
+		DisabledEntityIDs []string `json:"disabled_entity_ids"`
+		RegistryCount     int      `json:"registry_count"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+
+	if got.EntityCount != 2 {
+		t.Errorf("entity_count = %d, want 2 (the entities HA holds a state for)", got.EntityCount)
+	}
+	if got.DisabledCount != 2 {
+		t.Errorf("disabled_count = %d, want 2 — a disabled entity is owned by the integration "+
+			"and was being subtracted with nothing naming it", got.DisabledCount)
+	}
+	if got.RegistryCount != 4 {
+		t.Errorf("registry_count = %d, want 4 — the count the registry itself reports for this "+
+			"platform, which is what the other two have to reconcile against (H-11)", got.RegistryCount)
+	}
+	for _, id := range got.EntityIDs {
+		if strings.Contains(id, "somebody_else") {
+			t.Errorf("entity_ids carries %q, owned by another integration", id)
+		}
+	}
+	if len(got.DisabledEntityIDs) != 2 {
+		t.Errorf("disabled_entity_ids = %v, want both disabled entities named — a count a caller "+
+			"cannot expand into ids is a number they have to take on trust", got.DisabledEntityIDs)
+	}
+}
+
+// TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted — a registry row that is
+// neither live nor disabled is the case the old filter SAID it was handling. It
+// is counted in registry_count and named nowhere else, so the three numbers stop
+// adding up and say so, instead of the row being quietly removed.
+func TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted(t *testing.T) {
+	states := []map[string]any{
+		{"entity_id": "sensor.watch_alpha", "state": "1", "attributes": map[string]any{}},
+	}
+	statesJSON, _ := json.Marshal(states)
+
+	ts := startCmdServer(t, map[string]any{
+		"manifest/list": []map[string]any{
+			{"domain": "shapewatch", "name": "Shape Watch", "is_built_in": false},
+		},
+		"config/entity_registry/list": []map[string]any{
+			{"entity_id": "sensor.watch_alpha", "platform": "shapewatch", "unique_id": "a"},
+			{"entity_id": "sensor.watch_ghost", "platform": "shapewatch", "unique_id": "g"},
+		},
+	}, map[string]http.HandlerFunc{
+		"/api/states": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(statesJSON)
+		},
+	})
+	withFlagDir(t, ts.dir)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runCCShow(context.Background(), &buf, "shapewatch"); err != nil {
+		t.Fatalf("runCCShow --json failed: %v", err)
+	}
+	var got struct {
+		EntityCount   int `json:"entity_count"`
+		DisabledCount int `json:"disabled_count"`
+		RegistryCount int `json:"registry_count"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.EntityCount != 1 || got.DisabledCount != 0 || got.RegistryCount != 2 {
+		t.Errorf("entity_count=%d disabled_count=%d registry_count=%d; want 1/0/2 — "+
+			"the stale row is in the registry total and in neither list, which is how it stays "+
+			"visible", got.EntityCount, got.DisabledCount, got.RegistryCount)
 	}
 }
 
@@ -2184,13 +2375,19 @@ func TestResolveTraceID_DirectKey(t *testing.T) {
 	}
 }
 
-func TestResolveTraceID_InvalidFormat(t *testing.T) {
+// TestResolveTraceID_NeitherAddressForm was TestResolveTraceID_InvalidFormat,
+// and the rename is the fix (#66): "invalid_format" is not invalid, it is an
+// automation reference, and calling it malformed is what made `trace show
+// 24v_booster_schalten` refuse an identifier the manual promises it accepts.
+// The assertion is now on the SENTINEL rather than on "an error", because the
+// caller branches on it.
+func TestResolveTraceID_NeitherAddressForm(t *testing.T) {
 	idsPath := filepath.Join(t.TempDir(), "ids.json")
 	reg := idsRegistry(idsPath)
 
 	_, _, _, err := resolveTraceID(reg, "invalid_format") //nolint:dogsled
-	if err == nil {
-		t.Fatal("expected error for invalid format, got nil")
+	if !errors.Is(err, errNotATraceReference) {
+		t.Fatalf("resolveTraceID = %v, want errNotATraceReference", err)
 	}
 }
 
@@ -2250,7 +2447,7 @@ func TestRunHelperLs_WithCompanion(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs failed: %v", err)
 	}
 	out := buf.String()
@@ -2283,7 +2480,7 @@ func TestRunHelperLs_Empty(t *testing.T) {
 	defer func() { flagHelperDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runHelperLs(context.Background(), &buf); err != nil {
+	if err := runHelperLs(listingCmd(context.Background(), "helper", "ls"), &buf); err != nil {
 		t.Fatalf("runHelperLs empty failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no helpers") {
@@ -2735,7 +2932,7 @@ func TestRunAutoLs_WithTraces(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with traces failed: %v", err)
 	}
 	out := buf.String()
@@ -3121,8 +3318,14 @@ func TestRunCCShow_Found(t *testing.T) {
 		{"domain": "hacs", "name": "HACS", "version": "1.34.0", "is_built_in": false},
 	}
 	// update.hacs carries the *installed* version, which must win over the
-	// manifest's 1.34.0. The two hacs.* entities are what `entities:` counts;
-	// sensor.temp and the built-in's entity must not be counted.
+	// manifest's 1.34.0.
+	//
+	// `entities:` counts what the REGISTRY attributes to the hacs platform, not
+	// what happens to be spelled `hacs.*`. sensor.hacs_downloads is the case
+	// that matters: it belongs to hacs and its entity_id begins with `sensor.`,
+	// so the prefix match this replaced could never see it — which is why the
+	// count came back 0 for virtually every real component (P2 #16). mqtt.broker
+	// and sensor.temp belong to other platforms and must stay out.
 	states := []map[string]any{
 		{
 			"entity_id": "update.hacs",
@@ -3135,13 +3338,24 @@ func TestRunCCShow_Found(t *testing.T) {
 		},
 		{"entity_id": "hacs.default", "state": "ok"},
 		{"entity_id": "hacs.repositories", "state": "ok"},
+		{"entity_id": "sensor.hacs_downloads", "state": "42"},
 		{"entity_id": "mqtt.broker", "state": "ok"},
 		{"entity_id": "sensor.temp", "state": "21.5"},
 	}
 	statesJSON, _ := json.Marshal(states)
 
+	registry := []map[string]any{
+		{"entity_id": "update.hacs", "platform": "hacs", "unique_id": "h0"},
+		{"entity_id": "hacs.default", "platform": "hacs", "unique_id": "h1"},
+		{"entity_id": "hacs.repositories", "platform": "hacs", "unique_id": "h2"},
+		{"entity_id": "sensor.hacs_downloads", "platform": "hacs", "unique_id": "h3"},
+		{"entity_id": "mqtt.broker", "platform": "mqtt", "unique_id": "m1"},
+		{"entity_id": "sensor.temp", "platform": "met", "unique_id": "t1"},
+	}
+
 	ts := startCmdServer(t, map[string]any{
-		"manifest/list": manifests,
+		"manifest/list":               manifests,
+		"config/entity_registry/list": registry,
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -3163,7 +3377,7 @@ func TestRunCCShow_Found(t *testing.T) {
 		"domain:   hacs",
 		"name:     HACS",
 		"version:  1.32.0", // installed_version from update.hacs, not the manifest
-		"entities: 2",      // hacs.default + hacs.repositories only
+		"entities: 4",      // every entity the registry attributes to hacs, whatever its entity domain
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q: %q", want, out)
@@ -3571,18 +3785,23 @@ func TestReadLine(t *testing.T) {
 // --- runAutoDiff (HTTP) ---
 
 func TestRunAutoDiff_NoChanges(t *testing.T) {
-	remoteJSON := `{"alias":"Climate Schedule","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/climate_schedule": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	const stored = "alias: Climate Schedule\ntrigger: []\ncondition: []\naction: []\n"
+	handlers, _ := withCompanionEntry(t, stored)
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
-	// Create local file matching remote
+	// The local file IS the stored entry — the `auto cat > file` round trip the
+	// manual teaches. That is what "no changes" means now.
+	//
+	// It used to mean something weaker and wrong. This case fed the same keys
+	// in a DIFFERENT order and asserted "no changes", with a comment claiming
+	// "the whole point of the diff is that key order is not a change". Key
+	// order is exactly what a confirmed write puts on disk (finding #93): the
+	// diff was silent about it because both of its sides had been sorted, and
+	// this test pinned that silence as correct.
 	localFile := filepath.Join(ts.dir, "climate_schedule.yaml")
-	if err := os.WriteFile(localFile, []byte("alias: Climate Schedule\naction: []\ncondition: []\ntrigger: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(localFile, []byte(stored), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3594,24 +3813,30 @@ func TestRunAutoDiff_NoChanges(t *testing.T) {
 	if err := runAutoDiff(context.Background(), &buf, "climate_schedule"); err != nil {
 		t.Fatalf("runAutoDiff failed: %v", err)
 	}
-	// The local YAML says the same thing as the remote JSON, only with the keys
-	// in a different order. The whole point of the diff is that key order is
-	// not a change, so the answer is a single "no changes" line naming the
-	// automation — not a diff hunk, and not silence.
 	out := buf.String()
 	if out != "climate_schedule: no changes\n" {
 		t.Errorf("output = %q, want %q", out, "climate_schedule: no changes\n")
 	}
+
+	// The other half of the correction: a file that says the same thing in a
+	// different order IS a change, because a confirmed write would land it.
+	reordered := "trigger: []\nalias: Climate Schedule\naction: []\ncondition: []\n"
+	if err := os.WriteFile(localFile, []byte(reordered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := runAutoDiff(context.Background(), &buf, "climate_schedule"); err != nil {
+		t.Fatalf("runAutoDiff on the reordered file: %v", err)
+	}
+	if strings.Contains(buf.String(), "no changes") {
+		t.Errorf("a reordered file reports no changes; the confirmed write would reorder the entry on disk:\n%s", buf.String())
+	}
 }
 
 func TestRunAutoDiff_WithChanges(t *testing.T) {
-	remoteJSON := `{"alias":"Old Name","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/my_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	handlers, _ := withCompanionEntry(t, "alias: Old Name\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "my_auto.yaml")
@@ -3636,13 +3861,9 @@ func TestRunAutoDiff_WithChanges(t *testing.T) {
 // --- runAutoApply (HTTP, no WS needed for dry-run) ---
 
 func TestRunAutoApply_DryRun(t *testing.T) {
-	remoteJSON := `{"alias":"Current","trigger":[],"condition":[],"action":[]}`
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/test_auto": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteJSON)
-		},
-	})
+	handlers, _ := withCompanionEntry(t, "alias: Current\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "test_auto.yaml")
@@ -3668,35 +3889,14 @@ func TestRunAutoApply_DryRun(t *testing.T) {
 }
 
 func TestRunAutoApply_Confirm(t *testing.T) {
-	remoteJSON := `{"alias":"Old","trigger":[],"condition":[],"action":[]}`
-	// Record what was actually pushed and whether HA was told to reload: an
-	// apply that prints "applied" without writing the new config, or writes it
-	// and never reloads, is the failure this test exists to catch.
-	var mu sync.Mutex
-	var written []byte
-	reloads := 0
-	ts := startCmdServer(t, map[string]any{}, map[string]http.HandlerFunc{
-		"/api/config/automation/config/": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			if r.Method == http.MethodGet {
-				_, _ = fmt.Fprint(w, remoteJSON)
-			} else {
-				body, _ := io.ReadAll(r.Body)
-				mu.Lock()
-				written = body
-				mu.Unlock()
-				w.WriteHeader(http.StatusOK)
-				_, _ = fmt.Fprint(w, `{}`)
-			}
-		},
-		"/api/services/automation/reload": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			reloads++
-			mu.Unlock()
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
-		},
-	})
+	// Record what was actually written: an apply that prints "applied" without
+	// putting the caller's file on the wire is the failure this test exists to
+	// catch. The reload is the companion's now — it reloads the domain as part
+	// of the same route and reports what happened, so a second reload call from
+	// hactl would be a second opinion nobody asked for.
+	handlers, written := withCompanionEntry(t, "alias: Old\ntrigger: []\ncondition: []\naction: []\n")
+	ts := startCmdServer(t, map[string]any{}, handlers)
+	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "the_auto.yaml")
@@ -3716,23 +3916,14 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 		t.Fatalf("runAutoApply confirm failed: %v (output: %q)", err, buf.String())
 	}
 
-	mu.Lock()
-	pushed, reloadCount := string(written), reloads
-	mu.Unlock()
-
-	// What reached HA matters more than what was printed.
+	// What reached the instance matters more than what was printed — and it is
+	// the caller's own bytes, not a re-serialization of them (finding #93).
+	pushed := *written
 	if pushed == "" {
-		t.Fatal("confirmed apply never wrote the automation config to HA")
+		t.Fatal("confirmed apply never wrote the automation entry")
 	}
-	var pushedCfg map[string]any
-	if err := json.Unmarshal([]byte(pushed), &pushedCfg); err != nil {
-		t.Fatalf("pushed body is not JSON: %v\n%s", err, pushed)
-	}
-	if pushedCfg["alias"] != "New" {
-		t.Errorf("pushed alias = %v, want \"New\" (the local file's alias)", pushedCfg["alias"])
-	}
-	if reloadCount != 1 {
-		t.Errorf("automation.reload called %d times, want exactly 1", reloadCount)
+	if want := "alias: New\ntrigger: []\ncondition: []\naction: []\n"; pushed != want {
+		t.Errorf("wrote %q, want the local file verbatim %q", pushed, want)
 	}
 
 	out := buf.String()
@@ -4071,7 +4262,7 @@ func TestRunFloorCreate(t *testing.T) {
 	defer func() { flagFloorConfirm = oldConfirm }()
 
 	var buf bytes.Buffer
-	if err := runFloorCreate(context.Background(), &buf, "Ground"); err != nil {
+	if err := runFloorCreate(context.Background(), &buf, "Ground", &level); err != nil {
 		t.Fatalf("runFloorCreate failed: %v", err)
 	}
 	out := buf.String()
@@ -4302,7 +4493,7 @@ func TestRunScriptLs_WithScripts(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runScriptLs(context.Background(), &buf); err != nil {
+	if err := runScriptLs(listingCmd(context.Background(), "script", "ls"), &buf); err != nil {
 		t.Fatalf("runScriptLs failed: %v", err)
 	}
 	out := buf.String()
@@ -4746,8 +4937,17 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 		{"domain": "hacs_update", "name": "HACS Update", "is_built_in": false},
 	}
 
+	// Only some_entity is attributed to the platform. update.hacs_update is the
+	// update entity HA's own `update` integration publishes ABOUT it, which is
+	// why attribution cannot be read off an entity_id in either direction.
+	registry := []map[string]any{
+		{"entity_id": "hacs_update.some_entity", "platform": "hacs_update", "unique_id": "s1"},
+		{"entity_id": "update.hacs_update", "platform": "update", "unique_id": "u1"},
+	}
+
 	ts := startCmdServer(t, map[string]any{
-		"manifest/list": manifests,
+		"manifest/list":               manifests,
+		"config/entity_registry/list": registry,
 	}, map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -4768,7 +4968,7 @@ func TestRunCCShow_WithEntityCount(t *testing.T) {
 		t.Errorf("output missing version: %q", out)
 	}
 	if !strings.Contains(out, "entities: 1") {
-		t.Errorf("output missing honest entity count (only update.hacs_update matches the domain prefix, not hacs_update.some_entity): %q", out)
+		t.Errorf("output missing honest entity count (the registry attributes only hacs_update.some_entity to this platform): %q", out)
 	}
 }
 
@@ -4918,7 +5118,7 @@ func TestRunLog_ErrorsFilter(t *testing.T) {
 	withLogFlags(t, true, "", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --errors failed: %v", err)
 	}
 	out := buf.String()
@@ -4951,7 +5151,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --warnings alone: only the WARNING line.
 	restore(false, true, false, "")
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --warnings failed: %v", err)
 	}
 	out := buf.String()
@@ -4965,7 +5165,7 @@ func TestRunLog_WarningsFilter(t *testing.T) {
 	// --errors --warnings: both, but not INFO.
 	restore(true, true, false, "")
 	buf.Reset()
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --errors --warnings failed: %v", err)
 	}
 	out = buf.String()
@@ -4986,7 +5186,7 @@ func TestRunLog_ComponentFilter(t *testing.T) {
 	withLogFlags(t, false, "alpha", false)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --component failed: %v", err)
 	}
 	out := buf.String()
@@ -5009,7 +5209,7 @@ func TestRunLog_Unique(t *testing.T) {
 	withLogFlags(t, false, "", true)
 
 	var buf bytes.Buffer
-	if err := runLog(context.Background(), &buf, false); err != nil {
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
 		t.Fatalf("runLog --unique failed: %v", err)
 	}
 	out := buf.String()
@@ -5091,7 +5291,7 @@ func TestRunAutoLs_WithPattern(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with pattern failed: %v", err)
 	}
 	out := buf.String()
@@ -5160,7 +5360,7 @@ func TestRunAutoLs_WithFailing(t *testing.T) {
 
 	var buf bytes.Buffer
 	// runAutoLs with --failing - should include only automations with errors
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs --failing failed: %v", err)
 	}
 	out := buf.String()
@@ -5640,7 +5840,7 @@ func TestRunAutoLs_WithRegistryContext(t *testing.T) {
 	defer func() { flagSince = oldSince }()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs with registry failed: %v", err)
 	}
 	out := buf.String()

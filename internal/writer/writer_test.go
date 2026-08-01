@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -205,7 +206,7 @@ func TestExtractAutoIDFromBackup(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	client := haapi.New("http://localhost", "token")
-	w := New(client, nil, "/tmp/backups")
+	w := New(client, nil, nil, "/tmp/backups")
 	if w == nil {
 		t.Fatal("New returned nil")
 	}
@@ -324,7 +325,7 @@ func connectValidateWS(t *testing.T, srv *httptest.Server) *haapi.WSClient {
 }
 
 func TestValidateCandidate_NoWSClientSkips(t *testing.T) {
-	w := New(haapi.New("http://localhost", "tok"), nil, "")
+	w := New(haapi.New("http://localhost", "tok"), nil, nil, "")
 	candidate := map[string]any{"triggers": []any{}, "conditions": []any{}, "actions": []any{}}
 	validated, err := w.ValidateCandidate(context.Background(), candidate)
 	if err != nil {
@@ -345,7 +346,7 @@ func TestValidateCandidate_Valid(t *testing.T) {
 	ws := connectValidateWS(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	w := New(haapi.New("http://localhost", "tok"), ws, "")
+	w := New(haapi.New("http://localhost", "tok"), ws, nil, "")
 	candidate := map[string]any{
 		"triggers":   []any{map[string]any{"trigger": "time", "at": "06:00:00"}},
 		"conditions": []any{},
@@ -368,7 +369,7 @@ func TestValidateCandidate_Rejected(t *testing.T) {
 	ws := connectValidateWS(t, srv)
 	defer func() { _ = ws.Close() }()
 
-	w := New(haapi.New("http://localhost", "tok"), ws, "")
+	w := New(haapi.New("http://localhost", "tok"), ws, nil, "")
 	candidate := map[string]any{
 		"triggers":   []any{map[string]any{"trigger": "state", "entity_id": "sensor.x"}},
 		"conditions": []any{map[string]any{"condition": "template", "value_template": "{{ broken"}},
@@ -386,29 +387,50 @@ func TestValidateCandidate_Rejected(t *testing.T) {
 	}
 }
 
-// makeWriterServer creates an httptest server that handles automation config operations.
-func makeWriterServer(t *testing.T, _ string, remoteConfig string) *httptest.Server {
+// makeWriterServer creates an httptest server standing in for the companion's
+// single-entry automation route — the one every write here goes through.
+//
+// remoteEntry is YAML TEXT, because that is what the route serves and what the
+// diff compares: a stub returning HA's JSON would let a test pass against a
+// Writer that had gone back to normalizing both sides through a map.
+func makeWriterServer(t *testing.T, _ string, remoteEntry string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/v1/config/automation"):
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, remoteConfig)
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
+			body, _ := json.Marshal(map[string]string{
+				"id":      r.URL.Query().Get("id"),
+				"content": remoteEntry,
+			})
+			_, _ = w.Write(body)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/v1/config/automation"):
 			body, _ := io.ReadAll(r.Body)
 			if len(body) == 0 {
 				http.Error(w, "empty body", http.StatusBadRequest)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Query().Get("dry_run") == "true" {
+				_, _ = fmt.Fprint(w, `{"status":"dry_run","diff":""}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"status":"applied","reloaded":true}`)
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/services/"):
 			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
+			_, _ = fmt.Fprint(w, `[]`)
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
 	}))
+}
+
+// writerFor builds a Writer whose HA client and companion client both point at
+// the stub, which is what the command layer does with the real two. The WS
+// client is nil throughout: validate_config is exercised by the
+// TestValidateCandidate_* cases, which build their own Writer.
+func writerFor(srv *httptest.Server, backupDir string) *Writer {
+	return New(haapi.New(srv.URL, "tok"), nil, companion.New(srv.URL, "tok"), backupDir)
 }
 
 func TestWriter_Diff_NoChanges(t *testing.T) {
@@ -425,8 +447,7 @@ func TestWriter_Diff_NoChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, t.TempDir())
+	w := writerFor(srv, t.TempDir())
 
 	result, err := w.Diff(context.Background(), "test_auto", localFile)
 	if err != nil {
@@ -449,8 +470,7 @@ func TestWriter_Diff_WithChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, t.TempDir())
+	w := writerFor(srv, t.TempDir())
 
 	result, err := w.Diff(context.Background(), "test_auto", localFile)
 	if err != nil {
@@ -472,9 +492,8 @@ func TestWriter_Apply_DryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
 	backupDir := t.TempDir()
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	// confirm=false → dry run
 	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
@@ -512,9 +531,8 @@ func TestWriter_Apply_Confirm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
 	backupDir := t.TempDir()
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	// confirm=true → actually writes
 	result, err := w.Apply(context.Background(), "test_auto", localFile, true)
@@ -548,9 +566,8 @@ func TestWriter_Apply_InvalidYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
 	backupDir := t.TempDir()
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
 
@@ -586,8 +603,7 @@ func TestWriter_Apply_MissingFile(t *testing.T) {
 	srv := makeWriterServer(t, "test_auto", `{}`)
 	defer srv.Close()
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, t.TempDir())
+	w := writerFor(srv, t.TempDir())
 
 	_, err := w.Apply(context.Background(), "test_auto", "/nonexistent/file.yaml", false)
 	if err == nil {
@@ -612,8 +628,7 @@ action: []
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	result, err := w.Rollback(context.Background(), "test_auto")
 	if err != nil {
@@ -635,8 +650,7 @@ func TestWriter_Rollback_EmptyID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	// Empty autoID → picks most recent backup, extracts ID from filename
 	result, err := w.Rollback(context.Background(), "")
@@ -674,8 +688,7 @@ func TestWriter_Rollback_InvalidYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := haapi.New(srv.URL, "tok")
-	w := New(client, nil, backupDir)
+	w := writerFor(srv, backupDir)
 
 	_, err := w.Rollback(context.Background(), "test_auto")
 	if err == nil {
@@ -690,8 +703,7 @@ func TestWriter_Backup_CreatesFile(t *testing.T) {
 	defer srv.Close()
 
 	backupDir := t.TempDir()
-	client := haapi.New(srv.URL, "tok")
-	w := &Writer{client: client, backupDir: backupDir}
+	w := writerFor(srv, backupDir)
 
 	backupPath, err := w.backup(context.Background(), "my_auto")
 	if err != nil {
@@ -748,7 +760,7 @@ func TestWriter_Apply_BackupFailureAborts(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	w := New(haapi.New(srv.URL, "tok"), nil, filepath.Join(blocker, "backups"))
+	w := writerFor(srv, filepath.Join(blocker, "backups"))
 
 	_, err := w.Apply(context.Background(), "test_auto", localFile, true)
 	if err == nil {
@@ -771,15 +783,14 @@ func TestWriter_Apply_BackupFailureAborts(t *testing.T) {
 // reported the field correctly; nothing compared them.
 func TestWriter_Rollback_ReportsAFailedReload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/services/"):
-			http.Error(w, "reload blew up", http.StatusInternalServerError)
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/api/config/automation/config/"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `{}`)
-		default:
-			http.Error(w, "not found", http.StatusNotFound)
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/v1/config/automation") {
+			// The companion writes the entry and reports that HA never read it,
+			// which is the whole point of the field.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"status":"applied","reloaded":false,"reload_error":"500: reload blew up"}`)
+			return
 		}
+		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
 
@@ -789,13 +800,16 @@ func TestWriter_Rollback_ReportsAFailedReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := New(haapi.New(srv.URL, "tok"), nil, backupDir).
+	result, err := writerFor(srv, backupDir).
 		Rollback(context.Background(), "test_auto")
 	if err != nil {
 		t.Fatalf("a failed reload must not fail the rollback itself: %v", err)
 	}
 	if result.Reloaded {
-		t.Error("Reloaded is true although automation.reload answered 500 — the caller prints \"reload: ok\" off this field while HA is still running the previous config")
+		t.Error("Reloaded is true although the reload answered 500 — the caller prints \"reload: ok\" off this field while HA is still running the previous config")
+	}
+	if result.ReloadError == "" {
+		t.Error("the companion said why the reload failed and the result dropped it — a bare reloaded:false sends an operator hunting for a reason hactl already had")
 	}
 }
 
@@ -821,7 +835,7 @@ func TestWriter_Diff_EmptyRemoteConfigIsUnparsed(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err := New(haapi.New(srv.URL, "tok"), nil, t.TempDir()).
+			_, err := writerFor(srv, t.TempDir()).
 				Diff(context.Background(), "test_auto", localFile)
 			if err == nil {
 				t.Fatal("Diff rendered a diff against a remote config that decoded to nothing — every local line would show as an addition")
@@ -841,7 +855,7 @@ func TestWriter_Backup_RefusesEmptyRemoteConfig(t *testing.T) {
 	defer srv.Close()
 
 	backupDir := t.TempDir()
-	w := &Writer{client: haapi.New(srv.URL, "tok"), backupDir: backupDir}
+	w := writerFor(srv, backupDir)
 
 	if _, err := w.backup(context.Background(), "my_auto"); err == nil {
 		t.Fatal("backup of a remote config that decoded to nothing succeeded — an empty file would stand in for the user's only undo")
@@ -875,7 +889,7 @@ func TestWriter_Rollback_RefusesEmptyBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := New(haapi.New(srv.URL, "tok"), nil, backupDir).
+	_, err := writerFor(srv, backupDir).
 		Rollback(context.Background(), "test_auto")
 	if err == nil {
 		t.Fatal("Rollback restored a backup that decoded to nothing — the live config would be overwritten with an empty document")
@@ -885,5 +899,115 @@ func TestWriter_Rollback_RefusesEmptyBackup(t *testing.T) {
 	}
 	if posted {
 		t.Error("the empty config was POSTed to HA before the guard fired — the error alone does not prove the write was prevented")
+	}
+}
+
+// TestWriter_ApplyWritesTheBytesTheDiffShowed is finding #93 as a property.
+//
+// The old path sent the parsed config through `encoding/json.Marshal`, which
+// sorts keys, and compared two `yaml.Marshal`ed maps, which sorts them too. So
+// a confirmed apply alphabetized the entry's nested keys on disk —
+// `(platform, entity_id, to)` becoming `(entity_id, platform, to)` — while the
+// diff showed those lines as UNCHANGED, because both of its sides had been put
+// through the same normalization. The tool could not see what it was doing.
+//
+// The assertion is the contract, not the mechanism: every line the diff called
+// unchanged is a line the write leaves alone, and the bytes that land are the
+// bytes the caller wrote.
+func TestWriter_ApplyWritesTheBytesTheDiffShowed(t *testing.T) {
+	// Deliberately NOT alphabetical, and not the order a map marshal produces.
+	const remote = `id: pg_probe
+alias: PG Probe
+triggers:
+- platform: state
+  entity_id: input_boolean.pg_probe
+  to: 'on'
+conditions: []
+actions:
+- target:
+    entity_id: input_boolean.pg_probe
+  action: input_boolean.turn_off
+mode: single
+`
+	local := strings.Replace(remote, "alias: PG Probe", "alias: PG Probe edited", 1)
+
+	var mu sync.Mutex
+	var written string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			body, _ := json.Marshal(map[string]string{"id": "pg_probe", "content": remote})
+			_, _ = w.Write(body)
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			if r.URL.Query().Get("dry_run") != "true" {
+				mu.Lock()
+				written = string(body)
+				mu.Unlock()
+			}
+			_, _ = fmt.Fprint(w, `{"status":"applied","reloaded":true}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	localFile := filepath.Join(t.TempDir(), "pg_probe.yaml")
+	if err := os.WriteFile(localFile, []byte(local), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	wr := writerFor(srv, t.TempDir())
+	diff, err := wr.Diff(context.Background(), "pg_probe", localFile)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if got := diff.ChangedLines(); got != 2 {
+		t.Errorf("a one-line edit reports changed_lines = %d, want 2 (one removed, one added):\n%s",
+			got, strings.Join(diff.Lines, "\n"))
+	}
+
+	if _, err := wr.Apply(context.Background(), "pg_probe", localFile, true); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	mu.Lock()
+	got := written
+	mu.Unlock()
+
+	if got != local {
+		t.Errorf("the write did not send the file the caller wrote.\n--- sent:\n%s\n--- file:\n%s", got, local)
+	}
+	// The property, stated as the diff's own claim: a line shown with a leading
+	// space is a line that does not move.
+	for _, line := range diff.Lines {
+		if !strings.HasPrefix(line, " ") {
+			continue
+		}
+		if unchanged := line[1:]; unchanged != "" && !strings.Contains(got, unchanged) {
+			t.Errorf("the diff showed %q as unchanged and the write does not contain it", unchanged)
+		}
+	}
+}
+
+// TestChangedLinesCountsChangesNotContext — finding #94, at the one function
+// every reporter now goes through.
+func TestChangedLinesCountsChangesNotContext(t *testing.T) {
+	lines := []string{
+		" id: pg_probe",
+		"-alias: Old",
+		"+alias: New",
+		" conditions: []",
+		"… 5 unchanged lines …",
+		" mode: single",
+	}
+	if got := ChangedLines(lines); got != 2 {
+		t.Errorf("ChangedLines = %d, want 2 — context lines and the collapsed-run marker are not changes", got)
+	}
+	if !HasChanges(lines) {
+		t.Error("HasChanges = false on a diff carrying a +/- pair")
+	}
+	if HasChanges([]string{" a", " b", "… 3 unchanged lines …"}) {
+		t.Error("HasChanges = true on a diff of context only")
 	}
 }

@@ -160,12 +160,78 @@ func TestResampleDuration_Empty(t *testing.T) {
 	}
 }
 
-func TestResampleDuration_FiveMinBuckets(t *testing.T) {
-	// 60 points at 1-minute intervals → 5min buckets → ~12 buckets
-	points := makePoints(60, time.Minute, 1.0)
-	result := ResampleDuration(points, 5*time.Minute)
-	if len(result) < 10 || len(result) > 14 {
-		t.Fatalf("expected ~12 points, got %d", len(result))
+// TestResampleDuration_BucketsAreTheWidthThatWasAskedFor is finding #39.
+//
+// The case this replaces asserted "60 points at 1-minute intervals → 5min
+// buckets → ~12 buckets" and accepted anything from 10 to 14. The code
+// returned 11 buckets of 5m21s each, and the tolerance was wide enough to call
+// that right. A resampler's whole contract is the width of a bucket, so an
+// approximate assertion about the count is an assertion about nothing: it
+// passes for every wrong width that lands near the right count.
+//
+// The property is exact and it is about spacing, not length. Consecutive
+// output points are one bucket apart, always, because that is what a bucket
+// duration means.
+func TestResampleDuration_BucketsAreTheWidthThatWasAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		samples  int
+		interval time.Duration
+		bucket   time.Duration
+		want     int
+	}{
+		// The reproduction from the report: a 60-minute window at 10-minute
+		// buckets. 60 samples one minute apart span 59 minutes, so six buckets
+		// are needed to cover them — the sixth holding only the final samples.
+		// The old code answered five, 11m48s apart.
+		{"60m of samples in 10m buckets", 60, time.Minute, 10 * time.Minute, 6},
+		// An exact division: 61 samples span exactly 60 minutes.
+		{"an exact multiple", 61, time.Minute, 10 * time.Minute, 6},
+		{"20m of samples in 5m buckets", 21, time.Minute, 5 * time.Minute, 4},
+		{"a bucket wider than the whole series", 10, time.Minute, time.Hour, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			points := makePoints(tc.samples, tc.interval, 1.0)
+			result := ResampleDuration(points, tc.bucket)
+			if len(result) != tc.want {
+				t.Errorf("%d buckets, want %d — a bucket count short of the window means the "+
+					"final partial bucket was floored away", len(result), tc.want)
+			}
+			for i := 1; i < len(result); i++ {
+				if gap := result[i].Time.Sub(result[i-1].Time); gap != tc.bucket {
+					t.Errorf("points %d and %d are %s apart, want exactly %s — the requested "+
+						"resolution was silently coarsened", i-1, i, gap, tc.bucket)
+				}
+			}
+		})
+	}
+}
+
+// TestResampleDuration_SparseSeriesKeepsItsBucketGrid — a bucket with no
+// samples in it produces no row, so a gap in the history stays a gap. What
+// must NOT happen is the two readings coming out adjacent: an hour of silence
+// rendered as one bucket's worth of time is a series that lies about when its
+// readings were taken.
+//
+// Two samples an hour apart at 10-minute buckets land in the first bucket and
+// the sixth, five bucket-widths apart. Each row is stamped at its bucket's
+// midpoint, which is why the answer is 50 minutes and not 60 — the second
+// reading sits at the end of the closed final bucket, and the midpoint
+// convention is shared with Resample rather than invented here.
+func TestResampleDuration_SparseSeriesKeepsItsBucketGrid(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const bucket = 10 * time.Minute
+	points := []DataPoint{
+		{Time: start, Value: 1.0},
+		{Time: start.Add(time.Hour), Value: 2.0},
+	}
+	result := ResampleDuration(points, bucket)
+	if len(result) != 2 {
+		t.Fatalf("%d rows, want 2 — an empty bucket must not become a row", len(result))
+	}
+	if gap := result[1].Time.Sub(result[0].Time); gap != 5*bucket {
+		t.Errorf("the two readings are %s apart in the output, want %s — the four empty "+
+			"buckets between them must not be closed up", gap, 5*bucket)
 	}
 }
 

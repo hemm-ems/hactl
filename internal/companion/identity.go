@@ -149,6 +149,23 @@ func (r *TemplateCreateResponse) Identity() []degeneracy.Field {
 	}
 }
 
+// Identity reports the entity's domain, and deliberately not its unique_id.
+//
+// `domain` is a member of the companion's own _ENTITY_DOMAINS — a block's
+// domain key, or the validated `--domain` parameter — so it is never a legal
+// empty string. `unique_id` looks like the stronger identity and is not one:
+// the route rejects an item with no `unique_id` KEY (`"unique_id" not in
+// item`) and a block where no item has one, but neither check rejects the
+// empty STRING, so `unique_id: ""` reaches this struct as a legitimate value.
+// Declaring it would poison a real answer, which is finding #38's mistake
+// repeated on a new struct — read out of the emitting route rather than
+// assumed, per H-14.
+func (r *TemplateEntityResult) Identity() []degeneracy.Field {
+	return []degeneracy.Field{
+		{Name: "domain", Value: &r.Domain},
+	}
+}
+
 // Identity reports the script key. Alias and mode are legitimately absent.
 func (d *ScriptDefinition) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "id", Value: &d.ID}}
@@ -200,11 +217,34 @@ func (d *HelperDefinition) Identity() []degeneracy.Field {
 	}
 }
 
-// Identity reports which helper definition was returned.
+// Identity reports which helper definition was returned. Source is deliberately
+// excluded: a companion older than the release that added the field omits it,
+// and an empty source is that companion's honest answer rather than a decode
+// that fell through — poisoning it would break `helper show` against every
+// companion still in the field. The drift this would otherwise catch is caught
+// statically instead, by H-13's struct-tag-versus-spec sweep, which sees a
+// renamed wire field without needing a payload.
 func (r *HelperResponse) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "id", Value: &r.ID},
 		{Name: "domain", Value: &r.Domain},
+	}
+}
+
+// Identity reports the domain the wiring verdict is about. Wired is a bool, so
+// it cannot distinguish "false" from "never decoded" — the domain echo can, and
+// a preview that acted on an undecoded verdict would silently report every
+// instance unwired.
+func (r *WiringResponse) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "domain", Value: &r.Domain}}
+}
+
+// Identity reports where the walk stopped short. An entry with no location
+// cannot be acted on and cannot even be reported to the operator.
+func (s *SkippedFile) Identity() []degeneracy.Field {
+	return []degeneracy.Field{
+		{Name: "location", Value: &s.Location},
+		{Name: "reason", Value: &s.Reason},
 	}
 }
 

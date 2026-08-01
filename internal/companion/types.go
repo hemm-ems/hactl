@@ -71,9 +71,61 @@ type RelatedEntityEntry struct {
 
 // RefScanResponse is the response from GET /v1/ref/scan.
 type RefScanResponse struct {
-	Target string       `json:"target"`
-	Hits   []RefScanHit `json:"hits"`
+	Target  string        `json:"target"`
+	Hits    []RefScanHit  `json:"hits"`
+	Skipped []SkippedFile `json:"skipped,omitempty"`
 }
+
+// SkippedFile is one config file a companion walk could not read, so its result
+// covers less than the config does — a renamed `!include` target, a file the
+// path guard refuses, an `!include_dir_*` naming a directory that is not there.
+//
+// Decoded on every route that reports it, like Validated and Reloaded before it,
+// so the field-level contract (H-13) stays whole rather than ignore-listed: a
+// documented field no struct decodes is the D45 shape, and the ignore list is
+// empty by design.
+//
+// It was decoded here and read by nothing for a release — the same shape one
+// layer along, and D-7 recorded it in writing as a known limit. WP7 gave it its
+// reporting (D-31): every consumer of the three routes now treats an entry that
+// HidesReferences as a partial answer, whether it is searching (`ref scan`,
+// which says so beside the hits), certifying (`ref validate`, which refuses),
+// or renaming (`ref replace`, `ent rename`, which refuse before the write).
+type SkippedFile struct {
+	Location string `json:"location"`
+	Reason   string `json:"reason"`
+}
+
+// The reasons a companion walk records, verbatim from its SKIP_* constants.
+const (
+	// SkipMissing — the file or include directory is not there.
+	SkipMissing = "missing"
+	// SkipUnreadable — refused by the path guard, OS permissions, or outside
+	// the config directory.
+	SkipUnreadable = "unreadable"
+	// SkipUnparseable — the file could not be turned into a tree.
+	SkipUnparseable = "unparseable"
+	// SkipCircular — an include cycle.
+	SkipCircular = "circular"
+)
+
+// HidesReferences reports whether this skip leaves references UNKNOWN, which is
+// the only thing that makes an answer partial.
+//
+// A target that is not there is not a target that went unread: Home Assistant's
+// own loader globs an `!include_dir_*` directory and yields nothing when it does
+// not exist (annotatedyaml `_find_files`, read out of the stable image
+// 2026-07-31), so a `themes: !include_dir_merge_named themes/` with no themes
+// directory is zero entries to HA and zero references here — a complete answer
+// about a file that holds nothing, exactly as a dashboard HA stores no config
+// for is a complete zero rather than an unscanned one (D-23).
+//
+// Treating it as partial is not the safe direction, it is the cry-wolf one: that
+// include line is in stock configurations, and `ref validate --exit-code` would
+// have refused to certify anything, forever, on every instance carrying it. The
+// other three reasons name a file that EXISTS and was not read, and references
+// in those are genuinely unknown.
+func (f *SkippedFile) HidesReferences() bool { return f.Reason != SkipMissing }
 
 // RefScanHit is one literal reference found in a config file, reported against
 // the file it actually lives in (mirrors the Go jsonwalk hit shape).
@@ -86,7 +138,8 @@ type RefScanHit struct {
 // RefEntitiesResponse is the response from GET /v1/ref/entities: every
 // entity_id-shaped leaf across the config !include graph, unfiltered.
 type RefEntitiesResponse struct {
-	Entities []RefEntity `json:"entities"`
+	Entities []RefEntity   `json:"entities"`
+	Skipped  []SkippedFile `json:"skipped,omitempty"`
 }
 
 // RefEntity is one entity_id-shaped value found in a config file. Unlike
@@ -102,8 +155,9 @@ type RefEntity struct {
 
 // RefReplaceResponse is the response from POST /v1/ref/replace.
 type RefReplaceResponse struct {
-	Status  string      `json:"status"` // "dry_run" | "applied"
-	Changes []RefChange `json:"changes"`
+	Status  string        `json:"status"` // "dry_run" | "applied"
+	Changes []RefChange   `json:"changes"`
+	Skipped []SkippedFile `json:"skipped,omitempty"`
 }
 
 // RefChange is one literal rewritten (or, in dry-run, that would be rewritten)
@@ -146,6 +200,40 @@ type TemplateCreateResponse struct {
 	Status   string `json:"status"`
 	UniqueID string `json:"unique_id"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
+	// Entities reports what became of every entity this create declared — one
+	// for a bare item, one or more for a full block.
+	//
+	// A reloaded template is not a created entity. Home Assistant validates a
+	// template entry asynchronously during the reload, logs a per-entry schema
+	// error and skips that entry, and still answers the reload service call
+	// 200 — so `Reloaded` is true and `ReloadError` empty for a create that
+	// produced nothing (finding #91). This array is the only field that can
+	// tell those apart, which is why it is per entity rather than one boolean.
+	Entities []TemplateEntityResult `json:"entities,omitempty"`
+}
+
+// TemplateEntityResult is one entity's outcome inside a template create.
+type TemplateEntityResult struct {
+	UniqueID string `json:"unique_id"`
+	Domain   string `json:"domain"`
+	// EntityID is null when no single live state matched — the entity is not
+	// live, or its name is rendered from a template rather than a literal, or
+	// two live states share that name.
+	EntityID string `json:"entity_id"`
+	Created  bool   `json:"created"`
 }
 
 // ScriptDefinition represents a script definition.
@@ -169,9 +257,39 @@ type ScriptResponse struct {
 
 // ScriptCreateResponse is the response from POST /v1/config/script.
 type ScriptCreateResponse struct {
-	Status   string `json:"status"`
-	ID       string `json:"id"`
+	Status string `json:"status"`
+	ID     string `json:"id"`
+	// EntityID is the script entity HA actually registered, and EntityCreated
+	// whether it was found live after the reload. A script entry HA rejects is
+	// logged and skipped while the reload still answers 200, so `Reloaded`
+	// alone cannot tell a created script from a dropped one — the same shape
+	// finding #91 reported against templates, one route over.
+	//
+	// EntityCreated is a POINTER because a companion older than v2026.7.10 does
+	// not send the field at all, and `false` is the zero value a missing field
+	// decodes to. Reading that as "HA dropped the script" made hactl warn about
+	// a script it had just created successfully — a caller who updates the CLI
+	// before the add-on sees it on every script create. Nil means the companion
+	// did not answer the question; only an explicit false is a negative.
+	//
+	// This is finding #38's class arriving through a different field: a zero
+	// value is not evidence, and the guard against it has to be structural.
+	EntityID      string `json:"entity_id"`
+	EntityCreated *bool  `json:"entity_created"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // AutomationDefinition represents an automation definition.
@@ -199,6 +317,19 @@ type AutomationCreateResponse struct {
 	ID       string `json:"id"`
 	EntityID string `json:"entity_id"` // live entity_id, empty if HA never confirmed it
 	Reloaded bool   `json:"reloaded"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // CheckConfigResponse is the response from POST /v1/ha/check-config. Valid is a
@@ -222,6 +353,19 @@ type ConfigDeleteResponse struct {
 	Status   string `json:"status"`
 	Diff     string `json:"diff,omitempty"`
 	Reloaded bool   `json:"reloaded,omitempty"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // HelperDefinition represents a helper entity definition.
@@ -242,15 +386,48 @@ type HelperResponse struct {
 	ID      string `json:"id"`
 	Domain  string `json:"domain"`
 	Content string `json:"content"`
+	// Source is "yaml" for a helper defined in a file the companion manages and
+	// "storage" for one created in HA's UI. It is what makes `helper show`
+	// honest about a definition nothing here can edit, and what lets
+	// `helper delete`'s preview refuse a target its --confirm cannot delete.
+	Source string `json:"source"`
+}
+
+// WiringResponse is the response from GET /v1/config/wiring: whether a create
+// for a domain would reach a file Home Assistant reads. Reason is the companion's
+// own refusal text, so a preview built on it explains a failure exactly as the
+// confirmed run would.
+type WiringResponse struct {
+	Domain string `json:"domain"`
+	Wired  bool   `json:"wired"`
+	File   string `json:"file,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // HelperCreateResponse is the response from POST /v1/config/helper.
 type HelperCreateResponse struct {
-	Status        string `json:"status"`
-	ID            string `json:"id"`
-	EntityID      string `json:"entity_id"`
-	Reloaded      bool   `json:"reloaded"`
-	EntityCreated bool   `json:"entity_created"`
+	Status   string `json:"status"`
+	ID       string `json:"id"`
+	EntityID string `json:"entity_id"`
+	Reloaded bool   `json:"reloaded"`
+	// EntityCreated is a POINTER for the reason ScriptCreateResponse's is: a
+	// companion that does not send the field decodes to false, and reading
+	// that as "HA dropped the helper" warns about a helper that exists. Nil is
+	// "not answered"; only an explicit false is a negative.
+	EntityCreated *bool `json:"entity_created"`
+	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
+	// status plus a bounded excerpt of the body, or the transport error class.
+	// Absent on success. Decoded because a bare `reloaded: false` sends an
+	// operator hunting for a reason the companion already had.
+	ReloadError string `json:"reload_error,omitempty"`
+	// Reformatted is true when the companion could not splice this entry's
+	// lines and re-serialized the whole file instead, so formatting of
+	// *other* entries may have changed. Absent otherwise (companion C-14).
+	// Decoded because a caller keeping its config in git needs the difference
+	// between "your entry changed" and "the file was rewritten"; a whole-file
+	// rewrite that reads as a surgical one is the defect this field exists to
+	// make visible.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // --- WireGuard ---

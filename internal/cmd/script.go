@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/backupfile"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
@@ -30,18 +31,19 @@ var flagScriptFailing bool
 var flagScriptFile string
 var flagScriptConfirm bool
 
-var scriptCmd = &cobra.Command{
+var scriptCmd = family(&cobra.Command{
 	Use:   "script",
 	Short: "Inspect HA scripts",
 	Long:  "List, inspect, diff, apply, and run Home Assistant scripts.",
-}
+})
 
 var scriptLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List scripts",
 	Long:  "Show scripts table with state, run counts, and error info.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runScriptLs(cmd.Context(), cmd.OutOrStdout())
+		return runScriptLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -49,7 +51,7 @@ var scriptShowCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show script details and recent traces",
 	Long:  "Display script summary and the last 5 trace runs.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -59,7 +61,7 @@ var scriptRunCmd = &cobra.Command{
 	Use:   "run <id>",
 	Short: "Execute a script (dry-run by default)",
 	Long:  "Run a Home Assistant script via service call script.turn_on. Dry-run by default: verifies the script exists and previews the call; use --confirm to actually run it.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptRun(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -69,7 +71,7 @@ var scriptCatCmd = &cobra.Command{
 	Use:   "cat <id>",
 	Short: "Print a script's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of a script (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -79,7 +81,7 @@ var scriptDiffCmd = &cobra.Command{
 	Use:   "diff <id>",
 	Short: "Show diff between local YAML and remote script config",
 	Long:  "Compare a local YAML file (-f) against the current HA script config.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptDiff(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -89,7 +91,7 @@ var scriptApplyCmd = &cobra.Command{
 	Use:   "apply <id>",
 	Short: "Apply a local YAML config to a script (dry-run by default)",
 	Long:  "Validate and write script config through the companion. Use --confirm to actually write + reload.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptApply(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -97,6 +99,7 @@ var scriptApplyCmd = &cobra.Command{
 
 var scriptCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new script from YAML (dry-run by default)",
 	Long:  "Create a new script from a local YAML file via the companion. Use --confirm to apply.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +111,7 @@ var scriptDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a script (dry-run by default)",
 	Long:  "Delete a script from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runScriptDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -133,6 +136,7 @@ func init() {
 // round-trippable with `script diff -f`). The companion returns the definition
 // as YAML text in resp.Content.
 func runScriptCat(ctx context.Context, w io.Writer, scriptID string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -170,7 +174,8 @@ type scriptRow struct {
 	errors  int
 }
 
-func runScriptLs(ctx context.Context, w io.Writer) error {
+func runScriptLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -198,7 +203,7 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -213,6 +218,8 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 	}
 
 	rows := buildScriptRows(scripts, traces, cutoff, fires)
+	// Before any filter runs — see emptyListing.
+	total := len(rows)
 
 	// Enrich with area/labels from registry
 	if rc != nil {
@@ -235,8 +242,12 @@ func runScriptLs(ctx context.Context, w io.Writer) error {
 		rows = filterScriptsFailing(rows)
 	}
 
+	if len(rows) == 0 {
+		return emptyListing(cmd, w, "scripts", total, failingHints(flagScriptFailing)...)
+	}
+
 	tbl := &format.Table{
-		Headers: []string{"id", "state", "area", "labels", "runs_24h", "errors", "last_err"},
+		Headers: []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"},
 		Rows:    make([][]string, len(rows)),
 	}
 	for i, r := range rows {
@@ -393,7 +404,7 @@ func renderScriptShowJSON(ctx context.Context, w io.Writer, cfg *config.Config, 
 			traceKey := tr.Domain + "." + tr.ItemID + "/" + tr.RunID
 			result.Traces[i] = scriptShowTrace{
 				ID:       reg.GetOrCreate("trc", traceKey),
-				Time:     formatShortTime(tr.Timestamp.Start),
+				Time:     formatMachineTime(tr.Timestamp.Start),
 				Result:   traceResult(tr),
 				LastStep: tr.LastStep,
 			}
@@ -595,14 +606,22 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	diff := scriptConfigDiff(remoteCandidate.Content, candidate.Content)
-	if scriptDiffHasChanges(diff) {
+	if !scriptDiffHasChanges(diff) {
+		// A no-op is still an outcome a machine caller has to be able to read:
+		// under --json this was the prose line "no changes detected" and exit 0,
+		// indistinguishable from a command that printed nothing at all.
+		return done("apply script").
+			with("script", candidate.ID).
+			with("changed_lines", 0).
+			text("no changes detected").
+			asPreview(!flagScriptConfirm).
+			render(w)
+	}
+	if !flagJSON {
 		_, _ = fmt.Fprintln(w, "diff:")
 		for _, line := range diff {
 			_, _ = fmt.Fprintln(w, line)
 		}
-	} else {
-		_, _ = fmt.Fprintln(w, "no changes detected")
-		return nil
 	}
 
 	client := haapi.New(cfg.URL, cfg.Token)
@@ -645,16 +664,22 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	reloaded := false
-	if reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
+	if _, reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
 		slog.Warn("script reload failed, config was written but not activated", "error", reloadErr)
 	} else {
 		reloaded = true
 	}
 
-	_, _ = fmt.Fprintf(w, "applied: %s\n", candidate.ID)
-	_, _ = fmt.Fprintf(w, "backup:  %s\n", backupPath)
+	res := done("apply script").
+		with("script", candidate.ID).
+		with("validation", scriptValidation).
+		with("changed_lines", writer.ChangedLines(diff)).
+		with("backup", backupPath).
+		with("reloaded", reloaded).
+		text("applied: %s", candidate.ID).
+		text("backup:  %s", backupPath)
 	if reloaded {
-		_, _ = fmt.Fprintln(w, "reload:  ok")
+		res = res.text("reload:  ok")
 	}
 	entityID := "script." + candidate.ID
 	if stateData, stateErr := client.GetState(ctx, entityID); stateErr == nil {
@@ -663,10 +688,12 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 			// Best-effort echo: Check poisons EntityID/State in place, so a
 			// degenerate payload prints the marker instead of a blank line.
 			_ = degeneracy.Check("/api/states/"+entityID, &ent)
-			_, _ = fmt.Fprintf(w, "state:   %s %s\n", ent.EntityID, ent.State)
+			res = res.with("entity_id", ent.EntityID).
+				with("state", ent.State).
+				text("state:   %s %s", ent.EntityID, ent.State)
 		}
 	}
-	return nil
+	return res.render(w)
 }
 
 func loadScriptCandidate(path, scriptID string) (*scriptConfigCandidate, error) {
@@ -762,12 +789,7 @@ func scriptConfigDiff(remote, local string) []string {
 }
 
 func scriptDiffHasChanges(lines []string) bool {
-	for _, line := range lines {
-		if len(line) > 0 && (line[0] == '+' || line[0] == '-') {
-			return true
-		}
-	}
-	return false
+	return writer.HasChanges(lines)
 }
 
 func validateScriptCandidate(ctx context.Context, cfg *config.Config, candidate map[string]any) (bool, error) {
@@ -789,18 +811,14 @@ func validateScriptCandidate(ctx context.Context, cfg *config.Config, candidate 
 	return true, nil
 }
 
+// backupScriptConfig preserves a script's stored text before a confirmed write
+// replaces it. Named through backupfile so it cannot overwrite another
+// caller's recovery point (H-26) — the sibling defect to the automation
+// backup's, in the sibling command, which is why both go through one writer.
 func backupScriptConfig(dir, scriptID, content string) (string, error) {
-	backupDir := filepath.Join(dir, "backups")
-	if err := os.MkdirAll(backupDir, 0o750); err != nil {
-		return "", fmt.Errorf("creating backup dir: %w", err)
-	}
-	ts := time.Now().Format("2006-01-02T15-04-05")
-	filename := fmt.Sprintf("%s_script_%s.yaml", ts, strings.ReplaceAll(scriptID, string(os.PathSeparator), "_"))
-	backupPath := filepath.Join(backupDir, filename)
-	if err := os.WriteFile(backupPath, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("writing backup: %w", err)
-	}
-	return backupPath, nil
+	safeID := strings.ReplaceAll(scriptID, string(os.PathSeparator), "_")
+	return backupfile.Write(filepath.Join(dir, "backups"), 0o600, []byte(content),
+		func(stamp string) string { return fmt.Sprintf("%s_script_%s.yaml", stamp, safeID) })
 }
 
 func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
@@ -830,14 +848,17 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 			render(w)
 	}
 
-	if err := client.CallService(ctx, "script", "turn_on", map[string]any{
+	if _, err := client.CallService(ctx, "script", "turn_on", map[string]any{
 		"entity_id": entityID,
 	}); err != nil {
 		return fmt.Errorf("running script %s: %w", entityID, err)
 	}
 
-	_, _ = fmt.Fprintf(w, "executed %s\n", entityID)
-	return nil
+	return done("execute "+entityID).
+		with("entity_id", entityID).
+		with("via", "script.turn_on").
+		text("executed %s", entityID).
+		render(w)
 }
 
 func runScriptCreate(ctx context.Context, w io.Writer) error {
@@ -881,13 +902,31 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating script: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created script %q\n", resp.ID)
+	res := done("create script").
+		with("id", resp.ID).
+		with("reloaded", resp.Reloaded).
+		withIf(resp.EntityCreated != nil, "entity_created", resp.EntityCreated).
+		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
+		text("created script %q", resp.ID)
 	// The companion reports whether HA reloaded; saying "created" without it
 	// is the issue-#40 failure mode — a definition on disk that HA never read.
-	if !resp.Reloaded {
-		_, _ = fmt.Fprintln(w, "warning: script written but HA did not confirm reload")
+	//
+	// A reload it DID do is still not proof of an entity: HA validates each
+	// script entry during the reload and skips a bad one while answering the
+	// reload service call 200, so `reloaded` alone reports success for a script
+	// that does not exist. That is finding #91's mechanism, one route over from
+	// the templates it was reported against.
+	switch {
+	case !resp.Reloaded:
+		res = res.warn("script written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
+	case resp.EntityCreated != nil && !*resp.EntityCreated:
+		// Only an explicit false. A companion too old to send the field says
+		// nothing about the entity, and nothing is not a negative.
+		res = res.warn("script written and HA reloaded, but no script entity appeared for %q — "+
+			"HA dropped the entry during reload; `hactl log --component config` carries its reason", resp.ID)
 	}
-	return nil
+	res = warnIfReformatted(res, resp.Reformatted)
+	return res.render(w)
 }
 
 func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
@@ -923,7 +962,10 @@ func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("deleting script: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted script %q\n", scriptID)
 	removeOrphanedEntity(ctx, cfg, orphan)
-	return nil
+	return done("delete script").
+		with("id", scriptID).
+		withIf(orphan != "", "entity_id", orphan).
+		text("deleted script %q", scriptID).
+		render(w)
 }

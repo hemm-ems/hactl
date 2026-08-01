@@ -1,0 +1,37 @@
+# boolcell — a boolean rendered into a table cell reaches --json as a JSON
+# boolean (format.Table.SetMachine), never as its human wording.
+#
+# A cell is a string because a text table is made of strings, and renderJSON
+# re-uses the cells. So the wording IS the machine's value unless SetMachine
+# says otherwise, and "false" and "no" are non-empty strings: `if row["admin"]`
+# — the obvious thing to write — read every dashboard on the reference instance
+# as admin-only (finding #59).
+#
+# The rule, the helper and the reasoning all existed before the finding.
+# `yesNo`'s own doc comment states it in the exact terms needed ("a consumer
+# writing `if row["fixable"]` reads every issue as fixable"), and two commands
+# obeyed it. What did not exist was any way to ask WHICH commands did not.
+# Four did not, and the report named the one its author happened to run — the
+# scope-is-an-enumeration failure this directory exists for.
+#
+# Sites are keyed per RENDERED EXPRESSION, not per function, because `dash ls`
+# renders two of them and fixing one is exactly the half-fix the key would
+# otherwise hide.
+#ceiling 0
+
+internal/cmd/auto.go:runAutoLs:r.restored = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/dash.go:runDashLs:d.RequireAdmin = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/dash.go:runDashLs:d.ShowInSidebar = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/ent.go:runEntLs:isRestoredAttr(s.Attributes) = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/flow.go:runConfigEntries:e.SupportsOptions = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/issues.go:runIssues:issue.Ignored = proven: TestBooleanColumnsRenderAsJSONBooleans
+internal/cmd/issues.go:runIssues:issue.IsFixable = proven: TestBooleanColumnsRenderAsJSONBooleans
+
+internal/cmd/flow.go:appendSchemaRows:req = exempt: the config-flow schema table renders with RenderOpts{Full: true} and no JSON branch at all — flagJSON never reaches it, so the cell has no machine audience to be wrong for
+internal/cmd/flow.go:renderConfigShow:e.SupportsOptions = exempt: prose from fmt.Fprintf, not a table cell; `config show --json` is the separate configShowResult struct, which carries the bool as a bool
+internal/cmd/flow.go:renderConfigShow:e.SupportsReconfig = exempt: prose from fmt.Fprintf, not a table cell; `config show --json` is the separate configShowResult struct, which carries the bool as a bool
+
+internal/companion/client.go:WriteAutomationDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
+internal/companion/client.go:WriteConfigFile:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
+internal/companion/client.go:WriteScriptDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
+internal/companion/client.go:WriteTemplate:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it

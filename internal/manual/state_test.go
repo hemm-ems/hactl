@@ -17,7 +17,11 @@ func TestClaimProgressiveOncePerSession(t *testing.T) {
 	if !strings.HasPrefix(first, CoreNote) {
 		t.Fatalf("first claim missing core note: %.60q", first)
 	}
-	for _, want := range []string{"## Quick routing", "'health' family how-to", "### Setup & health"} {
+	// A family is named by every command it covers (FamilyLabel), so these
+	// expectations are derived: "health" also answers for `issues` and
+	// `changes`, and naming it after one of the three is what this PR fixed.
+	healthNote := "'" + FamilyLabel("health") + "' family how-to"
+	for _, want := range []string{"## Quick routing", healthNote, "### Setup & health"} {
 		if !strings.Contains(first, want) {
 			t.Errorf("first claim missing %q", want)
 		}
@@ -31,7 +35,8 @@ func TestClaimProgressiveOncePerSession(t *testing.T) {
 	if strings.Contains(auto, CoreNote) {
 		t.Error("core delivered twice")
 	}
-	if !strings.Contains(auto, "'auto' family how-to") || !strings.Contains(auto, "### Write path (automations)") {
+	autoNote := "'" + FamilyLabel("auto") + "' family how-to"
+	if !strings.Contains(auto, autoNote) || !strings.Contains(auto, "### Write path (automations)") {
 		t.Errorf("auto claim missing family section: %.60q", auto)
 	}
 

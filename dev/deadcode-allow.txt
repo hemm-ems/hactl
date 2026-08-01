@@ -19,6 +19,8 @@
 internal/cmd/root.go RunWithOutput            # harness: the entry point every CLI test drives the cobra tree through
 internal/cmd/introspect.go LeafCommandPaths   # harness: enumerates the cobra tree for the H-10 command-tree walk
 internal/mcpserver/gate.go ClassifiedPaths    # harness: enumerates the write-gate classification for its sweep tests
+internal/cmd/args.go isFamilyGroup            # harness: reads the family-group annotation for the three tree walks (MCP gate, --json sweep, manual guardrail) that must not count a group made runnable by H-22 as a command
+internal/companion/discovery.go DiscoveryReasons  # harness: the closed set of discovery failure reasons, so H-24's "each reason names its own fix" can be quantified over the set rather than over the reasons somebody remembered; the product handles one reason at a time and never enumerates them
 
 # --- orphan ------------------------------------------------------------------
 # The trace/log disk cache (internal/cache.Store) is written and read by nothing
@@ -39,12 +41,13 @@ internal/companion/client.go Client.ListTemplates       # orphan: no command rou
 internal/companion/client.go Client.WriteTemplate       # orphan: no command routes here
 internal/companion/client.go Client.ListScriptDefs      # orphan: no command routes here
 internal/companion/client.go Client.ListAutomationDefs  # orphan: no command routes here
-internal/companion/client.go Client.WriteAutomationDef  # orphan: no command routes here
 internal/companion/client.go Client.UpdateHelper        # orphan: no command routes here
 internal/companion/client.go Client.ReloadDomain        # orphan: no command routes here
 
 internal/haapi/client.go Client.GetEvents        # orphan: no command lists HA event types
+internal/manual/state.go HowToPending             # orphan: a read-only "is this family's how-to still undelivered" predicate with no caller in the binary; nothing branches on it, so the manual is delivered without ever asking
 internal/haapi/flow.go Client.StartConfigFlow    # orphan: `flow start` routes to StartConfigFlowOnce; this variant has no caller
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
-internal/cmd/companion_cmd.go formatCompanionStatusLine  # orphan: companion status renders its own lines
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
+internal/haapi/client.go Client.GetAutomationConfig  # gate: H-12's independent read path — the Docker tiers verify an automation write by reading it out of HA's OWN config API, which is the whole point ("reading back through hactl does not count"); no product command may route here, and since #128 none does
+internal/haapi/client.go Client.ServiceExists  # gate: the companion tier's rig setup probes whether a reload service exists before asserting a reload happened; a product command that branched on this would be guessing where it can ask

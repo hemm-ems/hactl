@@ -9,6 +9,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/clock"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
+	"github.com/hemm-ems/hactl/internal/format"
 )
 
 // StepResult represents the outcome of a single trace step.
@@ -167,7 +168,11 @@ func Condense(raw *RawTrace) *CondensedTrace {
 
 		if len(runs) > 0 {
 			run := runs[0]
-			step.Time = shortTimestamp(run.Timestamp)
+			// A step's time is JSON-only — FormatCondensed never prints it —
+			// so it carries the machine form: the full instant with its offset,
+			// in the reader's zone. It used to carry shortTimestamp's "08:00:00",
+			// a wall clock with no date and no zone inside a machine document.
+			step.Time = clock.ISO(run.Timestamp)
 			step.Detail = extractDetail(stepType, run)
 			step.Result, step.Reason = stepOutcome(run)
 		}
@@ -381,7 +386,12 @@ func extractActionDetail(run RawTraceRun) string {
 
 func stepOutcome(run RawTraceRun) (StepResult, string) {
 	if run.Error != "" {
-		return StepFail, shortenError(run.Error)
+		// The whole error Home Assistant reported. It used to be shortened
+		// here, and CondensedStep.Reason is serialised into `trace show --json`
+		// — so a machine received the last 40 characters of an error message
+		// with no way to ask for the rest (H-10, the class behind finding #14).
+		// FormatCondensed shortens it for the reader instead.
+		return StepFail, run.Error
 	}
 	if len(run.Result) > 0 {
 		var result map[string]any
@@ -405,19 +415,16 @@ func stepHasError(runs []RawTraceRun) bool {
 	return false
 }
 
+// shortenError renders an error message for the condensed TEXT trace.
+//
+// It is called from FormatCondensed, not from stepOutcome: the value stored on
+// the step is what Home Assistant said, so `trace show --json` carries it whole.
 func shortenError(errMsg string) string {
 	// Extract the most relevant part of the error message
 	if idx := strings.LastIndex(errMsg, ": "); idx >= 0 {
-		msg := errMsg[idx+2:]
-		if len(msg) > 40 {
-			return msg[:37] + "..."
-		}
-		return msg
+		errMsg = errMsg[idx+2:]
 	}
-	if len(errMsg) > 40 {
-		return errMsg[:37] + "..."
-	}
-	return errMsg
+	return format.Clip(errMsg, 40)
 }
 
 // shortTimestamp renders a trace timestamp in the reader's zone.
@@ -469,7 +476,7 @@ func FormatCondensed(ct *CondensedTrace) string {
 		case StepFail:
 			resultPart = "FAIL"
 			if s.Reason != "" {
-				resultPart += "  → " + s.Reason
+				resultPart += "  → " + shortenError(s.Reason)
 			}
 		case StepSkip:
 			resultPart = "skipped"

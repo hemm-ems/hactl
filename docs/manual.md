@@ -91,7 +91,7 @@ hactl auto create -f auto.yaml --confirm    # create + reload
 hactl script create -f script.yaml --confirm
 hactl helper create input_boolean -f toggle.yaml --confirm
 ```
-`script create` and `helper create` take a mapping with **exactly one top-level key — the id** (`my_toggle:` with `name:`/`icon:` nested under it); a bare `name:`/`icon:` mapping is rejected. `tpl create` takes an entity item or a full block instead (see Templates). If HA does not confirm the reload, the command says so — a written file HA never read produces no entity.
+`script create` and `helper create` take a mapping with **exactly one top-level key — the id** (`my_toggle:` with `name:`/`icon:` nested under it); a bare `name:`/`icon:` mapping is rejected. That id becomes the entity's object id, so it must be one HA can use: lowercase letters, digits and single underscores, not starting or ending with one. `helper create` refuses anything else, and refuses a domain outside its eight, before it plans or sends anything. `tpl create` takes an entity item or a full block instead (see Templates). If HA does not confirm the reload, the command says so — a written file HA never read produces no entity.
 
 ### "Delete an automation / helper"
 ```
@@ -107,8 +107,10 @@ hactl label ls
 hactl label create "Solar" --icon mdi:solar-power
 hactl ent ls --pattern 'sensor.solar_*'
 hactl ent set-label sensor.solar_power solar
+hactl ent set-label sensor.solar_power --remove solar    # take it back off this one entity
 hactl auto ls --label solar
 ```
+Positional labels are always ADDED — `set-label` never replaces an entity's or device's existing labels, so repeated calls accumulate. `--remove <label>` (repeatable) is the other half: it takes one or more labels back off the target named, and may be combined with positional labels to add and remove in the same write, but the same label cannot be named on both sides. This is deliberately narrower than `label delete <id> --confirm`, which removes a label from EVERY entity, device and area that carries it — `--remove` touches only the one target the command names.
 
 ### "Find and act on a group of automations"
 ```
@@ -150,7 +152,7 @@ One discovery call, then stop. `dash create` and `dash save` are dry-run by defa
 
 Your instance is normally configured already — verify with `hactl health`. Instance selection: a directory with a `.env` (`HA_URL`, `HA_TOKEN`) is one instance; select it with `--dir <path>` or `HACTL_DIR`, otherwise hactl walks up from the current directory and falls back to `~/.hactl/default/`.
 
-If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic. Human-facing installation and troubleshooting live in `docs/setup.md`.
+If hactl cannot connect: `hactl companion status` prints a one-screen connectivity diagnostic and **exits 1 when the companion is not usable**, naming the cause it observed — a token HA rejected, an `HA_URL` that redirects to another origin, or nothing answering at all. Human-facing installation and troubleshooting live in `docs/setup.md`.
 
 ---
 
@@ -179,10 +181,12 @@ hactl auto ls --restored                  # only "ghost" automations (restored f
 hactl auto show climate_schedule          # config summary + last 5 traces with stable IDs
 hactl auto cat climate_schedule           # the automation's remote YAML, verbatim (no header)
 hactl trace show trc:a7                   # condensed trace (trigger → condition → action, pass/fail)
+hactl trace show climate_schedule         # the automation's most recent run, by any of its identifiers
 hactl trace show trc:a7 --full            # raw trace JSON
 ```
 
-`runs_24h` counts **runs**, not triggers: a trigger blocked by its conditions never
+The run-count column is named for the window it counted: `runs_24h` by default,
+`runs_1h` under `--since 1h`. It counts **runs**, not triggers: a trigger blocked by its conditions never
 entered the actions and does not count — it appears in `auto show`'s trace table as
 `result: failed_conditions`. An errored run still counts, with the failure reported in
 `errors`. The two reconcile — `runs_24h` equals the trace rows *not* marked
@@ -201,9 +205,8 @@ one hactl prints (`auto show --json`'s `config_id`, `auto create`'s result);
 
 `auto show` summarizes; `auto cat` prints the stored config itself, so it is what
 you feed back into `auto diff -f` / `auto apply -f`. It needs the companion.
-Output is YAML by design —
-`--json` does not change it (same for `script|helper|tpl cat`, `auto|script diff`,
-`tpl eval`, `config file|block`).
+Output is YAML by design — `--json` does not change it; the full list of
+commands `--json` does not reach is under Output conventions.
 
 Condensed trace format:
 ```
@@ -285,6 +288,14 @@ completed half and the idempotent remediation (`ref replace <old> <new>
 replace`. Under `--json`, the dry run is one plan object; a confirmed run
 returns the reference report (registry success is the exit code).
 
+The new id is judged before the plan is printed, by HA's rule rather than by a
+dot check: `<domain>.<object_id>`, lowercase letters, digits and underscores,
+no leading, trailing or doubled underscore — and the **same domain** as the old
+id, because HA refuses a cross-domain rename (`switch.x` for an
+`input_boolean`). Those are the two answers HA gives at confirm time
+("Invalid entity ID", "New entity ID should be same domain"), so the preview
+gives them first.
+
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration, one row per **state run** — consecutive records reporting the same state are one row lasting until the state actually changes, and an `unavailable` gap splits the run rather than being spanned. Anomaly detection runs client-side on cached history.
 
 `ent show` closes with `attributes: N total; use --full to see all`. `N` is the
@@ -297,7 +308,11 @@ included in it.
 entity has no live state *and* nothing recorded in the window, because those two
 cases are indistinguishable from a typo. An entity that was deleted but still
 has recorder history reports that history as before. `--resample` must be a
-positive duration; `0m` and negative values are refused rather than ignored.
+positive duration; `0m` and negative values are refused rather than ignored. A
+`--resample` bucket is the width it says: buckets are that wide, there are as
+many as it takes to cover the recorded span, and a bucket holding no samples
+produces no row — so a gap in the history stays a gap rather than being closed
+up.
 
 `ent show`'s `changed_by:` line and `ent who` answer the same question — who or what changed this entity — through **one shared resolution**: the logbook's answer when it has one, the state's own `context` otherwise, and every answer names its source (`source: logbook` | `source: state context`). The sources are not equal: the logbook knows the proximate cause (`Automation: <alias>`, `Script: <id>`, `Device: <name>`, `User <name>`), while the state context carries only the propagated user id — it can name the human who started a causal chain but never the automation that acted.
 
@@ -317,7 +332,9 @@ hactl device ls --label heat_pump         # filter by label name or ID
 hactl device show summt_heizung           # device profile + registered entities
 hactl device set-area summt_heizung basement            # dry-run (device by ID or name)
 hactl device set-area summt_heizung basement --confirm  # place the device in the area
+hactl device set-area summt_heizung --clear --confirm   # remove the device's own area
 hactl device set-label summt_heizung heat_pump --confirm # add label(s) to the device
+hactl device set-label summt_heizung --remove heat_pump --confirm # take one back off
 ```
 
 Placing the **device** in a room is the normal HA pattern: a device's area is
@@ -326,6 +343,15 @@ inherited by every one of its entities that has no own `area_id` (H-8), so one
 exception for overrides. `set-label` merges into the device's existing labels.
 Both are dry-run by default; the preview resolves the device (ID or name) and
 the area/label, so a typo is an error, not a plan.
+
+Pass exactly one of `<area>` or `--clear` to `set-area` — naming both, or
+neither, is refused before anything is read. `--clear` removes the device's OWN
+area (its entities without an own `area_id` then have none to inherit, unless a
+new `set-area` gives it one); it does not touch any other device, which is what
+distinguishes it from `area delete`. `set-label --remove <label>` (repeatable)
+is the same shape for labels: it takes one label off THIS device alone, and may
+combine with positional labels to add and remove in the same write, but the
+same label cannot be named on both sides.
 
 LLM workflow for area assignment: discover the device with `device ls`, inspect its entities with `device show`, preview `device set-area <device> <area>`, then repeat the exact command with `--confirm` only after the user confirms the device and target area. Use `ent set-area` only when a single entity must differ from its device.
 
@@ -350,11 +376,19 @@ hactl label delete old-label --confirm    # delete a label (dry-run without --co
 
 hactl ent set-label sensor.wp_vl energy                # dry-run: preview merged labels
 hactl ent set-label sensor.wp_vl energy --confirm      # assign label(s) (by ID or name)
+hactl ent set-label sensor.wp_vl --remove energy --confirm  # take one label back off
 hactl ent set-area  sensor.wp_vl living_room            # dry-run
 hactl ent set-area  sensor.wp_vl living_room --confirm  # set entity area
+hactl ent set-area  sensor.wp_vl --clear --confirm      # remove the entity's own area
 ```
 
 Labels and areas are applied via the entity registry (dry-run by default; `--confirm` to apply). Multiple labels can be passed to `set-label` at once.
+
+`set-label` and `set-area` can also UNDO what they assign — H-27, "every assignment a command can make, it can also unmake." `set-label --remove <label>` (repeatable) takes one or more labels off the one entity named, leaving its other labels and every other entity's copy of the same label untouched; it may combine with positional labels to add and remove in the same call, but a label cannot be named on both sides — that is refused rather than resolved by picking a winner. `set-area --clear` removes the entity's own area the same way; pass exactly one of `<area>` or `--clear`. Before this, the only way to take a label off one entity or clear one entity's area was `label delete <id> --confirm` or `area delete <id> --confirm` — both instance-wide: they strip the value from every entity, device and area that carries it, not just the one a caller meant.
+
+**Names.** `label`/`area`/`floor create` refuse a blank name (empty or whitespace only) before contacting HA, in dry-run and with `--confirm` alike. Home Assistant would accept it: an empty name mints a record with an empty `area_id`/`floor_id`/`label_id`, and every command of that family then fails — `ls`, `create` and `delete` together, because each has to list the registry first — until the record is removed outside hactl. A name that merely carries surrounding spaces (`" Kitchen "`) is a real name and is sent verbatim.
+
+**`floor --level`** is optional and `0` is a value, not an absence: `--level 0` is stored as level 0 (HA's ground floor), a negative level is a basement, and omitting the flag leaves the floor with no level at all.
 
 ### Write path (automations)
 
@@ -368,7 +402,11 @@ hactl auto rollback climate_schedule --confirm         # undo specific automatio
 
 ```
 
-**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write, and HA's Config API validates again on write.
+**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write.
+
+**What the diff means, and what a write changes.** Both sides of the diff are the YAML text: the stored entry as `auto cat` prints it, and the file you pass. A confirmed apply writes **that file's bytes** into `automations.yaml` and leaves every other entry byte-identical — so key order and formatting are part of the diff, because they are part of what lands. Start from `hactl auto cat <id> > new.yaml` and edit; a hand-written file in a different style diffs as changed, and honestly so. `changed_lines` counts the `+`/`-` lines. If the entry cannot be spliced, the response says `reformatted: true` and the run warns that other entries' formatting may have moved.
+
+Both commands need **hactl-companion**: they write through its single-entry route. HA's own automation endpoint re-serializes the entire `automations.yaml` on every write, so there is deliberately no fallback — without a companion these two commands refuse rather than reformat the file.
 
 ### Write path (scripts)
 
@@ -397,6 +435,36 @@ any template entity domain (sensor, binary_sensor, number, select, button,
 weather, light, switch, cover, fan, lock, vacuum, alarm_control_panel, event,
 image, device_tracker, update).
 
+**Each domain has its own required keys, and the `state:` example below is only
+correct for `sensor` and `binary_sensor`.** Home Assistant validates a template
+entry *asynchronously*, during the reload that follows the write: an entry that
+fails its domain schema is logged and skipped while the reload itself still
+succeeds. So a write can be reported as done, be byte-clean in the file, and
+still never become an entity — `hactl log --component config` is where the
+reason appears. Give the domain what it requires:
+
+| domain | required beyond `name`/`unique_id` |
+|---|---|
+| `sensor`, `binary_sensor` | `state` |
+| `number` | `set_value` (an action block) |
+| `select` | `options` — **a Jinja template string, never a YAML list** |
+| `button` | `press` (an action block) |
+| `image` | `url` |
+| `update` | `installed_version`, `latest_version` |
+| `event` | `event_type`, `event_types` |
+| `lock` | `lock`, `unlock` (action blocks) |
+| `light`, `fan` | `turn_on`, `turn_off` (action blocks) |
+| `vacuum` | `start` (an action block) |
+| `weather` | `condition`, `humidity`, `temperature` |
+| `switch`, `cover`, `device_tracker`, `alarm_control_panel` | nothing — every key is optional |
+
+`select` is the one the example above actively misleads on: `options` is the
+only list-shaped field in the schema that is not a list. Write
+`options: "{{ ['alpha','beta'] }}"`, not `options: [alpha, beta]`.
+
+There is no Jinja syntax pre-check either — an unterminated `{{ ...` is written
+and reported the same way a valid one is.
+
 The `-f` file is either a **bare entity item** (state-based; placed into a block
 for `--domain`) or a **full block** for trigger-based / multi-domain entries. In
 HA's `template:` schema the trigger lives at the *block* level, never inside the
@@ -424,7 +492,8 @@ hactl helper ls                                      # list all helpers
 hactl helper ls --domain input_boolean               # filter by domain
 hactl helper ls --pattern guest                      # filter by helper id (glob/substring)
 hactl helper ls --name "Guest Mode"                  # filter by display name (substring)
-hactl helper show guest_mode                         # id + domain header, then the YAML definition
+hactl helper show guest_mode                         # id + domain + source header, then the YAML definition
+hactl helper show input_boolean.anwesenheit_flur     # storage helpers: address them by entity_id
 hactl helper cat guest_mode                          # the same YAML with no header (pipe-friendly)
 hactl helper create input_boolean -f toggle.yaml             # dry-run
 hactl helper create input_boolean -f toggle.yaml --confirm   # create via companion + reload
@@ -433,6 +502,29 @@ hactl helper delete guest_mode --confirm             # delete via companion + re
 ```
 
 Supported domains: input_boolean, input_number, input_select, input_text, input_datetime, counter, timer, schedule. Requires hactl-companion.
+
+`helper ls` shows a **source** column, and `show`/`cat` report it too:
+
+- `yaml` — defined in a helper file the companion manages. Editable with
+  `create` / `delete`.
+- `storage` — created in the HA UI, which is how most helpers on a real
+  instance exist. `show`, `cat` and `ls` read them (address one by its
+  `entity_id`, e.g. `input_boolean.anwesenheit_flur`, or by its bare id);
+  `helper delete` refuses them in dry run and with `--confirm` alike — there is
+  no YAML definition to delete, so remove it in the UI. `cat` output for a
+  storage helper carries a leading `# source: storage` comment; it is still
+  valid YAML.
+
+`helper create`'s dry run checks everything `--confirm` does, in the order that
+answers cheapest first: the domain is one of the eight it writes (`script`,
+`automation` and `template` are HA domains but not helper domains); the id is
+one HA can turn into an entity; and `configuration.yaml` has a `<domain>:` key
+which `!include`s a file. If the domain is written **inline** in
+`configuration.yaml` instead, no create can append to it, and the preview says
+so with the same message `--confirm` would — rather than planning a create that
+cannot happen. The id check is stricter than the companion, deliberately: HA
+validates a helper file as a whole, so one unusable key stops every helper in
+that file from loading.
 
 The `-f` file must be a **keyed mapping with exactly one top-level key** — the
 helper id — not a bare definition:
@@ -474,6 +566,15 @@ hactl tpl eval '{{ label_entities("energy") | list }}'
 
 `svc call` is dry-run by default and prints the planned call; `--confirm` executes it (only after the user confirmed). `--return` prints the service response for services that support `return_response` (e.g. `weather.get_forecasts`, `calendar.get_events`). `-d @file.json` reads the payload from a file and avoids shell quoting.
 
+The dry run judges the **payload**, not just the service name, against HA's own service registry — an undeclared field or a malformed `entity_id` ends the command, because HA answers both with 400. Two payload shapes are worth naming:
+
+- **`-d '{"target":{"entity_id":…}}'` is refused.** The `target:` wrapper is automation/script YAML syntax, which HA flattens before calling the service; a service call takes `entity_id`/`device_id`/`area_id`/`label_id`/`floor_id` at the top level.
+- **A targeted service with no target reaches nothing.** The preview says so (`targets: none — …`); HA selects no entity when none of the five selector fields is present. `"entity_id":"all"` is the opposite and the preview says that too.
+
+What the preview does *not* refuse: an `entity_id` naming an entity that does not exist (HA accepts it and changes nothing), and any payload for a service whose registry entry documents no fields — `script.<name>` takes arbitrary keys as script variables.
+
+A confirmed call reports what HA attributed to it: `changed: light.kitchen`, or `changed: none reported`. Read that as HA's own answer, not as proof of a miss — a service that acts asynchronously (`automation.trigger`) reports no change either.
+
 ### Energy
 
 ```bash
@@ -483,7 +584,12 @@ hactl energy show --json                  # same, as {configured, sources[], dev
 
 One row per statistic feeding the dashboard (`type` grid/solar/battery/gas/water,
 `direction`, `statistic`), plus the individually tracked devices — the joins to
-run before touching anything (`ent show <statistic>` answers who owns it). An
+run before touching anything (`ent show <statistic>` answers who owns it).
+`direction` is what that statistic means for that source type, in HA's own
+terms: grid `consumption`/`return`, solar `production`, battery
+`discharge`/`charge`, gas and water `consumption`. Only a generative source
+reads `production`; a source type this build does not know reads `unknown`
+rather than a guess. An
 instance whose Energy dashboard was never set up says exactly that (`--json`:
 `{"configured": false}`) — HA answers an error for missing preferences, so an
 empty dashboard and a missing one are never conflated. Read-only; there is no
@@ -517,9 +623,17 @@ as the inlined list); `--raw` returns the file's own bytes. `block` matches
 `id:` or `alias:` on the direct items of a top-level list (automations.yaml),
 or a top-level mapping key (scripts.yaml), and prints that block verbatim, so
 its output may carry a trailing comment line that sits before the next key.
-`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`.
-All three are YAML-only — `--json` is accepted but does not change the output. A
-missing file or block is an error with a non-zero exit, not an empty result.
+`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`;
+`block` says so when the id you gave is a template unique_id, so a wrong guess
+costs one command rather than a search. All three are YAML-only — `--json` is
+accepted but does not change the output. A missing file or block is an error
+with a non-zero exit, not an empty result. `file` without `--raw` re-renders the
+document, and HA's own tags survive that rendering as tags (`!input`, `!secret`,
+`!env_var` are printed, never resolved and never quoted into strings).
+
+`entries --json` carries values, not the table's renderings: `disabled_by` is
+`""` when the entry is enabled (the same shape `config show --json` gives) and
+`options` is a boolean.
 
 `options`, `flow-start`, and `flow-step` are dry-run by default (they start or advance a stateful flow, and a step can complete the flow and create a config entry) — add `--confirm` to actually start/submit. `entries`, `flow-inspect`, and `--json` reads are always live.
 
@@ -560,7 +674,7 @@ Every `config` command except `files`/`file`/`block` uses HA's REST API directly
 ```bash
 hactl dash ls                                      # list all dashboards (url_path, title, mode)
 hactl dash ls --json                               # structured JSON for all dashboards
-hactl dash show                                    # default dashboard: views summary, or an honest auto-generated report
+hactl dash show                                    # default dashboard: views summary, or an honest no-stored-config report
 hactl dash show my-dashboard                       # views summary by url_path (from `dash ls`, NOT a view path)
 hactl dash show my-dashboard --json                # pretty-printed full config JSON
 hactl dash show my-dashboard --raw                 # raw HA JSON (for round-trip editing)
@@ -574,25 +688,40 @@ hactl dash delete my-dash --confirm
 hactl dash resources                               # list custom card/CSS resources
 
 hactl dash grep sensor.wp_vl                       # where is this string used, across all dashboards
+hactl dash grep sensor.wp_vl --allow-partial       # answer from the dashboards that could be read
 hactl dash replace sensor.old sensor.new my-dash   # dry-run: rename within one dashboard
 hactl dash replace sensor.old sensor.new my-dash --confirm  # apply
 ```
 
 **LLM round-trip workflow:** `dash show --raw` → modify JSON → `dash save --file`. Config replacement is always full — HA has no partial update API. `--view` scopes inspection output only; do not feed a single-view object to `dash save`.
 
-**The default dashboard has three states, and `dash show` (no argument) reports
-them honestly.** With a stored config (someone saved it, e.g. via the UI editor
-or `dash save --confirm`) you get the views summary; the same holds when
-configuration.yaml pins the default to YAML mode (the config is read from
-`ui-lovelace.yaml`). When the default is **auto-generated** — HA builds it at
-view time and holds no config, the state of every fresh instance — `dash show`
-says exactly that and points to `dash ls`; it never fabricates a rendering of
-what HA would generate. Under `--json` the auto-generated answer is an object
-with `"state": "auto-generated"` (a stored answer is the config document
-itself, which carries `views` and no `state` key — check for `state` to tell
-them apart). `--raw`/`--yaml` refuse in the auto-generated state: there is no
-stored document to round-trip. To make an auto-generated default editable,
-store a config for it with `dash save --confirm`.
+**`dash show` reports what Home Assistant holds, for any dashboard.** With a
+stored config you get the views summary; the same holds when configuration.yaml
+pins the default to YAML mode (the config is read from `ui-lovelace.yaml`).
+Three answers are not a views summary, and each says which it is:
+
+- **No stored config.** HA holds nothing for this dashboard. For the **default**
+  that means HA builds it at view time — the state of every fresh instance —
+  and `dash show` says so and points to `dash ls`; it never fabricates a
+  rendering of what HA would generate. For a **named** dashboard it is the state
+  between `dash create` and its first `dash save`. Under `--json` the answer is
+  an object carrying `"state": "auto-generated"` or `"state":
+  "no-stored-config"` (a stored answer is the config document itself, which
+  carries `views` and no `state` key — check for `state` to tell them apart);
+  `--raw`/`--yaml` refuse, because there is no document to round-trip. Store one
+  with `dash save <url_path> --confirm`.
+- **Strategy-generated.** The stored config carries a `strategy` and no views —
+  HA's own `map` dashboard is one — so `dash show` names the strategy and says
+  the frontend builds the views at view time. `--raw` shows the stored document.
+- **A `--view` that does not exist** is an error at exit 1, whatever the
+  dashboard's shape, including a dashboard with no views at all.
+
+A url_path that names no dashboard is an error, never one of the answers above.
+
+**One output format per invocation.** `--raw`, `--yaml` and `--json` each name
+a format and `dash show` refuses more than one rather than silently picking:
+`--raw` is the stored document verbatim, `--json` the same document indented,
+`--yaml` the same document as YAML.
 
 **`grep` and `replace` work on string values, not on entity fields.** Both walk
 each dashboard's JSON and match any string **equal to** the argument, wherever it
@@ -602,15 +731,23 @@ is whole-value, so a mention *inside* a longer sentence is not a hit, and map
 keys are never matched or rewritten. Output is `dashboard` + `path`
 (`views[0].cards[1].content`); a miss says "not referenced **as a whole
 value**" and routes term discovery to `ent ls --pattern`, exit 0 — it is a
-verified negative only for the exact value asked about.
+verified negative only for the exact value asked about, and only when every
+dashboard could be read: a dashboard whose config does not fetch puts a `partial
+sweep: …` line above the answer, makes the miss read "in the dashboards that
+could be read", and makes `--json` refuse until you pass `--allow-partial` (see
+References, below).
 
-`dash replace` takes one dashboard (omit `url_path` for the default dashboard,
-which fails with `config_not_found` when the default is HA's auto-generated one),
-is dry-run until `--confirm`, and rewrites every matching value at once. Writes
-to a YAML-mode dashboard are refused up front — preview and `--confirm` alike —
-because HA's save API answers "Not supported" for them; the same applies to
-`dash save` and `dash delete` (a YAML dashboard is removed from
-configuration.yaml, not over the API). To rename across config files *and*
+`dash replace` takes one dashboard (omit `url_path` for the default dashboard),
+is dry-run until `--confirm`, and rewrites every matching value at once. A
+dashboard with no stored config contains no occurrences of anything, so it
+reports zero and writes nothing; a url_path that names no dashboard is refused.
+Writes to a YAML-mode dashboard are refused up front — preview and `--confirm`
+alike — because HA's save API answers "Not supported" for them; the same applies
+to `dash save` and `dash delete` (a YAML dashboard is removed from
+configuration.yaml, not over the API). Whether the **default** is YAML-mode is
+read from its own `mode` in `dash ls`, not from whether it is listed: recent
+Home Assistant migrates a stored default into the dashboard list under url_path
+`lovelace`, in `storage` mode, and that one is writable. To rename across config files *and*
 dashboards in a single pass, use `ref replace`.
 
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
@@ -619,6 +756,7 @@ dashboards in a single pass, use `ref replace`.
 
 ```bash
 hactl ref scan sensor.wp_vl                    # every reference, config files + dashboards
+hactl ref scan sensor.wp_vl --allow-partial    # answer from what could be read when a source is unavailable
 hactl ref validate                             # dangling references: pointers to entities that are gone
 hactl ref validate --exit-code                 # exit 1 if any dangling reference is found (CI gating)
 hactl ref validate --exit-code --allow-partial  # gate on what could be read when a half is unavailable
@@ -639,6 +777,15 @@ never finding one inside a dashboard's. Reports `source` (`config` |
 `dashboard`), `location` (file name or dashboard), and `path`
 (`[1].trigger[0].entity_id`).
 
+**The target must be a whole token**: it has to start and end on a letter, digit
+or underscore, because the config half matches it with a word boundary at each
+end. `scan`/`replace` refuse anything else before contacting Home Assistant —
+`.` would otherwise match the dot inside every entity_id and every service name
+(2747 hits on a real instance, and `ref replace . X` a plan to rewrite all of
+them). Display names are fine (`Wozi TV`, `Küche`); pasted syntax is not
+(`'sensor.x'`, `.turn_on`, `{{`). For term discovery use the name search under
+"Filtering & discovery".
+
 To rename a **live** entity and its references in one step, use `ent rename`
 (registry rename + this replace pass); `ref replace` alone is the tool when
 only the references must move — e.g. onto an already-existing entity.
@@ -655,28 +802,46 @@ false positives: **entities inside templates** (`{{ states('sensor.x') }}`) and
 entities under non-standard custom-card keys. `validate` reports; it never
 fixes — rename with `ref replace`.
 
-**A partial sweep never passes as a clean tree.** `validate` reads four sources
-— entity registry, live states, config files, dashboards — and states its scope
-when one is unreadable: in plain text it still answers, with one `partial
-sweep: …` line per unread source; under `--exit-code` or `--json` it **refuses**
-with a non-zero exit, because those modes feed a CI gate or a parser that cannot
-see a stderr warning, and certifying a half-read tree would make the gate
-vacuous. `--allow-partial` proceeds over whatever could be read, in any mode,
-scope stated. One source is stricter: missing **live states** refuse in every
-mode (the registry alone holds no state-only entities — most reports would be
-false positives); an unread config file or dashboard risks the opposite, false
-negatives — references that were never checked. An **auto-generated default
-dashboard is not a partial sweep**: HA holds no config for it, so zero
-references there is the complete truth, and `--exit-code` stays green on a
-fresh instance.
+**A partial sweep never passes as a clean tree — and never as a short answer.**
+`validate` reads four sources — entity registry, live states, config files,
+dashboards — and states its scope when one is unreadable: in plain text it still
+answers, with one `partial sweep: …` line per unread source; under `--exit-code`
+or `--json` it **refuses** with a non-zero exit, because those modes feed a CI
+gate or a parser that cannot see a stderr warning, and certifying a half-read
+tree would make the gate vacuous. `--allow-partial` proceeds over whatever could
+be read, in any mode, scope stated. One source is stricter: missing **live
+states** refuse in every mode (the registry alone holds no state-only entities —
+most reports would be false positives); an unread config file or dashboard risks
+the opposite, false negatives — references that were never checked. A dashboard
+Home Assistant holds **no config for is not a partial sweep** — the
+auto-generated default, and equally a dashboard created but not yet saved: HA
+holds nothing, so zero references there is the complete truth. `--exit-code`
+stays green on a fresh instance, and one unsaved dashboard does not make
+`validate` refuse to certify the tree.
+
+**`scan` and `dash grep` take the same rule, one step softer.** They answer
+"where is X?", so they still report what they found — with the same `partial
+sweep: …` lines above the table, in the body where you can see them. Under
+`--json` they **refuse** instead: that document is a bare array of rows with
+nowhere to say the search was incomplete, and a short list parses exactly like a
+complete one. Both take `--allow-partial` to get the partial array. An empty
+result never claims more than it tested either: after a partial sweep the miss
+reads `no reference to X in what could be scanned`, not `not referenced`.
+
+The **config half can be short without failing**: the companion reports files
+its walk could not read (a renamed `!include` target, a file it may not open),
+and every `ref` command treats that as partial — `scan` says so, `validate`
+refuses to certify, `replace` refuses in dry run and, if a confirmed run hits
+it, names the files that may still hold the old id instead of reporting a
+completed rename.
 
 **A missing companion is not a degraded source, and `--allow-partial` does not
 cover it** — the companion is the transport for the config half, so every `ref`
 command aborts in every mode when its discovery fails. Without the add-on (HA
 Container, HA Core) `ref` does not run at all; `dash grep` still works over the
 WebSocket API alone, but it answers "where is this value?", not "is the tree
-clean?" — like `ref scan`, it prints the hits it found with exit 0 and warns on
-stderr about unreadable dashboards.
+clean?" — like `ref scan`, it prints the hits it found with exit 0 and states any
+unread dashboard above them.
 
 `replace` is dry-run until `--confirm` and aborts before writing anything if
 the companion cannot be reached — a rename that silently skips config files is
@@ -697,12 +862,40 @@ hactl log --warnings                      # WARNING-level entries only (operatio
 hactl log --errors --warnings --unique    # both levels, deduplicated, sorted by count
 hactl log --component zha                 # filter by component name (substring)
 hactl log --errors --since 2h             # only entries from the last 2 hours
+hactl log --json                          # whole messages, whole logger names
+hactl log --full                          # whole messages in the text table too
 hactl log show log:f2                     # full detail: timestamp, component, message
 
 hactl cc ls                               # installed custom components + versions
 hactl cc show hacs                        # CC details + entity count
 hactl cc logs hacs --unique               # CC-specific errors, deduplicated
 ```
+
+The message column is shortened **for the text table only** — `--json` carries
+the message Home Assistant sent, tracebacks and all, and `--full` shows it in
+the table too. A cell always renders as one line; where a message had more, the
+table marks the fold with `⏎` and `log show <id>` prints the whole thing.
+
+The `component` column works the same way, in the other direction: `--component`
+matches the **full dotted logger name**, the table shows its last segment, and
+`--json` carries the full name — so `log --component template --json` reports
+`homeassistant.components.template.config`, the value the match was made
+against, not `config`. All four views (`log`, `log --unique`, `cc logs`,
+`cc logs --unique`) carry `id`, so any row can be drilled into with `log show`.
+
+`cc logs <name>` takes the name of an **installed custom component** — the ones
+`cc ls` prints — and refuses anything else, like `cc show`. "no log entries for
+X" therefore means X is installed and quiet, never that X was a typo.
+
+`cc show` attributes entities through the entity registry's `platform` field,
+which names the integration that created them — never through the entity_id,
+whose first segment is the *entity* domain (`powercalc` publishes `sensor.*`).
+`entities: N` counts the entities HA holds a state for. When the registry
+attributes more than that to the component, the line says so and names the
+usual reason — `entities: 159 (registry: 402, of which 243 disabled)` — because
+a disabled entity is one the integration owns and somebody turned off, not one
+that does not exist. `--json` carries `entity_count`, `disabled_count` and
+`registry_count` with the ids behind each; `--full` lists both sets.
 
 Log source: WS `system_log/list` (structured, preferred) with automatic fallback to REST `/api/error_log`.
 
@@ -762,9 +955,7 @@ non-default tunnel (default `wg0`). Requires hactl-companion.
 
 ## Filtering & discovery
 
-> **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop. Do not chain fallback patterns or broaden the search unless the user explicitly asks.
-
-> **Verify before answering "none".** An empty listing only proves the filter you used. If a flag value was guessed (a domain, label, or area), confirm it exists (the matching registry `ls`) before reporting a negative — that one call is exempt from stop-at-first-miss.
+> **Stop at the first miss.** If a pattern or entity ID returns empty or 404, report it and stop — do not chain fallback patterns or broaden the search unless the user asks. An empty listing says what emptied it (`no helpers match --pattern "guest" (220 on this instance)`); the bare `no helpers` means the instance holds none. Report the one you got.
 
 Five commands take `--pattern` (glob or substring, case-insensitive), and it matches **identifiers, not display names**:
 
@@ -776,7 +967,9 @@ hactl helper ls --pattern guest           # helper id
 hactl device ls --pattern wozi            # exception: id OR name ("Wozi Tv")
 ```
 
-`*`/`?` → glob, otherwise substring. An entity's display name can share no
+`*`/`?` → glob, otherwise substring, never case-sensitive; a glob anchors at the
+printed id and at the part after the domain (`'anwesen*'` matches
+`input_boolean.anwesenheit_flur`). A display name can share no
 token with its entity_id (`light.ap_gast_v2_led` ↔ "AP6 Flur LED") and listings
 print no name column, so quoted names need the server-side name search:
 
@@ -821,14 +1014,15 @@ hactl auto ls --restored                       # same, automation-scoped table
 
 ## Output conventions
 
-- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a command-specific hint on truncation (`log` suggests `--component`, `ent ls` suggests `--domain`); prefer filters over raising the cap. `--tokens` prints a `[~N tok]` estimate (stderr in JSON mode).
-- **Tables:** one header line, one row per item. `…+N more` for overflow. Control with `--top`.
-- **Stable IDs:** `trc:a7` (`auto`/`script show`) and `log:f2` (`log` incl. `--unique`, `cc logs`) — persistent in `cache/ids.json` until `cache clear`. `ent anomalies` mints none.
-- **Timestamps:** short form in your local zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. `--json` gives ISO for item/event views (`ent show`, `changes`, `ent who`); table listings serialize the rendered row, so the short string survives and numbers come back as strings (`"runs_24h": "0"`).
+- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--full` removes it too, unless you pass `--tokensmax` yourself. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `completion`, `--help`.
+- **Tables:** one header line, one row per item; `…+N more` for overflow, capped by `--top`.
+- **Stable IDs:** `trc:a7` (`auto`/`script show`), `log:f2` (`log` incl. `--unique`, `cc logs`) — kept in `cache/ids.json` until `cache clear`; `ent anomalies` mints none.
+- **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included. Boolean columns are JSON booleans (`"admin": true`); numeric cells stay strings (`"runs_24h": "0"`) — parse them, never test them for truthiness.
 - **No decoration:** no emojis, no color.
-- **JSON mode:** `--json` returns structured JSON. Use when extracting specific fields. Never truncated by `--tokensmax` (`--tokens` prints the estimate to stderr) — on large datasets filter first. Verbatim commands ignore it (`auto|script|helper|tpl cat`, `auto|script diff`, `tpl eval`, `config file|block`). Dry-run previews return `{"dry_run":true,"action","details","hint"}`.
-- **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A family's **first `--confirm`** is refused non-interactively (how-to on stderr, exit 1): dry-run first, then repeat.
-- **`--stats`:** raw response size + estimated token count on stderr, after any command including a failing one.
+- **JSON mode:** `--json` extracts fields; filter first on large datasets. **Commands `--json` does not reach:** `auto|script|helper|tpl cat`, `auto|script diff`, `config file|block`, `rtfm` — each prints one document verbatim; every other command honours it. Previews return `{"dry_run":true,"action","details","hint"}`, a confirmed write `{"dry_run":false,"ok":true,"action","details"}` (+`"warnings"`) — read `dry_run`, not your flags.
+- **Bad input is refused, not absorbed** (exit 1, stderr, empty stdout): a blank identifier (an empty string is never a wildcard), an argument a command does not take (`ent ls sensor` → `--domain sensor`), an unknown subcommand in any family, a flag the command does not take (the error names the ones that do), a value outside a flag's range (`--top -1`, `--timeout 0s`), or two inputs naming one thing (`dash show --raw --yaml`). Nothing mistyped ever exits 0 with help.
+- **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A `--confirm` is refused non-interactively (how-to on stderr, exit 1) unless the **same command and target** ran without it in the last 30 min — dry-run, then repeat.
+- **`--stats`:** response size + token estimate on stderr, after any command including a failing one.
 
 ---
 
@@ -837,15 +1031,15 @@ hactl auto ls --restored                       # same, automation-scoped table
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
-| `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
-| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
-| `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **On tables it lifts the `--top` cap** — prefer `--top N`, or `--tokensmax` byte-truncates the table |
+| `--since` | `24h` | Time range (`1h`, `7d`, …) — **only on** `log`, `cc logs`, `companion logs`, `changes`, `auto ls`, `script ls`, `ent hist`, `ent anomalies`, `ent who` |
+| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `0` = every row. `--json` returns the full set regardless |
+| `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **Lifts both caps** — `--top` rows and `--tokensmax` tokens — so it can return a lot; an explicit `--tokensmax` still wins |
 | `--json` | off | JSON output |
 | `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |
 | `--tokens` | off | Print compact token estimate |
-| `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap |
-| `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
+| `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap. Not applied to documents (see above) |
+| `--timeout` | `30s` | Per-request timeout for HA/companion API calls; must be positive |
 
 ---
 
@@ -865,6 +1059,11 @@ hactl --dir ~/ha/cabin auto ls --failing
 
 No global config, no profiles. Directory = instance.
 
+A `--dir` or `$HACTL_DIR` that holds no `.env` is answered with the path you
+gave and where it came from (`no .env at <path>/.env (from --dir)`, exit 2);
+only discovery — no flag, no variable — falls back to the generic four-step
+"no hactl instance configured".
+
 ---
 
 ## Manual delivery
@@ -874,7 +1073,8 @@ Parts of this manual may already have reached you automatically: when both stdou
 - `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
 - `off` also disables the first-`--confirm` guard (the refusal of a family's first write before its how-to arrived) — it is meant for scripts and pipelines that pre-load this manual another way, not a token-saving knob for interactive agents
 - `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand
-- Humans at a terminal never see it; stdout (incl. `--json`) stays untouched; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
+- Humans at a terminal never see it; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
+- **Delivery is decided by who is listening, never by the shape of the answer.** `--json` is a promise about stdout and the manual has never been on stdout, so `health --json` and `device ls --json` deliver on stderr exactly as they do without the flag — an agent that reads only structured output is the caller this manual is written for, and it used to be the one caller that never received it
 
 ---
 
@@ -889,3 +1089,4 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
 - One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
+- A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.

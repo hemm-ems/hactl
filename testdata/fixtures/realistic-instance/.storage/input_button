@@ -1,0 +1,24 @@
+{
+  "data": {
+    "items": [
+      {
+        "icon": "mdi:cellphone-charging",
+        "id": "boiler_ut",
+        "name": "Workshop S"
+      },
+      {
+        "icon": "mdi:radiator",
+        "id": "hallway_schedule_scullery",
+        "name": "Meter Mode Airlock Sculle"
+      },
+      {
+        "icon": "mdi:printer-3d-off",
+        "id": "threshold_meter_la",
+        "name": "Vestibule Limit Ga"
+      }
+    ]
+  },
+  "key": "input_button",
+  "minor_version": 1,
+  "version": 1
+}

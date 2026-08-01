@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,30 +25,33 @@ import (
 )
 
 var (
-	flagEntPattern  string
-	flagEntDomain   string
-	flagEntResample string
-	flagEntAttr     string
-	flagEntArea     string
-	flagEntLabel    string
-	flagEntConfirm  bool
-	flagEntStale    bool
-	flagEntRestored bool
+	flagEntPattern     string
+	flagEntDomain      string
+	flagEntResample    string
+	flagEntAttr        string
+	flagEntArea        string
+	flagEntLabel       string
+	flagEntConfirm     bool
+	flagEntStale       bool
+	flagEntRestored    bool
+	flagEntRemoveLabel []string
+	flagEntAreaClear   bool
 )
 
-var entCmd = &cobra.Command{
+var entCmd = family(&cobra.Command{
 	Use:        "ent",
 	SuggestFor: []string{"entity", "entities", "states", "sensor", "sensors"},
 	Short:      "Browse and inspect entities",
 	Long:       "List, inspect, and analyze Home Assistant entities and their history.",
-}
+})
 
 var entLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List entities",
 	Long:  "Show entities table, optionally filtered by glob pattern.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEntLs(cmd.Context(), cmd.OutOrStdout())
+		return runEntLs(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -55,7 +59,7 @@ var entShowCmd = &cobra.Command{
 	Use:   "show <entity_id>",
 	Short: "Show entity profile",
 	Long:  "Display entity current state, attributes, and last change.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -65,7 +69,7 @@ var entHistCmd = &cobra.Command{
 	Use:   "hist <entity_id>",
 	Short: "Show entity history",
 	Long:  "Display entity time series, auto-resampled to ~50 points by default.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntHist(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -75,7 +79,7 @@ var entAnomaliesCmd = &cobra.Command{
 	Use:   "anomalies <entity_id>",
 	Short: "Detect entity anomalies",
 	Long:  "Find gaps, stuck values, and spikes in entity history.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntAnomalies(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -85,29 +89,38 @@ var entRelatedCmd = &cobra.Command{
 	Use:   "related <entity_id>",
 	Short: "Show entities related to the given entity",
 	Long:  "Spider automations, device siblings, and area neighbors to find related entities.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntRelated(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
 }
 
 var entSetLabelCmd = &cobra.Command{
-	Use:   "set-label <entity_id> <label>...",
-	Short: "Assign labels to an entity (dry-run by default)",
-	Long:  "Set one or more labels on an entity via the HA entity registry. Dry-run by default: previews the merged label set; use --confirm to apply.",
-	Args:  cobra.MinimumNArgs(2),
+	Use:   "set-label <entity_id> [label...]",
+	Short: "Add or remove labels on an entity (dry-run by default)",
+	Long: "Merge one or more labels onto an entity via the HA entity registry — positional labels are ADDED " +
+		"to the existing set, never replacing it. Use --remove <label> (repeatable) to take a label back off " +
+		"instead; it may be combined with positional labels to add and remove in the same write, but a label " +
+		"cannot be named in both. Dry-run by default: previews the resulting label set; use --confirm to apply.",
+	Args: takesAtLeast(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
 }
 
 var entSetAreaCmd = &cobra.Command{
-	Use:   "set-area <entity_id> <area>",
-	Short: "Assign an area to an entity (dry-run by default)",
-	Long:  "Set the area (room) for an entity via the HA entity registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(2),
+	Use:   "set-area <entity_id> [area]",
+	Short: "Assign or clear an entity's area (dry-run by default)",
+	Long: "Set the area (room) for an entity via the HA entity registry, or use --clear to remove it from its " +
+		"current area (the entity then has no area of its own — H-8's inheritance still applies if its device " +
+		"has one). Pass exactly one of <area> or --clear. Use --confirm to apply.",
+	Args: takesBetween(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+		var area string
+		if len(args) > 1 {
+			area = args[1]
+		}
+		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], area)
 	},
 }
 
@@ -120,7 +133,10 @@ func init() {
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
 	entSetLabelCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set labels (default is dry-run)")
+	entSetLabelCmd.Flags().StringArrayVar(&flagEntRemoveLabel, "remove", nil,
+		"remove this label from the entity instead of adding it (repeatable; use 'label ls' to see available labels)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
+	entSetAreaCmd.Flags().BoolVar(&flagEntAreaClear, "clear", false, "remove the entity's area instead of setting one")
 	entRenameCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually rename and rewrite references (default is dry-run)")
 	entRenameCmd.Flags().BoolVar(&flagEntRenameAllowPartial, "allow-partial", false,
 		"rename even when some dashboards cannot be scanned or written "+
@@ -130,10 +146,46 @@ func init() {
 	rootCmd.AddCommand(entCmd)
 }
 
+// wireAttributes is an entity's attribute map decoded WITHOUT imposing a Go
+// numeric type on it.
+//
+// H-21 established that a domain-specific schema may only be applied to the
+// entities a command renders, and #105 fixed the decode half. This is the
+// encode half, and it was left standing: `encoding/json` decodes every JSON
+// number into `float64` for a `map[string]any`, and marshals `float64(5000)`
+// back as `5000`. So `ent show --json` re-emitted HA's `"max": 5000.0` — a
+// float by construction on every `number.*` entity, and on climate's
+// temperature/min_temp/max_temp — as a bare JSON integer. Python's
+// `json.loads` types that as `int`, and any consumer checking against HA's own
+// attribute contracts silently disagrees with HA about the entity it is
+// looking at. Non-integral floats were unaffected, which is why it survived:
+// `12.7` round-trips, `45.0` does not.
+//
+// `json.Number` keeps the literal HA sent, so the value re-encodes byte for
+// byte. The property belongs to the TYPE rather than to `ent show`'s renderer
+// on purpose: every decode of an entity state gets it, including the ones
+// inside a slice and the ones written next year, and there is no second place
+// that has to remember. `toFloat64` already accepted `json.Number` before this
+// existed, and nothing in the product asserts `.(float64)` on an attribute.
+type wireAttributes map[string]any
+
+// UnmarshalJSON decodes the attribute map with numbers left as their wire
+// literal.
+func (a *wireAttributes) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil {
+		return err
+	}
+	*a = m
+	return nil
+}
+
 // entityState holds a generic entity from /api/states.
 // Context carries HA's trigger metadata; see haapi.Context.
 type entityState struct {
-	Attributes  map[string]any `json:"attributes"`
+	Attributes  wireAttributes `json:"attributes"`
 	EntityID    string         `json:"entity_id"`
 	State       string         `json:"state"`
 	LastChanged string         `json:"last_changed"`
@@ -141,7 +193,8 @@ type entityState struct {
 	Context     haapi.Context  `json:"context"`
 }
 
-func runEntLs(ctx context.Context, w io.Writer) error {
+func runEntLs(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -160,6 +213,9 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 	if err := degeneracy.Check("/api/states", &states); err != nil {
 		return err
 	}
+
+	// Before any filter runs — see emptyListing.
+	total := len(states)
 
 	if flagEntDomain != "" {
 		filtered := filterEntitiesByDomain(states, flagEntDomain)
@@ -198,6 +254,10 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		states = filterEntitiesByRestored(states)
 	}
 
+	if len(states) == 0 {
+		return emptyListing(cmd, w, "entities", total)
+	}
+
 	// #54: HA marks a state `restored: true` when it was resurrected from the
 	// registry/recorder with no live platform entity behind its unique_id — a
 	// "ghost" left by a deleted or re-authored automation/helper/script. Surface
@@ -213,12 +273,21 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 
 	headers := []string{"entity_id", "state", "area", "labels", "last_changed"}
 	if anyRestored {
-		headers = append(headers, "restored")
+		headers = append(headers, restoredColumn)
 	}
 	tbl := &format.Table{
 		Headers: headers,
 		Rows:    make([][]string, len(states)),
 	}
+	// The cell carries the instant; the column decides its shape (#71).
+	tbl.SetTimeColumn("last_changed")
+	// A state wider than the column is shortened for the reader only. It used
+	// to be shortened here, so `ent ls --json` answered
+	// `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's 4486
+	// entities while `ent show --json` answered `"2026-08-01T03:33:44+00:00"`
+	// for the same field of the same entity (H-10, the class behind finding
+	// #14).
+	tbl.SetWidth("state", entStateWidth)
 	for i, s := range states {
 		var areaName, lblNames string
 		if rc != nil {
@@ -227,15 +296,21 @@ func runEntLs(ctx context.Context, w io.Writer) error {
 		}
 		row := []string{
 			s.EntityID,
-			truncateState(s.State),
+			s.State,
 			areaName,
 			lblNames,
-			formatShortTime(s.LastChanged),
+			s.LastChanged,
 		}
 		if anyRestored {
 			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
+			// boolCell is a rendering for a person — see its doc comment. The
+			// machine gets the boolean (finding #59, one command over).
+			tbl.SetMachine(i, restoredColumn, isRestoredAttr(s.Attributes))
 		}
 		tbl.Rows[i] = row
+		// The cell above is the reader's short clock; a machine gets the
+		// instant HA sent, with its offset (H-10).
+		tbl.SetMachine(i, "last_changed", formatMachineTime(s.LastChanged))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -502,7 +577,7 @@ func errUnknownEntity(ctx context.Context, client *haapi.Client, entityID string
 	}
 	return fmt.Errorf("entity %q: no live state, and no recorded history in the last %s "+
 		"(check the entity_id with `ent ls --pattern '*%s*'`, or widen --since)",
-		entityID, flagSince, lastIDSegment(entityID))
+		entityID, sinceWindow(), lastIDSegment(entityID))
 }
 
 // parseResampleDuration parses --resample and rejects values the resampler
@@ -536,7 +611,7 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -646,7 +721,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -699,12 +774,14 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, a := range anomalies {
 		tbl.Rows[i] = []string{
 			string(a.Type),
-			formatShortTime(a.Start.Format(time.RFC3339)),
+			a.Start.Format(time.RFC3339),
 			a.Detail,
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -780,7 +857,7 @@ func parseHistoryResponse(data []byte) ([]analyze.DataPoint, error) {
 // historyEntryFull is a history entry with full attributes (for --attr parsing).
 // Source: HA /api/history/period/ returns attributes in each state object.
 type historyEntryFull struct {
-	Attributes  map[string]any `json:"attributes"`
+	Attributes  wireAttributes `json:"attributes"`
 	EntityID    string         `json:"entity_id"`
 	State       string         `json:"state"`
 	LastChanged string         `json:"last_changed"`
@@ -927,12 +1004,14 @@ func renderStateTimeline(w io.Writer, entityID string, changes []analyze.StateCh
 		Headers: []string{"time", "state", "duration"},
 		Rows:    make([][]string, len(changes)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, c := range changes {
 		tbl.Rows[i] = []string{
-			formatShortTime(c.Time.Format(time.RFC3339)),
+			c.Time.Format(time.RFC3339),
 			c.State,
 			formatDuration(c.Duration),
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(c.Time.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -969,12 +1048,14 @@ func renderStateAnomalies(w io.Writer, entityID string, changes []analyze.StateC
 		Headers: []string{"type", "time", "detail"},
 		Rows:    make([][]string, len(anomalies)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, a := range anomalies {
 		tbl.Rows[i] = []string{
 			string(a.Type),
-			formatShortTime(a.Start.Format(time.RFC3339)),
+			a.Start.Format(time.RFC3339),
 			a.Detail,
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(a.Start.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -1026,11 +1107,13 @@ func renderHistoryPoints(w io.Writer, entityID string, points []analyze.DataPoin
 		Headers: []string{"time", "value"},
 		Rows:    make([][]string, len(points)),
 	}
+	tbl.SetTimeColumn("time")
 	for i, p := range points {
 		tbl.Rows[i] = []string{
-			formatShortTime(p.Time.Format(time.RFC3339)),
+			p.Time.Format(time.RFC3339),
 			strconv.FormatFloat(p.Value, 'f', 2, 64),
 		}
+		tbl.SetMachine(i, "time", formatMachineTime(p.Time.Format(time.RFC3339)))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -1075,7 +1158,7 @@ func filterEntitiesByPattern(states []entityState, pattern string) []entityState
 // domain where HA's config id and entity_id are independent strings by design,
 // and the only one hactl prints the config id for.
 func entityConfigID(s entityState) string {
-	if parseEntityDomain(s.EntityID) != "automation" {
+	if haapi.EntityIDDomain(s.EntityID) != "automation" {
 		return ""
 	}
 	id, _ := s.Attributes["id"].(string)
@@ -1089,7 +1172,7 @@ func entityConfigID(s entityState) string {
 // domain's friendly_name is a display name no hactl command resolves anything
 // by, so matching it would widen the filter past what hactl accepts.
 func entityAlias(s entityState) string {
-	if parseEntityDomain(s.EntityID) != "automation" {
+	if haapi.EntityIDDomain(s.EntityID) != "automation" {
 		return ""
 	}
 	alias, _ := s.Attributes["friendly_name"].(string)
@@ -1117,8 +1200,22 @@ func isRestoredAttr(attrs map[string]any) bool {
 	return b
 }
 
+// restoredColumn is the header of the ghost column `ent ls` and `auto ls` add
+// under --restored. It is a constant because the header and the SetMachine key
+// beside it must be the same string: SetMachine on a header that does not exist
+// adds a NEW json key instead of overriding the cell, silently, and the reader
+// of a `restored` field would never learn there was a `restred` one too.
+const restoredColumn = "restored"
+
 // boolCell renders a boolean for table output: "yes" when true, empty otherwise
 // (so the compact renderer keeps the majority of rows quiet).
+//
+// A cell it fills is a HUMAN rendering, so a table that reaches --json must
+// pair it with format.Table.SetMachine carrying the bool itself — the same rule
+// yesNo carries, for the same reason. "yes" and "" happen to be truthy and
+// falsy in most languages, which made this the quiet half of finding #59: the
+// type is wrong, a consumer comparing against `true` reads every ghost as not
+// a ghost, and nothing about the output says so.
 func boolCell(b bool) string {
 	if b {
 		return "yes"
@@ -1126,10 +1223,19 @@ func boolCell(b bool) string {
 	return ""
 }
 
+// filterEntitiesByDomain keeps the entities in exactly one domain, matched
+// without regard to case (D-2).
+//
+// It compared with `==`, so `ent ls --domain SENSOR` answered for 2 551 real
+// sensors on the reference instance — through domainNotFoundHint, which then
+// told the caller to "verify the domain exists". Entity domains are always
+// lowercase in HA, which is exactly why this flag had no stake in the case
+// question and why it went on answering it wrongly: the pole D-2 decided
+// covers every filter, not the ones where case can obviously bite.
 func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {
-		if parseEntityDomain(s.EntityID) == domain {
+		if strings.EqualFold(haapi.EntityIDDomain(s.EntityID), domain) {
 			result = append(result, s)
 		}
 	}
@@ -1153,6 +1259,22 @@ func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 // deleted the strings.ToLower to make it consistent with `ent ls --pattern` —
 // harmonising toward the sibling with no stake in the answer. Consistency was
 // the right instinct and the wrong direction.
+// A glob is anchored at BOTH identifier forms a listing prints (D-28). The
+// substring form matches anywhere in the id, so `--pattern anwesenheit` finds
+// `input_boolean.anwesenheit_flur`; the glob form is anchored, so
+// `--pattern 'anwesen*'` found nothing at all — the id it is anchored against
+// begins with the domain, not with the name (finding #29). `helper ls` makes
+// that unanswerable rather than merely surprising: it prints a bare YAML slug
+// for a companion-managed row and a full entity_id for a storage-backed one, in
+// the same column, so ONE anchor cannot serve both and `--pattern 'pg_*'`
+// matched half a listing by which source the row happened to come from.
+//
+// So a qualified identifier has two anchors: the id as printed, and the part
+// after the domain. A pattern carrying a dot (`sensor.*`) still selects by
+// domain, because the tail of `binary_sensor.foo` is `foo` and does not match
+// it. A value with a dot that is not a domain — a device named "Sonos v1.2" —
+// gains an anchor it has no use for, which is a false positive in the
+// permissive direction on a filter and cannot turn a match into a miss.
 func matchPattern(s, pattern string) bool {
 	if pattern == "" {
 		return s == ""
@@ -1161,7 +1283,13 @@ func matchPattern(s, pattern string) bool {
 	if !strings.ContainsAny(pattern, "*?") {
 		return strings.Contains(s, pattern)
 	}
-	return matchGlob(s, pattern)
+	if matchGlob(s, pattern) {
+		return true
+	}
+	if _, unqualified, found := strings.Cut(s, "."); found {
+		return matchGlob(unqualified, pattern)
+	}
+	return false
 }
 
 func matchGlob(s, pattern string) bool {
@@ -1198,21 +1326,16 @@ func matchGlob(s, pattern string) bool {
 	return len(s) == 0
 }
 
-func truncateState(state string) string {
-	if len(state) > 20 {
-		return state[:17] + "..."
-	}
-	return state
-}
+// entStateWidth is how wide the state column renders for a reader; the machine
+// contract carries what Home Assistant sent. See the SetWidth call in
+// writeEntListing.
+const entStateWidth = 20
 
-// parseEntityDomain extracts the domain from an entity ID (e.g. "sensor" from "sensor.temperature").
-func parseEntityDomain(entityID string) string {
-	if domain, _, ok := strings.Cut(entityID, "."); ok {
-		return domain
-	}
-	return entityID
-}
-
+// The domain half of an entity_id is haapi.EntityIDDomain. This file used to
+// carry its own `parseEntityDomain`, which differed in one case — a dotless id
+// came back whole rather than empty — and the rename check then had to agree
+// with it about what "the domain" is. Two functions answering one question is
+// how #30's display and --name halves came to disagree; there is one now.
 // filterEntitiesByArea matches an area by the id `area ls` prints in its first
 // column, or by its name — the same pair `device ls --area` has always matched.
 //
@@ -1235,9 +1358,12 @@ func filterEntitiesByArea(states []entityState, rc *registryContext, area string
 	return result
 }
 
-// labelNotFoundHint returns the user-facing message when a --label value isn't in the registry.
+// labelNotFoundHint returns the user-facing message when a --label value isn't
+// in the registry. It names the flag as well as the value: this is one of the
+// empty answers a listing can give, and every one of them says which narrowing
+// produced it (live-fire #28, TestEveryNarrowedListingSaysWhatNarrowedIt).
 func labelNotFoundHint(label string) string {
-	return fmt.Sprintf("label %q not found in registry (try: hactl label ls)", label)
+	return fmt.Sprintf("no entities match --label %q: that label is not in the registry (try: hactl label ls)", label)
 }
 
 // domainNotFoundHint returns the user-facing message when --domain matches no
@@ -1245,9 +1371,11 @@ func labelNotFoundHint(label string) string {
 // timer / schedule domains and have their own listing command.
 func domainNotFoundHint(domain string) string {
 	if domain == "helper" || domain == "helpers" {
-		return fmt.Sprintf("%q is not an entity domain — list helpers with: hactl helper ls", domain)
+		return fmt.Sprintf("no entities match --domain %q: that is not an entity domain — "+
+			"list helpers with: hactl helper ls", domain)
 	}
-	return fmt.Sprintf("no entities in domain %q — verify the domain exists (e.g. sensor, light, input_boolean) before reporting a negative result", domain)
+	return fmt.Sprintf("no entities match --domain %q — verify the domain exists "+
+		"(e.g. sensor, light, input_boolean) before reporting a negative result", domain)
 }
 
 // labelExistsInRegistry returns true if the given label value matches (by
@@ -1292,7 +1420,7 @@ var entRenameCmd = &cobra.Command{
 		"preview resolves the old id against the registry, pre-checks the new id for collisions, and " +
 		"counts the references a confirmed run would rewrite. Requires hactl-companion (it rewrites " +
 		"the config half). A dashboard that cannot be scanned refuses the run unless --allow-partial.",
-	Args: cobra.ExactArgs(2),
+	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntRename(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},
@@ -1305,9 +1433,25 @@ var entRenameCmd = &cobra.Command{
 func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 	// Shape refusals before any connection (H-2: the preview fails exactly
 	// where --confirm would, and HA refuses a malformed id at confirm time).
-	domain := parseEntityDomain(newID)
-	if domain == "" || domain == newID || strings.HasSuffix(newID, ".") {
-		return fmt.Errorf("new entity_id %q is not of the form <domain>.<object_id>", newID)
+	//
+	// This used to check only that the id had a dot with something on both
+	// sides, so `input_boolean.pg w5 bad`, `input_boolean.PG_w5_Bad!`,
+	// `input_boolean.pg_w5_🔥bad`, `input_boolean.pg.w5.bad` and the
+	// cross-domain `switch.pg_w5_renamed` all printed a confident "would
+	// rename … references: 2" at exit 0 — and `config/entity_registry/update`
+	// answers "Invalid entity ID" or "New entity ID should be same domain" to
+	// every one of them (measured on a live instance, 2026-07-31). The comment
+	// above was already the promise; the code kept half of it, which is the
+	// shape of every defect in dev/surfaces/README.md.
+	if !haapi.ValidEntityID(newID) {
+		return fmt.Errorf("new entity_id %q is not one Home Assistant accepts: <domain>.<object_id>, both "+
+			"lowercase letters, digits and underscores, no leading, trailing or doubled underscore "+
+			"(HA answers \"Invalid entity ID\")", newID)
+	}
+	if from, to := haapi.EntityIDDomain(oldID), haapi.EntityIDDomain(newID); from != to {
+		return fmt.Errorf("renaming %s to %s would move it from the %s domain to %s — Home Assistant refuses "+
+			"that (\"New entity ID should be same domain\"); an entity's domain follows its platform, "+
+			"not its id", oldID, newID, from, to)
 	}
 	if newID == oldID {
 		return errors.New("old and new entity_id are identical — nothing to rename")
@@ -1345,9 +1489,9 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 		return err
 	}
 	if scope.partial() && !flagEntRenameAllowPartial {
-		return fmt.Errorf("%d of %d dashboard(s) could not be scanned (%s), so this rename cannot claim to cover "+
-			"every reference; nothing was renamed. Re-run with --allow-partial to proceed over what could be read",
-			len(scope.unscanned), scope.total(), strings.Join(scope.unscanned, "; "))
+		return fmt.Errorf("%s could not be read, so this rename cannot claim to cover every reference; "+
+			"nothing was renamed. Re-run with --allow-partial to proceed over what could be read: %s",
+			strings.Join(scope.unreadSources(), " and "), renameScopeDetail(scope))
 	}
 
 	if !flagEntConfirm {
@@ -1376,22 +1520,53 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 	return nil
 }
 
+// renameScopeDetail names what went unread, one clause per source, so the
+// refusal says which dashboard and which file rather than only how many.
+func renameScopeDetail(scope sweepScope) string {
+	var parts []string
+	if reason := scope.configReason(); reason != nil {
+		parts = append(parts, reason.Error())
+	}
+	if scope.dash.partial() {
+		parts = append(parts, strings.Join(scope.dash.unscanned, "; "))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // countRenameReferences runs the read-only halves of the ref scan so the
 // rename preview can report how many references a confirmed run would move.
-func countRenameReferences(ctx context.Context, src *refSources, target string) (int, dashboardScanScope, error) {
+//
+// It returns the whole sweepScope, not just the dashboard half: the companion
+// names the config files its walk could not read, and a file that keeps the old
+// id after a confirmed rename is a dangling pointer left behind a success
+// message. Counting the hits from a partial answer and dropping the reason was
+// how the count could look complete.
+func countRenameReferences(ctx context.Context, src *refSources, target string) (int, sweepScope, error) {
 	cfgResp, err := src.cc.RefScan(ctx, target)
 	if err != nil {
-		return 0, dashboardScanScope{}, fmt.Errorf("companion ref scan: %w", err)
+		return 0, sweepScope{}, fmt.Errorf("companion ref scan: %w", err)
 	}
 	dashboards, err := src.ws.DashboardList(ctx)
 	if err != nil {
-		return 0, dashboardScanScope{}, fmt.Errorf("listing dashboards: %w", err)
+		return 0, sweepScope{}, fmt.Errorf("listing dashboards: %w", err)
 	}
-	hits, scope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
-	return len(cfgResp.Hits) + len(hits), scope, nil
+	hits, dashScope := scanDashboards(ctx, src.ws, dashboardScanTargets(dashboards), target)
+	return len(cfgResp.Hits) + len(hits), sweepScope{configSkipped: unreadConfigFiles(cfgResp.Skipped), dash: dashScope}, nil
 }
 
+// runEntSetLabel adds and/or removes labels on an entity (finding #81, H-27):
+// `set-label` could only ever grow an entity's label set, so taking one label
+// back off — without touching its siblings, and without touching the same
+// label on every OTHER entity the way `label delete` does — had no command.
+// Positional labels keep the original merge-only behaviour (TestEntSetLabelRoundTrip
+// pins it as intentional); --remove is the unmake half, additive to it rather
+// than replacing it.
 func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []string) error {
+	if len(labels) == 0 && len(flagEntRemoveLabel) == 0 {
+		return errors.New("no labels given: pass one or more labels to add, or --remove <label> to take one off " +
+			"(use 'label ls' to see available labels)")
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -1408,19 +1583,18 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	if err != nil {
 		return fmt.Errorf("fetching labels: %w", err)
 	}
-	labelIDs := make(map[string]string, len(existingLabels))
-	for _, l := range existingLabels {
-		labelIDs[strings.ToLower(l.Name)] = l.LabelID
-		labelIDs[l.LabelID] = l.LabelID
-	}
+	index := labelIndex(existingLabels)
 
-	resolved := make([]string, 0, len(labels))
-	for _, lbl := range labels {
-		id, ok := labelIDs[strings.ToLower(lbl)]
-		if !ok {
-			return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", lbl)
-		}
-		resolved = append(resolved, id)
+	toAdd, err := resolveLabelRefs(index, labels)
+	if err != nil {
+		return err
+	}
+	toRemove, err := resolveLabelRefs(index, flagEntRemoveLabel)
+	if err != nil {
+		return err
+	}
+	if overlapErr := refuseAddRemoveOverlap(toAdd, toRemove); overlapErr != nil {
+		return overlapErr
 	}
 
 	// Resolve the entity before planning anything. Labels live in the entity
@@ -1438,41 +1612,38 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
 	currentLabels := entry.Labels
-
-	// Merge: add new labels to existing ones (deduplicate)
-	seen := make(map[string]bool, len(currentLabels)+len(resolved))
-	merged := make([]string, 0, len(currentLabels)+len(resolved))
-	for _, l := range currentLabels {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
-	for _, l := range resolved {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
+	final, removed := applyLabelDelta(currentLabels, toAdd, toRemove)
 
 	if !flagEntConfirm {
-		return dryRunEntSetLabelSummary(entityID, currentLabels, merged).render(w)
+		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).render(w)
 	}
 
-	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": merged}); err != nil {
+	// An empty `final` is sent as `labels: []`, which clears every label rather
+	// than no-opping. Probed 2026-08-01 against HA 2026.7.4 by
+	// TestClearWiresEmptyLabels (internal/integration/registry_clear_oracle_test.go):
+	// it sets one real label, asserts the setup took, then sends the empty list
+	// and reads the entry back with no labels. The non-empty case was already
+	// proven by TestEntSetLabelRoundTrip; the empty one had never been sent.
+	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: labels set to %v\n", entityID, merged)
-	return nil
+	// Slices, not their %v rendering: under --json a caller gets real arrays.
+	return done("set entity labels").
+		with("entity_id", entityID).
+		with("labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed).
+		text("%s: labels set to %v", entityID, final).
+		render(w)
 }
 
-func dryRunEntSetLabelSummary(entityID string, current, merged []string) *dryRunPlan {
+func dryRunEntSetLabelSummary(entityID string, current, final, removed []string) *dryRunPlan {
 	// Slices, not their %v rendering: under --json a caller gets real arrays.
 	return dryRun("set entity labels").
 		with("entity_id", entityID).
 		with("current_labels", nonNil(current)).
-		with("new_labels", nonNil(merged))
+		with("new_labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed)
 }
 
 // nonNil turns a nil slice into an empty one, so --json emits [] rather than
@@ -1484,7 +1655,15 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// runEntSetArea sets, or — with --clear — removes an entity's own area
+// (finding #81, H-27). Clearing sends `area_id: nil` over the same
+// EntityRegistryUpdate a set does; clearAreaWireValue carries the probe that
+// established Home Assistant accepts it.
 func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) error {
+	if err := validateAreaTarget(area, flagEntAreaClear); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -1496,14 +1675,19 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Resolve area name to area ID
+	// Fetched either way: a clear's preview still names the area it is
+	// leaving, the same way a set's preview names the one it is replacing.
 	areas, err := ws.AreaRegistryList(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching areas: %w", err)
 	}
-	areaEntry, ok := resolveAreaEntry(areas, area)
-	if !ok {
-		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+	var areaEntry haapi.AreaEntry
+	if !flagEntAreaClear {
+		var ok bool
+		areaEntry, ok = resolveAreaEntry(areas, area)
+		if !ok {
+			return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+		}
 	}
 
 	entries, err := ws.EntityRegistryList(ctx)
@@ -1516,14 +1700,69 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	}
 
 	if !flagEntConfirm {
+		if flagEntAreaClear {
+			return dryRunEntClearAreaSummary(entityEntry, areas).render(w)
+		}
 		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).render(w)
 	}
 
-	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
+	if err := ws.EntityRegistryUpdate(ctx, entityID,
+		map[string]any{"area_id": clearAreaWireValue(flagEntAreaClear, areaEntry.AreaID)}); err != nil {
 		return fmt.Errorf("updating entity area: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s: area set to %s\n", entityID, areaEntry.AreaID)
+	if flagEntAreaClear {
+		return done("clear entity area").
+			with("entity_id", entityID).
+			with("area_id", nil).
+			text("%s: area cleared", entityID).
+			render(w)
+	}
+	return done("set entity area").
+		with("entity_id", entityID).
+		with("area_id", areaEntry.AreaID).
+		with("area_name", areaEntry.Name).
+		text("%s: area set to %s", entityID, areaEntry.AreaID).
+		render(w)
+}
+
+// clearAreaWireValue is the one place the assumption behind `--clear` turns
+// into a wire value, for both `ent set-area` and `device set-area`.
+//
+// Probed 2026-08-01, not assumed: `config/entity_registry/update` and the
+// device registry's equivalent both accept `area_id: null` and read the entry
+// back with its area cleared. TestClearWiresNullAreaID
+// (internal/integration/registry_clear_oracle_test.go) asks Home Assistant
+// directly, bypassing this code so the answer never travels through what it
+// judges.
+//
+// The version matters and is why the question was asked at all: the claim was
+// originally read off HA core's dev branch, which is not evidence for the
+// version under test. The `stable` image the rig boots is 2026.7.4 — the same
+// version the reference instance runs — so the probe covers both profiles
+// rather than only the rig.
+func clearAreaWireValue(wantClear bool, areaID string) any {
+	if wantClear {
+		return nil
+	}
+	return areaID
+}
+
+// validateAreaTarget applies H-25's exclusivity clause to `set-area`'s two
+// ways of naming what the entity's (or device's) area should become: the
+// <area> positional and --clear. Passing both names the target twice; passing
+// neither names it zero times. Shared by `ent set-area` and `device set-area`
+// so the two commands cannot answer the same input differently (D-44).
+func validateAreaTarget(area string, wantClear bool) error {
+	if wantClear && area != "" {
+		return &flagContractError{fmt.Sprintf(
+			"the area argument %q and --clear each say what the area should become and cannot both be honoured; pass one",
+			area)}
+	}
+	if !wantClear && area == "" {
+		return errors.New("no area given: pass an area, or --clear to remove the current one " +
+			"(use 'area ls' to see available areas)")
+	}
 	return nil
 }
 
@@ -1559,6 +1798,23 @@ func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEn
 		with("entity_id", entity.EntityID).
 		withIf(currentArea != "", "current_area", currentArea).
 		with("new_area", fmt.Sprintf("%s (%s)", area.Name, area.AreaID))
+}
+
+// dryRunEntClearAreaSummary mirrors dryRunEntSetAreaSummary for --clear: same
+// current-area lookup, but the plan's destination is "no area" rather than a
+// resolved one.
+func dryRunEntClearAreaSummary(entity haapi.EntityRegistryEntry, areas []haapi.AreaEntry) *dryRunPlan {
+	currentArea := entity.AreaID
+	for _, a := range areas {
+		if a.AreaID == entity.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+	return dryRun("clear entity area").
+		with("entity_id", entity.EntityID).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", nil)
 }
 
 // relatedEntry holds one edge in the entity relationship graph.
@@ -1824,7 +2080,7 @@ func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
 		return nil
 	}
 	// Every entity in the area, whatever its domain. This used to also require
-	// parseEntityDomain(e) == parseEntityDomain(entityID), which made "area
+	// haapi.EntityIDDomain(e) == haapi.EntityIDDomain(entityID), which made "area
 	// neighbors" mean "same area AND same domain" — narrower than `ent ls
 	// --area` and than HA's own area_entities(), which has no notion of a
 	// domain. The restriction was invisible in the output (there is no domain
@@ -1850,7 +2106,7 @@ func findAreaNeighbors(rc *registryContext, entityID string) []relatedEntry {
 func findGroupMemberships(states []entityState, entityID string) []relatedEntry {
 	var result []relatedEntry
 	for _, s := range states {
-		if parseEntityDomain(s.EntityID) != "group" {
+		if haapi.EntityIDDomain(s.EntityID) != "group" {
 			continue
 		}
 		members, ok := s.Attributes["entity_id"].([]any)

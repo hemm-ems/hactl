@@ -177,12 +177,47 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		wantKeys []string
 	}{
 		{"clock", surfaceaudit.ClockSurface, []string{"internal/clock/render.go:Short"}},
-		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/cc.go:runCCShow"}},
+		// runDashGrep, not runCCShow: `cc show` was the anchor until it grew a
+		// real resolver (finding #18) and correctly left the surface. An anchor
+		// has to be a site the surface holds for a durable reason, and
+		// `dash grep`'s is structural — its argument is a search value, so there
+		// is nothing for it to resolve and nothing that would remove it.
+		{"target", surfaceaudit.TargetSurface, []string{"internal/cmd/dash.go:runDashGrep"}},
+		// runRefScan reads BOTH partial-capable sources — the companion's config
+		// walk and the dashboard walk — so it is the site that would survive
+		// either derivation pass breaking on its own, and the one #34 was
+		// reported against.
+		{"partialscope", surfaceaudit.PartialScopeSurface, []string{"internal/cmd/ref.go:runRefScan"}},
 		{"invariant", surfaceaudit.InvariantSurface, []string{"H-17"}},
+		// format.Clip is the one shortening the product is supposed to have, so
+		// an extractor that stopped matching would take the whole surface with
+		// it and still look green (it would report "nothing shortens anything").
+		{"truncation", surfaceaudit.TruncationSurface, []string{"internal/format/format.go:Clip"}},
 		// The named site is the one the maprange surface exists for: the walk
 		// that rendered one arbitrary entry of a map for a whole release.
 		{"maprange", surfaceaudit.MapRangeSurface, []string{"internal/cmd/wireguard_cmd.go:writeWireguardMonitor"}},
-		{"decode", surfaceaudit.DecodeSurface, []string{"internal/writer/writer.go:parseRemoteAutomationConfig"}},
+		{"decode", surfaceaudit.DecodeSurface, []string{"internal/writer/writer.go:(*Writer).remoteEntry"}},
+		// The three backup writers this surface was built for. Naming all three
+		// is the point: each was a separate fix in a separate release before
+		// H-26, and an extractor that found only one would look green while
+		// proving a third of the rule.
+		// backupfile.Write is the one writer the three backup sites were
+		// collapsed into, so an extractor that stopped matching would take the
+		// whole rule with it; the other two are independent packages, so a
+		// derivation that silently narrowed to one of them is caught too.
+		{"sharedstate", surfaceaudit.SharedStateSurface, []string{
+			"internal/backupfile/backupfile.go:Write",
+			"internal/manual/state.go:saveState",
+			"pkg/ids/ids.go:(*Registry).Save",
+		}},
+		// One key per transport kind, because the two legs are derived
+		// independently and the defect was in exactly one of them: the shared
+		// HTTP client both REST callers now build, and the websocket dialer that
+		// had its own constants and was the site of #73.
+		{"transport", surfaceaudit.TransportSurface, []string{
+			"internal/haapi/transport.go:HTTPClient:http.Client",
+			"internal/haapi/websocket.go:(*WSClient).connect:websocket.Dialer",
+		}},
 		// One key per leg: the schema, the whole-payload read, and the join.
 		// fetchAutomations is the site H-21 was written for — the listing that
 		// died on an entity it does not list.
@@ -254,6 +289,20 @@ func runScriptShow(ctx context.Context, w io.Writer, scriptID string) error {
 }
 `
 	if err := os.WriteFile(filepath.Join(dir, "thing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The surface now reads docs/manual.md as well — the sentence that MAKES the
+	// promise is the second derivation, after the first (a parameter-name
+	// convention) missed `trace show` for a release (#66). The fixture tree needs
+	// the claim for the same reason it needs a thing.go: an extractor is being
+	// exercised, so both of its inputs have to be there.
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	claim := "**Automation identifiers:** every command that takes an automation — " +
+		"`auto show|cat` — accepts any of its interchangeable names.\n"
+	if err := os.WriteFile(filepath.Join(docs, "manual.md"), []byte(claim), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -397,5 +446,144 @@ func viaDot(b []byte) { var v map[string]any; _ = Unmarshal(b, &v) }
 	}
 	if got["internal/cmd/x.go:sweptJSON"] {
 		t.Error("a sweep-governed json.Unmarshal in a wire package was flagged here too — the surface would demand a second ledger entry for every site the H-14 sweep already derives")
+	}
+}
+
+// TestResultExtractorFlagsProseOnConfirm guards the result violation surface,
+// which is empty by design and therefore cannot be guarded by a non-empty
+// check.
+//
+// The fixture pins both directions, because both were live in the tree when the
+// gate was written and getting either wrong makes the gate useless:
+//
+//   - the two GUARD SPELLINGS must both be accepted. `if !flagJSON { print }`
+//     is lexical; `if flagJSON { …; return }` followed by prose is an early
+//     return, which is how `config delete` is written and is correct. An
+//     extractor that only understood the first would report a correct command
+//     and teach people to override it.
+//   - a rendered result (`done(…).text(…).render(w)`) must be accepted, and
+//     an unconditional Fprintf on the confirmed branch must be flagged. That
+//     Fprintf is the defect itself: `svc call --confirm --json` printing
+//     `called script.turn_on` in prose right after really firing the script.
+func TestResultExtractorFlagsProseOnConfirm(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := `package cmd
+
+func runThingRendered(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	return done("do the thing").text("did %s", id).render(w)
+}
+
+func runThingLexicallyGuarded(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	if !flagJSON {
+		fmt.Fprintf(w, "did %s\n", id)
+	}
+	return nil
+}
+
+func runThingEarlyReturnGuarded(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	if flagJSON {
+		fmt.Fprintln(w, "{}")
+		return nil
+	}
+	fmt.Fprintf(w, "did %s\n", id)
+	return nil
+}
+
+func runThingAsProse(ctx context.Context, w io.Writer, id string) error {
+	if !flagThingConfirm {
+		return dryRun("do the thing").render(w)
+	}
+	fmt.Fprintf(w, "did %s\n", id)
+	return nil
+}
+
+func runReadOnlyThing(ctx context.Context, w io.Writer) error {
+	fmt.Fprintln(w, "not a write command; no --confirm gate")
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "thing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := surfaceaudit.ResultSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	keys := make([]string, 0, len(s.Sites))
+	for _, site := range s.Sites {
+		keys = append(keys, site.Key)
+	}
+	if len(keys) != 1 || !strings.Contains(keys[0], ":runThingAsProse:") {
+		t.Errorf("want exactly the prose-on-confirm result flagged, got %v", keys)
+	}
+}
+
+// TestAttributedExtractorFlagsAnInventedField is the attributed surface's
+// guard against silently matching nothing.
+//
+// A violation surface is empty when the rule holds, so emptiness cannot be the
+// alarm — runGate lets it pass. What stands in for it is this: a tree
+// containing one known-bad row literal, which the extractor must flag, and
+// three shapes beside it that it must not. If a refactor breaks the derivation,
+// this fails while the real surface goes on reporting zero.
+func TestAttributedExtractorFlagsAnInventedField(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := `package cmd
+
+func runInventedListing(w io.Writer) error {
+	rows = append(rows, thingRow{ID: s.EntityID, Name: name, Source: "storage"})
+	return nil
+}
+
+func runReadListing(w io.Writer) error {
+	// Read from the payload: not a site, which is the whole point of the rule.
+	rows = append(rows, thingRow{ID: s.EntityID, Name: name, Source: sourceOf(s.Attributes)})
+	return nil
+}
+
+func runAbsentValue(w io.Writer) error {
+	// An empty constant is the absence of a claim, not a claim.
+	rows = append(rows, thingRow{ID: s.EntityID, Icon: ""})
+	return nil
+}
+
+func runNotARow(w io.Writer) error {
+	// Not a listing row, so its constants describe hactl's own request.
+	req = append(req, filterSpec{Field: "entity_id", Op: "eq"})
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "listing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := surfaceaudit.AttributedSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	keys := make([]string, 0, len(s.Sites))
+	for _, site := range s.Sites {
+		keys = append(keys, site.Key)
+	}
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], ":thingRow.Source") {
+		t.Errorf("want exactly the invented Source flagged, got %v", keys)
 	}
 }

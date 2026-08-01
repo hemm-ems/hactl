@@ -33,13 +33,32 @@ Set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on
 stderr (accepts `debug`, `info`, `warn`, `error`; defaults to `info`).
 
 Companion connectivity issues? Run `hactl companion status` for a one-screen
-diagnostic showing which discovery path succeeded or failed and why. Typical
-failure reasons:
+diagnostic showing which discovery path succeeded or failed and why. It **exits
+1 when the companion is not usable**, so it can gate a script. Failure reasons:
 
 - `auth_denied` — your long-lived token lacks admin scope. Re-issue from an HA owner account.
+- `auth_invalid` — Home Assistant rejected the token outright. The connection is fine; replace `HA_TOKEN` in `.env`.
 - `addon_missing` — the add-on isn't installed. HA → Settings → Add-ons → install `hactl-companion`.
 - `protocol_mismatch` — HA Container without Supervisor. Set `COMPANION_URL` in `.env` directly.
-- `unreachable` — Supervisor is there but the add-on URL isn't responding. Check Ingress / network.
+- `redirected` — `HA_URL` names an origin that redirects elsewhere. See below.
+- `unreachable` — nothing answered at `HA_URL`. Check the URL and the network.
+
+### `HA_URL` must be the origin that answers
+
+hactl talks to the URL you configured; a redirect to a different scheme, host or
+port is refused, naming the origin to put in `.env`.
+
+The case this comes up in is `HA_URL=http://…` behind a reverse proxy that 301s
+to `https://`. It is worth refusing rather than following, because following it
+half-works: REST calls follow the redirect transparently with the credentials
+intact, so `ent ls` returns your real entities, while WebSocket-backed
+subsystems — traces, registries, add-on discovery, recorder error counts —
+cannot follow a redirect at all, there being no such step in the protocol. That
+produced a `health` output with a real version, state, location and timezone
+beside `errors: -1` and `companion: not found`, at exit 0, with nothing naming
+the scheme as the cause.
+
+Same-origin redirects (a trailing slash, a path rewrite) are followed normally.
 
 Discovery requires HA OS or Supervised (`supervisor/api` WS proxy must be
 available). External access works automatically via Supervisor-issued

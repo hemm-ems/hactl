@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "Rig capability R12 — the dashboard shapes a real Home Assistant has and three flat YAML",
+    "files could not express. WP5 (findings #3, #8) plus the default-dashboard mode premise.",
+    "",
+    "Two entries are seeded here; a third arrives on its own, and that is the point:",
+    "",
+    "  map          a STRATEGY dashboard. Its stored config is exactly {\"strategy\": …} with no",
+    "               `views` key at all, so `dash show map` reads a real document that contains",
+    "               zero views. Home Assistant creates this dashboard itself during onboarding",
+    "               (lovelace/__init__.py _create_map_dashboard, HA 2026.7.4), so it is stock",
+    "               shape, not a quirk — the reference instance carries the identical document.",
+    "               Finding #8 lived in the len(Views)==0 early return that fires before --view",
+    "               is consulted, and no fixture had a dashboard with no views to fire it.",
+    "",
+    "  rig-unsaved  a REGISTERED dashboard with no stored config. lovelace/dashboards/list",
+    "               reports it; lovelace/config answers config_not_found for it. This is the",
+    "               state every dashboard is in between `dash create` and its first `dash save`,",
+    "               and finding #3 is that hactl had an honest answer for it only when it was",
+    "               the default. Deliberately NO .storage/lovelace.rig_unsaved file.",
+    "",
+    "  lovelace     NOT seeded here — .storage/lovelace is, and Home Assistant's own migration",
+    "               (_async_migrate_default_config, storage mode only) turns it into an entry in",
+    "               THIS collection at boot, mode `storage`, url_path `lovelace`. Letting HA",
+    "               perform the migration is what makes the shape survive an HA that changes it.",
+    "               See .storage/lovelace for why that shape matters."
+  ],
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace_dashboards",
+  "data": {
+    "items": [
+      {
+        "id": "map",
+        "url_path": "map",
+        "title": "Map",
+        "icon": "mdi:map",
+        "mode": "storage",
+        "require_admin": false,
+        "show_in_sidebar": true
+      },
+      {
+        "id": "rig_unsaved",
+        "url_path": "rig-unsaved",
+        "title": "Rig Unsaved",
+        "icon": "mdi:file-hidden",
+        "mode": "storage",
+        "require_admin": false,
+        "show_in_sidebar": true
+      }
+    ]
+  }
+}

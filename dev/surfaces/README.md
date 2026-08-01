@@ -70,10 +70,18 @@ not an act at all. That asymmetry is the whole design.
 | `target` | `internal/cmd` entrypoints | an unresolvable identifier ends the command rather than becoming a plan |
 | `autoref` | `internal/cmd` entrypoints taking an automation reference | the reference reaches `resolveAutomation`, so every command accepts every identifier form the family prints (D-1, H-17) |
 | `clock` | every clock layout in the source | a rendered hour is in the reader's zone, not Home Assistant's UTC |
+| `truncation` | every `<something> + <ellipsis>` in the source | a value shortened to fit a display is shortened by the renderer, never on the way in (H-10) |
 | `maprange` | every range over a map, from the typed source | a map walk is made canonical before anything it feeds renders (H-16) |
 | `decode` | every decode site the H-14 json sweep cannot see — yaml, decoder constructions, websocket `ReadJSON`, json outside `degeneracy.WirePackages` | a decode that yields nothing never renders as success (H-7) |
 | `domaindecode` | the three legs of the rule, from the typed source: every non-map `json:"attributes"` schema, every read of the whole `/api/states` document, every join between them | a domain-specific attribute schema is applied only to the entities the command renders (H-21) |
+| `preview` | `internal/cmd` `run…` entrypoints that gate on `--confirm` | a preview is built with `dryRun()`, the only renderer that honours `--json` (H-2, second half) |
+| `result` | the same entrypoints, the other branch | a confirmed write reports its outcome through a renderer that honours `--json`, never as unconditional prose (H-10) |
 | `lsfilter` | every leaf command named `ls` in the live cobra tree — with or without a filter flag | a listing narrows by an identifier filter (`--pattern`, D-1), or its row states why there is nothing to narrow |
+| `positional` | the live cobra tree | every command declares its positional contract, so a blank identifier, an unexpected positional and an unknown subcommand are all refused before the command runs (H-22) |
+| `boolcell` | every bool-to-cell rendering in the typed source — a call into the renderer vocabulary, or a variable a function assigns two of its words | a boolean rendered into a table cell reaches `--json` as a JSON boolean (`SetMachine`), never as its human wording (H-10) |
+| `outputformat` | the live cobra tree | a command declaring an output-format flag beside `--json` refuses the combination rather than silently picking a winner (H-10) |
+| `flagcontract` | the live cobra tree | a flag more than one command offers means one thing in all of them, and every command that offers it acts on it (H-25) |
+| `unmake` | every leaf command in the live cobra tree named `set-*` | every assignment a command can make, it can also unmake (H-27) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

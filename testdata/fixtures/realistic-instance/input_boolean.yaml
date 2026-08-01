@@ -1,0 +1,33 @@
+# A helper domain that does NOT live in configuration.yaml.
+#
+# `input_number:` and `input_select:` are written out in configuration.yaml on
+# purpose; these three are here. Both forms produce identical helpers over the
+# API, so anything that reads the API cannot tell them apart — and anything
+# that goes looking for the definition in configuration.yaml will find nothing
+# for exactly these three.
+guest_mode:
+  name: Guest Mode
+  icon: mdi:account-group
+vacation_mode:
+  name: Vacation Mode
+  icon: mdi:airplane
+alarm_armed:
+  name: Alarm Armed
+  icon: mdi:shield-lock
+
+# The two ends of the blueprint-backed automation in automations.yaml.
+shape_button:
+  name: Shape Button
+  icon: mdi:gesture-tap-button
+shape_target:
+  name: Shape Target
+  icon: mdi:target
+
+# The sweep's write target, named for the live profile's rule rather than the
+# rig's. Nothing on the rig needs a namespace — but the corpus is ONE corpus,
+# and a case that has to discover a different object per profile is two cases
+# wearing one name. `pg_` is what guardLiveWrite allows, so the same case
+# toggles pg_wp4_probe on both sides.
+pg_wp4_probe:
+  name: PG WP4 Probe
+  icon: mdi:toggle-switch

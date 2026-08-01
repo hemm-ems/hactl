@@ -75,3 +75,66 @@ func TestNaiveWireValueKeepsItsDigits(t *testing.T) {
 		t.Errorf("ShortSeconds(naive) = %q, want %q", got, want)
 	}
 }
+
+// TestShortColumnIsUniformDownTheColumn — live-fire #71.
+//
+// `auto show`'s trace table printed four rows as `07-29 01:15` and the fifth,
+// which started today, as a bare `01:15`. The abbreviation is a relative
+// rendering and the column is where its reference point is invisible: a reader
+// who does not know the convention cannot date that row, cannot tell it from a
+// row whose date was lost, and cannot compare it with the one above it.
+//
+// The fixtures are built from today's CALENDAR DAY at fixed clock times rather
+// than by subtracting from now, so the case means the same thing when it runs at
+// 00:44 as at noon — the first draft used now-1h and crossed midnight.
+func TestShortColumnIsUniformDownTheColumn(t *testing.T) {
+	inBerlin(t)
+	morning := todayAt(9, 15)
+	afternoon := todayAt(13, 45)
+	yesterday := morning.AddDate(0, 0, -1)
+
+	mixed := clock.ShortColumn([]string{
+		yesterday.Format(time.RFC3339),
+		afternoon.Format(time.RFC3339),
+	})
+	for i, got := range mixed {
+		if len(got) != len("01-02 15:04") {
+			t.Errorf("row %d of a mixed column renders %q — one row carries a date and another does not", i, got)
+		}
+	}
+
+	// The convenience survives where it is unambiguous: a column in which
+	// everything happened today is a column of clock times, and adding today's
+	// date to every row of it is noise the reader cannot use.
+	allToday := clock.ShortColumn([]string{
+		morning.Format(time.RFC3339),
+		afternoon.Format(time.RFC3339),
+	})
+	for i, got := range allToday {
+		if len(got) != len("15:04") {
+			t.Errorf("row %d of an all-today column renders %q, want the bare clock", i, got)
+		}
+	}
+}
+
+// todayAt builds an instant on the reader's current calendar day.
+func todayAt(hour, minute int) time.Time {
+	now := time.Now()
+	//nolint:gosmopolitan // the reader's zone is what this package renders in
+	return time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, time.Local)
+}
+
+// TestShortColumnPassesThroughWhatItCannotParse holds the rule this package
+// applies everywhere: a wire change shows up as itself, never as a plausible
+// time. A column of one unparseable value must not make the parseable ones
+// change shape either.
+func TestShortColumnPassesThroughWhatItCannotParse(t *testing.T) {
+	inBerlin(t)
+	got := clock.ShortColumn([]string{"", "not a timestamp", todayAt(9, 15).Format(time.RFC3339)})
+	if got[0] != "" || got[1] != "not a timestamp" {
+		t.Errorf("unparseable values were rewritten: %q", got)
+	}
+	if len(got[2]) != len("15:04") {
+		t.Errorf("an all-today column rendered %q beside unparseable neighbours", got[2])
+	}
+}

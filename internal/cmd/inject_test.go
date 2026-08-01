@@ -15,30 +15,51 @@ func TestShouldInject(t *testing.T) {
 		name                 string
 		mode                 manual.Mode
 		stdoutTTY, stderrTTY bool
-		jsonOut              bool
 		top                  string
 		bare                 bool
 		want                 bool
 	}{
-		{"agent run, family cmd", manual.ModeProgressive, false, false, false, "health", false, true},
-		{"agent run, full mode", manual.ModeFull, false, false, false, "health", false, true},
-		{"agent run, unknown cmd (core only)", manual.ModeProgressive, false, false, false, "", false, true},
-		{"mode off", manual.ModeOff, false, false, false, "health", false, false},
-		{"human at terminal", manual.ModeProgressive, true, true, false, "health", false, false},
-		{"human piping stdout, stderr on TTY", manual.ModeProgressive, false, true, false, "ent", false, false},
-		{"stdout TTY, stderr redirected", manual.ModeProgressive, true, false, false, "ent", false, false},
-		{"json output suppresses injection", manual.ModeProgressive, false, false, true, "ent", false, false},
-		{"json output suppresses even in full mode", manual.ModeFull, false, false, true, "health", false, false},
-		{"bare hactl (help screen)", manual.ModeProgressive, false, false, false, "", true, false},
-		{"rtfm exempt from injection", manual.ModeProgressive, false, false, false, "rtfm", false, false},
-		{"mcp exempt", manual.ModeProgressive, false, false, false, "mcp", false, false},
-		{"setup exempt", manual.ModeProgressive, false, false, false, "setup", false, false},
-		{"version exempt", manual.ModeProgressive, false, false, false, "version", false, false},
-		{"completion machinery exempt", manual.ModeProgressive, false, false, false, "__complete", false, false},
+		{"agent run, family cmd", manual.ModeProgressive, false, false, "health", false, true},
+		{"agent run, full mode", manual.ModeFull, false, false, "health", false, true},
+		{"agent run, unknown cmd (core only)", manual.ModeProgressive, false, false, "", false, true},
+		{"mode off", manual.ModeOff, false, false, "health", false, false},
+		{"human at terminal", manual.ModeProgressive, true, true, "health", false, false},
+		{"human piping stdout, stderr on TTY", manual.ModeProgressive, false, true, "ent", false, false},
+		{"stdout TTY, stderr redirected", manual.ModeProgressive, true, false, "ent", false, false},
+		{"bare hactl (help screen)", manual.ModeProgressive, false, false, "", true, false},
+		{"rtfm exempt from injection", manual.ModeProgressive, false, false, "rtfm", false, false},
+		{"mcp exempt", manual.ModeProgressive, false, false, "mcp", false, false},
+		{"setup exempt", manual.ModeProgressive, false, false, "setup", false, false},
+		{"version exempt", manual.ModeProgressive, false, false, "version", false, false},
+		{"completion machinery exempt", manual.ModeProgressive, false, false, "__complete", false, false},
 	}
 	for _, tc := range cases {
-		if got := shouldInject(tc.mode, tc.stdoutTTY, tc.stderrTTY, tc.jsonOut, tc.top, tc.bare); got != tc.want {
+		if got := shouldInject(tc.mode, tc.stdoutTTY, tc.stderrTTY, tc.top, tc.bare); got != tc.want {
 			t.Errorf("%s: shouldInject = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestManualDeliveryIsNotDecidedByOutputFormat is the case the table above used
+// to hold the opposite of. The two rows it replaces asserted that `--json`
+// suppresses delivery; on a real instance that meant an agent reading only
+// structured output — the caller this manual is written for — received nothing,
+// while the write path delivered under the same flag (#50).
+//
+// It is written against the SHAPE of the invocation rather than against a
+// command, because that is what the rule is about: the same gate answers the
+// same way whatever `--json` says.
+func TestManualDeliveryIsNotDecidedByOutputFormat(t *testing.T) {
+	for _, top := range []string{"health", "device", "ent", ""} {
+		want := shouldInject(manual.ModeProgressive, false, false, top, false)
+		if !want {
+			t.Fatalf("agent-shaped %q does not receive the manual at all — the premise of this test is gone", top)
+		}
+		// The flag lives in package state, not in the gate's arguments: that is
+		// the fix. Setting it must change nothing here.
+		setFlagForTest(t, &flagJSON, true)
+		if got := shouldInject(manual.ModeProgressive, false, false, top, false); got != want {
+			t.Errorf("--json changed delivery for %q: %v, want %v", top, got, want)
 		}
 	}
 }
@@ -71,6 +92,15 @@ func TestTopCommandName(t *testing.T) {
 // executeCapture runs Execute() the way the real CLI does (args from
 // os.Args), with both streams swapped for pipes so the injection hook sees an
 // agent-shaped invocation.
+//
+// Both pipes are drained by goroutines while the command runs, not read
+// afterwards. A pipe holds 64 KiB, and `hactl rtfm` prints the whole manual:
+// this helper worked for as long as that document stayed under the buffer and
+// deadlocked the moment a manual edit pushed it from 65 261 to 67 380 bytes —
+// the command blocked in os.File.Write with its only reader waiting for the
+// command to return. Nothing about the product was wrong (a real consumer of
+// stdout reads while the process writes); the harness had a size limit nobody
+// had written down.
 func executeCapture(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	// Other tests leak cobra state (SetArgs, --dir flag values); start clean.
@@ -90,13 +120,24 @@ func executeCapture(t *testing.T, args ...string) (stdout, stderr string, err er
 		resetSubcommandFlags()
 	}()
 
+	outC, errC := drainPipe(rOut), drainPipe(rErr)
+
 	err = Execute()
 
 	_ = wOut.Close()
 	_ = wErr.Close()
-	outB, _ := io.ReadAll(rOut)
-	errB, _ := io.ReadAll(rErr)
-	return string(outB), string(errB), err
+	return <-outC, <-errC, err
+}
+
+// drainPipe reads a pipe to EOF in the background and delivers the whole of it
+// on the returned channel.
+func drainPipe(r *os.File) <-chan string {
+	out := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		out <- string(b)
+	}()
+	return out
 }
 
 func setupInjectEnv(t *testing.T, session string) {
@@ -161,7 +202,11 @@ func TestExecute_InjectsFamilyOnErrorToo(t *testing.T) {
 		t.Fatal("auto ls against a closed port should error")
 	}
 	// Cold-start help matters most on failures: manual precedes the error.
-	for _, want := range []string{"[hactl manual core", "'auto' family how-to", "=== RESULT of hactl auto ls ==="} {
+	// The family is named by every command it covers (manual.FamilyLabel), so
+	// this expectation is derived rather than typed — an alias added to the
+	// family must not need this literal edited to stay true.
+	autoNote := "'" + manual.FamilyLabel("auto") + "' family how-to"
+	for _, want := range []string{"[hactl manual core", autoNote, "=== RESULT of hactl auto ls ==="} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("error-path stderr missing %q", want)
 		}

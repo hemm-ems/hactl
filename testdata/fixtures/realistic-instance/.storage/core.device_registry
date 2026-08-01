@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "minor_version": 9,
+  "key": "core.device_registry",
+  "data": {
+    "devices": [
+      {
+        "area_id": null,
+        "config_entries": [],
+        "config_entries_subentries": {},
+        "configuration_url": null,
+        "connections": [],
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "disabled_by": null,
+        "disabled_by_undefined": null,
+        "entry_type": null,
+        "hw_version": null,
+        "id": "dev00000000000000000000000renamed",
+        "identifiers": [["demo", "renamed_device"]],
+        "labels": [],
+        "manufacturer": "Acme",
+        "model": "Widget",
+        "model_id": null,
+        "modified_at": "2026-01-01T00:00:00.000000+00:00",
+        "name": "Acme Widget 4711",
+        "name_by_user": "Kitchen Pendant Light",
+        "orphaned_timestamp": null,
+        "primary_config_entry": null,
+        "serial_number": null,
+        "sw_version": null,
+        "via_device_id": null
+      },
+      {
+        "area_id": null,
+        "config_entries": [],
+        "config_entries_subentries": {},
+        "configuration_url": null,
+        "connections": [],
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "disabled_by": null,
+        "disabled_by_undefined": null,
+        "entry_type": null,
+        "hw_version": null,
+        "id": "dev0000000000000000000000plainone",
+        "identifiers": [["demo", "plain_device"]],
+        "labels": [],
+        "manufacturer": "Acme",
+        "model": "Widget",
+        "model_id": null,
+        "modified_at": "2026-01-01T00:00:00.000000+00:00",
+        "name": "Acme Widget 0815",
+        "name_by_user": null,
+        "orphaned_timestamp": null,
+        "primary_config_entry": null,
+        "serial_number": null,
+        "sw_version": null,
+        "via_device_id": null
+      }
+    ],
+    "deleted_devices": []
+  }
+}

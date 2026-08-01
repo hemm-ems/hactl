@@ -1,0 +1,53 @@
+{
+  "data": {
+    "items": [
+      {
+        "icon": "mdi:fan-remove",
+        "id": "hallway_pantr",
+        "name": "Meter Limit C",
+        "options": [
+          "Landing Limit",
+          "Cellar Inter",
+          "Utility Counte",
+          "Airlock Window S"
+        ]
+      },
+      {
+        "icon": "mdi:television",
+        "id": "hallway_porch_cistern_cister",
+        "name": "Meter Counter Porch Airlock",
+        "options": [
+          "Workshop Cou",
+          "Utility Sensor L",
+          "Airlock Latch Ci",
+          "Annex Limit"
+        ]
+      },
+      {
+        "icon": "mdi:fan-auto",
+        "id": "window_w",
+        "name": "Landing",
+        "options": [
+          "Landing Limit",
+          "Cellar Inter",
+          "Utility Counte",
+          "Airlock Window S"
+        ]
+      },
+      {
+        "icon": "mdi:television",
+        "id": "workshop_hallway_pantry_threshold",
+        "name": "Boiler Setpoint Boiler Annex Work",
+        "options": [
+          "Workshop Cou",
+          "Utility Sensor L",
+          "Airlock Latch Ci",
+          "Annex Limit"
+        ]
+      }
+    ]
+  },
+  "key": "input_select",
+  "minor_version": 1,
+  "version": 1
+}

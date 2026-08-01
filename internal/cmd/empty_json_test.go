@@ -108,7 +108,7 @@ func TestEmptyResultJSON_DeviceLs(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := runDeviceLs(context.Background(), &buf); err != nil {
+	if err := runDeviceLs(listingCmd(context.Background(), "device", "ls"), &buf); err != nil {
 		t.Fatalf("runDeviceLs failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -128,7 +128,7 @@ func TestEmptyResultJSON_ConfigEntries(t *testing.T) {
 	defer func() { flagConfigDomain = old }()
 
 	var buf bytes.Buffer
-	if err := runConfigEntries(context.Background(), &buf); err != nil {
+	if err := runConfigEntries(listingCmd(context.Background(), "config", "entries"), &buf); err != nil {
 		t.Fatalf("runConfigEntries failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -255,7 +255,7 @@ func TestEmptyResultJSON_EntLs_DomainFilter(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -284,7 +284,7 @@ func TestEmptyResultJSON_EntLs_LabelFilter(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := runEntLs(context.Background(), &buf); err != nil {
+	if err := runEntLs(listingCmd(context.Background(), "ent", "ls"), &buf); err != nil {
 		t.Fatalf("runEntLs failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())
@@ -315,7 +315,7 @@ func TestEmptyResultJSON_AutoLs_Failing(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := runAutoLs(context.Background(), &buf); err != nil {
+	if err := runAutoLs(listingCmd(context.Background(), "auto", "ls"), &buf); err != nil {
 		t.Fatalf("runAutoLs failed: %v", err)
 	}
 	assertEmptyJSONArray(t, buf.String())

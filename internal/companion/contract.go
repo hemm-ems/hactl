@@ -31,6 +31,7 @@ var Endpoints = []Endpoint{
 	{"GET", "/v1/config/file", &ConfigFileResponse{}},
 	{"PUT", "/v1/config/file", &ConfigWriteResponse{}},
 	{"GET", "/v1/config/block", &ConfigBlockResponse{}},
+	{"GET", "/v1/config/wiring", &WiringResponse{}},
 	{"GET", "/v1/related/entity", &RelatedEntityResponse{}},
 	{"GET", "/v1/ref/scan", &RefScanResponse{}},
 	{"GET", "/v1/ref/entities", &RefEntitiesResponse{}},

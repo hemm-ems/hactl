@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/hemm-ems/hactl/internal/backupfile"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -22,11 +22,20 @@ import (
 // Best-effort: a snapshot failure is logged, never fatal. Refusing to save
 // because we couldn't back up would be worse than the asymmetry it fixes.
 func snapshotDashboardBeforeSave(ctx context.Context, ws *haapi.WSClient, urlPath string) {
-	prev, err := ws.DashboardConfigRaw(ctx, urlPath)
-	if err != nil {
+	state, prev, err := classifyDashboardConfig(ctx, ws, urlPath)
+	switch state {
+	case dashConfigAbsent:
+		// The first save for a dashboard that has none. There is nothing to
+		// snapshot and nothing to warn about: warning "could not fetch current
+		// dashboard config" here reported an absence as a failure, which is
+		// finding #3's class one command over.
+		slog.Debug("no stored dashboard config to snapshot", "url_path", urlPath)
+		return
+	case dashConfigUnclassifiable:
 		slog.Warn("could not fetch current dashboard config; overwriting without a snapshot",
 			"url_path", urlPath, "error", err)
 		return
+	case dashConfigStored:
 	}
 	path, err := writeDashboardSnapshot(flagDir, urlPath, prev)
 	if err != nil {
@@ -44,22 +53,25 @@ func writeDashboardSnapshot(dirFlag, urlPath string, raw []byte) (string, error)
 		return "", errors.New("could not resolve hactl instance directory")
 	}
 	dir := filepath.Join(base, "backups", "dashboards")
-	if err := os.MkdirAll(filepath.Clean(dir), 0o750); err != nil {
-		return "", fmt.Errorf("creating snapshot dir: %w", err)
-	}
 	// url_path comes from HA's dashboard list, but it still flows into a file
 	// path, so reduce it to a single safe filename component and then verify the
 	// result stays inside the snapshot dir (defense in depth against traversal).
 	name := sanitizeSnapshotName(urlPath)
-	ts := time.Now().UTC().Format("20060102T150405")
-	path := filepath.Join(dir, name+"."+ts+".json")
-	if !strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+	// Checked BEFORE anything is created, on the name rather than on the
+	// finished path: a containment check that runs after the write has already
+	// happened is not a check, it is a report.
+	if !strings.HasPrefix(filepath.Join(dir, name), dir+string(os.PathSeparator)) {
 		return "", fmt.Errorf("refusing to write snapshot outside %s", dir)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return "", fmt.Errorf("writing snapshot: %w", err)
-	}
-	return path, nil
+	// Named through backupfile, which will not write over a name that is
+	// already taken (H-26). The stamp used to be `20060102T150405` in UTC, so
+	// two dashboard writes inside one second left one snapshot where the caller
+	// had been told there were two — the same defect as the automation and
+	// script backups, in the third of the three places hactl names a file from
+	// a clock.
+	return backupfile.Write(dir, 0o600, raw, func(stamp string) string {
+		return name + "." + stamp + ".json"
+	})
 }
 
 // sanitizeSnapshotName reduces an arbitrary dashboard url_path to a single safe

@@ -13,14 +13,15 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var floorCmd = &cobra.Command{
+var floorCmd = family(&cobra.Command{
 	Use:   "floor",
 	Short: "Manage floors",
 	Long:  "List, create, and delete Home Assistant floors.",
-}
+})
 
 var floorLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List all floors",
 	Long:  "Show all floors registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,17 +37,36 @@ var floorCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new floor",
 	Long:  "Create a floor in the Home Assistant floor registry.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runFloorCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
+		return runFloorCreate(cmd.Context(), cmd.OutOrStdout(), args[0], levelFromFlags(cmd))
 	},
+}
+
+// levelFromFlags reads --level as the optional value it is: the level the
+// caller gave, or nil when they gave none.
+//
+// `if flagFloorLevel != 0` cannot tell `--level 0` from no --level at all, so
+// the most common real level there is — HA's convention for a ground floor,
+// and the manual's own canonical example — was dropped from the request and
+// from the preview, and the floor came back with `level: null`. 0 is a value
+// here, not an absence; only cobra knows which the caller meant, and it knows
+// it as Changed(). HA distinguishes the two on its side
+// (TestOracleFloorLevelZeroIsStored), which is what makes the distinction
+// worth carrying.
+func levelFromFlags(cmd *cobra.Command) *int {
+	if !cmd.Flags().Changed("level") {
+		return nil
+	}
+	level := flagFloorLevel
+	return &level
 }
 
 var floorDeleteCmd = &cobra.Command{
 	Use:   "delete <floor_id>",
 	Short: "Delete a floor (dry-run by default)",
 	Long:  "Delete a floor from the Home Assistant floor registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runFloorDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -107,11 +127,21 @@ func runFloorLs(ctx context.Context, w io.Writer) error {
 	})
 }
 
-func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
+func runFloorCreate(ctx context.Context, w io.Writer, name string, level *int) error {
+	// Before the plan, so the preview fails exactly where --confirm would
+	// (H-2). See requireRegistryName for why this cannot wait for HA's answer.
+	if err := requireRegistryName("floor", name); err != nil {
+		return err
+	}
+
 	if !flagFloorConfirm {
-		return dryRun("create floor").
-			with("name", name).
-			withIf(flagFloorLevel != 0, "level", flagFloorLevel).
+		plan := dryRun("create floor").with("name", name)
+		if level != nil {
+			// Not withIf: its value argument is evaluated eagerly, so a nil
+			// level cannot be dereferenced inside the call.
+			plan = plan.with("level", *level)
+		}
+		return plan.
 			withIf(flagFloorIcon != "", "icon", flagFloorIcon).
 			render(w)
 	}
@@ -127,18 +157,18 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string) error {
 	}
 	defer func() { _ = ws.Close() }()
 
-	var level *int
-	if flagFloorLevel != 0 {
-		level = &flagFloorLevel
-	}
-
 	entry, err := ws.FloorRegistryCreate(ctx, name, flagFloorIcon, level)
 	if err != nil {
 		return fmt.Errorf("creating floor: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created floor %q (id=%s)\n", entry.Name, entry.FloorID)
-	return nil
+	return done("create floor").
+		with("floor_id", entry.FloorID).
+		with("name", entry.Name).
+		withIf(level != nil, "level", flagFloorLevel).
+		withIf(flagFloorIcon != "", "icon", flagFloorIcon).
+		text("created floor %q (id=%s)", entry.Name, entry.FloorID).
+		render(w)
 }
 
 func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
@@ -175,6 +205,9 @@ func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
 		return fmt.Errorf("deleting floor: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted floor %q\n", entry.FloorID)
-	return nil
+	return done("delete floor").
+		with("floor_id", entry.FloorID).
+		with("name", entry.Name).
+		text("deleted floor %q", entry.FloorID).
+		render(w)
 }

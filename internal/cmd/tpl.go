@@ -72,18 +72,18 @@ var flagTplFile string
 var flagTplConfirm bool
 var flagTplDomain string
 
-var tplCmd = &cobra.Command{
+var tplCmd = family(&cobra.Command{
 	Use:        "tpl",
 	SuggestFor: []string{"template", "templates"},
 	Short:      "Manage templates (eval, create, delete)",
 	Long:       "Evaluate Jinja2 templates and manage template sensor definitions.",
-}
+})
 
 var tplEvalCmd = &cobra.Command{
 	Use:   "eval [template]",
 	Short: "Evaluate a template",
 	Long:  "Evaluate an inline template string or a template from a file (-f).",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  takesAtMost(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplEval(cmd.Context(), cmd.OutOrStdout(), args)
 	},
@@ -93,7 +93,7 @@ var tplCatCmd = &cobra.Command{
 	Use:   "cat <unique_id>",
 	Short: "Print a template sensor's remote config as YAML",
 	Long:  "Fetch and print the current remote YAML definition of a template sensor (via the companion).",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplCat(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -112,6 +112,7 @@ func init() {
 // runTplCat prints a template sensor's remote YAML config verbatim. The
 // companion returns the definition as YAML text in resp.Content.
 func runTplCat(ctx context.Context, w io.Writer, uniqueID string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -126,6 +127,7 @@ func runTplCat(ctx context.Context, w io.Writer, uniqueID string) error {
 
 var tplCreateCmd = &cobra.Command{
 	Use:   "create",
+	Args:  takesNone(),
 	Short: "Create a new template entry (dry-run by default)",
 	Long: `Create a new template entry from a YAML file via the companion. Use --confirm to apply.
 
@@ -160,7 +162,7 @@ var tplDeleteCmd = &cobra.Command{
 	Use:   "delete <unique_id>",
 	Short: "Delete a template sensor (dry-run by default)",
 	Long:  "Delete a template sensor from HA via the companion. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTplDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -202,7 +204,23 @@ func runTplEval(ctx context.Context, w io.Writer, args []string) error {
 	return nil
 }
 
+// resolveTemplate picks the template to render from the two places a caller may
+// put one.
+//
+// Both at once is refused. `tpl eval "{{ 1+1 }}" -f file.jinja` used to evaluate
+// the file and discard the argument, printing nothing on either stream about
+// the input it had thrown away (H-25, #6) — the same defect `dash show --raw
+// --yaml` had one flag over, and refused for the same reason (D-26): a
+// precedence nobody documented is a rule every caller has to learn, and naming
+// the winner in the output is not available under `--json`. This is the only
+// place in the tree where a positional and a flag name the same input; every
+// other `-f` sits beside a positional that names the OBJECT being written.
 func resolveTemplate(args []string) (string, error) {
+	if flagTplFile != "" && len(args) > 0 {
+		return "", &flagContractError{fmt.Sprintf(
+			"the template argument %q and -f %s each name a template to evaluate and only one can be honoured; pass one",
+			args[0], flagTplFile)}
+	}
 	if flagTplFile != "" {
 		data, err := os.ReadFile(flagTplFile) //nolint:gosec // file path provided by user via CLI flag
 		if err != nil {
@@ -244,16 +262,9 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
 		}
-		shape := "entity item"
-		if kind.isBlock {
-			shape = "state-based block"
-			if kind.triggerBased {
-				shape = "trigger-based block"
-			}
-		}
 		plan := dryRun("create template").
 			with("file", flagTplFile).
-			with("shape", shape)
+			with("shape", templateShape(kind))
 		if kind.isBlock {
 			plan = plan.with("domains", strings.Join(kind.domains, ", "))
 		} else {
@@ -272,22 +283,51 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("creating template: %w", err)
 	}
 
+	res := done("create template").
+		with("unique_id", resp.UniqueID).
+		with("shape", templateShape(kind)).
+		with("reloaded", resp.Reloaded)
 	switch {
 	case kind.triggerBased:
-		_, _ = fmt.Fprintf(w, "created trigger-based template %q\n", resp.UniqueID)
+		res = res.with("domains", strings.Join(kind.domains, ", ")).
+			text("created trigger-based template %q", resp.UniqueID)
 	case kind.isBlock:
-		_, _ = fmt.Fprintf(w, "created template %q\n", resp.UniqueID)
+		res = res.with("domains", strings.Join(kind.domains, ", ")).
+			text("created template %q", resp.UniqueID)
 	default:
-		_, _ = fmt.Fprintf(w, "created template %q (domain=%s)\n", resp.UniqueID, flagTplDomain)
+		res = res.with("domain", flagTplDomain).
+			text("created template %q (domain=%s)", resp.UniqueID, flagTplDomain)
 	}
 	// A template.yaml that no `template:` key !include's is written happily and
 	// never read: HA reports no reload, and without this the command claimed
 	// success for a definition that will never produce an entity.
 	if !resp.Reloaded {
-		_, _ = fmt.Fprintln(w, "warning: template written but HA did not confirm reload "+
-			"(is `template: !include template.yaml` in configuration.yaml?)")
+		// The reason, when the companion has one, replaces the rhetorical
+		// question this line used to end on — an operator asked "is the include
+		// there?" had no way to see HA's actual answer.
+		if resp.ReloadError != "" {
+			res = res.warn("template written but HA did not confirm reload: %s", resp.ReloadError)
+		} else {
+			res = res.warn("template written but HA did not confirm reload " +
+				"(is `template: !include template.yaml` in configuration.yaml?)")
+		}
 	}
-	return nil
+	res = warnTemplateEntities(res, resp.Entities)
+	res = warnIfReformatted(res, resp.Reformatted)
+	return res.render(w)
+}
+
+// templateShape names what `tpl create` just wrote, in the same vocabulary the
+// preview uses, so the plan and the result describe one thing.
+func templateShape(kind tplKind) string {
+	switch {
+	case kind.triggerBased:
+		return "trigger-based block"
+	case kind.isBlock:
+		return "state-based block"
+	default:
+		return "entity item"
+	}
 }
 
 func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
@@ -323,9 +363,12 @@ func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
 		return fmt.Errorf("deleting template: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted template %q\n", uniqueID)
 	for _, entityID := range orphans {
 		removeOrphanedEntity(ctx, cfg, entityID)
 	}
-	return nil
+	return done("delete template").
+		with("unique_id", uniqueID).
+		with("entities", strings.Join(orphans, ", ")).
+		text("deleted template %q", uniqueID).
+		render(w)
 }

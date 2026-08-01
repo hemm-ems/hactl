@@ -10,8 +10,14 @@ import (
 	"testing"
 )
 
-// writeTestAutoYAML creates a temp YAML file with a modified automation config
-// for use in auto diff/apply tests. Returns the file path.
+// This tier boots Home Assistant alone. Since `auto apply`/`auto rollback`
+// stopped writing through HA's own config endpoint (D-14, issue #128), that
+// makes it the tier where those commands cannot run — so what it asserts here
+// is the refusal. The round trip itself moved to internal/companiontest, where
+// a companion exists: `auto_write_e2e_test.go`.
+
+// writeTestAutoYAML creates a temp YAML file with an automation config, for the
+// cases that need a candidate file on disk.
 func writeTestAutoYAML(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -22,121 +28,40 @@ func writeTestAutoYAML(t *testing.T, content string) string {
 	return path
 }
 
-// getFirstAutoID returns the ID of the first automation from auto ls --json.
-func getFirstAutoID(t *testing.T) string {
-	t.Helper()
-	out := runHactl(t, "auto", "ls", "--json")
-	var entries []map[string]string
-	if err := json.Unmarshal([]byte(out), &entries); err != nil || len(entries) == 0 {
-		t.Skip("no automations available for write-path test")
-	}
-	return entries[0]["id"]
-}
-
-func TestAutoDiff(t *testing.T) {
-	autoID := getFirstAutoID(t)
-
-	// Create a modified config with a different description
-	yamlContent := `alias: Modified Automation
-description: Modified for E2E diff test
-trigger:
-  - platform: time
-    at: "08:00:00"
+// TestAutoWritesRefuseWithoutACompanion pins the absence of a fallback.
+//
+// Home Assistant's `POST /api/config/automation/config/<id>` still exists and
+// still works; using it is what re-dumped the whole automations.yaml on every
+// confirmed apply. So the interesting property is not that the companion route
+// works — companiontest proves that — but that hactl does NOT quietly reach for
+// the endpoint that does the damage when the companion is missing. A silent
+// fallback restores exactly the behaviour the reroute removed, on the instances
+// least likely to notice.
+func TestAutoWritesRefuseWithoutACompanion(t *testing.T) {
+	candidate := writeTestAutoYAML(t, `alias: Should Never Be Written
+trigger: []
 condition: []
-action:
-  - service: light.turn_on
-    target:
-      entity_id: light.bedroom
-mode: single
-`
-	yamlPath := writeTestAutoYAML(t, yamlContent)
-
-	out := runHactl(t, "auto", "diff", autoID, "-f", yamlPath)
-	// diff output should show changes (or "no changes" if config happens to match)
-	assertNotContains(t, out, "panic")
-	if !strings.Contains(out, "diff") && !strings.Contains(out, "no changes") {
-		t.Errorf("auto diff gave unexpected output: %s", out)
+action: []
+`)
+	for _, args := range [][]string{
+		{"auto", "diff", "climate_schedule", "-f", candidate},
+		{"auto", "apply", "climate_schedule", "-f", candidate},
+		{"auto", "apply", "climate_schedule", "-f", candidate, "--confirm"},
+	} {
+		out, err := runHactlErr(t, args...)
+		if err == nil {
+			t.Errorf("%v succeeded on an instance with no companion:\n%s", args, out)
+			continue
+		}
+		// The reason lives in the error, not in stdout: a refused command
+		// writes nothing to its answer stream (H-22).
+		if !strings.Contains(err.Error(), "companion") {
+			t.Errorf("%v failed for a reason that does not name the companion: %v", args, err)
+		}
+		if out != "" {
+			t.Errorf("%v wrote to stdout while refusing:\n%s", args, out)
+		}
 	}
-}
-
-func TestAutoDiffNoFile(t *testing.T) {
-	_, err := runHactlErr(t, "auto", "diff", "climate_schedule")
-	if err == nil {
-		t.Error("auto diff without -f should error")
-	}
-}
-
-func TestAutoApplyDryRun(t *testing.T) {
-	autoID := getFirstAutoID(t)
-
-	yamlContent := `alias: DryRun Test
-description: Dry-run test automation
-trigger:
-  - platform: time
-    at: "09:00:00"
-condition: []
-action:
-  - service: light.turn_on
-    target:
-      entity_id: light.bedroom
-mode: single
-`
-	yamlPath := writeTestAutoYAML(t, yamlContent)
-
-	// Without --confirm = dry-run
-	out := runHactl(t, "auto", "apply", autoID, "-f", yamlPath)
-	assertContains(t, out, "dry-run")
-	assertNotContains(t, out, "applied:")
-}
-
-func TestAutoApplyConfirmAndRollback(t *testing.T) {
-	autoID := getFirstAutoID(t)
-
-	// Capture original state for comparison
-	originalShow := runHactl(t, "auto", "show", autoID)
-
-	yamlContent := `alias: Applied Test
-description: E2E apply-and-rollback test
-trigger:
-  - platform: time
-    at: "10:00:00"
-condition: []
-action:
-  - service: light.turn_on
-    target:
-      entity_id: light.bedroom
-mode: single
-`
-	yamlPath := writeTestAutoYAML(t, yamlContent)
-
-	// Apply with --confirm
-	applyOut := runHactl(t, "auto", "apply", autoID, "-f", yamlPath, "--confirm")
-	assertContains(t, applyOut, "applied:")
-	assertContains(t, applyOut, "backup:")
-
-	// Verify change: auto show should reflect new config
-	afterApply := runHactl(t, "auto", "show", autoID)
-	// The automation should still exist and be accessible
-	assertContains(t, afterApply, autoID)
-
-	// Verify backup file was created
-	backupsDir := filepath.Join(ha.Dir(), "backups")
-	entries, err := os.ReadDir(backupsDir)
-	if err != nil {
-		t.Fatalf("reading backups dir: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Error("no backup files created after apply")
-	}
-
-	// Rollback
-	rollbackOut := runHactl(t, "rollback", autoID, "--confirm")
-	assertContains(t, rollbackOut, "rolled back:")
-
-	// Verify rollback: auto show should be closer to original
-	afterRollback := runHactl(t, "auto", "show", autoID)
-	assertContains(t, afterRollback, autoID)
-	_ = originalShow // We've verified the round-trip works
 }
 
 func TestAutoApplyNoFile(t *testing.T) {
@@ -146,13 +71,10 @@ func TestAutoApplyNoFile(t *testing.T) {
 	}
 }
 
-func TestAutoApplyInvalidYAML(t *testing.T) {
-	autoID := getFirstAutoID(t)
-	yamlPath := writeTestAutoYAML(t, "{{invalid yaml: [")
-
-	_, err := runHactlErr(t, "auto", "apply", autoID, "-f", yamlPath, "--confirm")
+func TestAutoDiffNoFile(t *testing.T) {
+	_, err := runHactlErr(t, "auto", "diff", "climate_schedule")
 	if err == nil {
-		t.Error("auto apply with invalid YAML should error")
+		t.Error("auto diff without -f should error")
 	}
 }
 
@@ -172,4 +94,26 @@ func TestRollbackNoBackup(t *testing.T) {
 	if err == nil {
 		t.Error("rollback with no backups should error")
 	}
+}
+
+// getFirstAutoID returns the ID of the first automation from auto ls --json.
+func getFirstAutoID(t *testing.T) string {
+	t.Helper()
+	out := runHactl(t, "auto", "ls", "--json")
+	var entries []map[string]string
+	if err := json.Unmarshal([]byte(out), &entries); err != nil || len(entries) == 0 {
+		t.Skip("no automations available for write-path test")
+	}
+	return entries[0]["id"]
+}
+
+// mustJSON renders a decoded config for an error message, so a mismatch shows
+// what the two sides actually were.
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshaling config: %v", err)
+	}
+	return string(b)
 }

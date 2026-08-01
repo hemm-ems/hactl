@@ -19,14 +19,15 @@ var flagLabelIcon string
 var flagLabelDesc string
 var flagLabelConfirm bool
 
-var labelCmd = &cobra.Command{
+var labelCmd = family(&cobra.Command{
 	Use:   "label",
 	Short: "Discover and manage labels",
 	Long:  "List, create, and inspect Home Assistant labels.",
-}
+})
 
 var labelLsCmd = &cobra.Command{
 	Use:   "ls",
+	Args:  takesNone(),
 	Short: "List all labels",
 	Long:  "Show all labels registered in Home Assistant.",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -38,7 +39,7 @@ var labelCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new label",
 	Long:  "Create a label in the Home Assistant label registry.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLabelCreate(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -48,7 +49,7 @@ var labelDeleteCmd = &cobra.Command{
 	Use:   "delete <label_id>",
 	Short: "Delete a label (dry-run by default)",
 	Long:  "Delete a label from the Home Assistant label registry. Use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLabelDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -89,12 +90,13 @@ func runLabelLs(ctx context.Context, w io.Writer) error {
 		Headers: []string{"label_id", "name", "color", "description"},
 		Rows:    make([][]string, len(labels)),
 	}
+	tbl.SetWidth("description", 40)
 	for i, l := range labels {
 		tbl.Rows[i] = []string{
 			l.LabelID,
 			l.Name,
 			l.Color,
-			truncateStr(l.Description, 40),
+			l.Description,
 		}
 	}
 
@@ -117,6 +119,12 @@ func dryRunLabelSummary(name, icon, color, description string) *dryRunPlan {
 }
 
 func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
+	// Before the plan, so the preview fails exactly where --confirm would
+	// (H-2). See requireRegistryName for why this cannot wait for HA's answer.
+	if err := requireRegistryName("label", name); err != nil {
+		return err
+	}
+
 	if !flagLabelConfirm {
 		return dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc).render(w)
 	}
@@ -137,8 +145,14 @@ func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
 		return fmt.Errorf("creating label: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "created label %q (id=%s)\n", entry.Name, entry.LabelID)
-	return nil
+	return done("create label").
+		with("label_id", entry.LabelID).
+		with("name", entry.Name).
+		withIf(flagLabelIcon != "", "icon", flagLabelIcon).
+		withIf(flagLabelColor != "", "color", flagLabelColor).
+		withIf(flagLabelDesc != "", "description", flagLabelDesc).
+		text("created label %q (id=%s)", entry.Name, entry.LabelID).
+		render(w)
 }
 
 func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
@@ -176,17 +190,11 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 		return fmt.Errorf("deleting label: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(w, "deleted label %q\n", labelID)
-	return nil
-}
-
-func truncateStr(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen-1]) + "…"
+	return done("delete label").
+		with("label_id", labelID).
+		with("name", entry.Name).
+		text("deleted label %q", labelID).
+		render(w)
 }
 
 // fetchRegistryContext fetches entity registry, areas, labels, floors, and
@@ -352,4 +360,103 @@ func matchingLabelIDs(labelByID map[string]haapi.LabelEntry, query string) map[s
 		}
 	}
 	return out
+}
+
+// --- shared add/remove resolution for `ent set-label` and `device set-label` ---
+//
+// Both commands resolve a caller-given label (by name or ID) against the
+// registry, merge it into the target's existing set, and — since finding #81 —
+// can also take one back off. The resolution and the merge/remove arithmetic
+// used to be written out twice; here once, so the two commands cannot answer
+// the same input differently the way `device ls --pattern` once diverged from
+// its siblings (D-2's cautionary tale, dev/surfaces/README.md).
+
+// resolvedLabel pairs a caller-given label name with the registry ID it
+// resolved to, so a refusal can quote back what the caller typed rather than
+// hactl's internal ID.
+type resolvedLabel struct {
+	name string
+	id   string
+}
+
+// labelIndex builds the name/ID → label_id lookup runEntSetLabel and
+// runDeviceSetLabel both need, exactly as each built it inline before.
+func labelIndex(labels []haapi.LabelEntry) map[string]string {
+	index := make(map[string]string, len(labels))
+	for _, l := range labels {
+		index[strings.ToLower(l.Name)] = l.LabelID
+		index[l.LabelID] = l.LabelID
+	}
+	return index
+}
+
+// resolveLabelRefs resolves each caller-given label against the index,
+// case-insensitively by name or exactly by ID, or refuses on the first one
+// that matches neither.
+func resolveLabelRefs(index map[string]string, names []string) ([]resolvedLabel, error) {
+	out := make([]resolvedLabel, 0, len(names))
+	for _, name := range names {
+		id, ok := index[strings.ToLower(name)]
+		if !ok {
+			return nil, fmt.Errorf("label %q not found (use 'label ls' to see available labels)", name)
+		}
+		out = append(out, resolvedLabel{name: name, id: id})
+	}
+	return out, nil
+}
+
+// refuseAddRemoveOverlap applies H-25's exclusivity clause to `set-label`'s
+// two ways of naming what should happen to one label: a label resolving to the
+// same registry ID on both sides says two different things about itself in one
+// call, so the command ends rather than picking a winner (D-44).
+func refuseAddRemoveOverlap(toAdd, toRemove []resolvedLabel) error {
+	removeByID := make(map[string]string, len(toRemove))
+	for _, r := range toRemove {
+		removeByID[r.id] = r.name
+	}
+	for _, a := range toAdd {
+		if removeName, conflict := removeByID[a.id]; conflict {
+			return &flagContractError{fmt.Sprintf(
+				"label %q and --remove %q name the same label and cannot both be honoured; pass one",
+				a.name, removeName)}
+		}
+	}
+	return nil
+}
+
+// applyLabelDelta computes the label set a write should send: the current set,
+// with toAdd merged in (deduplicated, original merge-only behaviour) and
+// toRemove taken back out. removed lists exactly the IDs that were actually
+// present and came off — so a --remove of a label the target never had is
+// visible in the plan as a no-op rather than silently claimed.
+func applyLabelDelta(current []string, toAdd, toRemove []resolvedLabel) (final, removed []string) {
+	removeSet := make(map[string]bool, len(toRemove))
+	for _, r := range toRemove {
+		removeSet[r.id] = true
+	}
+
+	seen := make(map[string]bool, len(current)+len(toAdd))
+	merged := make([]string, 0, len(current)+len(toAdd))
+	for _, l := range current {
+		if !seen[l] {
+			seen[l] = true
+			merged = append(merged, l)
+		}
+	}
+	for _, r := range toAdd {
+		if !seen[r.id] {
+			seen[r.id] = true
+			merged = append(merged, r.id)
+		}
+	}
+
+	final = make([]string, 0, len(merged))
+	for _, l := range merged {
+		if removeSet[l] {
+			removed = append(removed, l)
+			continue
+		}
+		final = append(final, l)
+	}
+	return final, removed
 }

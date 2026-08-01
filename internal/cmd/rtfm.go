@@ -20,6 +20,7 @@ var (
 
 var rtfmCmd = &cobra.Command{
 	Use:   "rtfm",
+	Args:  takesNone(),
 	Short: "Print the full hactl manual",
 	Long: "Display the embedded hactl manual. Intended for LLM self-teaching.\n" +
 		"Use --core / --family for a token-frugal subset, --families to see the split.",

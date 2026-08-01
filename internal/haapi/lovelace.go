@@ -12,10 +12,18 @@ import (
 
 // WSErrCodeLovelaceConfigNotFound is the error code `lovelace/config` answers
 // with when the requested dashboard has no stored config — for the default
-// dashboard (no url_path) that is exactly HA's auto-generated state.
+// dashboard (no url_path) that is exactly HA's auto-generated state, and for a
+// named one the state between its creation and its first save.
 //
 // Captured from HA 2026.7.4 (internal/integration/lovelace_oracle_test.go):
 // {"code":"config_not_found","message":"No config found."}
+//
+// The same code also answers "there is no such dashboard"
+// ({"code":"config_not_found","message":"Unknown config specified: x"},
+// measured on the reference instance 2026-07-31): HA's handler sends it from
+// two places, and the difference is an English message rather than a code. A
+// caller that classifies on this constant must therefore have resolved the
+// url_path first — see internal/cmd's classifyDashboardConfig.
 const WSErrCodeLovelaceConfigNotFound = "config_not_found"
 
 // LovelaceDashboard is a dashboard entry from lovelace/dashboards/list.
@@ -52,6 +60,27 @@ func ParseLovelaceConfig(raw json.RawMessage) (*LovelaceConfig, error) {
 		return nil, fmt.Errorf("parsing dashboard config: %w", err)
 	}
 	return &cfg, nil
+}
+
+// LovelaceStrategyType returns the type of the dashboard-level strategy in a
+// raw `lovelace/config` document, or "" when it carries none.
+//
+// A strategy dashboard has no `views` key at all: the frontend builds its views
+// from the strategy at view time. Home Assistant creates one itself during
+// onboarding — the `map` dashboard, whose entire stored config is
+// {"strategy":{"type":"map"}} (lovelace/__init__.py _create_map_dashboard,
+// HA 2026.7.4) — so this is stock shape on every instance, and it is why
+// "no views" alone was an answer that read as "this dashboard is empty".
+func LovelaceStrategyType(raw json.RawMessage) string {
+	var doc struct {
+		Strategy struct {
+			Type string `json:"type"`
+		} `json:"strategy"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ""
+	}
+	return doc.Strategy.Type
 }
 
 // LovelaceViewSummary holds the key fields of a view for display purposes.
@@ -102,5 +131,5 @@ type LovelaceResource struct {
 // hactl once decoded, and resource_mode describes where frontend resources are
 // configured, not which state the default dashboard is in (captured from HA
 // 2026.7.4 in both states: internal/integration/lovelace_oracle_test.go).
-// The default dashboard is classified by attempting `lovelace/config` instead
-// (internal/cmd's classifyDefaultDashboard, D-6).
+// A dashboard is classified by attempting `lovelace/config` instead
+// (internal/cmd's classifyDashboardConfig, D-6).

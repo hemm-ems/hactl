@@ -15,27 +15,29 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
-var configCmd = &cobra.Command{
+var configCmd = family(&cobra.Command{
 	Use:        "config",
 	SuggestFor: []string{"integrations", "integration", "entries"},
 	Short:      "Manage config entries and flows",
 	Long:       "List config entries and start, step through, and inspect config entry options flows and config flows.",
-}
+})
 
 var flagConfigDomain string
 
 var configEntriesCmd = &cobra.Command{
 	Use:   "entries",
+	Args:  takesNone(),
 	Short: "List config entries",
 	Long:  "List all config entries. Use --domain to filter by integration domain.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runConfigEntries(cmd.Context(), cmd.OutOrStdout())
+		return runConfigEntries(cmd, cmd.OutOrStdout())
 	},
 }
 
@@ -51,7 +53,7 @@ var configShowCmd = &cobra.Command{
 		"diagnostics platform, pass --probe-options-flow to read current values " +
 		"from a transient options flow (started and immediately aborted); without " +
 		"the flag no options flow is started. Read-only; requires an admin token.",
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -61,7 +63,7 @@ var configOptionsCmd = &cobra.Command{
 	Use:   "options <entry_id>",
 	Short: "Start an options flow for a config entry (dry-run by default)",
 	Long:  "Start an options flow for an existing config entry. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigOptions(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -73,7 +75,7 @@ var configDeleteCmd = &cobra.Command{
 	Use:   "delete <entry_id>",
 	Short: "Delete a config entry (dry-run by default)",
 	Long:  "Delete a config entry by ID. Dry-run by default — use --confirm to apply.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigDelete(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -83,7 +85,7 @@ var configFlowStartCmd = &cobra.Command{
 	Use:   "flow-start <domain>",
 	Short: "Start a config flow for an integration (dry-run by default)",
 	Long:  "Start a new config flow for a domain/integration. Returns the flow ID and initial step schema. Dry-run by default: previews the intent without starting the flow; use --confirm to start.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStart(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -104,7 +106,7 @@ Without --options, the step is sent to the config flow endpoint
 
 Dry-run by default: previews the data that would be submitted (a step may complete
 the flow and create a config entry); use --confirm to submit.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowStep(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -117,7 +119,7 @@ var configFlowInspectCmd = &cobra.Command{
 
 Use --options when inspecting an options flow (started via 'config options <entry_id>').
 Without --options, the inspect reads from the config flow endpoint instead of the options flow endpoint.`,
-	Args: cobra.ExactArgs(1),
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFlowInspect(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -127,6 +129,7 @@ var flagConfigFileRaw bool
 
 var configFilesCmd = &cobra.Command{
 	Use:   "files",
+	Args:  takesNone(),
 	Short: "List config files",
 	Long:  "List configuration.yaml and its !include'd files (via the companion).",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -138,7 +141,7 @@ var configFileCmd = &cobra.Command{
 	Use:   "file <path>",
 	Short: "Print a config file as YAML",
 	Long:  "Print the contents of a config file. Use --raw to leave !include directives unresolved.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigFile(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -150,7 +153,7 @@ var configBlockCmd = &cobra.Command{
 	Long: "Print a single block from a config file: matched by 'id:' or 'alias:' on the direct items " +
 		"of a top-level list (automations.yaml), or by top-level key (scripts.yaml). template.yaml " +
 		"blocks carry neither — read those with 'tpl cat <unique_id>'.",
-	Args:  cobra.ExactArgs(2),
+	Args:  takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigBlock(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
 	},
@@ -189,7 +192,25 @@ type configEntry struct {
 	ReasonTranslateKey string `json:"error_reason_translation_key"`
 }
 
-func runConfigEntries(ctx context.Context, w io.Writer) error {
+// filterConfigEntriesByDomain keeps the entries of exactly one integration
+// domain, matched without regard to case (D-2).
+//
+// It compared with `==` and lived inline in runConfigEntries, where nothing
+// could probe it: `config entries --domain MQTT` answered "no config entries"
+// on an instance running mqtt. Extracted so the case gate drives the filter the
+// command itself calls rather than a reimplementation of it.
+func filterConfigEntriesByDomain(entries []configEntry, domain string) []configEntry {
+	out := make([]configEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.EqualFold(e.Domain, domain) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func runConfigEntries(cmd *cobra.Command, w io.Writer) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -208,19 +229,15 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	// Filter by domain if requested
+	// Before the filter runs — see emptyListing.
+	total := len(entries)
+
 	if flagConfigDomain != "" {
-		var filtered []configEntry
-		for _, e := range entries {
-			if e.Domain == flagConfigDomain {
-				filtered = append(filtered, e)
-			}
-		}
-		entries = filtered
+		entries = filterConfigEntriesByDomain(entries, flagConfigDomain)
 	}
 
 	if len(entries) == 0 {
-		return emitEmptyList(w, "no config entries")
+		return emptyListing(cmd, w, "config entries", total)
 	}
 
 	tbl := &format.Table{
@@ -237,6 +254,11 @@ func runConfigEntries(ctx context.Context, w io.Writer) error {
 			yesNo(e.SupportsOptions),
 			dashIfEmpty(e.DisabledBy),
 		}
+		// Both cells above are renderings for a person; the machine gets what
+		// HA sent (finding #22). `config show --json` already emits the raw
+		// field for disabled_by, and these two were the pair that disagreed.
+		tbl.SetMachine(i, "options", e.SupportsOptions)
+		tbl.SetMachine(i, "disabled_by", e.DisabledBy)
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -573,17 +595,24 @@ func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {
 		return fmt.Errorf("deleting config entry: %w", err)
 	}
 
-	if flagJSON {
-		_, err = w.Write(data)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w)
-		return err
+	// HA's own answer is carried, not echoed. Echoing it made this the one
+	// write whose --json document had no `dry_run`, no `action` and no `ok`:
+	// valid JSON that a caller still could not tell from a preview, from an
+	// error, or from another command's output. `require_restart` is the one
+	// field HA sends and it is the one thing the caller has to act on, so it
+	// keeps its name inside the result.
+	res := done("delete config entry").
+		with("entry_id", entry.EntryID).
+		with("domain", entry.Domain).
+		with("title", entry.Title).
+		text("deleted config entry %q", entryID)
+	var haAnswer struct {
+		RequireRestart bool `json:"require_restart"`
 	}
-
-	_, _ = fmt.Fprintf(w, "deleted config entry %q\n", entryID)
-	return nil
+	if json.Unmarshal(data, &haAnswer) == nil {
+		res = res.with("require_restart", haAnswer.RequireRestart)
+	}
+	return res.render(w)
 }
 
 func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {
@@ -694,9 +723,7 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 		// expired or was never started reads exactly like a live one in a
 		// preview that never asks HA about it.
 		if _, inspectErr := client.InspectFlow(ctx, flowID, flagFlowOptions); inspectErr != nil {
-			return fmt.Errorf("no in-progress %s with id %q "+
-				"(flows expire; start one with 'config flow-start' or 'config options'): %w",
-				endpoint, flowID, inspectErr)
+			return flowLookupError(flowID, flagFlowOptions, inspectErr)
 		}
 		return dryRun("submit data to advance the flow").
 			with("flow_id", flowID).
@@ -708,7 +735,7 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 
 	data, err := client.StepFlow(ctx, flowID, flagFlowOptions, rawData)
 	if err != nil {
-		return fmt.Errorf("stepping flow: %w", err)
+		return flowLookupError(flowID, flagFlowOptions, fmt.Errorf("stepping flow: %w", err))
 	}
 	return renderFlowResult(w, data)
 }
@@ -721,9 +748,39 @@ func runConfigFlowInspect(ctx context.Context, w io.Writer, flowID string) error
 	client := haapi.New(cfg.URL, cfg.Token)
 	data, err := client.InspectFlow(ctx, flowID, flagFlowOptions)
 	if err != nil {
-		return fmt.Errorf("inspecting flow: %w", err)
+		return flowLookupError(flowID, flagFlowOptions, fmt.Errorf("inspecting flow: %w", err))
 	}
 	return renderFlowResult(w, data)
+}
+
+// flowLookupError explains a flow id Home Assistant does not know.
+//
+// It exists because the explanation was a sentence inside ONE branch of ONE
+// command. `config flow-step <bad-id>` without --confirm said "flows expire;
+// start one with 'config flow-start' or 'config options'"; `config flow-inspect
+// <the same bad id>` said `inspecting flow: GET …: 404 Not Found:
+// {"message":"Invalid flow specified"}`, and `flow-step --confirm` said
+// `stepping flow: …` — three commands, one condition, and the help attached to
+// whichever one somebody was looking at when they wrote it (#84).
+//
+// The three causes HA answers identically are named, because a 404 alone does
+// not distinguish them and the reader's next action differs for each: the id
+// never existed, the flow expired or was aborted, or the id belongs to the
+// other endpoint and --options is missing or extra. The last is the one a
+// caller cannot guess, so it names the flag and the direction to move it.
+//
+// Anything other than a 404 passes through untouched: a 500 from HA is not a
+// caller mistake and telling them to check their flag would be a guess.
+func flowLookupError(flowID string, options bool, err error) error {
+	if status, ok := haapi.HTTPStatus(err); !ok || status != http.StatusNotFound {
+		return err
+	}
+	endpoint, other, flag := "config flow", "options flow", "add --options"
+	if options {
+		endpoint, other, flag = "options flow", "config flow", "drop --options"
+	}
+	return fmt.Errorf("no in-progress %s with id %q — it never existed, it expired or was aborted, "+
+		"or it belongs to the %s (%s): %w", endpoint, flowID, other, flag, err)
 }
 
 func runConfigFiles(ctx context.Context, w io.Writer) error {
@@ -756,6 +813,7 @@ func runConfigFiles(ctx context.Context, w io.Writer) error {
 // runConfigFile prints a config file's contents verbatim. With --raw the
 // companion leaves !include directives unresolved; otherwise they are inlined.
 func runConfigFile(ctx context.Context, w io.Writer, path string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
@@ -780,16 +838,50 @@ func runConfigFile(ctx context.Context, w io.Writer, path string) error {
 
 // runConfigBlock prints a single keyed block from a config file as YAML.
 func runConfigBlock(ctx context.Context, w io.Writer, path, id string) error {
+	markStructuredOutput()
 	cc, err := connectCompanion(ctx)
 	if err != nil {
 		return err
 	}
 	resp, err := cc.ReadConfigBlock(ctx, path, id)
 	if err != nil {
+		if redirect := templateRedirect(ctx, cc, path, id, err); redirect != nil {
+			return redirect
+		}
 		return fmt.Errorf("reading config block: %w", err)
 	}
 	_, _ = fmt.Fprint(w, resp.Content)
 	return nil
+}
+
+// templateRedirect turns a block-not-found into the referral `config block`'s
+// own --help already promises, or returns nil when there is nothing to refer to.
+//
+// The help says: "template.yaml blocks carry neither [id: nor alias:] — read
+// those with 'tpl cat <unique_id>'". Nothing implemented that sentence, so
+// `config block template.yaml posclock_jan` — a real unique_id in a real file —
+// answered `Block not found: posclock_jan`, word for word what a typo gets
+// (finding #24). The command that knows the id is addressable said nothing
+// about it.
+//
+// Whether the id IS addressable is asked, not assumed from the filename: the
+// companion is the only thing that knows which unique_ids exist, and a rule
+// keyed on `path == "template.yaml"` would miss a template split into its own
+// file and would fire on a typo inside template.yaml. A 404 from the template
+// route means no — the caller keeps the original error, which is the true one.
+func templateRedirect(ctx context.Context, cc *companion.Client, path, id string, blockErr error) error {
+	if status, ok := haapi.HTTPStatus(blockErr); !ok || status != http.StatusNotFound {
+		return nil
+	}
+	if _, err := cc.GetTemplate(ctx, id); err != nil {
+		// Deliberately swallowed: this call is a QUESTION ("is that id a
+		// template?"), not work the caller asked for. Its failure — a 404, an
+		// unreachable companion, anything — is the answer "no", and the error
+		// the caller gets is the block read's own, which is the true one.
+		return nil //nolint:nilerr // the probe's failure is data, not this command's failure
+	}
+	return fmt.Errorf("no block with id or alias %q in %s, but a template entity has that unique_id — "+
+		"read it with 'hactl tpl cat %s'", id, path, id)
 }
 
 func renderFlowResult(w io.Writer, data []byte) error {
@@ -902,11 +994,7 @@ func renderSchemaTable(w io.Writer, flow *haapi.FlowResult) error {
 	for _, s := range sections {
 		parts := make([]string, len(s.Schema))
 		for i, sub := range s.Schema {
-			typ := sub.Type
-			if typ == "" {
-				typ = "string"
-			}
-			parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, typ)
+			parts[i] = fmt.Sprintf("%q: <%s>", sub.Name, schemaFieldType(sub))
 		}
 		_, _ = fmt.Fprintf(w, "\n%q is an expandable section — nest its fields in --data:\n", s.Name)
 		_, _ = fmt.Fprintf(w, "  {%q: {%s}}\n", s.Name, strings.Join(parts, ", "))
@@ -929,6 +1017,46 @@ func printSelectOptions(w io.Writer, f haapi.SchemaField, prefix string) {
 	}
 }
 
+// schemaFieldType is the word the Type column carries.
+//
+// A modern HA schema types its fields with a SELECTOR and leaves `type` empty,
+// so the fallback "string" was the answer for every one of them: a number, a
+// 28-value enum, an entity picker and a device picker all rendered identically
+// while --json carried the difference (#82). The selector kind is the type when
+// there is one; `type` is preferred when both are present, because that is the
+// field's own declaration; "string" remains the answer when HA said neither,
+// which is what an unadorned voluptuous string field is.
+func schemaFieldType(f haapi.SchemaField) string {
+	switch {
+	case f.Type != "":
+		return f.Type
+	case f.Selector != "":
+		return f.Selector
+	default:
+		return "string"
+	}
+}
+
+// schemaFieldDefault is the value the Default column carries.
+//
+// HA sends two different things and they mean different things: `default` is
+// what the field falls back to, and `description.suggested_value` is what HA
+// PROPOSES — for an options flow, the entry's current configuration. The second
+// was decoded nowhere, so `flow-inspect --options` on a template helper showed
+// an empty Default beside a `state` field whose current value `{{ true }}` was
+// in the same response (#83). The suggestion wins where both exist: it is the
+// more specific statement, and it is the one a caller re-submitting a form
+// wants to see.
+func schemaFieldDefault(f haapi.SchemaField) string {
+	if f.Suggested != nil {
+		return fmt.Sprintf("%v", f.Suggested)
+	}
+	if f.Default != nil {
+		return fmt.Sprintf("%v", f.Default)
+	}
+	return ""
+}
+
 // appendSchemaRows adds a schema field (and, for expandable sections, its
 // nested sub-fields) to the table. Sub-fields are shown with a dotted path
 // (e.g. "advanced.framerate") so the nesting is visible at a glance.
@@ -941,15 +1069,7 @@ func appendSchemaRows(tbl *format.Table, f haapi.SchemaField, prefix string) {
 	if f.Required {
 		req = "yes"
 	}
-	def := ""
-	if f.Default != nil {
-		def = fmt.Sprintf("%v", f.Default)
-	}
-	typ := f.Type
-	if typ == "" {
-		typ = "string"
-	}
-	tbl.Rows = append(tbl.Rows, []string{name, typ, req, def})
+	tbl.Rows = append(tbl.Rows, []string{name, schemaFieldType(f), req, schemaFieldDefault(f)})
 	for _, sub := range f.Schema {
 		appendSchemaRows(tbl, sub, name)
 	}

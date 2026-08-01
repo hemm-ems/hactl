@@ -15,30 +15,48 @@ import "github.com/hemm-ems/hactl/internal/degeneracy"
 // empty attribute set, and `auto ls` must keep listing it — poisoning those
 // would cry wolf on the exact case hactl exists to surface.
 
-// Identity reports the entity key and its state. HA rejects an empty state
-// string (an entity that has none reports "unknown"/"unavailable"), so a blank
-// one means the payload, not the entity, is empty.
+// `state` is deliberately absent from every Identity below (finding #38).
+//
+// It was an identity field on five structs, justified by this comment: "HA
+// rejects an empty state string (an entity that has none reports
+// 'unknown'/'unavailable'), so a blank one means the payload, not the entity,
+// is empty." Home Assistant does no such thing. `sensor.strompreis_kategorie`
+// on the reference instance served 62 of 407 history records over 400 days
+// with `"state": ""`, the key present on every one, and a second entity on the
+// same instance carries the same shape. Because the guard compares the decoded
+// value against Go's zero value — it cannot see whether the wire carried the
+// key at all — a legitimate empty state was indistinguishable from a renamed
+// field, and `ent hist`/`ent anomalies` exited 1 with empty stdout rather than
+// rendering the series.
+//
+// That premise was authored from the code's own model of Home Assistant rather
+// than probed against one. It is the same mistake the paragraph above avoids
+// for restored ghosts, one screen away.
+//
+// Every struct keeps an identity that empty cannot legitimately be, so a
+// renamed or removed field is still caught at record level — the guard is
+// corrected here, not weakened.
+
+// Identity reports the entity key. `state` is not part of it: see above.
 func (e *entityState) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "entity_id", Value: &e.EntityID},
-		{Name: "state", Value: &e.State},
 	}
 }
 
-// Identity reports the automation's entity key and state. The `id` attribute is
-// not part of it: a restored ghost has no config id, which `auto ls` reports.
+// Identity reports the automation's entity key. The `id` attribute is not part
+// of it: a restored ghost has no config id, which `auto ls` reports. Nor is
+// `state` — see above.
 func (a *automationEntity) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "entity_id", Value: &a.EntityID},
-		{Name: "state", Value: &a.State},
 	}
 }
 
-// Identity reports the script's entity key and state.
+// Identity reports the script's entity key. `state` is not part of it: see above.
 func (s *scriptEntity) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "entity_id", Value: &s.EntityID},
-		{Name: "state", Value: &s.State},
 	}
 }
 
@@ -50,21 +68,19 @@ func (l *logbookEntry) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "when", Value: &l.When}}
 }
 
-// Identity reports the sample's state and timestamp — the two values every
-// history consumer here reads. entity_id is not part of it: HA omits it from
-// all but the first sample of a series under minimal_response, so requiring it
-// would break the moment that flag is used.
+// Identity reports when the sample was taken. entity_id is not part of it: HA
+// omits it from all but the first sample of a series under minimal_response, so
+// requiring it would break the moment that flag is used. `state` is not part of
+// it either — see above; this is the struct finding #38 was reported against.
 func (h *historyEntry) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
-		{Name: "state", Value: &h.State},
 		{Name: "last_changed", Value: &h.LastChanged},
 	}
 }
 
-// Identity reports the same pair for the attribute-carrying history shape.
+// Identity reports the same for the attribute-carrying history shape.
 func (h *historyEntryFull) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
-		{Name: "state", Value: &h.State},
 		{Name: "last_changed", Value: &h.LastChanged},
 	}
 }

@@ -29,12 +29,20 @@ var (
 	flagLogComponent string
 )
 
+// logMessageWidth is how wide the message column renders for a reader. It is a
+// display cap declared to format.Table, which is the only renderer that knows
+// whether it is writing for a person, and `--full` lifts it — the flag's
+// documented meaning. Every log-family view used to apply it while building the
+// row instead, so no flag could recover the rest of the message (finding #14).
+const logMessageWidth = 60
+
 var logCmd = &cobra.Command{
 	Use:   "log",
+	Args:  takesNone(),
 	Short: "View Home Assistant logs",
 	Long:  "Display HA error log with deduplication and filtering.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runLog(cmd.Context(), cmd.OutOrStdout(), cmd.Flags().Changed("since"))
+		return runLog(cmd, cmd.OutOrStdout(), cmd.Flags().Changed("since"))
 	},
 }
 
@@ -42,7 +50,7 @@ var logShowCmd = &cobra.Command{
 	Use:   "show <log-id>",
 	Short: "Show log entry details",
 	Long:  "Display full details for a specific log entry by stable ID.",
-	Args:  cobra.ExactArgs(1),
+	Args:  takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runLogShow(cmd.Context(), cmd.OutOrStdout(), args[0])
 	},
@@ -57,7 +65,8 @@ func init() {
 	rootCmd.AddCommand(logCmd)
 }
 
-func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
+func runLog(cmd *cobra.Command, w io.Writer, sinceSet bool) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -71,6 +80,10 @@ func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	if entries, err = applyLogSince(entries, sinceSet); err != nil {
 		return err
 	}
+	// Before the level and component filters run — see emptyListing. --since
+	// is deliberately outside the count: it bounds which log the caller is
+	// asking about rather than narrowing an answer within it.
+	total := len(entries)
 
 	// --errors and --warnings are additive: either alone narrows to that
 	// level; together they surface both (the "what went wrong" signal, since
@@ -85,6 +98,10 @@ func runLog(ctx context.Context, w io.Writer, sinceSet bool) error {
 	entries = analyze.FilterByLevels(entries, levels...)
 	if flagLogComponent != "" {
 		entries = analyze.FilterByComponent(entries, flagLogComponent)
+	}
+
+	if len(entries) == 0 {
+		return emptyListing(cmd, w, "log entries", total)
 	}
 
 	if flagLogUnique {
@@ -116,11 +133,8 @@ func renderDedupedLogs(w io.Writer, cfg *config.Config, entries []analyze.LogEnt
 		Headers: []string{"id", "count", "level", "component", "first_seen", "last_seen", "message"},
 		Rows:    make([][]string, len(deduped)),
 	}
+	tbl.SetWidth("message", logMessageWidth)
 	for i, d := range deduped {
-		msg := d.Message
-		if len(msg) > 60 {
-			msg = msg[:57] + "..."
-		}
 		tbl.Rows[i] = []string{
 			reg.GetOrCreate("log", d.FirstSeen+"|"+d.Component+"|"+d.Message),
 			strconv.Itoa(d.Count),
@@ -128,8 +142,13 @@ func renderDedupedLogs(w io.Writer, cfg *config.Config, entries []analyze.LogEnt
 			shortComponent(d.Component),
 			analyze.FormatShortTimestamp(d.FirstSeen),
 			analyze.FormatShortTimestamp(d.LastSeen),
-			msg,
+			d.Message,
 		}
+		// Both columns are the reader's short clock; a machine gets the full
+		// instant with its offset (H-10).
+		tbl.SetMachine(i, "first_seen", analyze.FormatMachineTimestamp(d.FirstSeen))
+		tbl.SetMachine(i, "last_seen", analyze.FormatMachineTimestamp(d.LastSeen))
+		tbl.SetMachine(i, "component", d.Component)
 	}
 
 	if saveErr := reg.Save(); saveErr != nil {
@@ -155,21 +174,20 @@ func renderLogEntries(w io.Writer, cfg *config.Config, entries []analyze.LogEntr
 		Headers: []string{"id", "time", "level", "component", "message"},
 		Rows:    make([][]string, len(entries)),
 	}
+	tbl.SetWidth("message", logMessageWidth)
 	for i, e := range entries {
 		logKey := e.Timestamp + "|" + e.Component + "|" + e.Message
 		shortID := reg.GetOrCreate("log", logKey)
 
-		msg := e.Message
-		if len(msg) > 60 {
-			msg = msg[:57] + "..."
-		}
 		tbl.Rows[i] = []string{
 			shortID,
 			analyze.FormatShortTimestamp(e.Timestamp),
 			e.Level,
 			shortComponent(e.Component),
-			msg,
+			e.Message,
 		}
+		tbl.SetMachine(i, "time", analyze.FormatMachineTimestamp(e.Timestamp))
+		tbl.SetMachine(i, "component", e.Component)
 	}
 
 	if saveErr := reg.Save(); saveErr != nil {
@@ -222,7 +240,12 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 	if flagJSON {
 		out := map[string]any{"id": logID}
 		if len(parts) == 3 {
-			out["timestamp"] = parts[0]
+			// The id key holds the timestamp in the shape hactl's log pipeline
+			// produced — a naive local stamp with no zone, which names no
+			// instant. The machine form attaches the reader's offset; the text
+			// form below stays the key's own value, so an id printed by `log`
+			// and the entry `log show` resolves still read alike.
+			out["timestamp"] = analyze.FormatMachineTimestamp(parts[0])
 			out["component"] = parts[1]
 			out["message"] = parts[2]
 		} else {
@@ -322,6 +345,19 @@ func systemLogToEntries(entries []haapi.SystemLogEntry) []analyze.LogEntry {
 // display (e.g. "homeassistant.components.zha" -> "zha"). This is display-only
 // — matching (--component, `cc logs <name>`) always operates on the full
 // logger name held in analyze.LogEntry.Component/DedupedLog.Component.
+//
+// "Display-only" was already what this comment said and was not what the code
+// did: the short form went into the table ROW, and format.Table renders one set
+// of cells to both audiences, so it went into `--json` as well. `log
+// --component template --json` answered rows whose component read "config",
+// "state" and "trigger" — matched correctly against
+// `homeassistant.components.template.config` and friends, and reported as three
+// values none of which contains the filter term, so a caller could neither
+// audit the match nor grep the answer for their own filter (finding #16).
+// `log show --json` emitted the full name for the same field of the same
+// entry, which is the two-commands-disagree shape H-10 is about.
+//
+// Every caller therefore pairs this with `SetMachine("component", full)`.
 func shortComponent(full string) string {
 	if idx := strings.LastIndex(full, "."); idx >= 0 {
 		return full[idx+1:]
@@ -356,7 +392,7 @@ func applyLogSince(entries []analyze.LogEntry, sinceSet bool) ([]analyze.LogEntr
 	if !sinceSet {
 		return entries, nil
 	}
-	d, err := parseSince(flagSince)
+	d, err := parseSince(sinceWindow())
 	if err != nil {
 		return nil, err
 	}

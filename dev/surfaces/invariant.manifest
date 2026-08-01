@@ -28,6 +28,9 @@ H-17 = proven: TestTargetSurfaceIsClosed
 H-19 = proven: TestAssertionFloor
 H-20 = proven: TestClockSurfaceIsClosed
 H-21 = proven: TestDomainDecodeSurfaceIsClosed
+H-22 = proven: TestPositionalSurfaceIsClosed
+H-23 = proven: TestTransportSurfaceIsClosed
+H-24 = proven: TestEveryDiscoveryReasonNamesItsOwnFix
 
 # --- exempt: the law is about one site, so there is no set to quantify over ---
 H-3 = exempt: there is exactly one vendored spec file, and make check-spec-drift diffs the whole of it byte for byte
@@ -41,3 +44,7 @@ H-9 = debt: the law covers every lookup key hactl uses, and the citations enumer
 H-11 = debt: the law covers every count hactl prints, and the citations name the counts that were found wrong rather than the set of counts
 H-15 = debt: the law covers every detector, and one test is cited
 H-18 = debt: reconciliation between two specific columns, stated as a rule about counts in general. The script family now shares the automation logbook path, so the two runs_24h columns agree; nothing derives the set of columns the rule covers
+H-25 = proven: TestFlagContractSurfaceIsClosed
+H-26 = proven: TestSharedStateSurfaceIsClosed
+H-27 = proven: TestUnmakeSurfaceIsClosed
+H-28 = proven: TestAttributedSurfaceIsClosed

@@ -62,8 +62,11 @@ func TestEveryCommandHasManualProse(t *testing.T) {
 }
 
 // runnableCommandPaths returns the space-joined path of every visible command
-// that actually runs (a pure grouping command such as `auto` has no RunE and is
-// covered by its subcommands).
+// that actually runs. A pure grouping command such as `auto` is covered by its
+// subcommands: it is runnable only because `family` gives it a RunE that prints
+// its own help, which is what makes cobra validate its arguments at all (H-22,
+// args.go) — the annotation, not Runnable(), is what says whether a command is
+// one a caller invokes for an answer.
 func runnableCommandPaths(root *cobra.Command) []string {
 	var out []string
 	var walk func(c *cobra.Command, prefix string)
@@ -80,7 +83,7 @@ func runnableCommandPaths(root *cobra.Command) []string {
 				continue
 			}
 			path := strings.TrimSpace(fmt.Sprintf("%s %s", prefix, sub.Name()))
-			if sub.Runnable() {
+			if sub.Runnable() && !isFamilyGroup(sub) {
 				out = append(out, path)
 			}
 			walk(sub, path)

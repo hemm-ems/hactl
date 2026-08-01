@@ -1,0 +1,69 @@
+# flagcontract — a flag hactl offers is a flag hactl honours: it appears on the
+# commands that act on it, it accepts the values it says it accepts, and where
+# two inputs name the same thing, passing both ends the command
+# (INVARIANTS.md H-25).
+#
+# The surface is the live cobra tree, walked by sharedFlagSites: every flag name
+# MORE THAN ONE command offers — inherited from an ancestor, declared again
+# lower down, or both. A flag one command declares and nothing else sees is on
+# the command that reads it by construction; there is nowhere for it to be inert
+# and nothing for it to disagree with. Every defect behind this file needed a
+# second command:
+#
+#   - `--since` was a root persistent flag: 112 commands offered it, nine read
+#     it. `area ls --since garbage-value-xyz` exited 0 with output byte-identical
+#     to `area ls`, and six more families did the same, while `log` and
+#     `changes` refused the identical value — so whether a mistyped window was an
+#     error depended on which command you happened to be running (#54). It is now
+#     declared by its nine readers, and the tree refuses it everywhere else with
+#     the flag's address in the message.
+#   - `--pattern` sat on five listings, four case-insensitive and one that
+#     stopped being so in a *consistency* commit (D-2).
+#   - `--raw` names a FORMAT on `dash show` and CONTENT on `config file` — one
+#     conflicts with `--json`, the other composes with it (D-26).
+#   - `--color` is a documented global no-op every command inherits AND a real
+#     value-taking flag on `label create` that shadows it. Nothing anywhere said
+#     so until this file existed.
+#
+# What this ledger cannot see, and does not pretend to: the DOMAIN half of H-25
+# is closed separately, by globalFlagDomains (internal/cmd/flagcontract.go) over
+# the root's own measurable flags, and by TestEveryNumericGlobalFlagStatesItsDomain
+# over the live flag set — because a value out of range is a property of the flag
+# rather than of the commands that share it.
+#
+# A `debt` row here is usually one of two shapes, and both are worth reading as
+# work rather than as noise: a flag whose declaring commands all act on it while
+# no single gate says so, and a flag whose spelling carries two meanings that
+# would be a breaking CLI change to separate.
+#ceiling 8
+
+--allow-partial = proven: TestPartialScopeSurfaceIsClosed
+--area          = proven: TestFilterFlagsAgreeOnCase
+--clear         = proven: TestUnmakeSurfaceIsClosed
+--color         = debt: two meanings, one spelling — the root's is a documented no-op every command inherits, `label create`'s is the label's own colour and silently shadows it. Recorded rather than fixed: renaming either is a breaking CLI change.
+--component     = proven: TestFilterSurfaceIsClosed
+--confirm       = proven: TestConfirmSurfaceIsClosed
+--data          = debt: `svc call` and `config flow-step` both take a JSON object and each validates it against a different schema (D-20 for the service, HA's flow schema for the step); no gate holds the two readings to one meaning.
+--dir           = proven: TestLoad_ExplicitDirNamesThePathItTried
+--domain        = debt: three listings filter by it and `tpl create` names the domain to WRITE — one referent, two verbs. The filters are held to the D-2 pole by TestFilterFlagsAgreeOnCase; nothing gates the pair.
+--failing       = proven: TestEveryNarrowedListingSaysWhatNarrowedIt
+--file          = debt: eleven commands read an input document from it. `tpl eval`'s was the one that named the same input as a positional and is refused since H-25; no gate quantifies over the other ten.
+--full          = proven: TestFullNeverTruncates
+--icon          = debt: four registry creates pass it to Home Assistant unchanged and each asserts its own round trip; no gate holds the four to one meaning.
+--json          = proven: TestJSONContract
+--label         = proven: TestFilterFlagsAgreeOnCase
+--level         = debt: two meanings, one spelling — `companion logs --level` is a minimum log level, `floor create --level` is the storey number. Both are established CLI surface.
+--name          = proven: TestFilterFlagsAgreeOnCase
+--options       = proven: TestFlowLookupErrorExplainsThe404Everywhere
+--pattern       = proven: TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints
+--raw           = proven: TestOutputFormatSurfaceIsClosed
+--remove        = proven: TestUnmakeSurfaceIsClosed
+--restored      = proven: TestEveryNarrowedListingSaysWhatNarrowedIt
+--since         = proven: TestSinceIsDeclaredOnlyOnTheCommandsThatReadIt
+--stats         = proven: TestVersionStats
+--timeout       = proven: TestTransportSurfaceIsClosed
+--tokens        = proven: TestRunWithOutput_TokensFlag
+--tokensmax     = proven: TestProseOutputIsStillTokenCapped
+--top           = debt: honoured by every command that renders a table and inert on the rest — clause 1's other half, which `--since` closed and this flag has not. Moving it to its consumers is the same change and would take `--full` with it; deliberately not made here.
+--tunnel        = exempt: declared once, on the `companion wireguard` group, and inherited by four subcommands that each address a tunnel. The group itself only prints help, so there is no second declaration and no second meaning to reconcile.
+--unique        = debt: `log --unique` and `cc logs --unique` deduplicate through the same analyze path and only the `log` side is asserted.

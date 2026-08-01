@@ -18,7 +18,7 @@ func triggerAutomation(t *testing.T, automationID string) {
 	cfg := loadConfig(t)
 	client := haapi.New(cfg.URL, cfg.Token)
 	ctx := context.Background()
-	err := client.CallService(ctx, "automation", "trigger", map[string]any{
+	_, err := client.CallService(ctx, "automation", "trigger", map[string]any{
 		"entity_id": "automation." + automationID,
 	})
 	if err != nil {

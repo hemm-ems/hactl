@@ -64,6 +64,68 @@ them too: `auto delete` takes a config id, an alias or a live entity_id, so
 its check is "the companion has the definition **or** HA has the entity" — a
 stricter dry run is the same dishonesty pointing the other way.
 
+*Input* is the half a create has. `area create` has no target to resolve — the
+name does not exist yet — and that reading exempted the three registry creates
+from the `confirm` surface until `area create "" --confirm` created a real area
+with a blank `area_id` on a production instance, which then failed every `area`
+command including `area delete` (H-14 refuses an identity-less record, and
+`delete` must list first) until a raw WebSocket call removed it. The oracle
+says HA accepts a blank name, mints a blank id for it and files a
+whitespace-only name under an id it chose, so the refusal cannot be the
+server's and cannot come after the request: it is client-side, in both modes,
+and the preview refuses exactly what `--confirm` refuses. An exemption argued
+from one half of a rule is how the other half goes unenforced.
+
+**Resolving the target is not the whole check.** Some confirmed runs fail on a
+fact about the *instance* rather than about the argument, and the preview owes
+that fact too. On a Home Assistant whose `input_boolean:` is written inline in
+`configuration.yaml` instead of `!include`-ing a file, every `helper create
+--confirm` is a structural 400 — and every dry run printed "would create"
+anyway, eight domains out of eight, because the layout check lived inside the
+companion's create where nothing could ask it. It is askable now
+(`GET /v1/config/wiring`, companion C-10), and the preview asks. Two rules fall
+out of that episode: hactl does not re-derive a server-side rule to keep a
+promise — it asks the server, so the two cannot drift and the preview quotes
+the same refusal the confirmed run would print — and a preview that cannot
+reach its check fails rather than proceeding, because a silent fallback
+restores exactly the behaviour the check exists to remove.
+
+The converse half is what a *read* fix can break. `helper delete` resolves
+through the companion's helper lookup; teaching that lookup to resolve
+storage-backed (UI-created) helpers — which is what makes `helper show`/`cat`
+work at all on a normal instance — turned "the lookup succeeded" into a weaker
+claim than "the delete can happen". The preview now checks the source, so a
+target the confirmed run refuses is refused in preview too.
+
+**The identifier and the payload are one question, and the answer belongs to
+Home Assistant.** Resolving the target says nothing about the *value* being
+written, and two previews shipped as `proven` on this surface while accepting
+values HA refuses. `ent rename input_boolean.x 'input_boolean.pg w5 bad'`
+printed "would rename … references: 2" at exit 0 for five malformed or
+cross-domain ids, each of which `config/entity_registry/update` answers with
+"Invalid entity ID" or "New entity ID should be same domain". `svc call
+automation.trigger --data '{"target":{"entity_id":[…]}}'` echoed the JSON back
+unexamined and --confirm answered 400, because HA validates service data with
+PREVENT_EXTRA and `target:` is script syntax it flattens before the call.
+Both are now judged by HA's own rule — `homeassistant/core.py`'s
+`VALID_ENTITY_ID`, mirrored in `internal/haapi/entityid.go` under an oracle
+that reads the regex out of the running container, and the accepted key set of
+`GET /api/services` — never by a check invented here.
+
+The same measurement bounds the refusal. HA answers 200 to an `entity_id` that
+names nothing, to a payload for a service whose registry entry documents no
+fields (`script.<name>` takes arbitrary variables), and to a nested section's
+leaf field (`mqtt.publish` `qos`) while refusing the section name itself. A
+preview refusing any of those would be this rule pointing the other way, so
+the enforcement carries both directions in one table.
+
+**Where a preview cannot refuse, it states.** A targeted service called with no
+`entity_id`/`device_id`/`area_id`/`label_id`/`floor_id` reaches *no* entity —
+HA's target extraction returns before it looks at one — and `entity_id: all`
+reaches every entity of the domain. Both are legal, so neither is refused;
+both are stated in the plan, because a preview that renders identically for a
+no-op and for a domain-wide broadcast is not a preview of either.
+
 **A preview is machine-readable.** `--json` used to be a byte-for-byte no-op
 on nearly every preview, so an agent that asked for JSON got prose. Previews
 share one shape (`internal/cmd/dryrun.go`) that renders as text or as an
@@ -71,7 +133,16 @@ object stating `"dry_run": true` — a caller must be able to tell a plan from a
 result by looking at the answer, not by remembering which flags it passed.
 
 - Enforced by: `internal/cmd/ref_test.go` (dry-run default asserted against a
-  stubbed companion), `internal/cmd/confirm_guard_test.go` (first-write
+  stubbed companion), `internal/haapi/servicedata_test.go`
+  (`TestUnknownFieldsRefusesWhatHomeAssistantRefuses`,
+  `TestMalformedEntityIDsMatchesHomeAssistantsRefusal`,
+  `TestTargetsAnythingSeesTheTwoExtremes`,
+  `TestAcceptedFieldsFlattensSectionsAndIsSorted`,
+  `TestValidEntityIDMirrorsHomeAssistantsRegex` — each table carries the
+  payloads HA answered 400 to *and* the ones it answered 200 to); oracle:
+  `internal/integration/entityid_oracle_test.go`
+  (`TestOracleEntityIDRule`, `make test-int`),
+  `internal/cmd/confirm_guard_test.go` (first-write
   refusal + informed retry), `internal/cmd/config_delete_test.go`
   (`TestConfigDeleteDryRunRefusesUnknownEntry`),
   `internal/cmd/create_delete_test.go` (`TestRegistryDeleteDryRunResolvesTarget`,
@@ -82,7 +153,26 @@ result by looking at the answer, not by remembering which flags it passed.
   `internal/companiontest/write_config_test.go`
   (`TestE2EDryRunRejectsFabricatedTargetCLI`,
   `TestE2ECreateDryRunValidatesInputCLI`,
-  `TestE2EConfirmedRunRejectsWhatDryRunRejectsCLI`)
+  `TestE2EConfirmedRunRejectsWhatDryRunRejectsCLI`),
+  `internal/cmd/registry_write_gate_test.go`
+  (`TestRegistryCreateRefusesABlankName` over both modes and all three
+  registries, with `TestRegistryCreateAcceptsANameWithSurroundingSpace` as the
+  no-false-positive control); oracle:
+  `internal/integration/registry_blank_name_oracle_test.go`
+  (`TestOracleRegistryCreateAcceptsABlankName`, `make test-int`),
+  `internal/cmd/helper_family_test.go`
+  (`TestHelperCreatePreviewAgreesWithConfirmOnEveryLayout`,
+  `TestHelperDeleteRefusesAStorageHelperInBothModes` — both written as an
+  equality between the dry run's verdict and `--confirm`'s, plus equality of
+  the explanation, rather than as two hand-written expectations that can drift
+  apart), `internal/companiontest/helper_family_e2e_test.go`
+  (`TestE2EHelperCreatePreviewMatchesConfirmOnEveryLayoutCLI`,
+  `TestE2EHelperDeleteAgreesWithItselfOnAUIHelperCLI` — the same equalities
+  against a real HA, on the inline layout and the UI-created helper that
+  produced the defect; `make test-companion`)
+- Quantified by: `internal/cmd/surface_confirm_test.go`
+  (`TestConfirmSurfaceIsClosed`, over `dev/surfaces/confirm.manifest`) — the set
+  of `--confirm` commands is walked from the cobra tree, not listed here.
 
 ## H-3 — The vendored companion contract must not drift
 
@@ -111,12 +201,19 @@ This exists because stubbing `haapi.Client.UpdateAutomationConfig` to
 the whole integration package green. The prior test asserted only that the
 automation still existed after each step, which is true either way.
 
-Comparison folds HA's legacy singular keys (`trigger`/`condition`/`action`,
-and `service` within a step) onto the modern plural ones, because writing
-through the Config API migrates the schema; everything else must match exactly.
+The comparison used to fold HA's legacy singular keys (`trigger`/`condition`/
+`action`, and `service` within a step) onto the modern plural ones, because
+writing through the Config API migrated the schema and a faithful round trip
+still came back different. The write goes through the companion's single-entry
+route now (D-14, issue #128), which splices the caller's own bytes, so nothing
+migrates and the comparison is exact — the entry after a rollback is byte-identical
+to the entry before the apply, and so is every other entry in the file.
 
-- Enforced by: `internal/integration/write_roundtrip_test.go`
-  (`TestAutoApplyRollbackRoundTrip`, `make test-int`)
+- Enforced by: `internal/companiontest/auto_write_e2e_test.go`
+  (`TestE2EAutoApplyWritesOnlyItsOwnEntryCLI`, `make test-companion`), with
+  `internal/integration/write_test.go`
+  (`TestAutoWritesRefuseWithoutACompanion`, `make test-int`) pinning that there
+  is no fallback to the endpoint that rewrites the file
 
 ## H-5 — No automation write without a successful backup
 
@@ -270,7 +367,7 @@ and fixed alongside it, in the same files:
   `TestRunEntHist_JSON_NoHeaderLine`, `TestRunEntAnomalies_JSON_NoHeaderLine`,
   `TestRunEntRelated_JSON_NoHeaderLine`),
   `internal/cmd/device_test.go` (`TestDeviceMatchesPattern_IgnoresCase`,
-  `TestDeviceMatchesPattern_UsesTheNameTheUserSees`,
+  `TestDeviceMatchesPattern_MatchesEitherNameADeviceCarries`,
   `TestDeviceHasLabel_SubstringMatchesEnt`,
   `TestRegistryEntityAreaName_DeviceFallback`)
 
@@ -357,13 +454,35 @@ set at all — so the sentence that has to be printed is a different sentence, n
 the shared one behind a posture flag. The two directions differ and both are
 covered: an unread config file or dashboard hides references, risking a false
 clean bill; a degraded live entity set reports entities that exist as dangling,
-risking a false alarm. **A source added later joins `validateScope` — that part
+risking a false alarm. **A source added later joins `sweepScope` — that part
 is not optional — and takes `validateScanGateError` unless it is unusable in kind
 the way live states are, in which case it refuses where it is read and says why
-there.** Search commands (`ref scan`, `dash grep`)
-answer "where is X?" rather than "is the tree clean?", so they warn and still
-answer — and their `--json` shape does not change, because a scope note on stdout
-would break clause (1) for them.
+there.**
+
+Search commands (`ref scan`, `dash grep`) answer "where is X?" rather than "is
+the tree clean?", so they still answer over what they could read — but **where**
+they say so is decided by the medium, not by the command's job (D-31). This
+clause used to end "they warn and still answer, and their `--json` shape does not
+change, because a scope note on stdout would break clause (1) for them", and that
+is the door #34 walked through: with the companion timing out, `ref scan <id>
+--json` returned three of twenty-four references at exit 0, and for an id whose
+references are all in config files it returned `[]` — a verified negative for a
+query that never ran, in the mode whose whole contract is clause (2). A `slog.Warn`
+is not a report: it is invisible to every machine and to anyone whose
+`HACTL_LOG_LEVEL` hides it. So the scope goes in the REPORT BODY in plain text,
+and under `--json` — where the document is a bare array of rows and clause (1)
+forbids a note beside it — the command REFUSES and prints nothing, the same
+posture `ref validate` takes, with `--allow-partial` as the acknowledgement.
+Clause (2) outranks answering: a caller can always ask for the partial answer,
+and cannot ask a short one to tell them it is short.
+
+The config half is a SOURCE, not a transport, and it can be short without
+failing: the companion answers 200 and names in `skipped` every file its walk
+could not read (a renamed `!include` target, a file the path guard refuses).
+D-7 recorded that as a known limit "until hactl consumes the array"; it is
+consumed now, on every consumer of the three routes that report it — `ref scan`,
+`ref validate`, `ref replace` and `ent rename`'s reference count — because a 200
+that skipped a file is the partial answer that looks complete.
 
 Fix shape: `format.Table.visibleRows` now returns every row whenever
 `opts.JSON` is set, full stop — `--top` has no code path into JSON output at
@@ -375,21 +494,253 @@ the cap without touching the `--json` exemption it already had. `version`
 and `script show` gained a `flagJSON` branch each, encoded straight from a
 struct (`versionInfo`, `scriptShowResult`) with nothing printed before it.
 
+**The contract holds on the branch that WROTE, not only on the branch that
+planned.** Every write in hactl is dry-run by default (H-2), and the preview
+half of this law was closed one release earlier: no `--confirm`-gated command
+may assemble a plan outside `dryRun()`, enforced by the `preview` surface. The
+confirmed branch had no such rule and no such gate, so fourteen commands printed
+their result as unconditional prose — `svc call --confirm --json` answered
+`called script.turn_on` at exit 0 immediately after really firing the script,
+and area/label/floor create and delete, tpl create and delete,
+script/auto/helper create/delete/apply, dash create/save/delete/replace, ent
+set-area/set-label, device set-area/set-label, rollback and `config delete` all
+did the same. A caller that scripted the documented global flag received a JSON
+parse error at the one moment it could no longer retry safely. The pole: **a
+confirmed write renders through `done()`, `dryRunPlan`'s counterpart, so both
+branches answer the machine and a caller tells a plan from a result by reading
+`dry_run` rather than by remembering which flags it passed.** `config delete`
+shows why "valid JSON" is not the rule on its own: it echoed HA's
+`{"require_restart":false}`, which parses and still names neither what was done
+nor whether it worked.
+
+**A rendered wall clock is not a timestamp.** `format.Table` renders one set of
+cells as text and as JSON, so every command that put `clock.Short`'s output in a
+row also put it in its machine contract: `ent ls --json` answered
+`"last_changed": "06:31"` for an entity whose wire value was
+`2026-07-30T04:31:28.653662+00:00`, degrading to `"07-28 11:52"` — undatable —
+for anything older than today, while `ent show --json` answered the full instant
+for the same field. The pole: **JSON carries the full instant with its UTC
+offset; the short form belongs to the text table.** The two audiences diverge in
+exactly one place, `format.Table.SetMachine`, and the gate is written against
+the SHAPE of the value rather than against a list of timestamp-ish field names —
+`first_seen`/`last_seen` on the deduped log view is precisely the column a name
+list forgets. Seven commands were affected; three of them no report had named.
+
+**And neither is a rendered absence.** The same mechanism, the same table, one
+column over: `dashIfEmpty` puts `-` in a cell that stands for "no value" and
+`yesNo` puts `yes`/`no` in a cell that stands for a bool, and both reached
+`--json` verbatim. `config entries --json` reported `disabled_by: "-"` on 212 of
+213 entries while `config show --json` reported `""` for the same field of the
+same entry, so `if entry["disabled_by"]` — the obvious thing for a consumer to
+write — answered "every entry is disabled" from one command and the truth from
+its sibling; `options` was the string `"yes"` where a machine wanted `true`, and
+`"no"` is non-empty, so a boolean read as true in both of its states. The pole
+is the clock rule's: **a cell whose text form is a rendering declares its
+machine value with `format.Table.SetMachine`.** The gate is clause (5) of the
+`TestJSONContract` sweep and is written against the value's SHAPE, with one
+per-field exemption that states its reason — `state` is HA's own payload, and an
+input_select may honestly hold `yes`.
+
+**And a gate against a rendering is only as wide as its vocabulary.** The
+paragraph above was written when `yesNo` and `dashIfEmpty` were fixed, and
+clause (5) was built from those two renderers' output — `-`, `yes`, `no`. It
+says of itself that it checks "the SHAPE of the value ... a list of column names
+is the enumeration that forgets whichever column is added next", and it was
+right about columns and wrong about values: `strconv.FormatBool` renders `true`
+and `false`, neither of which was in the list, so `dash ls --json` answered
+`"admin": "false"` for two years past a gate built to catch precisely that
+(finding #59). Three more sites — `ent ls` and `auto ls`'s `restored`, and one
+more inside `config` — were in the same state, and no report named any of them.
+The vocabulary now covers `strconv`'s pair too, and that is still the weaker
+half: `boolCell` renders false as `""`, which no value check can ever
+distinguish from a string that is honestly empty. The structural half is
+`dev/surfaces/boolcell.manifest` — every place a bool becomes a table cell,
+derived from the typed source and each one dispositioned — so a cell whose
+wording nothing recognises is still a site nobody may leave silent.
+
+**And neither is a rendered abbreviation.** The third instance of the same
+mechanism, in the same table, and the widest: six functions in five files each
+did their own `if len(msg) > 60 { msg = msg[:57] + "..." }` while ASSEMBLING the
+row, so the value reached `format.Table` already cut and `--json`, `--full` and
+`--tokensmax 0` were all downstream of a decision nothing could undo. `hactl log
+--json --full --tokensmax 0` answered messages of exactly 60 characters for
+entries whose real text was a multi-kilobyte Python traceback — 43 of the
+reference instance's 54 — and `log show <id>` was the only way to read a message
+hactl had received in full. The report named that one site. Of the five it did
+not, two reached a machine: `ent ls --json` answered `"state":
+"2026-07-31T03:13:..."` for 76 of 4486 entities while `ent show --json` answered
+`"2026-08-01T03:33:44+00:00"` for the same field of the same entity, and `trace
+show --json` carried the last forty characters of a step's error. The pole is
+the clock rule's, one level up: **a column too wide to print declares its width
+with `format.Table.SetWidth`, which only `renderText` consults** — so the cap is
+a property of the column rather than a step in building the value, `--full`
+lifts it because that is what the flag says it does, and there is one
+implementation of "shorten a string" (`format.Clip`) rather than six.
+
+Three things were wrong in those six lines and only one was reported. The cut
+was a **length** test, so a message whose first line was under the budget passed
+through untouched and put its newline in a table cell: the reference instance
+printed 58 lines for 54 rows plus a header, three rows split, the continuation
+carrying no columns at all — a row per line is what makes a table a table, and
+every line-oriented consumer downstream depends on it. And the cut sliced
+**bytes**, so a two-byte character straddling offset 57 was left in half; that
+instance's messages are German, and the invalid UTF-8 survives into `--json`,
+where the encoder writes U+FFFD. `format.Clip` counts runes and
+`format.Table.displayRows` folds a cell onto one line, marking the fold.
+
+**The same table, one column further: a value must be reported as the value it
+was matched against.** `--component` matches the full dotted logger name and
+`shortComponent` cut it to its last segment — for display, said its own comment,
+except that a table cell IS the JSON value. `log --component template --json`
+answered rows whose component read `config`, `state` and `trigger`, none of
+which contains the filter term, while their real names were
+`homeassistant.components.template.config` and two siblings; a caller could
+neither audit the match nor grep the answer for their own filter, and `log show
+--json` reported the full name for the same field of the same entry. The
+machine value is the matched value (`SetMachine("component", …)`), the last
+segment stays the reader's column.
+
+**A number hactl re-emits is the number Home Assistant sent.** H-21 was reported
+as a decode defect and fixed as one; the encode half shipped standing.
+`encoding/json` decodes every JSON number into `float64` for a `map[string]any`
+and marshals `float64(5000)` back as `5000`, so `ent show --json` re-emitted
+HA's `"max": 5000.0` — a float by construction on every `number.*` entity — as a
+bare integer, while `12.7` round-tripped untouched, which is why it survived a
+release. The pole: **an attribute map decodes with `json.Number` and re-encodes
+byte for byte**, a property of the type (`wireAttributes`) rather than of one
+renderer, so every decode of an entity state has it and no second site has to
+remember.
+
+**Truncation is not the cap's business when the output is a document.**
+`--tokensmax` chops at a byte boundary and appends a plain-English notice.
+`--json` was exempt and documented as exempt; nothing else was, although
+`dash show --raw` (its own help: "for LLM round-trip editing"), `--yaml`,
+`--view`, the verbatim `cat` family, `config file`/`block` and `hactl completion
+bash` all write documents. A 91 541-byte dashboard came back as 2 096 bytes of
+invalid JSON at exit 0; `auto cat > backup.yaml` truncated inside a quoted
+scalar, so the backup did not parse; `completion bash >
+/etc/bash_completion.d/hactl`, the line that command's own `--help` prints,
+produced a script `bash -n` rejects. The pole is the one `--json` already set:
+**output whose contract is "this parses" is never capped — a caller narrows it
+with filters — and a command declares itself a document with
+`markStructuredOutput`.** Prose is still capped, which is the control the
+exemption has to keep passing.
+
+**Two flags naming one format is a question with no answer.** Clause (1) is why
+`dash show x --raw --yaml` cannot be fixed by noting which flag won: under
+`--json` a note on stdout breaks "it parses, with nothing else on stdout", and a
+note on stderr is the same silence one stream over. So the combination is
+refused — the only answer that also stays true when a fourth format arrives.
+`--raw` beat `--yaml` beat `--json` by the order of three if-statements,
+documented nowhere, and a caller who asked for YAML got compact JSON at exit 0
+(finding #60). The set of format flags lives in one place
+(`outputFormatFlagNames`), read by both the runtime check and the closure gate
+over `dev/surfaces/outputformat.manifest`, so a command that grows a second way
+to spell its output format is a site somebody has to disposition rather than a
+new silent precedence rule.
+
 - Enforced by: `internal/format/format_test.go` (`TestRenderJSON_TopN` —
   inverted from asserting the truncation bug as correct to asserting `--top`
   has no effect on `--json`), `internal/cmd/json_contract_test.go`
   (`TestJSONContract`, which walks the live cobra command tree — so a newly
   added read command is covered automatically — and asserts all three
   properties on every non-mutating, non-meta, non-verbatim-by-design leaf it
-  can exercise against a fake HA; `TestRootHelp_NeverTokenTruncated`,
-  `TestVersionJSON_Shape`, `TestScriptShowJSON_Shape`),
+  can exercise against a fake HA, and — clause (4) — fails on any string value
+  anywhere in any swept document shaped like `clock.Short`/`ShortSeconds`
+  output; and — clause (6) — on any string value carrying
+  `format.TruncationMarker`, with NO field exemption: `state` is exempt from
+  clause (5) and is precisely where `ent ls` truncated, so inheriting that
+  exemption would have left the check blind to the site it was written for;
+  `TestRootHelp_NeverTokenTruncated`, `TestVersionJSON_Shape`,
+  `TestScriptShowJSON_Shape`, `TestLogJSON_CarriesTheWholeMessage` as clause
+  (6)'s positive half — a document that simply dropped the column satisfies the
+  sweep — and `TestLogText_ComponentIsTheLastSegment` as its control, since a
+  fix that showed the whole logger name to the reader too satisfies the
+  positive half),
+  `internal/format/format_test.go` (`TestSetWidth_JSONCarriesTheWholeValue`,
+  `TestSetWidth_FullLiftsTheCap`, `TestSetWidth_ACellIsOneLine`,
+  `TestSetWidth_TextCapsTheColumn` as the control that the cap did not become
+  "nothing is capped", `TestClip_NeverCutsARuneInHalf` over every width),
+  `internal/analyze/trace_test.go` (`TestStepOutcomeKeepsTheWholeError` — the
+  condensed step keeps Home Assistant's whole error and `FormatCondensed`
+  shortens it),
+  `internal/livefire/log_honesty_test.go` (the two-profile sweep, against the
+  reference instance as well as the rig: `TestSweepLogJSONCarriesTheWholeMessage`
+  — which also fails when the longest message on the instance is too short to
+  reach the cut, so the case cannot pass vacuously —
+  `TestSweepLogTextIsOneRowPerLine`,
+  `TestSweepLogJSONComponentIsWhatTheFilterMatched`,
+  `TestSweepLogFamilyAgreesOnItsSchema`),
+  `internal/cmd/boolcell_test.go` (`TestBooleanColumnsRenderAsJSONBooleans` —
+  every bool column across five commands, each asserted true AND false so a
+  constant column cannot satisfy it) with
+  `internal/cmd/surface_boolcell_test.go` (`TestBoolCellSurfaceIsClosed`) as its
+  closure half,
+  `internal/cmd/surface_outputformat_test.go`
+  (`TestOutputFormatSurfaceIsClosed`, `TestDashShowRefusesConflictingOutputFormats`),
+  `internal/cmd/json_confirm_contract_test.go` (`TestJSONConfirmContract` — the
+  write half: every `--confirm`-gated command the fixture can answer is driven
+  through BOTH branches and must report `dry_run`, `action` and `ok`; a write in
+  the tree that is neither driven nor recorded with a reason fails by name),
+  `internal/cmd/json_timestamp_test.go` (the positive half of clause (4):
+  `TestEntLsJSON_TimestampIsTheInstantHASent`,
+  `TestEntHistJSON_TimestampIsTheInstantHASent`,
+  `TestLogJSON_TimestampCarriesAZone`, `TestLogShowJSON_TimestampCarriesAZone`,
+  `TestTraceShowJSON_StepTimeCarriesAZone`, plus
+  `TestEntShowJSON_WholeFloatAttributeStaysAFloat`, which asserts on the BYTES
+  because Go decodes `5000` and `5000.0` to one value),
+  `internal/integration/json_wireform_oracle_test.go`
+  (`TestOracleEntShowJSONPreservesWireNumberForm` — the same claim against a
+  live HA, since a stub answering `5000.0` proves hactl preserves what it is
+  handed and not that HA hands it over; `TestOracleEntShowJSONNumberDomains`
+  records how wide that oracle is),
+  `internal/cmd/tokencap_document_test.go`
+  (`TestDocumentOutputIsNeverTokenCapped`,
+  `TestCompletionScriptIsNeverTokenCapped`, `TestProseOutputIsStillTokenCapped`
+  as the control that the exemption did not become "nothing is capped", and
+  `TestVerbatimLeavesAreDispositionedForTheTokenCap` as the closure clause over
+  the tree-derived verbatim set),
   `internal/cmd/ref_test.go`
   (`TestRunRefValidate_UnscannableDashboardRefusesUnlessAllowPartial` — the
   unavailability half, watched red against a scanner that swallows the failure;
   `TestRunRefValidate_AutoGeneratedDefaultIsNotAPartialSweep` as the
   cry-wolf control, since a dashboard HA holds no config for has no references
   to miss; `TestRunRefScan_UnscannableDashboardStillAnswers` as the
-  search-command control)
+  search-command control),
+  `internal/cmd/ref_partial_test.go` (the search half, D-31:
+  `TestRunRefScan_PartialRefusesUnderJSONUnlessAllowPartial` — a bare array
+  cannot carry the caveat, so it refuses and `--allow-partial` is the
+  acknowledgement; `TestRunRefScan_AnUnreadConfigHalfIsStatedInTheBody` as the
+  plain-text half; `TestRunRefScan_APartialScanNeverClaimsNotReferenced`, which
+  is the sharpest form — the empty answer used to be a verified negative for a
+  query that never ran; `TestRunDashGrep_PartialIsStatedAndRefusesUnderJSON` as
+  the sibling site; and the `skipped`-array half on all four consumers:
+  `TestRunRefScan_SkippedConfigFilesMakeTheAnswerPartial`,
+  `TestRunRefValidate_SkippedConfigFilesTakeTheGate`,
+  `TestRefReplaceRefusesWhenTheCompanionSkippedAFile`,
+  `TestEntRenameRefusesWhenTheConfigHalfSkippedAFile`),
+  `internal/livefire/ref_family_test.go` (the two-profile sweep:
+  `TestSweepAPartialScanSaysSoOrRefuses` and
+  `TestSweepAScanThatSkippedFilesIsPartialToo`, both producing the condition
+  from a stub companion beside the profile's real HA rather than waiting for
+  one)
+- Quantified by: `internal/surfaceaudit` (`TestResultSurfaceIsClosed` — the set
+  of confirmed-write result renderings is derived from the source, mirroring
+  `TestPreviewSurfaceIsClosed` one branch over, and is empty by design;
+  `TestResultExtractorFlagsProseOnConfirm` feeds it a known-bad function so an
+  extractor that stopped matching cannot pass while proving nothing;
+  `TestTruncationSurfaceIsClosed` over `dev/surfaces/truncation.manifest` — the
+  set is every `<something> + <ellipsis>` in the source, so a seventh site
+  written from memory is red the day it appears. It is the surface finding #14
+  needed: the report named one of six, and nothing in the tree could have said
+  how many there were;
+  `TestPartialScopeSurfaceIsClosed` over `dev/surfaces/partialscope.manifest` —
+  the set is derived in two passes from the code that PRODUCES partial answers
+  (every internal/cmd function returning a scope type, every companion route
+  whose response declares a `Skipped` field), so a command that starts reading
+  one of those sources is red until somebody says what it does about a short
+  read. This paragraph had been written twice over a set that lived in prose,
+  and was one source short both times)
 
 ## H-11 — hactl never invents an identifier, and every count it reports reconciles with the count its source reported
 
@@ -424,6 +775,31 @@ each substituted something *plausible* for the real signal:
   custom. `manifest/list`'s `is_built_in` is now the sole source that can
   nominate a domain; an `update.*` entity can only enrich a domain manifest/
   list already confirmed non-built-in, never add one.
+- `cc show`'s `entities: N` counted only the registry rows HA also holds a
+  state for, and said nothing about the rest. The filter was documented as
+  removing stale rows for removed devices; measured against a real instance it
+  removes nothing but DISABLED entities — 243 of `homematicip_local`'s 402, 56
+  of `dwd_weather`'s 75, and across all 5524 registry rows there not one row
+  without a live state for any other reason. A caller checking the number
+  against the registry saw 159 where HA says 402, with nothing naming the
+  difference. `entity_count`, `disabled_count` and `registry_count` are
+  reported together now, and a row in neither list is still in the total —
+  so a genuinely stale row, the case the filter claimed to handle, shows up as
+  the three numbers failing to add up rather than as a silent subtraction.
+
+**Two summaries of ONE run are two counts that have to reconcile.** The clause
+above is about a count and its source; this is the same clause with both numbers
+inside hactl. `ref validate` ends its report with "429 dangling reference(s) to
+318 entity(ies)" — two measurements, explicitly distinguished — while
+`--exit-code`'s one-line verdict said "318 dangling reference(s) found",
+constructed as `&danglingRefsError{len(uniq)}`, the deduplicated ENTITY count.
+The number was right and the noun was the other measurement's, so a CI log and a
+report of the same instance disagreed about what was counted. Both now render
+through one `danglingSummary(refs, entities)`, which is the general shape: a
+label that names what was counted cannot be kept in step with a second copy of
+the sentence, only with the same one. Its full harm was invisible until D-33 —
+under `--exit-code` the report was discarded by the entry point, so the
+mislabeled line was the entire answer.
 
 A fifth command fabricated *fields*, not rows: `log show` resolved any ID
 `pkg/ids.Registry` recognized regardless of prefix, so a `trc:` or `anom:` ID
@@ -455,12 +831,22 @@ entries, and `Resolve` accepts any prefix.
   `internal/cmd/whoresolve_test.go` (`TestTriggerLabel` precedence cases),
   `internal/cmd/ws_cmd_test.go` (`TestRunCCLs_ExcludesBuiltInUpdateEntities`,
   `TestRunCCShow_RejectsBuiltInDomain`, `TestRunLogShow_RejectsForeignNamespace`,
-  `TestRunLogShow_JSON`, `TestRunCCShow_JSON`),
+  `TestRunLogShow_JSON`, `TestRunCCShow_JSON`,
+  `TestRunCCShow_ReconcilesWithTheRegistry`,
+  `TestRunCCShow_StaleRegistryRowIsVisibleNotSubtracted`),
   `internal/cmd/ent_anomalies_id_test.go` (`TestEntAnomaliesMintsNoIdentifier`
   — the D-5 standing gate, watched red against the re-introduced minting),
   `internal/integration/oracle_diagnostics_test.go` (all tests, checked
   against HA's own `system_log/list`, `manifest/list`, and logbook —
-  invariant H-9)
+  invariant H-9),
+  `internal/cmd/ref_partial_test.go`
+  (`TestDanglingSummaryIsOneSentenceInBothPlaces` — the two-summaries clause,
+  over a fixture of three references to two entities, because a count that
+  divides evenly hides which of the two a label names) and
+  `internal/livefire/ref_family_test.go`
+  (`TestSweepRefValidateExitCodeAnswersOnStdout` — the same reconciliation
+  against whatever the profile actually holds, plus the report reaching stdout
+  at all)
 
 ## H-12 — A write is proven by reading it back from Home Assistant
 
@@ -537,6 +923,24 @@ then read straight back from a fresh options flow's HA-seeded form default.
 Stubbing `StartConfigFlowOnce`/`StepFlow`/`DeleteConfigEntry`/`StartOptionsFlow`
 to canned success fails these at the read-back.
 
+**A write that Home Assistant reports as FAILED claims nothing either.** The
+clause above is one direction of the rule and it shipped without the other. On a
+url_path long enough that `.storage/lovelace.<id>` passes the filesystem's
+255-byte filename limit, HA removes the dashboard from its collection and *then*
+fails unlinking the file — from a listener that runs after the removal — so the
+websocket answers `Unknown error` about an object that is already gone
+(`OSError: [Errno 36]`, traceback captured on the reference instance
+2026-07-31). `dash delete --confirm` reported that as a plain failure at exit 1,
+which tells a caller the dashboard still exists; a retry then fails with "not
+found", and a script gating on the exit code takes the wrong branch either way.
+Whether the object changed is a question the error does not answer, and the only
+thing that answers it is a read-back: `runDashDelete` re-resolves the url_path
+before it decides what to say, reports the delete as done when it is gone, and
+carries HA's own error into `warnings` so the failure is not swallowed on the
+way. The general rule is that a confirmed write's *outcome* is a fact about the
+instance, not about the last call's return value — and that fact is free to
+disagree with it in either direction.
+
 **A flow preview resolves the domain the way the confirmed run does.** `config
 flow-start`'s dry run validated the domain against `manifest/list` — the
 integrations HA has *loaded* — so every not-yet-configured integration (the very
@@ -546,8 +950,9 @@ where the confirmed run worked, the inverse of the H-2 contract, and it broke
 the command's whole purpose. It now resolves against HA's `flow_handlers` list
 (the authority on what `StartConfigFlow` accepts), so preview and confirm agree.
 
-- Enforced by: `internal/integration/write_roundtrip_test.go`
-  (`TestAutoApplyRollbackRoundTrip`, the original H-4 case),
+- Enforced by: `internal/companiontest/auto_write_e2e_test.go`
+  (`TestE2EAutoApplyWritesOnlyItsOwnEntryCLI`, the original H-4 case, now
+  reading automations.yaml back as bytes),
   `internal/integration/write_entity_test.go` (`TestEntSetLabelRoundTrip`
   incl. merge-not-replace and label-deletion detachment,
   `TestEntSetAreaRoundTrip` incl. resolution by name and HA's own
@@ -640,6 +1045,30 @@ person who trips it. Both of those cry-wolf identities were in the first draft
 of this invariant and were removed only after reading the companion routes that
 emit the field.
 
+That converse binds per FIELD, not only per struct, and for a year nothing
+enforced it there. `state` was an identity field on five structs on the
+strength of one comment — "HA rejects an empty state string ... so a blank one
+means the payload, not the entity, is empty" — which was authored from hactl's
+model of Home Assistant rather than probed against one, and is false. Home
+Assistant served 62 of 407 history records with `"state": ""`, the key present
+on every record, so `ent hist` and `ent anomalies` exited 1 with empty stdout
+on a real entity: the cry-wolf failure this invariant already forbade, reached
+through a field rather than a struct (finding #38). The struct-level sweep
+stayed green throughout, and correctly — it asks whether a struct is
+*classified*, never whether a classification is *sound*.
+
+The check compares a decoded value against Go's zero value; `encoding/json`
+gives an absent key and a present-but-empty one the same zero value, so it
+cannot distinguish "the wire never sent this" from "the wire sent it empty".
+Every identity field therefore rests on a premise — that empty is not a value
+this wire can carry — and that premise is now written down per field, with its
+grounds, in `identityFieldEvidence`. A field whose premise nobody has probed
+says so rather than carrying an invented justification, and the count of those
+may only fall: fabricating a plausible reason there would reproduce the exact
+failure the ledger exists to prevent, one layer up. The error text was corrected
+in the same change — it said a record "carries no" the field, which is a claim
+about the wire that a value comparison cannot make.
+
 This generalises H-7. `trace/get` decoded every automation run into an all-zero
 struct because hactl read the wrong wire tags, and `overallResult` rendered
 every run as `PASS` for months while sitting at 100% statement coverage (D1).
@@ -658,6 +1087,12 @@ token and one scan.
   legitimate answer; `TestSweep_EveryDecodeSiteIsChecked` — every
   `json.Unmarshal` in those packages sits in a function that also calls
   `degeneracy.Check`, or is listed in `uncheckedDecodeSites` with a reason).
+- Soundness enforced by: `internal/degeneracy/sweep_test.go`
+  (`TestSweep_EveryIdentityFieldStatesItsGrounds` — every field name declared
+  inside any `Identity` method carries a row in `identityFieldEvidence` saying
+  why empty cannot be a legitimate answer there, and a row whose field no longer
+  exists fails too; `TestSweep_UnprobedIdentityFieldsOnlyShrink` — the number of
+  fields whose premise is unprobed is a ratchet that may only fall).
   Both tables are derived from the source and fail on a *stale* entry as well as
   a missing one, so the classification cannot rot silently and an anonymous
   decode target — which can never declare an identity — cannot ship unnoticed.
@@ -743,7 +1178,10 @@ The `ent hist` expectations have no such licence and are computed from HA's raw
 series at test time (count, min, max, mean, span).
 
 - Enforced by: `internal/integration/backfill_test.go`, `TestRecorderBackfill` —
-  `make test-int` (Docker tier). Subtests: `rig_lands_in_has_own_history` (the
+  `make test-int` (Docker tier); `internal/cmd/since_runs_test.go`
+  (`TestRunsColumnNamesTheWindowItCounted`, over the default and three other
+  windows); sweep case `TestSweepACountNamesTheWindowItCounted` (both
+  profiles). Subtests: `rig_lands_in_has_own_history` (the
   rig writes what HA reads back, and HA's attribute-only filter still behaves as
   the row shape assumes), `anomalies_finds_injected_gap`,
   `anomalies_finds_injected_stuck_run`, `anomalies_finds_injected_spike` (each
@@ -864,6 +1302,45 @@ Two bounds keep the rule from degrading into "match anything":
 - **A resource that matches on two of its identifiers is still one row.** The
   filter widens what matches, never how often.
 
+**A glob is anchored at every identifier form the listing prints.** The
+substring form of `--pattern` matches anywhere in the id, so `helper ls
+--pattern anwesenheit` found six helpers; the glob form is anchored, so
+`--pattern 'anwesen*'` found none — an id is `input_boolean.anwesenheit_flur`
+and the anchor lands on the domain (finding #29). `helper ls` makes that
+unanswerable rather than merely surprising: it prints a bare YAML slug for a
+companion-managed row and a full entity_id for a storage-backed one, IN THE SAME
+COLUMN, so one anchor cannot serve both and `--pattern 'pg_*'` matched by which
+source a row happened to come from. D-28 fixes the pole: the id as printed and
+the part after the domain are both anchors, in the one shared matcher. A dot
+still selects — the tail of `binary_sensor.foo` is `foo`, which `sensor.*` does
+not match — so the fix widens the promise without weakening the filter.
+
+**And when a match finds nothing, the answer says what it was matching.** The
+same stop-at-the-first-miss rule that makes an empty listing read as "no such
+entity" makes `no helpers` read as "this instance has none": `helper ls
+--pattern zzz` printed exactly that on an instance holding 220, `device ls` on
+one holding 307, and `config entries` the same (finding #28). Four more listings
+printed a bare table header — honest, and byte-identical to the answer on an
+instance that really is empty, which is the pair a caller most needs to tell
+apart. D-29 fixes the pole: **an empty listing names the narrowings that emptied
+it and how many records they were applied to.** The narrowings are read from the
+command's own flag set (`activeNarrowings`), never enumerated per call site,
+because a listing that grows a sixth filter is exactly the site an enumeration
+forgets — the same mechanism that let three `--domain` filters sit outside the
+D-2 case pole for as long as that pole's set was four names typed into a test.
+
+**The column's NAME is part of the count.** It was `runs_24h` whatever `--since`
+said, so `auto ls --since 1h --json` answered `"runs_24h": "0"` for a count that
+covered one hour (live-fire #72). The number was right; the key was a claim
+about it that the invocation contradicted, and a JSON consumer that trusts the
+key over the command line that produced it reads the wrong thing. The name is
+derived from the flag — `runs_24h` at the default, `runs_1h` under `--since 1h`,
+`runs` for a window that cannot be spelled inside an identifier — so it cannot
+fall out of step with it, and no caller who left `--since` alone sees any change
+at all. This is H-11's reconciliation rule one layer up from the count: a label
+is kept in step with what it labels by being the same expression, never by a
+second copy of it.
+
 - Enforced by: `internal/cmd/auto_test.go` —
   `TestFilterAutosByPattern_AcceptsTheConfigIDHactlPrints`,
   `TestFilterAutosByPattern_AcceptsTheAliasHactlPrints`,
@@ -893,9 +1370,39 @@ Two bounds keep the rule from degrading into "match anything":
   (`TestAutomationRefSurfaceIsClosed`, `make test-surface`) — the set of
   entrypoints taking an automation reference is derived from the source, and
   one that bypasses `resolveAutomation` fails the build the day it appears;
-  and `TestTargetSurfaceIsClosed` for the wider any-resource half.
+  and `TestTargetSurfaceIsClosed` for the wider any-resource half;
+  `internal/cmd/surface_filter_test.go`
+  (`TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints` — over the live
+  tree's glob-documented filters rather than the command that reported it, with
+  a fixture whose records are named after the needle so an anchor on the domain
+  prefix cannot pass; `TestNarrowingFlagsDeclareThemselves`, which holds the
+  tree to the convention the derivation reads) and
+  `internal/cmd/surface_emptyanswer_test.go`
+  (`TestEveryNarrowedListingSaysWhatNarrowedIt` — every narrowing flag in the
+  tree, driven against the contract fixture until it finds nothing, with the
+  unfiltered run as the negative control so a command that always prints a flag
+  name cannot pass; `TestEmptyListingCountsTheInventoryItSearched`,
+  `TestEmptyListingUnderJSONIsStillAnArray`).
 
-## H-18 — `runs_24h` counts runs, and it counts the same runs `auto show` lists
+**`trace show` was named in this law's own statement and refused every form of
+it.** docs/manual.md says: "every command that takes an automation — `auto
+show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
+interchangeable names". All four were answered `invalid trace ID format`
+(live-fire #66), and "invalid" was the wrong word: the forms are valid, they
+address an automation rather than one of its runs. The command now resolves such
+a reference through `resolveAutomation` and shows the automation's most recent
+stored run.
+
+The reason the gate did not catch it is the more important half. The
+`autoref` surface derived its membership from the PARAMETER NAME of each
+entrypoint — `autoID`, `automationID` — and `trace show`'s is `traceID`, so the
+one command the manual names outside the `auto` family was invisible to the rule
+it was named in. A membership test read off a local naming convention covers
+exactly the sites that followed the convention. The surface now unions that
+derivation with a second one: the commands the manual's own sentence lists.
+The spec makes the promise, so the spec decides the set.
+
+## H-18 — The run count counts runs, it counts the same runs `auto show` lists, and its name is the window it counted
 
 A **run** is a trigger whose conditions passed: the automation entered its
 actions. An errored run is still a run — the `errors` column reports it, not the
@@ -1153,3 +1660,472 @@ of a states payload that the ordering fix never touched. They are safe, but only
 because each addresses `/api/states/<entity_id>` inside its own domain, so the
 set decoded is the single entity rendered. That is a reason somebody had to
 write down; before the surface existed, nobody had checked it.
+
+## H-22 — An argument a command cannot act on ends the command
+
+Every command in the tree declares what positional arguments it takes, and the
+declaration refuses three things before the command body runs: an argument that
+is empty or whitespace-only, an argument on a command that takes none, and — on
+a command that holds subcommands — a subcommand it does not have. The pole is
+**refuse**: an empty string is not a wildcard, an ignored argument is not a
+filter, and a mistyped subcommand is not a help request.
+
+The rule is about the *boundary*, not about any one resolver. Where a resolver
+compares the caller's reference to a field, a record that legitimately carries
+that field empty answers the empty string — and Home Assistant produces such
+records in the ordinary course of being used. A restored automation ("ghost":
+registry entry, no config) has an empty config id and an empty friendly_name; a
+device the user renamed has an empty registry `name`, because the override lives
+in `name_by_user`. So `hactl auto show ''` printed a real, unrelated automation,
+`hactl auto delete ''` printed a plan to delete it, and `hactl device show ''`
+answered with an arbitrary real device — each at exit 0, each one flag from a
+write against an object nobody named.
+
+The other two legs are the same defect where the argument is not an identifier:
+
+- **A command that takes no positionals must say so.** `Args == nil` is cobra's
+  ArbitraryArgs, so `hactl ent ls sensor` accepted `sensor`, discarded it, and
+  printed the same listing as `hactl ent ls` — the most plausible mistake an LLM
+  caller makes with that command, answered with a plausible wrong result. The
+  refusal names the flag that does what the caller meant (`--domain sensor`),
+  built from the command's own flag set rather than a table.
+- **A family group must refuse an unknown subcommand like the root does.**
+  Cobra's `legacyArgs` errors for the root and returns nil for every other
+  group; a group with no `Run` then answers *anything* with its help text at
+  exit 0. Twelve families were confirmed doing it. Setting `Args` on such a
+  group changes nothing — `execute` returns `flag.ErrHelp` before
+  `ValidateArgs` — so a group carries a `RunE` that prints its own help, which
+  is what makes cobra validate its arguments at all.
+
+- Enforced by: `internal/cmd/surface_positional_test.go`
+  (`TestNoCommandAcceptsABlankPositional` — every command in the live tree,
+  driven through the real entry point with one, two and three blank arguments,
+  asserting the refusal comes from the contract rather than from the next error
+  down; `TestEveryFamilyRefusesAnUnknownSubcommand` over every command that
+  holds subcommands; `TestFamilyGroupsAreMarkedAsSuch`, which pins the
+  annotation the MCP gate, the `--json` sweep and the manual guardrail read),
+  `internal/cmd/args_test.go` (the message contracts: the blank refusal names
+  the placeholder from the command's own `Use` line, the unexpected-positional
+  refusal carries the flag alternative, the unknown-subcommand refusal keeps
+  cobra's did-you-mean, and `TestValidUsageIsUnchanged` holds the other half —
+  a bare family still prints help at exit 0, optional arguments stay optional;
+  `TestResolveAutomationRefusesABlankReference` and
+  `TestResolveDeviceRefusesABlankReference` at the two resolvers where the wrong
+  match was actually made),
+  `internal/integration/positional_test.go`
+  (`TestBlankAutomationIdentifierResolvesNothing` against a ghost this test
+  creates through HA's own config API, with the ghost's real identifiers as the
+  control; `TestListingRefusesAPositionalFilter`;
+  `TestUnknownSubcommandFailsAgainstALiveInstance`).
+- Premise probed, not assumed:
+  `TestOracleAutomationWithoutAnIDCarriesNoConfigID` (`make test-int`, the
+  `idless` fixture) — HA reports `attributes.id` only for an automation that has
+  an `id:`, so an automation without one is an entity whose config id is empty.
+  That is the record the empty string matched, and it is stock YAML rather than
+  the field instance's ghost: the same probe established that creating an
+  automation through HA's config API and deleting it again removes the entity
+  outright on HA 2026.x, so the rig cannot make a ghost that way and nothing
+  here needs one.
+- Quantified by: `internal/cmd` (`TestPositionalSurfaceIsClosed`,
+  `make test-surface`) over `dev/surfaces/positional.manifest` — the set is the
+  live cobra tree, and a command whose `Args` is not one of the five
+  constructors in `internal/cmd/args.go` is a site. A new command inherits
+  nothing silently: it is red until its contract is written.
+
+## H-23 — Every connection hactl opens is bounded by the caller's `--timeout`
+
+`--timeout` is documented as "per-request timeout for HA/companion API calls",
+and hactl opens three kinds of connection: REST to Home Assistant, a WebSocket
+to Home Assistant, and HTTP to the companion add-on. Each of them takes its
+bound from that flag, directly or through the one shared constructor. A
+constant is not a bound the caller can ask to be smaller, and `DialTimeout` —
+which exists so an unreachable host fails in seconds rather than consuming the
+whole budget — is a ceiling on the wait, never a floor under it.
+
+The rule covers the WHOLE of establishing a connection, including a retry the
+caller did not ask for. `WSClient.Connect` retries once, and two attempts do not
+entitle a command to twice the time the caller allowed: the retry runs inside
+the budget and is skipped when the budget is gone.
+
+Three transports, three files, three changes, and the flag reached two of them.
+The WebSocket dialled with a 5-second constant, twice, behind a 10-second
+constant handshake, so `companion status --timeout 1s` against a host that never
+answers returned after **10.02s** — with `--timeout 3s` and `--timeout 20s`
+landing on the same 10.02s — while `health --timeout 1s` and `ent ls --timeout
+1s` against the identical host aborted at 1.01s. Against a host that accepts the
+connection and then stalls it was 20.00s. Nothing about that was findable from
+the outside: the flag was documented, and most of the product obeyed it.
+
+The second clause is the same rule about *where* a connection goes. hactl talks
+to the URL it was configured with; a redirect that moves the origin — a
+different scheme, host or port — ends the request with a `*RedirectError` naming
+the origin to configure, rather than being followed. Following it is what a
+browser does, and it made `hactl health` against an `http://` URL a reverse
+proxy 301s to `https://` return a real version, state, location and timezone
+beside `errors: -1` and `companion: not found (unreachable)`, at exit 0: the
+REST half followed the redirect with the credentials intact, and the WebSocket
+half could not, there being no redirect step in the protocol. Half the product
+worked and nothing named the cause. Same-origin redirects are followed to the
+same depth the standard library allows — a trailing-slash redirect is a server
+tidying its own URL space, and Ingress is served under a path prefix.
+
+- Enforced by: `internal/haapi/transport_test.go`
+  (`TestWSConnectHonoursTheCallerTimeout` and
+  `TestHTTPClientIsBoundedByTheCallerTimeout`, both asserting an upper bound on
+  wall time against a host that accepts and never answers — what the caller
+  asked for is "come back within a second", and every way of not doing that is
+  the same defect; `TestRESTRefusesARedirectThatMovesTheOrigin`,
+  `TestWSConnectReportsARedirectAsTheSchemeProblemItIs`, and the boundary
+  `TestRESTFollowsARedirectWithinTheSameOrigin`).
+- Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`,
+  `make test-surface`) over `dev/surfaces/transport.manifest` — the set is every
+  composite literal of `http.Client`, `http.Transport`, `net.Dialer` or
+  `websocket.Dialer` in the typed source, plus every request issued through
+  `http.DefaultClient`, which has no timeout at all. A fourth transport is
+  unclassified on the day it appears.
+
+## H-24 — A connectivity answer names the cause the transport reported, and its exit code carries the verdict
+
+A command whose subject is "can hactl reach this?" answers in two channels, and
+they say the same thing. The body names the cause — and it is the cause the
+transport established, not a category inferred from the absence of a
+connection. The exit code is non-zero when the answer is that it cannot.
+
+`companion status` did neither. It printed `WS connect: failed (authentication
+failed: Invalid access token or password)` and then, one line below,
+`discovery: failed (unreachable)` with a hint reading "Check Ingress / network,
+or set COMPANION_URL in .env" — a remediation that cannot help, for a cause its
+own output had already identified correctly. A rejected token, a refused port
+and a blackholed host produced that identical text, because the discovery
+reason was derived from a nil WebSocket client rather than from the error that
+left it nil: three root causes, one label, one wrong fix. And all three exited
+**0**, so `hactl companion status && proceed` proceeded.
+
+The two clauses are one rule because they fail together. A verdict nobody can
+gate on and a cause nobody can act on are the same command answering a question
+it was not asked.
+
+The exit code follows the command's subject, which for `companion status` is the
+companion: discovery failing or the health check failing is exit 1, and a
+WebSocket that could not open beside a companion reached directly through
+`COMPANION_URL` is not — the companion is usable and the body says what else is
+not. The report is rendered before the verdict is returned and reaches stdout
+(D-33).
+
+- Enforced by: `internal/cmd/companion_verdict_test.go`
+  (`TestCompanionStatusExitsNonZeroWhenTheCompanionIsNotUsable`, asserting the
+  code through the `interface{ ExitCode() int }` the entry point reads;
+  `TestCompanionStatusExitsZeroWhenTheCompanionAnswers`, the control without
+  which the first is satisfied by a command that always fails;
+  `TestCompanionStatusNamesTheCauseTheTransportReported` over a rejected token,
+  a redirected origin and a refused port),
+  `internal/companion/discovery_typed_test.go` (`TestClassifyConnectError`,
+  `TestDiscoveryErrorMessages` — every reason names its own fix and quotes the
+  cause).
+- Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`) for
+  the transport half — the set of places a cause can be produced is the set of
+  connections H-23 closes.
+
+## H-25 — A flag hactl offers is a flag hactl honours
+
+H-22 gave every command a positional contract. This is its other half, and it
+says the same thing about the other kind of input: a flag appears on the
+commands that act on it, it accepts the values it says it accepts, and where two
+inputs name the same thing, passing both ends the command. There is no third
+state between honouring a flag and refusing one. A flag that is declared and
+ignored is the defect; documenting the gap is not the fix.
+
+The live-fire run found nine symptoms of the missing rule, in three shapes.
+
+**Reach.** `--since` was a root persistent flag: 112 commands offered it and
+nine read it. `area ls --since garbage-value-xyz` exited 0 with output
+byte-identical to `area ls`, while `log` and `changes` refused the identical
+value — so whether a mistyped window was an error depended on which command you
+happened to be running, and every one of those help screens advertised the flag.
+`rtfm --json` printed Markdown while the manual's enumeration of the commands
+`--json` does not reach failed to name it, and did name `tpl eval`, which
+honours it. `hactl --version --json` printed the plain banner while `hactl
+version --json` printed JSON.
+
+**Domain.** `--top -1`, `--top 0`, `--tokensmax -5` and `--timeout 0s` were each
+reinterpreted rather than refused. `--top 0` silently meant "no cap", documented
+for `--tokensmax` and for nothing else. The sharp one is `--timeout`: H-23 says
+every connection hactl opens is bounded by the caller's `--timeout`, so a `0s`
+that removes the bound makes that law vacuous — and a negative reached
+`net.Dialer` as a deadline already in the past, so hactl answered `dial tcp:
+lookup <host>: i/o timeout` against a host that was up. A flag value became a
+network diagnosis. A cap and a bound are different promises, and the flag that
+promises a bound may not be talked out of it: `--top 0` and `--tokensmax 0` mean
+"no cap" and say so, `--timeout 0s` is refused.
+
+**Exclusivity.** `tpl eval "{{ 1+1 }}" -f file.jinja` evaluated the file and
+discarded the argument, printing nothing on either stream about the input it had
+thrown away — the defect `dash show --raw --yaml` had one flag over, refused
+since D-26 for the reason that applies here too: an undocumented precedence is a
+rule every caller has to learn instead of a question the tool answers, and
+naming the winner in the output is not available under `--json`.
+
+The corollary the reach clause earns: because a flag a command cannot act on is
+now an error rather than silence, that error owes the caller an address.
+`unknown flag: --since` alone would make the next move a guess, so the refusal
+names the commands that do declare it — and a flag that resembles one the
+command takes is answered with that flag, which is the help a mistyped
+*subcommand* has always received.
+
+- Enforced by: `internal/cmd/flagcontract_test.go`
+  (`TestSinceIsDeclaredOnlyOnTheCommandsThatReadIt` and
+  `TestEveryCommandDeclaringSinceReadsIt` — the declaration set and the
+  consumption set are proven equal, the second by instrumenting the only read of
+  the flag and driving each of the nine; `TestACommandThatCannotActOnSinceRefusesItAndSaysWhereItLives`
+  over every other command in the tree;
+  `TestGlobalFlagDomainsRefuseWhatTheyCannotHonour` with the legal values
+  asserted beside the illegal ones; `TestATimeoutThatCannotBoundNeverReachesATransport`,
+  which is about ORDER — the refusal happens before the value is installed;
+  `TestUnknownFlagOffersTheNearestFlagTheCommandTakes` with a flag resembling
+  nothing as its control; `TestVersionFlagAndVersionCommandAgreeInBothModes`;
+  `TestManualNamesTheCommandsJSONDoesNotReach`, which runs every command the
+  manual names; `TestSinceIsReadThroughOneAccessor`, which holds the source to
+  the single-accessor claim the consumption proof rests on),
+  `internal/cmd/tpl_test.go`
+  (`TestResolveTemplate_RefusesTwoTemplates`, replacing a test that asserted the
+  defect), `internal/cmd/inject_test.go`
+  (`TestManualDeliveryIsNotDecidedByOutputFormat`).
+- Quantified by: `TestEveryNumericGlobalFlagStatesItsDomain` over the root's own
+  flag set for the domain clause, and `TestFlagContractSurfaceIsClosed`
+  (`dev/surfaces/flagcontract.manifest`) over every flag name more than one
+  command offers — the only place the reach clause can be broken.
+
+---
+
+## H-26 — hactl is never the only caller
+
+Every other law here is about hactl and Home Assistant. This one is about
+hactl and the *other* hactl: the second terminal, the CI job, the MCP server,
+the multi-agent fleet all three of its findings were reported from. hactl's
+instance directory is shared state — it carries the `.env` naming the
+instance, the session cache, the write lock and the backups a rollback reads —
+and hactl treated it as private.
+
+The rule has four clauses, and they are the four ways a shared thing can be got
+wrong: **held**, **witnessed**, **unique**, and — the one this law does not
+claim — **honest about what it cannot exclude**.
+
+**Held.** A confirmed write takes the instance's exclusive lock for as long as
+it runs, so two hactl processes writing to one instance never interleave their
+read-modify-write. `auto apply --confirm` fetches the stored entry (that fetch
+is also its backup), validates the candidate against HA over the WebSocket, and
+only then asks the companion to splice the new text in. Measured on the
+reference instance that span is two to three seconds, and two applies launched
+together both read the same starting state inside it: both printed their own
+diff, both printed `applied` and `reload: ok`, both exited 0, and one of the two
+edits was not in the file afterwards (#100). The companion's own read-modify-write
+is milliseconds wide and was never the interesting half.
+
+Serialising does not stop the second write from replacing the first — two
+sequential applies do that too, and it is what the caller asked for. What it
+stops is a write being *planned against a state that no longer exists*: with
+the lock, the second writer's backup holds the first writer's result, so
+`auto rollback` can still reach the version that was replaced. Without it, both
+backups held the pre-race state and the intermediate version was unrecoverable.
+
+**Witnessed.** A `--confirm` write is authorized by a dry-run *of the same
+command, the same target, and the same session*, recorded in the instance cache
+and expiring with it. The guard used to ask a different question — whether the family how-to had
+reached the session — answered out of state under the session key `default`,
+which every process sharing the directory writes. So one caller could switch
+the guard off for another: measured live, a process running `area ls` under
+`HACTL_MANUAL_MODE=full` set `full: true`, and a second process, in another
+directory, in progressive mode, whose first-ever automation command it was,
+then wrote to the instance with no refusal and nothing on stderr (#61).
+
+A delivery record was never evidence about the caller; it is evidence about the
+directory, and a directory is shared. It was also weaker than it read: `auto ls`
+delivers the automation how-to, so `auto ls` followed by `auto apply --confirm`
+satisfied a guard whose entire subject is writes nobody previewed. A preview is
+evidence about the write, and it is what the manual has always instructed.
+
+The session is part of the key, not decoration: without it one caller's preview
+authorizes another caller's write, which is #61 rebuilt two levels down. The
+sweep found exactly that — two sibling cases previewing one automation
+authorized a third whose entire precondition was that nothing had — so a caller
+that names itself with `HACTL_SESSION` has a private record. Callers that leave
+it unset share the key `default` and therefore share their previews, target by
+target. That residue is the same knob the manual documents, and it is stated
+rather than left to be discovered.
+
+**Unique.** A file hactl writes to preserve a state it is about to replace
+never overwrites an existing file. All three of them — the automation backup,
+the script backup, the dashboard snapshot — named the file from a clock at
+one-second resolution and wrote it with `os.WriteFile`, which truncates.
+Demonstrated on the reference instance without needing two writers at all: a
+file was planted at the path the next backup would choose, the apply was run,
+and the backup overwrote it and printed that path to its caller as a recovery
+point (#101). The defect is not that a clock repeats. It is that nothing asked
+whether the name was free.
+
+**What this law does not claim.** A writer that is not this hactl — Home
+Assistant's own UI, a second machine, a hactl pointed at a different directory
+carrying the same URL — is not excluded by a lock on a local file. H-26 makes
+hactl consistent with itself; H-12's read-back is what catches everybody else.
+Stated here rather than discovered later.
+
+- Enforced by: `internal/instancelock/lock_test.go`
+  (`TestLockIsExclusiveAcrossProcesses`, which asks `flock(1)` rather than
+  hactl's own implementation whether the lock is held — flock is per open file
+  description, so a same-process acquire and a cross-process one are different
+  questions and only one of them is the one hactl faces;
+  `TestAcquireGivesUpAndSaysWhoHasIt`, because an unbounded wait on a peer that
+  may itself be blocked is a hang, and a hang is the one failure an agent
+  cannot report; `TestAcquireHonoursContextCancellation`;
+  `TestUnresolvableCacheDirFailsOpenVisibly`), `internal/backupfile/backupfile_test.go`
+  (`TestWriteNeverOverwritesAnExistingBackup`, which freezes the clock so the
+  collision happens by construction — two live writes landed 2.1 s apart
+  however hard they were launched together, so a test that waits for one second
+  to be shared proves nothing; `TestWriteDoesNotClobberAFileItDidNotWrite`, the
+  live sentinel reproduction; `TestLayoutCarriesSubSecondPrecision`, because a
+  stamp that cannot express the retry's advance makes the retry a spin;
+  `TestWriteFailsRatherThanReturningAPathItDidNotWrite`),
+  `internal/cmd/confirm_guard_test.go`
+  (`TestExecute_ConfirmGuardRefusesUnpreviewedWrite`,
+  `TestExecute_ConfirmGuardRefusalDoesNotAuthorizeTheRetry` — the old guard
+  delivered the how-to *as* it refused, so the immediate retry passed;
+  `TestExecute_ConfirmGuardIsNotSatisfiedByAFamilyRead`, the hole stated as a
+  test; `TestExecute_ConfirmGuardPassesAfterDryRun`;
+  `TestWitnessKeyDistinguishesCommandAndTarget`; `TestWitnessExpires`),
+  `internal/livefire/concurrency_test.go`
+  (`TestSweepConcurrentAppliesDoNotShareAStaleRead`,
+  `TestSweepAConfirmedWriteNeverOverwritesABackup`,
+  `TestSweepAConfirmRequiresItsOwnDryRun` — all three on both profiles, driven
+  by rig capability R8).
+- Quantified by: `TestSharedStateSurfaceIsClosed`
+  (`dev/surfaces/sharedstate.manifest`) over every site the typed source shows
+  writing a file into an instance directory or reading state another process
+  can have written — the only places a second caller can be forgotten.
+
+## H-27 — Every assignment a command can make, it can also unmake
+
+`ent set-label` merged labels onto an entity and could not take one back off.
+`ent set-area` required a real, existing area and refused `""` and `none`
+outright. Neither gap was a missing feature so much as a missing SYMMETRY: the
+verb `set-*` names an assignment, and an assignment a command can make but
+never undo leaves exactly one door out — the instance-wide one. Taking a
+single label off a single entity meant `label delete <id> --confirm`, which
+removes that label from every entity, device and area holding it. Clearing one
+entity's area meant `area delete <id> --confirm`, which does the same to every
+holder of that area. Both are correct commands for the question "make this
+value stop existing anywhere"; neither answers "make this ONE assignment stop
+holding", and nothing else did either (finding #81). `device set-label` and
+`device set-area` are the same two gaps one registry over — the class is
+exactly the four `set-*` leaf commands the live tree has today, not a
+hand-picked pair of them, which is the failure this project keeps finding one
+command short of fixed (`dev/surfaces/README.md`'s four defects, all "the
+unfixed half of a fix shipped in the same release").
+
+The rule: a command whose name is `set-<something>` — hactl's one spelling for
+"make this registry field equal this value" — offers a way to unmake what it
+last made, scoped to the one target it names. `ent`/`device set-label` gained
+`--remove <label>` (repeatable), additive to the existing merge-only
+behaviour rather than replacing it — `TestEntSetLabelRoundTrip` pinned merge
+as intentional, and this law does not revisit that, only completes it.
+`ent`/`device set-area` gained `--clear`. Both flags refuse the shape that
+would let them say two things at once: naming a label in both the positional
+adds and `--remove`, or passing an `<area>` alongside `--clear`, ends the
+command rather than picking a winner (H-25's exclusivity clause, one syntax
+over — `refuseAddRemoveOverlap`, `validateAreaTarget`).
+
+**What this law does not claim.** It does not say every command that assigns
+something must offer an inverse regardless of cost or of whether HA's own API
+has one — `label create`/`area create`/`floor create` already have their
+inverse in `label delete`/`area delete`/`floor delete`, because a label or an
+area is itself the object being created, and deleting the object it names IS
+the unmake. The class this law is about is narrower and sharper: a command
+that assigns one object's REFERENCE to another (a label onto an entity, an
+area onto a device) where the only existing way to sever that one reference
+was to destroy the referenced object for everybody holding it.
+
+**Oracle status: probed 2026-08-01.** Whether `area_id: null` and `labels: []`
+actually reach Home Assistant's registry as a clear rather than a no-op or a
+rejection was first read off HA core's dev-branch source, which is not evidence
+for the version under test. It was then asked directly:
+`internal/integration/registry_clear_oracle_test.go` passes against the
+`stable` image, which is 2026.7.4 — the same version the reference instance
+runs — so the answer covers both profiles. Both registries accept both writes
+and read the value back cleared, and the four oracle markers that
+stood in for the answer are gone (D-44). The LAW does not depend on the
+mechanism — it says the command has to offer an unmake, not that the unmake
+must be `area_id: null` specifically — but the CURRENT implementation's proof
+does, which is why those markers blocked `make lint` until a container answered
+rather than being quietly assumed correct.
+
+- Enforced by: `internal/cmd/ent_unmake_test.go`
+  (`TestRunEntSetLabel_RemoveTakesOneLabelOff`, asserting the PARTIAL
+  property that distinguishes `--remove` from `label delete` — a second
+  entity carrying the same label is untouched;
+  `TestRunEntSetLabel_AddAndRemoveSameLabelIsRefused`,
+  `TestRunEntSetLabel_NeitherAddNorRemoveIsRefused`;
+  `TestRunEntSetArea_ClearRemovesTheArea`, the same partial property for
+  `--clear`; `TestRunEntSetArea_AreaAndClearIsRefused`,
+  `TestRunEntSetArea_NeitherAreaNorClearIsRefused`),
+  `internal/cmd/device_unmake_test.go` (the same six, one registry over);
+  sweep cases `TestSweepRemovingOneLabelLeavesTheOtherHolderAlone`,
+  `TestSweepClearingOneEntitysAreaLeavesAnothersAlone`
+  (`internal/livefire/unmake_test.go`, both profiles, H-26's dry-run-then-confirm
+  witness observed throughout).
+- Quantified by: `TestUnmakeSurfaceIsClosed` (`dev/surfaces/unmake.manifest`)
+  over every leaf command in the live cobra tree named `set-*` — so a fifth
+  such command inherits the question the day it is added, rather than
+  silently landing outside a hand-picked list of four.
+
+## H-28 — A field that describes the object is read from the instance, never assigned by the branch that built the row
+
+`helper ls` builds its listing from two reads: the companion's per-domain YAML
+files, then every remaining helper-domain entity in `/api/states`. The second
+branch set `Source: "storage"` on every row it produced. So the column did not
+report where a helper is defined — it reported which of hactl's two code paths
+had produced the row, and nothing in the output distinguished the two readings.
+
+They agree only while the instance is tidy. A helper domain written inline in
+`configuration.yaml` is in no `<domain>.yaml`, the companion's read returns
+nothing for it, every helper falls through to the second branch, and all 222
+helpers on the reference instance were announced as created in the Home
+Assistant UI. Forty-two of those are YAML-defined. The consequence is not
+cosmetic: `helper set` and `helper delete` refuse them citing a reason that is
+false, and `helper show` 404s under a message naming every file it searched —
+none of them the file the helper is in (finding #104).
+
+Home Assistant had already answered. `editable` rides on the same state payload
+the entity was being read out of, set by the helper collection itself: true for
+a storage collection, false for a YAML one. The fix reads it.
+
+The third arm is the law's real content, and it is H-14 at field level. On a
+restored ghost `editable` is ABSENT — the integration no longer provides the
+entity, so HA serves the registry entry with `restored: true` and almost no
+attributes, which is the state of 10 of the reference instance's 222 helper
+entities. Reading absent as false would call every one of them YAML-defined:
+a zero value taken for evidence, which is the class WP12 spent its length on.
+So an unstated source stays unstated, and the column is empty rather than
+confident. `helper show` had already made that choice for a companion predating
+the field; this makes it the rule rather than one site's good judgement.
+
+A constant is legal in this position only when it states a property of the
+ANSWER rather than of the object — `GET /v1/config/helpers` reads YAML files and
+nothing else, so `yaml` on a row that route returned is what the route said, not
+what hactl concluded from no other read having claimed the row. That is the
+distinction the manifest's one `exempt` line has to make.
+
+- Enforced by: `internal/cmd/helper_test.go`
+  (`TestRunHelperLs_SourceFollowsEditableNotTheCodePath`, all three arms —
+  `editable:true` → `storage`, `editable:false` → `yaml`, absent → empty —
+  watched red on the third and second arms before the fix);
+  sweep case `TestSweepHelperSourceIsReadNotInvented`
+  (`internal/livefire/helper_family_test.go`), which asks Home Assistant for
+  `editable` over the raw API rather than through hactl, because a case that
+  sourced its truth from hactl would agree with the defect.
+- Quantified by: `TestAttributedSurfaceIsClosed`
+  (`dev/surfaces/attributed.manifest`) over every row-type composite literal in
+  the tree that assigns a string constant to a field. It is a violation surface
+  — zero sites is the goal — so `TestAttributedExtractorFlagsAnInventedField`
+  guards the derivation against silently matching nothing. Named constants count
+  as literals there: `Source: "yaml"` → `Source: helperSourceYAML` is the first
+  tidy-up anyone makes, and a rule matching only string literals would go to
+  zero sites and stay there while the invented value survived.

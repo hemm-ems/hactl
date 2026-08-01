@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -36,7 +39,11 @@ func leafCommands(root *cobra.Command) []*cobra.Command {
 	var out []*cobra.Command
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if c.Runnable() {
+		// A family group is runnable only so that cobra reaches its argument
+		// validator (H-22, args.go): its RunE prints the group's help, which
+		// has no --json contract to keep. Asking the annotation keeps this
+		// sweep over the commands that answer with data.
+		if c.Runnable() && !isFamilyGroup(c) {
 			out = append(out, c)
 		}
 		for _, ch := range c.Commands() {
@@ -88,9 +95,16 @@ var metaCommands = map[string]bool{
 //   - `cat`/`diff` exist for YAML round-tripping — see the "pipe-friendly,
 //     round-trippable" comment on script.go's runScriptCat, and the identical
 //     pattern on auto/helper/tpl cat and auto/script diff.
-//   - `eval`'s result IS a rendered template string (tpl eval).
 //   - `file`/`block` print a raw config file or block verbatim (config file,
 //     config block).
+//
+// `eval` was on this list and did not belong: `tpl eval --json` has answered
+// with a JSON envelope since H-10 forced it (HA renders a template to a STRING,
+// and for non-scalars that string is Python's repr, so the text is returned
+// verbatim INSIDE a document rather than as one). The manual's own enumeration
+// of the commands --json does not reach copied the error and omitted `rtfm`,
+// which really does ignore it — a hand-written list wrong in both directions at
+// once (#12). It is derived now: TestManualNamesTheCommandsJSONDoesNotReach.
 //
 // Forcing --json on these would fight their actual, documented contract, so
 // they are excluded from the JSON sweep on design grounds — not because they
@@ -98,7 +112,6 @@ var metaCommands = map[string]bool{
 var verbatimByDesign = map[string]bool{
 	"cat":   true,
 	"diff":  true,
-	"eval":  true,
 	"file":  true,
 	"block": true,
 }
@@ -163,6 +176,32 @@ type contractFixture struct {
 	companion *contractCompanion
 }
 
+// contractConfigEntries is how many entries the fixture's config-entries
+// endpoint serves.
+//
+// It is 40 rather than 1 so the shared fixture can express a listing LONGER
+// than the default caps — `--top 10` cuts it, and the whole thing is well past
+// the 500-token prose cap. A one-row listing cannot tell a working `--full`
+// from a broken one, and that is exactly how finding #21 stayed invisible to
+// this tier while the real instance answered `config entries --full` with
+// seven rows where the default gave ten.
+const contractConfigEntries = 40
+
+// configEntriesJSON is the fixture's /api/config/config_entries/entry payload:
+// entry1 first (every positional in contractPosArgs names it), then filler
+// with titles long enough that the listing has real width.
+func configEntriesJSON() string {
+	rows := []string{
+		`{"entry_id":"entry1","domain":"mydomain","title":"My Domain","state":"loaded","source":"user","supports_options":true,"supports_reconfigure":false}`,
+	}
+	for i := 1; i < contractConfigEntries; i++ {
+		rows = append(rows, fmt.Sprintf(
+			`{"entry_id":"entry%02d","domain":"filler_domain_%02d","title":"Filler Integration Number %02d (a title with enough width to matter)",`+
+				`"state":"loaded","source":"user","supports_options":false,"supports_reconfigure":false}`, i+1, i, i))
+	}
+	return "[" + strings.Join(rows, ",") + "]"
+}
+
 // buildContractFixture stands up ONE shared fake HA (startCmdServer) with
 // enough data — states, registries, dashboards, logbook, history, config
 // entries, a flow, an issue, and a trace — PLUS one companion-shaped stub
@@ -188,6 +227,17 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			"entity_id": "binary_sensor.door", "state": "off",
 			"last_changed": "2026-01-01T08:00:00+00:00", "last_updated": "2026-01-01T08:00:00+00:00",
 			"attributes": map[string]any{},
+		},
+		{
+			// A state wider than the column `ent ls` renders it in. Without one,
+			// clause (6) passes over every listing in this sweep for the reason
+			// the whole 2026-07-30 report was about: the condition it tests for
+			// cannot occur. 76 of the reference instance's 4486 entities hold a
+			// timestamp state exactly like this one, and `ent ls --json`
+			// answered "2026-07-31T03:13:..." for every one of them.
+			"entity_id": "sensor.next_scheduled_backup", "state": "2026-08-01T03:33:44+00:00",
+			"last_changed": "2026-01-01T04:00:00+00:00", "last_updated": "2026-01-01T04:00:00+00:00",
+			"attributes": map[string]any{"friendly_name": "Next Scheduled Backup", "device_class": "timestamp"},
 		},
 		{
 			"entity_id": "automation.morning", "state": "on",
@@ -248,13 +298,30 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, historyJSON)
 		},
+		// `tpl eval` joined this sweep when `eval` left verbatimByDesign, where
+		// it never belonged: it answers --json with a JSON envelope and has
+		// since H-10. Home Assistant renders a template to plain text, not JSON,
+		// so the handler answers as HA does.
+		"/api/template": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = fmt.Fprint(w, "2")
+		},
 		"/api/logbook/": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, logbookJSON)
 		},
+		// Two records, and the long one is load-bearing: with a four-character
+		// "boom" the log family's clause (6) passes without ever reaching the
+		// width it exists to police, which is the green-by-construction shape
+		// this whole sweep is built against. The dotted logger name is the other
+		// half — the displayed segment has to be able to differ from the
+		// matched one (finding #16).
 		"/api/error_log": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			_, _ = fmt.Fprint(w, "2026-01-01 05:00:00.000 ERROR (MainThread) [mydomain.sensor] boom\n")
+			_, _ = fmt.Fprint(w, "2026-01-01 05:00:00.000 ERROR (MainThread) [mydomain.sensor] boom\n"+
+				"2026-01-01 05:01:00.000 ERROR (MainThread) [homeassistant.components.mydomain.config] "+
+				"could not reach the configured endpoint after three attempts; the collector stays "+
+				"degraded until the next successful poll\n")
 		},
 		"/api/config": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -262,7 +329,7 @@ func buildContractFixture(t *testing.T) *contractFixture {
 		},
 		"/api/config/config_entries/entry": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `[{"entry_id":"entry1","domain":"mydomain","title":"My Domain","state":"loaded","source":"user","supports_options":true,"supports_reconfigure":false}]`)
+			_, _ = fmt.Fprint(w, configEntriesJSON())
 		},
 		"/api/diagnostics/config_entry/entry1": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -403,6 +470,7 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"dash resources":      nil,
 		"dash grep":           {"light.kitchen"},
 		"log show":            {f.logShowID},
+		"tpl eval":            {"{{ 1 + 1 }}"},
 
 		// The eight the deleted companionRequired list used to skip. They are
 		// ordinary rows here — the only thing that made them special was the
@@ -514,6 +582,15 @@ func assertJSONContract(t *testing.T, dir string, cmdArgs, extra []string) {
 	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		t.Fatalf("--json output does not start with JSON (a human header line precedes it):\n%s", small)
 	}
+
+	// (4) no rendered wall clock anywhere in the document.
+	assertNoRenderedClock(t, parsedSmall, "", small)
+
+	// (5) no rendered absence placeholder anywhere in the document.
+	assertNoRenderedPlaceholder(t, parsedSmall, "", small)
+
+	// (6) no display truncation anywhere in the document.
+	assertNoDisplayTruncation(t, parsedSmall, "", small)
 
 	// (2) --top must not remove a single element from JSON output (defeats
 	// defect A generically).
@@ -656,5 +733,285 @@ func TestScriptShowJSON_Shape(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.Traces[0].ID, "trc:") {
 		t.Errorf("trace id should be a trc: short id, got %q", got.Traces[0].ID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (4): a rendered wall clock never reaches a machine.
+//
+// `ent ls`, `ent hist`, `log` and `log show` built a format.Table whose cells
+// were internal/clock's HUMAN rendering and then rendered that same table as
+// JSON, so `ent ls --json` reported `"last_changed": "06:31"` for an entity
+// whose wire value was `2026-07-30T04:31:28.653662+00:00` — no date, no year,
+// no offset — and `"07-28 11:52"` for anything older than today, which a
+// machine cannot even date. `ent show --json` emitted the full instant for the
+// SAME field, so two commands disagreed about one field's shape.
+//
+// The gate is written against the SHAPE of the value rather than a list of
+// timestamp-ish field names, and that is the whole point: a name list is the
+// enumeration this repository keeps being bitten by, and it would have missed
+// `first_seen`/`last_seen` (the deduped log view) exactly as the original fix
+// missed them. Every shape below is one internal/clock can produce and nothing
+// else in hactl's JSON legitimately does.
+// ---------------------------------------------------------------------------
+
+// renderedClockShapes are the human renderings clock.Short, clock.ShortSeconds
+// and the log pipeline's naive local stamp produce. A JSON string matching any
+// of them is a table cell that escaped into the machine contract.
+var renderedClockShapes = []struct {
+	name string
+	re   *regexp.Regexp
+}{
+	{"clock.Short, same day (HH:MM)", regexp.MustCompile(`^\d{2}:\d{2}$`)},
+	{"clock.ShortSeconds, same day (HH:MM:SS)", regexp.MustCompile(`^\d{2}:\d{2}:\d{2}$`)},
+	{"clock.Short, other day (MM-DD HH:MM)", regexp.MustCompile(`^\d{2}-\d{2} \d{2}:\d{2}$`)},
+	{"clock.ShortSeconds, other day (MM-DD HH:MM:SS)", regexp.MustCompile(`^\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)},
+	{"a naive local stamp with no zone (YYYY-MM-DD HH:MM:SS)", regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$`)},
+}
+
+// assertNoRenderedClock walks a decoded --json document and fails on any string
+// value shaped like a rendered clock, naming the path so the offending column
+// is obvious.
+func assertNoRenderedClock(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			assertNoRenderedClock(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoRenderedClock(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		for _, shape := range renderedClockShapes {
+			if shape.re.MatchString(node) {
+				t.Errorf("--json carries a rendered wall clock at %s: %q looks like %s.\n"+
+					"JSON timestamps must be the full instant with its UTC offset (clock.ISO); the short form "+
+					"belongs to the text table only. If this column is a table cell, give it a machine value "+
+					"with format.Table.SetMachine.\noutput:\n%s",
+					strings.TrimPrefix(path, "."), node, shape.name, raw)
+				return
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (5): a rendered absence never reaches a machine.
+//
+// `config entries --json` reported `disabled_by: "-"` on all 212 entries that
+// were NOT disabled, because the JSON rendering re-uses the table row and the
+// row cell came from dashIfEmpty. Its sibling `config show --json` reported
+// `""` for the same field of the same entry, so one command said "every entry
+// is disabled" to `if entry["disabled_by"]` and the other said the truth
+// (finding #22).
+//
+// The same mechanism one column over is yesNo: `"options": "yes"` where a
+// machine wants `true`, and "no" is a non-empty string too — a boolean that
+// reads as true in both of its states.
+//
+// The check is on the SHAPE of the value, like clause (4) and for the same
+// reason: a list of column names is the enumeration that forgets whichever
+// column is added next. Exemptions are per-field and each has to say why.
+// ---------------------------------------------------------------------------
+
+// renderedPlaceholders are the strings hactl's table renderers put in a cell
+// that stands for a value the wire did not carry, or for a value a machine
+// should receive typed.
+//
+// The list read `-`, `yes`, `no` until WP5, and that is how `dash ls --json`
+// shipped `"admin": "false"` past a gate written to catch exactly this
+// (finding #59): the vocabulary was the two renderers the PREVIOUS fix had
+// touched, so `strconv.FormatBool`'s own output was outside a check whose
+// stated principle is "the shape of the value, never a list of columns". A
+// value gate can only ever hold a list of values, which is why the structural
+// half — `dev/surfaces/boolcell.manifest`, every bool that becomes a cell —
+// exists beside it. That half also covers the one this can never see:
+// `boolCell` renders false as `""`, and an empty string is legitimately empty
+// everywhere.
+var renderedPlaceholders = map[string]string{
+	"-":     "dashIfEmpty's stand-in for an empty string — a machine reads it as a value",
+	"yes":   "yesNo's rendering of true — a machine wants the bool",
+	"no":    "yesNo's rendering of false — non-empty, so it reads as true",
+	"true":  "strconv.FormatBool's rendering of true — a machine wants the bool",
+	"false": "strconv.FormatBool's rendering of false — non-empty, so it reads as true",
+}
+
+// passedThroughJSONField names the fields whose value hactl copies from Home
+// Assistant rather than rendering, and where one of the strings above is
+// therefore HA's own answer and not a placeholder.
+//
+// `state` is the only one, and it is genuinely reachable: an input_select or a
+// template binary sensor may legitimately hold "yes", "no" or "-". Every other
+// field stays covered, including whichever column is added next.
+func passedThroughJSONField(field string) bool {
+	return field == "state"
+}
+
+// assertNoRenderedPlaceholder walks a decoded --json document and fails on any
+// string value that is one of the renderers' placeholders, naming the path so
+// the offending column is obvious.
+func assertNoRenderedPlaceholder(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			if passedThroughJSONField(k) {
+				continue
+			}
+			assertNoRenderedPlaceholder(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoRenderedPlaceholder(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		if why, bad := renderedPlaceholders[node]; bad {
+			t.Errorf("--json carries a rendered placeholder at %s: %q is %s.\n"+
+				"Give the column its machine value with format.Table.SetMachine, or emit the "+
+				"underlying field directly.\noutput:\n%s",
+				strings.TrimPrefix(path, "."), node, why, raw)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H-10, clause (6): a display truncation never reaches a machine.
+//
+// The third instance of the pole clauses (4) and (5) set. Every log-family
+// renderer cut its message to 60 bytes while BUILDING the row — before the cell
+// reached format.Table, the only thing that knows whether it is writing for a
+// person — so `log --json --full --tokensmax 0` returned messages of exactly 60
+// characters for entries whose true text was a multi-kilobyte traceback, and no
+// combination of flags could recover them (finding #14). `ent ls --json`
+// answered `"state": "2026-07-31T03:13:..."` for 76 of the reference instance's
+// 4486 entities while `ent show --json` answered the whole instant for the same
+// field — the sibling disagreement clause (5) is also about.
+//
+// The check is on the SHAPE of the value: format.TruncationMarker is a single
+// rune emitted by exactly one function, format.Clip, and only ever for a text
+// table. A `…` in a machine document therefore means a cell escaped, whichever
+// column it is and whenever it was added. The old marker was "..." and Home
+// Assistant's own messages are full of those, which is the other half of why
+// the marker is what it is.
+// ---------------------------------------------------------------------------
+
+// assertNoDisplayTruncation walks a decoded --json document and fails on any
+// string carrying the text renderer's truncation marker.
+//
+// Unlike clause (5), this one has NO field exemption, and `state` is the reason
+// it must not: `ent ls` truncated the state column, and skipping it here would
+// leave the check blind to the exact site — 76 of the reference instance's 4486
+// entities — that made this clause worth writing. Clause (5) exempts `state`
+// because an input_select may honestly hold "yes"; the equivalent worry here is
+// a state that legitimately contains "…", and there is not one on the reference
+// instance: zero of 4486 rows carry the character anywhere (measured
+// 2026-07-31). An exemption inherited from the neighbouring clause without
+// re-asking whether it applies is how a gate ends up covering everything but
+// the defect.
+func assertNoDisplayTruncation(t *testing.T, v any, path, raw string) {
+	t.Helper()
+	switch node := v.(type) {
+	case map[string]any:
+		for k, e := range node {
+			assertNoDisplayTruncation(t, e, path+"."+k, raw)
+		}
+	case []any:
+		for i, e := range node {
+			assertNoDisplayTruncation(t, e, fmt.Sprintf("%s[%d]", path, i), raw)
+		}
+	case string:
+		if strings.Contains(node, format.TruncationMarker) {
+			t.Errorf("--json carries a display truncation at %s: %q ends in the text table's "+
+				"marker.\nA column too wide to print declares its width with "+
+				"format.Table.SetWidth, which only renderText consults — never shorten a value "+
+				"while building the row.\noutput:\n%s",
+				strings.TrimPrefix(path, "."), node, raw)
+		}
+	}
+}
+
+// TestLogJSON_CarriesTheWholeMessage is clause (6)'s positive half, and the
+// direct regression test for finding #14.
+//
+// The sweep above proves no swept document CONTAINS a truncation; this proves
+// the value that used to be truncated is present in full, which a document that
+// simply dropped the column would also satisfy.
+func TestLogJSON_CarriesTheWholeMessage(t *testing.T) {
+	const long = "Shape watch probe could not reach the configured endpoint at 192.0.2.41:8443 " +
+		"after 3 attempts; the collector stays degraded until the next successful poll"
+	// A first line under the display budget, so the old LENGTH test let it
+	// through untouched and its newline reached the table cell.
+	const multiline = "loader skipped 2 sources\n  alpha: unparseable manifest\n  beta: no reader"
+
+	ts := startCmdServer(t, map[string]any{
+		"system_log/list": []map[string]any{
+			{"name": "custom_components.shapewatch.diagnostics.probe", "message": []string{long},
+				"level": "ERROR", "timestamp": 1.7e9, "count": 1},
+			{"name": "custom_components.shapewatch.helpers.loader", "message": []string{multiline},
+				"level": "WARNING", "timestamp": 1.7e9, "count": 1},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	withLogFlags(t, false, "", false)
+
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() { flagJSON = oldJSON }()
+
+	var buf bytes.Buffer
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
+		t.Fatalf("runLog: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rows); err != nil {
+		t.Fatalf("log --json is not a JSON array: %v\n%s", err, buf.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("log --json returned %d rows, want 2:\n%s", len(rows), buf.String())
+	}
+	got := map[string]string{}
+	for _, row := range rows {
+		component, _ := row["component"].(string)
+		message, _ := row["message"].(string)
+		got[component] = message
+	}
+	// The component field is the FULL logger name — the value --component
+	// matched against (finding #16). The table's last-segment form is
+	// display-only.
+	for component, want := range map[string]string{
+		"custom_components.shapewatch.diagnostics.probe": long,
+		"custom_components.shapewatch.helpers.loader":    multiline,
+	} {
+		if got[component] != want {
+			t.Errorf("log --json: component %q carries\n got %q\nwant %q", component, got[component], want)
+		}
+	}
+}
+
+// TestLogText_ComponentIsTheLastSegment is the control for the case above: the
+// machine value moved, and the reader's column must not have. A fix that made
+// both audiences read the full dotted name would satisfy clause (6) and widen
+// every log table by 30 characters.
+func TestLogText_ComponentIsTheLastSegment(t *testing.T) {
+	ts := startCmdServer(t, map[string]any{
+		"system_log/list": []map[string]any{
+			{"name": "homeassistant.components.template.config", "message": []string{"bad template"},
+				"level": "ERROR", "timestamp": 1.7e9, "count": 1},
+		},
+	}, nil)
+	withFlagDir(t, ts.dir)
+	withLogFlags(t, false, "", false)
+
+	var buf bytes.Buffer
+	if err := runLog(listingCmd(context.Background(), "log"), &buf, false); err != nil {
+		t.Fatalf("runLog: %v", err)
+	}
+	if strings.Contains(buf.String(), "homeassistant.components.template.config") {
+		t.Errorf("the text table prints the whole logger name:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "config") {
+		t.Errorf("the text table lost the component column:\n%s", buf.String())
 	}
 }
