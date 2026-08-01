@@ -284,6 +284,24 @@ func TestResultSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestAttributedSurfaceIsClosed — every listing-row field filled from a Go
+// constant declares why that constant is not a claim about the object.
+//
+// Finding #104: `helper ls` reported a `source` column that described its own
+// control flow. Every row the companion's YAML read had not produced was
+// labelled `storage`, so on an instance configuring helpers inline in
+// configuration.yaml — where that read returns nothing — all 222 helpers were
+// announced as created in the Home Assistant UI. The wire had carried the
+// answer (`editable`) the whole time, in the same payload.
+//
+// Like TestResultSurfaceIsClosed this is a violation surface: zero sites is the
+// goal, so runGate's emptiness alarm is off and
+// TestAttributedExtractorFlagsAnInventedField guards the derivation instead.
+func TestAttributedSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.AttributedSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestTruncationSurfaceIsClosed — every place that shortens a string for a
 // reader is dispositioned.
 //

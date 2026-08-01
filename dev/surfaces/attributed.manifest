@@ -1,0 +1,30 @@
+# attributed — a listing-row field describing the OBJECT is read from the wire,
+# never assigned a constant by the branch that built the row (INVARIANTS.md H-28).
+#
+# This is a VIOLATION surface, like result.manifest: internal/surfaceaudit
+# .AttributedSurface lists every row-type composite literal that sets a field to
+# a string constant, and empty is the goal. Emptiness is therefore not proof the
+# gate works — TestAttributedExtractorFlagsAnInventedField feeds the extractor a
+# known-bad literal and requires it to be flagged.
+#
+# Finding #104 is why it exists. `helper ls` reads twice — the companion's
+# per-domain YAML files, then everything else in a helper domain from
+# /api/states — and the second branch labelled its rows `storage` by
+# elimination. That is not a fact about the helper; it is a fact about which
+# read produced the row, and the two part company as soon as the instance is
+# untidy. A domain written inline in configuration.yaml is in no `<domain>.yaml`,
+# so the companion answered with nothing, every helper fell through, and all 222
+# on the reference instance were announced as created in the Home Assistant UI.
+# 42 were YAML-defined and 10 were restored ghosts whose source nothing can know.
+#
+# Home Assistant had said so in the same payload hactl was already reading:
+# `editable` is true for a storage collection, false for a YAML one, and absent
+# on a ghost. helperSourceOf now reads it, and returns "" for the third case —
+# an unstated source stays unstated (H-14's rule at field level, and the choice
+# `helper show` had already made for a companion predating the field).
+#
+# `exempt` here means the constant is not a claim about the object: it states a
+# property of the ANSWER hactl received, which the route's own contract fixes.
+#ceiling 0
+
+internal/cmd/helper.go:helperRow.Source = exempt: GET /v1/config/helpers reads YAML files and nothing else (companion routes/helpers.py get_helpers -> _load_helpers -> wired_target_or_default), so "yaml" is what that route answered rather than what hactl concluded from no other read having claimed the row; the /api/states branch beside it derives its value from `editable` via helperSourceOf and is the finding this surface was minted for

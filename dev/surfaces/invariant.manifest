@@ -47,3 +47,4 @@ H-18 = debt: reconciliation between two specific columns, stated as a rule about
 H-25 = proven: TestFlagContractSurfaceIsClosed
 H-26 = proven: TestSharedStateSurfaceIsClosed
 H-27 = proven: TestUnmakeSurfaceIsClosed
+H-28 = proven: TestAttributedSurfaceIsClosed

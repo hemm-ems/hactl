@@ -106,11 +106,86 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(binDir)
 		panic(err)
 	}
+	// The run-level collateral bracket. Every case can pass while the RUN as a
+	// whole has reformatted automations.yaml or left an empty-id area behind —
+	// both happened on 2026-07-30, and neither showed up in any individual
+	// command's output, because collateral is a property of the instance rather
+	// than of a command. So it is measured on the instance, once before the
+	// first case and once after the last.
+	before := censusOrExit(binDir)
+
 	exit := m.Run()
+
+	if problems := collateral(before); len(problems) > 0 {
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "COLLATERAL: %s\n", problem)
+		}
+		fmt.Fprintln(os.Stderr, "the sweep changed the instance outside the pg_ playground — see above")
+		exit = 1
+	}
+
 	rigHA.Stop()
 	// os.Exit skips deferred calls, so the build directory is removed here.
 	_ = os.RemoveAll(binDir)
 	os.Exit(exit)
+}
+
+// censusOrExit takes the pre-run census of every profile that is configured.
+//
+// A census that cannot be read is fatal rather than skipped. The whole value of
+// the bracket is that "nothing moved" is a claim somebody checked; a run that
+// quietly lost the ability to look would report a clean instance precisely when
+// it could no longer see one — the shape H-14 exists to refuse, applied to the
+// harness itself.
+func censusOrExit(binDir string) map[Profile]Integrity {
+	out := map[Profile]Integrity{}
+	for profile, tgt := range censusTargets() {
+		census, err := Census(tgt)
+		if err != nil {
+			rigHA.Stop()
+			_ = os.RemoveAll(binDir)
+			fmt.Fprintf(os.Stderr, "taking the %s census before the sweep: %v\n", profile, err)
+			os.Exit(1)
+		}
+		out[profile] = census
+	}
+	return out
+}
+
+// collateral re-reads each census and reports what moved outside pg_*.
+func collateral(before map[Profile]Integrity) []string {
+	var problems []string
+	for profile, tgt := range censusTargets() {
+		start, taken := before[profile]
+		if !taken {
+			continue
+		}
+		after, err := Census(tgt)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: the census could not be re-read after the sweep: %v", profile, err))
+			continue
+		}
+		for _, problem := range CompareIntegrity(start, after) {
+			problems = append(problems, string(profile)+": "+problem)
+		}
+	}
+	return problems
+}
+
+// censusTargets is the profiles the bracket covers.
+//
+// The rig is included as well as the live instance, and deliberately: the rig
+// is where the destructive cases run, so it is the profile most likely to be
+// damaged — and unlike the live profile it has no pg_ guard standing between a
+// case and the whole instance.
+func censusTargets() map[Profile]Target {
+	out := map[Profile]Target{
+		Rig: {Profile: Rig, Dir: rigHA.Dir(), Bin: hactlBin},
+	}
+	if dir := os.Getenv("HACTL_LIVEFIRE_DIR"); dir != "" {
+		out[Live] = Target{Profile: Live, Dir: dir, Bin: hactlBin}
+	}
+	return out
 }
 
 // backfillRigHistory writes rigHistory into the rig's recorder.

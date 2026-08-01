@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "minor_version": 9,
+  "key": "core.area_registry",
+  "_comment": [
+    "Areas, with floor_id and labels populated (see the note in core.floor_registry).",
+    "",
+    "Home Assistant's onboarding creates Living Room, Kitchen and Bedroom by itself, and it leaves",
+    "floor_id null and labels empty on all three. That default is exactly the shape that cannot",
+    "express an area belonging to a floor, so two areas here carry a floor and one carries a label \u2014",
+    "and one keeps the bare default, because a fixture where every area is anchored cannot tell",
+    "`area ls` reporting the floor it read from reporting the floor it assumed."
+  ],
+  "data": {
+    "areas": [
+      {
+        "aliases": [],
+        "floor_id": "ground_floor",
+        "humidity_entity_id": null,
+        "icon": "mdi:sofa",
+        "id": "living_room",
+        "labels": [
+          "comfort"
+        ],
+        "name": "Living Room",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "ground_floor",
+        "humidity_entity_id": null,
+        "icon": "mdi:stove",
+        "id": "kitchen",
+        "labels": [],
+        "name": "Kitchen",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "upper_floor",
+        "humidity_entity_id": null,
+        "icon": "mdi:bed",
+        "id": "bedroom",
+        "labels": [
+          "energy"
+        ],
+        "name": "Bedroom",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": null,
+        "humidity_entity_id": null,
+        "icon": null,
+        "id": "utility_room",
+        "labels": [],
+        "name": "Utility Room",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "modified_at": "2026-01-01T00:00:00.000000+00:00"
+      }
+    ]
+  }
+}

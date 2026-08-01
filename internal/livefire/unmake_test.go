@@ -96,6 +96,33 @@ func dryRunThenConfirm(t *testing.T, tgt Target, targets, vocab, args []string) 
 	}
 }
 
+// cleanUpWith undoes a setup step, and reports rather than swallows a failure.
+//
+// The cleanups here used to call Write with `--confirm` directly and discard
+// the result. Both halves of that were wrong and they hid each other: H-26's
+// confirm guard REFUSES a --confirm with no dry run of the same command behind
+// it, so every one of these deletes was rejected — and the discarded error meant
+// the sweep left a label and an area on the rig on every single run without
+// anybody being told.
+//
+// The run-level Integrity census found it the first time it was wired up
+// (`the sweep CREATED labels outside the playground: [wp13_unmake_label]`),
+// which is the argument for the census in one line: this is collateral, and
+// collateral is invisible to every per-case assertion because each case really
+// did pass.
+func cleanUpWith(t *testing.T, tgt Target, targets, vocab, args []string) {
+	t.Helper()
+	if _, err := tgt.Read(t, args...); err != nil {
+		stderr, _ := tgt.ReadDiagnostic(t, args...)
+		t.Errorf("cleanup dry run %v failed, so the object is left behind: %v\n%s", args, err, truncate(stderr))
+		return
+	}
+	confirmArgs := append(append([]string{}, args...), "--confirm")
+	if out, err := tgt.Write(t, targets, vocab, confirmArgs); err != nil {
+		t.Errorf("cleanup %v failed, so the object is left behind: %v\n%s", confirmArgs, err, truncate(out))
+	}
+}
+
 // TestSweepRemovingOneLabelLeavesTheOtherHolderAlone is finding #81's label
 // half. It attaches one label to two entities, removes it from ONE via
 // --remove, and requires the other to still carry it — the property
@@ -110,8 +137,8 @@ func TestSweepRemovingOneLabelLeavesTheOtherHolderAlone(t *testing.T) {
 		dryRunThenConfirm(t, tgt, []string{label}, []string{"label", "create"},
 			[]string{"label", "create", label})
 		t.Cleanup(func() {
-			_, _ = tgt.Write(t, []string{label}, []string{"label", "delete"},
-				[]string{"label", "delete", label, "--confirm"})
+			cleanUpWith(t, tgt, []string{label}, []string{"label", "delete"},
+				[]string{"label", "delete", label})
 		})
 
 		for _, entity := range []string{primary, secondary} {
@@ -120,8 +147,8 @@ func TestSweepRemovingOneLabelLeavesTheOtherHolderAlone(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			for _, entity := range []string{primary, secondary} {
-				_, _ = tgt.Write(t, []string{entity, label}, []string{"ent", "set-label", "--remove"},
-					[]string{"ent", "set-label", entity, "--remove", label, "--confirm"})
+				cleanUpWith(t, tgt, []string{entity, label}, []string{"ent", "set-label", "--remove"},
+					[]string{"ent", "set-label", entity, "--remove", label})
 			}
 		})
 
@@ -161,8 +188,8 @@ func TestSweepClearingOneEntitysAreaLeavesAnothersAlone(t *testing.T) {
 		dryRunThenConfirm(t, tgt, []string{area}, []string{"area", "create"},
 			[]string{"area", "create", area})
 		t.Cleanup(func() {
-			_, _ = tgt.Write(t, []string{area}, []string{"area", "delete"},
-				[]string{"area", "delete", area, "--confirm"})
+			cleanUpWith(t, tgt, []string{area}, []string{"area", "delete"},
+				[]string{"area", "delete", area})
 		})
 
 		for _, entity := range []string{primary, secondary} {
@@ -171,8 +198,8 @@ func TestSweepClearingOneEntitysAreaLeavesAnothersAlone(t *testing.T) {
 		}
 		t.Cleanup(func() {
 			for _, entity := range []string{primary, secondary} {
-				_, _ = tgt.Write(t, []string{entity}, []string{"ent", "set-area", "--clear"},
-					[]string{"ent", "set-area", entity, "--clear", "--confirm"})
+				cleanUpWith(t, tgt, []string{entity}, []string{"ent", "set-area", "--clear"},
+					[]string{"ent", "set-area", entity, "--clear"})
 			}
 		})
 

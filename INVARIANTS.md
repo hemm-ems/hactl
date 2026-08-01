@@ -2075,3 +2075,57 @@ rather than being quietly assumed correct.
   over every leaf command in the live cobra tree named `set-*` — so a fifth
   such command inherits the question the day it is added, rather than
   silently landing outside a hand-picked list of four.
+
+## H-28 — A field that describes the object is read from the instance, never assigned by the branch that built the row
+
+`helper ls` builds its listing from two reads: the companion's per-domain YAML
+files, then every remaining helper-domain entity in `/api/states`. The second
+branch set `Source: "storage"` on every row it produced. So the column did not
+report where a helper is defined — it reported which of hactl's two code paths
+had produced the row, and nothing in the output distinguished the two readings.
+
+They agree only while the instance is tidy. A helper domain written inline in
+`configuration.yaml` is in no `<domain>.yaml`, the companion's read returns
+nothing for it, every helper falls through to the second branch, and all 222
+helpers on the reference instance were announced as created in the Home
+Assistant UI. Forty-two of those are YAML-defined. The consequence is not
+cosmetic: `helper set` and `helper delete` refuse them citing a reason that is
+false, and `helper show` 404s under a message naming every file it searched —
+none of them the file the helper is in (finding #104).
+
+Home Assistant had already answered. `editable` rides on the same state payload
+the entity was being read out of, set by the helper collection itself: true for
+a storage collection, false for a YAML one. The fix reads it.
+
+The third arm is the law's real content, and it is H-14 at field level. On a
+restored ghost `editable` is ABSENT — the integration no longer provides the
+entity, so HA serves the registry entry with `restored: true` and almost no
+attributes, which is the state of 10 of the reference instance's 222 helper
+entities. Reading absent as false would call every one of them YAML-defined:
+a zero value taken for evidence, which is the class WP12 spent its length on.
+So an unstated source stays unstated, and the column is empty rather than
+confident. `helper show` had already made that choice for a companion predating
+the field; this makes it the rule rather than one site's good judgement.
+
+A constant is legal in this position only when it states a property of the
+ANSWER rather than of the object — `GET /v1/config/helpers` reads YAML files and
+nothing else, so `yaml` on a row that route returned is what the route said, not
+what hactl concluded from no other read having claimed the row. That is the
+distinction the manifest's one `exempt` line has to make.
+
+- Enforced by: `internal/cmd/helper_test.go`
+  (`TestRunHelperLs_SourceFollowsEditableNotTheCodePath`, all three arms —
+  `editable:true` → `storage`, `editable:false` → `yaml`, absent → empty —
+  watched red on the third and second arms before the fix);
+  sweep case `TestSweepHelperSourceIsReadNotInvented`
+  (`internal/livefire/helper_family_test.go`), which asks Home Assistant for
+  `editable` over the raw API rather than through hactl, because a case that
+  sourced its truth from hactl would agree with the defect.
+- Quantified by: `TestAttributedSurfaceIsClosed`
+  (`dev/surfaces/attributed.manifest`) over every row-type composite literal in
+  the tree that assigns a string constant to a field. It is a violation surface
+  — zero sites is the goal — so `TestAttributedExtractorFlagsAnInventedField`
+  guards the derivation against silently matching nothing. Named constants count
+  as literals there: `Source: "yaml"` → `Source: helperSourceYAML` is the first
+  tidy-up anyone makes, and a rule matching only string literals would go to
+  zero sites and stay there while the invented value survived.

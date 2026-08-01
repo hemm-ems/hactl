@@ -3,12 +3,16 @@
 package livefire
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // WP6 — the helper family remnants, plus the two classes reproducing them
@@ -198,6 +202,181 @@ func TestSweepHelperCreateRefusesWhatConfirmRefuses(t *testing.T) {
 			t.Errorf("a valid entity object id was refused:\n%s", truncate(stderr))
 		}
 	})
+}
+
+// TestSweepHelperSourceIsReadNotInvented — finding #104, found by WP13's own
+// capture while reading the instance to build the fixture.
+//
+// `helper ls` builds its listing from two reads: the companion's per-domain
+// YAML files, and everything else in a helper domain that appears in
+// /api/states. The second read labelled its rows `source: storage`
+// unconditionally, so the column did not report where a helper comes from — it
+// reported which of hactl's two code paths had produced the row.
+//
+// Those differ exactly where a real config is not tidy. A domain written inline
+// in configuration.yaml is in no `<domain>.yaml` the companion reads, so its
+// helpers arrive through the second path and were announced as created in the
+// Home Assistant UI. On the reference instance that is five helpers, and the
+// consequence is not cosmetic: `helper set` and `helper delete` refuse them
+// with a reason that is false, and `helper show` 404s with a message naming the
+// files it searched — all of them, none of them the one the helper is in.
+//
+// Home Assistant states the answer on the wire. Every helper entity carries
+// `editable`, true only for a storage collection, and hactl had it in the same
+// payload it was reading the entity out of. So the assertion is against HA's
+// attribute rather than against a list of ids: an instance that grows a sixth
+// inline helper is covered without anyone remembering to add it.
+func TestSweepHelperSourceIsReadNotInvented(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		// `helper ls` opens with connectCompanion and returns its error, so the
+		// rig cannot run this case at all — rig capability debt R11 again, and
+		// worth stating rather than leaving as a skip nobody reads: the
+		// classification itself needs no companion (`editable` rides on the
+		// state payload) and is proven on the rig one tier down, by
+		// TestRunHelperLs_SourceFollowsEditableNotTheCodePath. What is
+		// live-profile-only here is the end-to-end command, not the rule.
+		requireCompanion(t, tgt)
+
+		editable := helperEditability(t, tgt)
+		if len(editable) == 0 {
+			t.Skip("this profile serves no helper-domain entities, so a source cannot be wrong about one")
+		}
+
+		var rows []struct {
+			ID     string `json:"id"`
+			Source string `json:"source"`
+		}
+		out := tgt.MustRead(t, "helper", "ls", "--json", "--full", "--tokensmax", "0")
+		if err := json.Unmarshal([]byte(out), &rows); err != nil {
+			t.Fatalf("`helper ls --json` is not a JSON array: %v\n%s", err, truncate(out))
+		}
+		if len(rows) == 0 {
+			t.Fatal("`helper ls --json` read zero rows — a listing that reads nothing cannot be wrong about one")
+		}
+
+		checked := 0
+		for _, row := range rows {
+			// A YAML row's id is a bare slug, so it names no entity and HA has
+			// no editable for it. The invented value only ever reached the
+			// entity-derived rows, which are the ones addressed by entity_id.
+			isEditable, known := editable[row.ID]
+			if !known {
+				continue
+			}
+			checked++
+			want := helperSourceYAML
+			if isEditable {
+				want = helperSourceStorage
+			}
+			if row.Source != want {
+				t.Errorf("`helper ls` reports %s as source=%q, but Home Assistant reports editable=%v, so it is %s-defined",
+					row.ID, row.Source, isEditable, want)
+			}
+		}
+		if checked == 0 {
+			t.Error("no `helper ls` row could be matched to a helper entity — the case proved nothing")
+		}
+	})
+}
+
+const (
+	helperSourceStorage = "storage"
+	helperSourceYAML    = "yaml"
+)
+
+// helperEditability asks Home Assistant itself which helper entities belong to
+// a storage collection, keyed by entity_id.
+//
+// It reads /api/states directly rather than through hactl, and that is the
+// point: the claim under test is hactl's, so a case that sourced its truth from
+// hactl would agree with the defect. This is the tier's oracle rule (TC-1)
+// applied to a case about a classification — the instance decides.
+func helperEditability(t *testing.T, tgt Target) map[string]bool {
+	t.Helper()
+
+	baseURL, token := instanceCredentials(t, tgt)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/states", nil)
+	if err != nil {
+		t.Fatalf("building the states request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/states: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // the body is drained below
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading /api/states: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/states: HTTP %d: %s", resp.StatusCode, truncate(string(body)))
+	}
+
+	var states []struct {
+		EntityID   string         `json:"entity_id"`
+		Attributes map[string]any `json:"attributes"`
+	}
+	if err := json.Unmarshal(body, &states); err != nil {
+		t.Fatalf("parsing /api/states: %v\n%s", err, truncate(string(body)))
+	}
+
+	out := map[string]bool{}
+	for _, s := range states {
+		domain, _, found := strings.Cut(s.EntityID, ".")
+		if !found || !helperDomain(domain) {
+			continue
+		}
+		// Absent is not false. A helper domain whose entity carries no
+		// `editable` at all cannot answer the question, and recording it as
+		// "not editable" would be the invented value this case exists about,
+		// re-introduced by the case itself.
+		if v, ok := s.Attributes["editable"].(bool); ok {
+			out[s.EntityID] = v
+		}
+	}
+	return out
+}
+
+// helperDomain reports whether a domain is one Home Assistant serves helpers
+// in. It mirrors hactl's own list rather than importing it, so a domain
+// silently dropped from the product does not silently narrow this case too.
+func helperDomain(domain string) bool {
+	switch domain {
+	case "input_boolean", "input_number", "input_text", "input_select",
+		"input_datetime", "input_button", "counter", "timer", "schedule":
+		return true
+	}
+	return false
+}
+
+// instanceCredentials reads the URL and token a profile's .env points at.
+func instanceCredentials(t *testing.T, tgt Target) (baseURL, token string) {
+	t.Helper()
+	env, err := os.ReadFile(filepath.Join(tgt.Dir, ".env"))
+	if err != nil {
+		t.Fatalf("reading %s/.env: %v", tgt.Dir, err)
+	}
+	for line := range strings.SplitSeq(string(env), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		switch key {
+		case "HA_URL":
+			baseURL = strings.TrimRight(strings.Trim(value, `"'`), "/")
+		case "HA_TOKEN":
+			token = strings.Trim(value, `"'`)
+		}
+	}
+	if baseURL == "" || token == "" {
+		t.Fatalf("%s/.env carries no HA_URL/HA_TOKEN pair", tgt.Dir)
+	}
+	return baseURL, token
 }
 
 // countJSONRows runs a listing under --json and returns how many rows it

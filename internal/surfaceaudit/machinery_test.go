@@ -531,3 +531,59 @@ func runReadOnlyThing(ctx context.Context, w io.Writer) error {
 		t.Errorf("want exactly the prose-on-confirm result flagged, got %v", keys)
 	}
 }
+
+// TestAttributedExtractorFlagsAnInventedField is the attributed surface's
+// guard against silently matching nothing.
+//
+// A violation surface is empty when the rule holds, so emptiness cannot be the
+// alarm — runGate lets it pass. What stands in for it is this: a tree
+// containing one known-bad row literal, which the extractor must flag, and
+// three shapes beside it that it must not. If a refactor breaks the derivation,
+// this fails while the real surface goes on reporting zero.
+func TestAttributedExtractorFlagsAnInventedField(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := `package cmd
+
+func runInventedListing(w io.Writer) error {
+	rows = append(rows, thingRow{ID: s.EntityID, Name: name, Source: "storage"})
+	return nil
+}
+
+func runReadListing(w io.Writer) error {
+	// Read from the payload: not a site, which is the whole point of the rule.
+	rows = append(rows, thingRow{ID: s.EntityID, Name: name, Source: sourceOf(s.Attributes)})
+	return nil
+}
+
+func runAbsentValue(w io.Writer) error {
+	// An empty constant is the absence of a claim, not a claim.
+	rows = append(rows, thingRow{ID: s.EntityID, Icon: ""})
+	return nil
+}
+
+func runNotARow(w io.Writer) error {
+	// Not a listing row, so its constants describe hactl's own request.
+	req = append(req, filterSpec{Field: "entity_id", Op: "eq"})
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "listing.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := surfaceaudit.AttributedSurface(root)
+	if err != nil {
+		t.Fatalf("deriving: %v", err)
+	}
+	keys := make([]string, 0, len(s.Sites))
+	for _, site := range s.Sites {
+		keys = append(keys, site.Key)
+	}
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], ":thingRow.Source") {
+		t.Errorf("want exactly the invented Source flagged, got %v", keys)
+	}
+}

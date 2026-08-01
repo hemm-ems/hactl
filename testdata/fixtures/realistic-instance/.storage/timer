@@ -1,0 +1,27 @@
+{
+  "data": {
+    "items": [
+      {
+        "duration": "0:00:00",
+        "icon": "mdi:hammer",
+        "id": "annex_utility_vestibu",
+        "name": "Annex Threshold Boile"
+      },
+      {
+        "duration": "0:01:00",
+        "icon": "mdi:led-strip-variant",
+        "id": "limit_limit_porch_landing_vest",
+        "name": "Pantry Setpoint Gantry Loft Ga"
+      },
+      {
+        "duration": "0:00:00",
+        "icon": "mdi:account-clock",
+        "id": "vestibule_la",
+        "name": "Scullery Thre"
+      }
+    ]
+  },
+  "key": "timer",
+  "minor_version": 1,
+  "version": 1
+}

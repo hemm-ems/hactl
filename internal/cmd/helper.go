@@ -63,7 +63,10 @@ type helperRow struct {
 	Name   string
 	Domain string
 	Icon   string
-	Source string // "yaml" or "storage"
+	// Source is what Home Assistant says the helper is, never which of the two
+	// reads above produced the row. Empty means HA did not say — see
+	// helperSourceOf and H-28.
+	Source string
 }
 
 var flagHelperDomain string
@@ -84,8 +87,10 @@ var helperLsCmd = &cobra.Command{
 	Args:  takesNone(),
 	Short: "List helpers",
 	Long: "List all helpers, optionally filtered by domain. Unions YAML helpers (companion-managed) " +
-		"with storage-backed helpers created in the HA UI (discovered live via the entity states), " +
-		"distinguished by a source column — only the yaml ones are editable via create/set/delete.",
+		"with helper entities discovered live via the entity states, distinguished by a source " +
+		"column: yaml (defined in a file), storage (created in the HA UI), or blank when Home " +
+		"Assistant does not say — which is what a restored ghost looks like. Only yaml helpers " +
+		"in a file the companion manages are editable via create/set/delete.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHelperLs(cmd, cmd.OutOrStdout())
 	},
@@ -185,7 +190,12 @@ func runHelperLs(cmd *cobra.Command, w io.Writer) error {
 	rows := make([]helperRow, 0, len(resp.Helpers))
 	yamlEntityIDs := make(map[string]bool, len(resp.Helpers))
 	for _, h := range resp.Helpers {
-		rows = append(rows, helperRow{ID: h.ID, Name: h.Name, Domain: h.Domain, Icon: h.Icon, Source: "yaml"})
+		// Not the invented value #104 was about, and the difference is the
+		// reason it stays: GET /v1/config/helpers reads YAML files and nothing
+		// else (companion routes/helpers.py get_helpers -> _load_helpers), so
+		// "this came from a YAML file" is what the route answered, not what
+		// hactl concluded because no other read had claimed the row.
+		rows = append(rows, helperRow{ID: h.ID, Name: h.Name, Domain: h.Domain, Icon: h.Icon, Source: helperSourceYAML})
 		yamlEntityIDs[h.Domain+"."+h.ID] = true
 	}
 	storage, err := fetchStorageHelpers(ctx, yamlEntityIDs)
@@ -283,9 +293,49 @@ func fetchStorageHelpers(ctx context.Context, skip map[string]bool) ([]helperRow
 			name = s.EntityID
 		}
 		icon, _ := s.Attributes["icon"].(string)
-		rows = append(rows, helperRow{ID: s.EntityID, Name: name, Domain: domain, Icon: icon, Source: "storage"})
+		rows = append(rows, helperRow{
+			ID: s.EntityID, Name: name, Domain: domain, Icon: icon,
+			Source: helperSourceOf(s.Attributes),
+		})
 	}
 	return rows, nil
+}
+
+// helperSourceOf reads Home Assistant's own verdict on where a helper is
+// defined, and returns "" when it does not give one.
+//
+// This function is the whole of finding #104. The rows above used to be
+// labelled `storage` unconditionally, which made the column report *which of
+// hactl's two reads had produced the row* rather than anything about the
+// helper: the companion's per-domain YAML files answered first, and everything
+// else that turned up in a helper domain was declared UI-created by
+// elimination. A domain written inline in `configuration.yaml` is in no
+// `<domain>.yaml`, so five helpers on the reference instance were announced as
+// created in the UI, refused by `helper set`/`delete` with a false reason, and
+// 404'd by `helper show` under a message listing every file it had searched.
+//
+// HA settles it on the wire. `editable` is set by the helper collection itself
+// — true for a storage collection, false for a YAML one — and it was in the
+// same state payload the entity was being read out of.
+//
+// The third arm is the one that has to be written down rather than assumed.
+// `editable` is ABSENT on a restored ghost: the integration no longer provides
+// the entity, HA serves the registry entry with `restored: true` and almost no
+// attributes, and 10 of the reference instance's 222 helper entities are in
+// that state. Reading absent as false would call every one of them a YAML
+// helper — WP12's Lesson 1 exactly, a zero value taken for evidence. So an
+// unstated source stays unstated, which is the same choice `helper show`
+// already makes for a companion that predates the field.
+func helperSourceOf(attrs map[string]any) string {
+	editable, stated := attrs["editable"].(bool)
+	switch {
+	case stated && editable:
+		return helperSourceStorage
+	case stated:
+		return helperSourceYAML
+	default:
+		return ""
+	}
 }
 
 // filterHelperRowsByDomain keeps rows in exactly one domain, matched without
@@ -384,6 +434,11 @@ func runHelperShow(ctx context.Context, w io.Writer, helperID string) error {
 // helperSourceStorage is the companion's marker for a helper created in HA's
 // UI: readable, never editable through this CLI.
 const helperSourceStorage = "storage"
+
+// helperSourceYAML is its counterpart: a helper defined in a YAML file. The
+// companion says it for a file it manages; HA says it, for any file at all, by
+// reporting the entity as not editable.
+const helperSourceYAML = "yaml"
 
 func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 	if flagHelperFile == "" {

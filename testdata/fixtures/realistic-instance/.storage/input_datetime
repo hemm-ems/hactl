@@ -1,0 +1,100 @@
+{
+  "data": {
+    "items": [
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:ab-testing",
+        "id": "boiler_lof",
+        "name": "Utility Co"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:clock-digital",
+        "id": "boiler_threshold_porch_meter_utility_h",
+        "name": "Größe Cistern Threshold Utility Boiler"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:alarm",
+        "id": "cistern_loft_scullery_w",
+        "name": "Loft Window Pantry Loft"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:alarm",
+        "id": "hallway_airlock_airlock",
+        "name": "Landing Window Annex Ai"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:battery-clock",
+        "id": "hallway_schedule_meter_scullery",
+        "name": "Utility Limit Pantry Scullery Cel"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:clock-alert-outline",
+        "id": "latch_setpoint_limit",
+        "name": "Pantry Offset Sculler"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:clock",
+        "id": "limit_schedule_cou",
+        "name": "Meter Window Gantr"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:alarm",
+        "id": "meter_cistern_window_ci",
+        "name": "Gantry Counter Gantry V"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:battery-clock",
+        "id": "mode_vestibule_limit_setpoint",
+        "name": "Landing Interval Annex Boiler"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:battery-clock",
+        "id": "pantry_cistern_setpoint_landing",
+        "name": "Annex Setpoint Vestibule Hallway"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:clock-alert-outline",
+        "id": "schedule_mode_window",
+        "name": "Cellar Sensor Worksho"
+      },
+      {
+        "has_date": false,
+        "has_time": true,
+        "icon": "mdi:clock-alert",
+        "id": "scullery_latch_landi",
+        "name": "Utility Limit Meter U"
+      },
+      {
+        "has_date": true,
+        "has_time": true,
+        "icon": "mdi:battery-clock",
+        "id": "vestibule_scullery_threshold_th",
+        "name": "Airlock Latch Loft Cellar Boiler"
+      }
+    ]
+  },
+  "key": "input_datetime",
+  "minor_version": 1,
+  "version": 1
+}

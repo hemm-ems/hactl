@@ -383,8 +383,11 @@ func TestSweepConcurrentDashWritesEachKeepTheirOwnSnapshot(t *testing.T) {
 			t.Fatalf("creating %s: %v\n%s", urlPath, err, out)
 		}
 		t.Cleanup(func() {
-			_, _ = tgt.Read(t, "dash", "delete", urlPath)
-			_, _ = tgt.Write(t, []string{urlPath}, vocab, []string{"dash", "delete", urlPath, "--confirm"})
+			// The last cleanup in this tier that discarded its result. This one
+			// did at least run its dry run first, so it worked — but a silent
+			// failure here would leak a dashboard exactly the way the unmake
+			// cases leaked a label, and the census below now watches for it.
+			cleanUpWith(t, tgt, []string{urlPath}, vocab, []string{"dash", "delete", urlPath})
 		})
 
 		// A config carrying the value the racers rewrite.
