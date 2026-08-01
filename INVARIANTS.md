@@ -2043,17 +2043,19 @@ that assigns one object's REFERENCE to another (a label onto an entity, an
 area onto a device) where the only existing way to sever that one reference
 was to destroy the referenced object for everybody holding it.
 
-**Oracle status.** Whether `area_id: null` and `labels: []` actually reach
-Home Assistant's registry as a clear rather than a no-op or a rejection was
-read off HA core's dev-branch source, not probed against the version under
-test — `clearAreaWireValue` (internal/cmd/ent.go) and the two `labels: []`
-call sites in `runEntSetLabel`/`runDeviceSetLabel` carry `[NEEDS ORACLE]`
-markers rather than an assumed answer, and `internal/integration/registry_clear_oracle_test.go`
-is the test that resolves them once a container is available (D-44). The LAW
-does not depend on the mechanism — it says the command has to offer an
-unmake, not that the unmake must be `area_id: null` specifically — but the
-CURRENT implementation's proof does, which is why the markers block `make
-lint` rather than being silently assumed correct.
+**Oracle status: probed 2026-08-01.** Whether `area_id: null` and `labels: []`
+actually reach Home Assistant's registry as a clear rather than a no-op or a
+rejection was first read off HA core's dev-branch source, which is not evidence
+for the version under test. It was then asked directly:
+`internal/integration/registry_clear_oracle_test.go` passes against the
+`stable` image, which is 2026.7.4 — the same version the reference instance
+runs — so the answer covers both profiles. Both registries accept both writes
+and read the value back cleared, and the four oracle markers that
+stood in for the answer are gone (D-44). The LAW does not depend on the
+mechanism — it says the command has to offer an unmake, not that the unmake
+must be `area_id: null` specifically — but the CURRENT implementation's proof
+does, which is why those markers blocked `make lint` until a container answered
+rather than being quietly assumed correct.
 
 - Enforced by: `internal/cmd/ent_unmake_test.go`
   (`TestRunEntSetLabel_RemoveTakesOneLabelOff`, asserting the PARTIAL

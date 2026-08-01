@@ -106,7 +106,8 @@ func init() {
 // --clear is finding #81 / H-27: `set-area` could set a device's area but had
 // no way to remove one short of `area delete`, which strips the area from
 // EVERY device, entity and area instance-wide. See validateAreaTarget and
-// clearAreaWireValue's [NEEDS ORACLE] marker in ent.go, which this shares.
+// clearAreaWireValue in ent.go, which this shares — including the probe that
+// established Home Assistant accepts `area_id: null` on the device registry too.
 func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) error {
 	if err := validateAreaTarget(area, flagDeviceAreaClear); err != nil {
 		return err
@@ -268,10 +269,10 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 			render(w)
 	}
 
-	// [NEEDS ORACLE: same open question as ent set-label's marker beside its
-	// EntityRegistryUpdate call — does `config/device_registry/update` with
-	// `labels: []` clear every label when a removal empties the set? Unresolved
-	// for the same reason; see clearAreaWireValue in ent.go.]
+	// An empty `final` clears every label here exactly as it does on the entity
+	// registry — probed 2026-08-01 by TestClearWiresEmptyLabels/device, which
+	// asks the device registry its own question rather than inferring it from
+	// the entity one.
 	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating device labels: %w", err)
 	}

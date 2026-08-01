@@ -1618,14 +1618,12 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).render(w)
 	}
 
-	// [NEEDS ORACLE: when a removal empties the label set, does
-	// `config/entity_registry/update` with `labels: []` clear every label, or
-	// no-op on an empty list? The non-empty case is already proven by
-	// TestEntSetLabelRoundTrip, which round-trips a full replacement list — but
-	// that test has never sent an empty one. TestClearWiresEmptyLabels in
-	// internal/integration/registry_clear_oracle_test.go is the oracle test;
-	// unresolved for the same Docker-unavailable reason as clearAreaWireValue's
-	// marker, which explains the mechanism.]
+	// An empty `final` is sent as `labels: []`, which clears every label rather
+	// than no-opping. Probed 2026-08-01 against HA 2026.7.4 by
+	// TestClearWiresEmptyLabels (internal/integration/registry_clear_oracle_test.go):
+	// it sets one real label, asserts the setup took, then sends the empty list
+	// and reads the entry back with no labels. The non-empty case was already
+	// proven by TestEntSetLabelRoundTrip; the empty one had never been sent.
 	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
@@ -1659,9 +1657,8 @@ func nonNil(s []string) []string {
 
 // runEntSetArea sets, or — with --clear — removes an entity's own area
 // (finding #81, H-27). Clearing sends `area_id: nil` over the same
-// EntityRegistryUpdate a set does; see the [NEEDS ORACLE] marker on
-// clearAreaWireValue for why that is not yet proven against the version under
-// test.
+// EntityRegistryUpdate a set does; clearAreaWireValue carries the probe that
+// established Home Assistant accepts it.
 func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) error {
 	if err := validateAreaTarget(area, flagEntAreaClear); err != nil {
 		return err
@@ -1732,21 +1729,18 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 // clearAreaWireValue is the one place the assumption behind `--clear` turns
 // into a wire value, for both `ent set-area` and `device set-area`.
 //
-// [NEEDS ORACLE: does `config/entity_registry/update` (and the device
-// registry's equivalent) accept `area_id: null` and read the entry back with
-// its area actually cleared, on the Home Assistant version under test? The
-// claim is read off HA core's dev-branch source
-// (homeassistant/components/config/entity_registry.py, WS_CONFIG_SCHEMA
-// `vol.Optional("area_id"): vol.Any(str, None)`, and
-// entity_registry.async_update_entity accepting area_id=None as "no area") —
-// the instance this repo tests against runs 2026.7.4 and the rig runs
-// `stable`, and neither has been asked. TestClearWiresNullAreaID in
-// internal/integration/registry_clear_oracle_test.go is the oracle test that
-// asks; it has not been run because Docker was held by another track for the
-// whole of this session (see AGENTS.md step 1's "which unknowns block": a
-// different answer changes this function, so it blocks). Resolve by running
-// that test against a throwaway hatest container, then delete this marker and
-// the one beside TestClearWiresNullAreaID.]
+// Probed 2026-08-01, not assumed: `config/entity_registry/update` and the
+// device registry's equivalent both accept `area_id: null` and read the entry
+// back with its area cleared. TestClearWiresNullAreaID
+// (internal/integration/registry_clear_oracle_test.go) asks Home Assistant
+// directly, bypassing this code so the answer never travels through what it
+// judges.
+//
+// The version matters and is why the question was asked at all: the claim was
+// originally read off HA core's dev branch, which is not evidence for the
+// version under test. The `stable` image the rig boots is 2026.7.4 — the same
+// version the reference instance runs — so the probe covers both profiles
+// rather than only the rig.
 func clearAreaWireValue(wantClear bool, areaID string) any {
 	if wantClear {
 		return nil

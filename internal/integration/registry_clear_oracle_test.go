@@ -25,17 +25,17 @@ import (
 //
 // These tests ask Home Assistant directly, bypassing hactl's CLI so nothing
 // about the answer travels through the code under test (H-12's discipline,
-// applied to a question rather than to a regression). They have NOT been run:
-// this change was made in a workspace where Docker was held by another track
-// for its entire duration, so `clearAreaWireValue` in internal/cmd/ent.go and
-// the two `labels: []` call sites in runEntSetLabel/runDeviceSetLabel carry
-// `[NEEDS ORACLE]` markers instead of a probed answer, and `make lint` fails
-// on `check-markers` while they remain (Makefile's check-markers target) —
-// the intended behaviour per AGENTS.md step 1, not a gate to route around.
+// applied to a question rather than to a regression).
 //
-// Run this file (`go test -tags=integration ./internal/integration/... -run
-// TestClearWires`) against a throwaway rig, then delete the four markers this
-// comment block's neighbours name.
+// RESULT, 2026-08-01: both pass against the `stable` image, which is 2026.7.4 —
+// the same version the reference instance runs, so the answer covers both the
+// rig and live profiles rather than only the rig. Both registries accept
+// `area_id: null` and `labels: []` and read the value back cleared. The four
+// oracle markers this file existed to resolve are gone.
+//
+// The label test asserts its own setup took before it clears: without that, an
+// empty read-back would pass whether or not the clear did anything, and this
+// file had never been watched fail.
 // ============================================================================
 
 // pickAnyDevice returns any device HA's registry holds, unlike
