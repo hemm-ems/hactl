@@ -138,7 +138,8 @@ func inspectPositional(a string, known map[string]bool) error {
 // one is not mistaken for its value and skipped past the guard.
 func isBoolFlag(flag string) bool {
 	switch strings.TrimLeft(flag, "-") {
-	case "confirm", "json", "full", "raw", "yaml", "stats", "tokens", "unique", "failing", "errors", "warnings", "restored", "exit-code", "allow-partial":
+	case "confirm", "json", "full", "raw", "yaml", "stats", "tokens", "unique", "failing", "errors", "warnings", "restored", "exit-code", "allow-partial",
+		"clear": // finding #81 / H-27: `ent`/`device set-area --clear` takes no value
 		return true
 	}
 	return false

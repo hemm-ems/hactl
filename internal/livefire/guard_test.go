@@ -44,6 +44,15 @@ func TestLiveWriteGuardAllowsAPlaygroundWrite(t *testing.T) {
 			[]string{"sensor.pg_w7_template_sensor", "pg_core_area"},
 			[]string{"ent", "set-area"},
 		},
+		{
+			// finding #81 / H-27: --clear takes no value, so it must not
+			// swallow --confirm as though --confirm were its argument — the
+			// failure mode isBoolFlag's list exists to name each flag against.
+			"--clear followed by --confirm",
+			[]string{"ent", "set-area", "sensor.pg_w7_template_sensor", "--clear", "--confirm"},
+			[]string{"sensor.pg_w7_template_sensor"},
+			[]string{"ent", "set-area"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

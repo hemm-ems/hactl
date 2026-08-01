@@ -18,10 +18,12 @@ import (
 )
 
 var (
-	flagDevicePattern string
-	flagDeviceName    string
-	flagDeviceArea    string
-	flagDeviceLabel   string
+	flagDevicePattern     string
+	flagDeviceName        string
+	flagDeviceArea        string
+	flagDeviceLabel       string
+	flagDeviceRemoveLabel []string
+	flagDeviceAreaClear   bool
 )
 
 var flagDeviceConfirm bool
@@ -33,23 +35,30 @@ var deviceCmd = family(&cobra.Command{
 })
 
 var deviceSetAreaCmd = &cobra.Command{
-	Use:   "set-area <device> <area>",
-	Short: "Place a device in an area (dry-run by default)",
+	Use:   "set-area <device> [area]",
+	Short: "Place a device in an area, or clear it (dry-run by default)",
 	Long: "Assign a device to an area; the device may be given by ID or name, the area by name or ID. " +
 		"Every entity of the device without its own area_id inherits the device's area (H-8), so this " +
-		"is the one-command way to move a whole device. Use --confirm to apply.",
-	Args: takes(2),
+		"is the one-command way to move a whole device. Use --clear to remove the device's area instead " +
+		"of setting one — pass exactly one of <area> or --clear. Use --confirm to apply.",
+	Args: takesBetween(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+		var area string
+		if len(args) > 1 {
+			area = args[1]
+		}
+		return runDeviceSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], area)
 	},
 }
 
 var deviceSetLabelCmd = &cobra.Command{
-	Use:   "set-label <device> <label>...",
-	Short: "Add label(s) to a device (dry-run by default)",
+	Use:   "set-label <device> [label...]",
+	Short: "Add or remove label(s) on a device (dry-run by default)",
 	Long: "Merge one or more labels (by name or ID) into a device's labels; the device may be given " +
-		"by ID or name. Use --confirm to apply.",
-	Args: takesAtLeast(2),
+		"by ID or name. Use --remove <label> (repeatable) to take a label back off instead; it may " +
+		"combine with positional labels to add and remove in the same write, but a label cannot be " +
+		"named in both. Use --confirm to apply.",
+	Args: takesAtLeast(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDeviceSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
@@ -81,7 +90,10 @@ func init() {
 	deviceLsCmd.Flags().StringVar(&flagDeviceArea, "area", "", "filter by area/room name or ID substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceLabel, "label", "", "filter by label name or ID substring")
 	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the area (default is dry-run)")
+	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceAreaClear, "clear", false, "remove the device's area instead of setting one")
 	deviceSetLabelCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the labels (default is dry-run)")
+	deviceSetLabelCmd.Flags().StringArrayVar(&flagDeviceRemoveLabel, "remove", nil,
+		"remove this label from the device instead of adding it (repeatable; use 'label ls' to see available labels)")
 	deviceCmd.AddCommand(deviceLsCmd, deviceShowCmd, deviceSetAreaCmd, deviceSetLabelCmd)
 	rootCmd.AddCommand(deviceCmd)
 }
@@ -90,7 +102,16 @@ func init() {
 // and the device before planning anything, so the dry run fails exactly where
 // --confirm would (H-2). The write is DeviceRegistryUpdate — per its doc
 // comment the only way to place an existing device into an area.
+//
+// --clear is finding #81 / H-27: `set-area` could set a device's area but had
+// no way to remove one short of `area delete`, which strips the area from
+// EVERY device, entity and area instance-wide. See validateAreaTarget and
+// clearAreaWireValue's [NEEDS ORACLE] marker in ent.go, which this shares.
 func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) error {
+	if err := validateAreaTarget(area, flagDeviceAreaClear); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -106,9 +127,13 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 	if err != nil {
 		return fmt.Errorf("fetching areas: %w", err)
 	}
-	areaEntry, ok := resolveAreaEntry(areas, area)
-	if !ok {
-		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+	var areaEntry haapi.AreaEntry
+	if !flagDeviceAreaClear {
+		var ok bool
+		areaEntry, ok = resolveAreaEntry(areas, area)
+		if !ok {
+			return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+		}
 	}
 
 	devices, err := ws.DeviceRegistryList(ctx)
@@ -122,13 +147,25 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 	}
 
 	if !flagDeviceConfirm {
+		if flagDeviceAreaClear {
+			return dryRunDeviceClearAreaSummary(device, areas).render(w)
+		}
 		return dryRunDeviceSetAreaSummary(device, areaEntry, areas).render(w)
 	}
 
-	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID,
+		map[string]any{"area_id": clearAreaWireValue(flagDeviceAreaClear, areaEntry.AreaID)}); err != nil {
 		return fmt.Errorf("updating device area: %w", err)
 	}
 
+	if flagDeviceAreaClear {
+		return done("clear device area").
+			with("device_id", device.ID).
+			withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+			with("area_id", nil).
+			text("%s: area cleared", device.ID).
+			render(w)
+	}
 	return done("set device area").
 		with("device_id", device.ID).
 		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
@@ -154,9 +191,33 @@ func dryRunDeviceSetAreaSummary(device haapi.DeviceRegistryEntry, area haapi.Are
 		withHint("use --confirm to apply (entities without an own area_id inherit the device's area)")
 }
 
+// dryRunDeviceClearAreaSummary mirrors dryRunEntClearAreaSummary one registry
+// over.
+func dryRunDeviceClearAreaSummary(device haapi.DeviceRegistryEntry, areas []haapi.AreaEntry) *dryRunPlan {
+	currentArea := device.AreaID
+	for _, a := range areas {
+		if a.AreaID == device.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+	return dryRun("clear device area").
+		with("device_id", device.ID).
+		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", nil).
+		withHint("use --confirm to apply (entities without an own area_id keep inheriting whatever the device's area becomes)")
+}
+
 // runDeviceSetLabel mirrors runEntSetLabel: labels resolve by name or ID and
-// merge into the device's existing set, deduplicated.
+// merge into the device's existing set, deduplicated. --remove is finding
+// #81 / H-27 — see the doc comment on runEntSetLabel.
 func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, labels []string) error {
+	if len(labels) == 0 && len(flagDeviceRemoveLabel) == 0 {
+		return errors.New("no labels given: pass one or more labels to add, or --remove <label> to take one off " +
+			"(use 'label ls' to see available labels)")
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -172,18 +233,18 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	if err != nil {
 		return fmt.Errorf("fetching labels: %w", err)
 	}
-	labelIDs := make(map[string]string, len(existingLabels))
-	for _, l := range existingLabels {
-		labelIDs[strings.ToLower(l.Name)] = l.LabelID
-		labelIDs[l.LabelID] = l.LabelID
+	index := labelIndex(existingLabels)
+
+	toAdd, err := resolveLabelRefs(index, labels)
+	if err != nil {
+		return err
 	}
-	resolved := make([]string, 0, len(labels))
-	for _, lbl := range labels {
-		id, ok := labelIDs[strings.ToLower(lbl)]
-		if !ok {
-			return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", lbl)
-		}
-		resolved = append(resolved, id)
+	toRemove, err := resolveLabelRefs(index, flagDeviceRemoveLabel)
+	if err != nil {
+		return err
+	}
+	if overlapErr := refuseAddRemoveOverlap(toAdd, toRemove); overlapErr != nil {
+		return overlapErr
 	}
 
 	devices, err := ws.DeviceRegistryList(ctx)
@@ -194,21 +255,7 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	if err != nil {
 		return err
 	}
-
-	seen := make(map[string]bool, len(device.Labels)+len(resolved))
-	merged := make([]string, 0, len(device.Labels)+len(resolved))
-	for _, l := range device.Labels {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
-	for _, l := range resolved {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
+	final, removed := applyLabelDelta(device.Labels, toAdd, toRemove)
 
 	if !flagDeviceConfirm {
 		// Slices, not their %v rendering, so --json carries real arrays.
@@ -216,11 +263,16 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 			with("device_id", device.ID).
 			withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
 			with("current_labels", nonNil(device.Labels)).
-			with("new_labels", nonNil(merged)).
+			with("new_labels", nonNil(final)).
+			withIf(len(removed) > 0, "removed_labels", removed).
 			render(w)
 	}
 
-	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": merged}); err != nil {
+	// [NEEDS ORACLE: same open question as ent set-label's marker beside its
+	// EntityRegistryUpdate call — does `config/device_registry/update` with
+	// `labels: []` clear every label when a removal empties the set? Unresolved
+	// for the same reason; see clearAreaWireValue in ent.go.]
+	if err := ws.DeviceRegistryUpdate(ctx, device.ID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating device labels: %w", err)
 	}
 
@@ -229,8 +281,9 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	return done("set device labels").
 		with("device_id", device.ID).
 		withIf(deviceUserFacingName(device) != "", "device_name", deviceUserFacingName(device)).
-		with("labels", nonNil(merged)).
-		text("%s: labels set to %v", device.ID, merged).
+		with("labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed).
+		text("%s: labels set to %v", device.ID, final).
 		render(w)
 }
 

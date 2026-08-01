@@ -107,8 +107,10 @@ hactl label ls
 hactl label create "Solar" --icon mdi:solar-power
 hactl ent ls --pattern 'sensor.solar_*'
 hactl ent set-label sensor.solar_power solar
+hactl ent set-label sensor.solar_power --remove solar    # take it back off this one entity
 hactl auto ls --label solar
 ```
+Positional labels are always ADDED — `set-label` never replaces an entity's or device's existing labels, so repeated calls accumulate. `--remove <label>` (repeatable) is the other half: it takes one or more labels back off the target named, and may be combined with positional labels to add and remove in the same write, but the same label cannot be named on both sides. This is deliberately narrower than `label delete <id> --confirm`, which removes a label from EVERY entity, device and area that carries it — `--remove` touches only the one target the command names.
 
 ### "Find and act on a group of automations"
 ```
@@ -330,7 +332,9 @@ hactl device ls --label heat_pump         # filter by label name or ID
 hactl device show summt_heizung           # device profile + registered entities
 hactl device set-area summt_heizung basement            # dry-run (device by ID or name)
 hactl device set-area summt_heizung basement --confirm  # place the device in the area
+hactl device set-area summt_heizung --clear --confirm   # remove the device's own area
 hactl device set-label summt_heizung heat_pump --confirm # add label(s) to the device
+hactl device set-label summt_heizung --remove heat_pump --confirm # take one back off
 ```
 
 Placing the **device** in a room is the normal HA pattern: a device's area is
@@ -339,6 +343,15 @@ inherited by every one of its entities that has no own `area_id` (H-8), so one
 exception for overrides. `set-label` merges into the device's existing labels.
 Both are dry-run by default; the preview resolves the device (ID or name) and
 the area/label, so a typo is an error, not a plan.
+
+Pass exactly one of `<area>` or `--clear` to `set-area` — naming both, or
+neither, is refused before anything is read. `--clear` removes the device's OWN
+area (its entities without an own `area_id` then have none to inherit, unless a
+new `set-area` gives it one); it does not touch any other device, which is what
+distinguishes it from `area delete`. `set-label --remove <label>` (repeatable)
+is the same shape for labels: it takes one label off THIS device alone, and may
+combine with positional labels to add and remove in the same write, but the
+same label cannot be named on both sides.
 
 LLM workflow for area assignment: discover the device with `device ls`, inspect its entities with `device show`, preview `device set-area <device> <area>`, then repeat the exact command with `--confirm` only after the user confirms the device and target area. Use `ent set-area` only when a single entity must differ from its device.
 
@@ -363,11 +376,15 @@ hactl label delete old-label --confirm    # delete a label (dry-run without --co
 
 hactl ent set-label sensor.wp_vl energy                # dry-run: preview merged labels
 hactl ent set-label sensor.wp_vl energy --confirm      # assign label(s) (by ID or name)
+hactl ent set-label sensor.wp_vl --remove energy --confirm  # take one label back off
 hactl ent set-area  sensor.wp_vl living_room            # dry-run
 hactl ent set-area  sensor.wp_vl living_room --confirm  # set entity area
+hactl ent set-area  sensor.wp_vl --clear --confirm      # remove the entity's own area
 ```
 
 Labels and areas are applied via the entity registry (dry-run by default; `--confirm` to apply). Multiple labels can be passed to `set-label` at once.
+
+`set-label` and `set-area` can also UNDO what they assign — H-27, "every assignment a command can make, it can also unmake." `set-label --remove <label>` (repeatable) takes one or more labels off the one entity named, leaving its other labels and every other entity's copy of the same label untouched; it may combine with positional labels to add and remove in the same call, but a label cannot be named on both sides — that is refused rather than resolved by picking a winner. `set-area --clear` removes the entity's own area the same way; pass exactly one of `<area>` or `--clear`. Before this, the only way to take a label off one entity or clear one entity's area was `label delete <id> --confirm` or `area delete <id> --confirm` — both instance-wide: they strip the value from every entity, device and area that carries it, not just the one a caller meant.
 
 **Names.** `label`/`area`/`floor create` refuse a blank name (empty or whitespace only) before contacting HA, in dry-run and with `--confirm` alike. Home Assistant would accept it: an empty name mints a record with an empty `area_id`/`floor_id`/`label_id`, and every command of that family then fails — `ls`, `create` and `delete` together, because each has to list the registry first — until the record is removed outside hactl. A name that merely carries surrounding spaces (`" Kitchen "`) is a real name and is sent verbatim.
 

@@ -361,3 +361,102 @@ func matchingLabelIDs(labelByID map[string]haapi.LabelEntry, query string) map[s
 	}
 	return out
 }
+
+// --- shared add/remove resolution for `ent set-label` and `device set-label` ---
+//
+// Both commands resolve a caller-given label (by name or ID) against the
+// registry, merge it into the target's existing set, and — since finding #81 —
+// can also take one back off. The resolution and the merge/remove arithmetic
+// used to be written out twice; here once, so the two commands cannot answer
+// the same input differently the way `device ls --pattern` once diverged from
+// its siblings (D-2's cautionary tale, dev/surfaces/README.md).
+
+// resolvedLabel pairs a caller-given label name with the registry ID it
+// resolved to, so a refusal can quote back what the caller typed rather than
+// hactl's internal ID.
+type resolvedLabel struct {
+	name string
+	id   string
+}
+
+// labelIndex builds the name/ID → label_id lookup runEntSetLabel and
+// runDeviceSetLabel both need, exactly as each built it inline before.
+func labelIndex(labels []haapi.LabelEntry) map[string]string {
+	index := make(map[string]string, len(labels))
+	for _, l := range labels {
+		index[strings.ToLower(l.Name)] = l.LabelID
+		index[l.LabelID] = l.LabelID
+	}
+	return index
+}
+
+// resolveLabelRefs resolves each caller-given label against the index,
+// case-insensitively by name or exactly by ID, or refuses on the first one
+// that matches neither.
+func resolveLabelRefs(index map[string]string, names []string) ([]resolvedLabel, error) {
+	out := make([]resolvedLabel, 0, len(names))
+	for _, name := range names {
+		id, ok := index[strings.ToLower(name)]
+		if !ok {
+			return nil, fmt.Errorf("label %q not found (use 'label ls' to see available labels)", name)
+		}
+		out = append(out, resolvedLabel{name: name, id: id})
+	}
+	return out, nil
+}
+
+// refuseAddRemoveOverlap applies H-25's exclusivity clause to `set-label`'s
+// two ways of naming what should happen to one label: a label resolving to the
+// same registry ID on both sides says two different things about itself in one
+// call, so the command ends rather than picking a winner (D-44).
+func refuseAddRemoveOverlap(toAdd, toRemove []resolvedLabel) error {
+	removeByID := make(map[string]string, len(toRemove))
+	for _, r := range toRemove {
+		removeByID[r.id] = r.name
+	}
+	for _, a := range toAdd {
+		if removeName, conflict := removeByID[a.id]; conflict {
+			return &flagContractError{fmt.Sprintf(
+				"label %q and --remove %q name the same label and cannot both be honoured; pass one",
+				a.name, removeName)}
+		}
+	}
+	return nil
+}
+
+// applyLabelDelta computes the label set a write should send: the current set,
+// with toAdd merged in (deduplicated, original merge-only behaviour) and
+// toRemove taken back out. removed lists exactly the IDs that were actually
+// present and came off — so a --remove of a label the target never had is
+// visible in the plan as a no-op rather than silently claimed.
+func applyLabelDelta(current []string, toAdd, toRemove []resolvedLabel) (final, removed []string) {
+	removeSet := make(map[string]bool, len(toRemove))
+	for _, r := range toRemove {
+		removeSet[r.id] = true
+	}
+
+	seen := make(map[string]bool, len(current)+len(toAdd))
+	merged := make([]string, 0, len(current)+len(toAdd))
+	for _, l := range current {
+		if !seen[l] {
+			seen[l] = true
+			merged = append(merged, l)
+		}
+	}
+	for _, r := range toAdd {
+		if !seen[r.id] {
+			seen[r.id] = true
+			merged = append(merged, r.id)
+		}
+	}
+
+	final = make([]string, 0, len(merged))
+	for _, l := range merged {
+		if removeSet[l] {
+			removed = append(removed, l)
+			continue
+		}
+		final = append(final, l)
+	}
+	return final, removed
+}

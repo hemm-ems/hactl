@@ -1,0 +1,30 @@
+# unmake — every assignment a command can make, it can also unmake
+# (INVARIANTS.md H-27).
+#
+# The surface is the live cobra tree, walked by setAssignmentSites: every leaf
+# command whose name starts with `set-`. That verb is hactl's one spelling for
+# "make this entry's field equal this value", and finding #81 is what happens
+# when the verb has no opposite: `ent set-label` could only ever grow an
+# entity's label set, and `ent set-area` rejected `""` and `none` outright, so
+# there was no way to take one label off one entity, or clear one entity's
+# area, short of `label delete <id> --confirm` / `area delete`, which strip the
+# value from EVERY entity, device and area instance-wide — a instance-wide
+# blast radius standing in for a single-entity undo.
+#
+# `proven` here means a named test asserts the PARTIAL nature that
+# distinguishes this from the instance-wide delete: removing one label (or
+# clearing one area) leaves the same target's OTHER labels intact and leaves a
+# SECOND holder of the same value untouched. A test that only asserts the
+# field changed proves `set-*` writes; it does not prove `set-*` can unmake
+# without reaching for the sledgehammer next to it.
+#
+# The ceiling is the number of set-* commands known not to unmake yet. It may
+# fall without ceremony and may only rise by editing this line on purpose —
+# which is what happens the day a fifth set-* command ships without its other
+# half.
+#ceiling 0
+
+hactl device set-area  = proven: TestRunDeviceSetArea_ClearRemovesTheArea
+hactl device set-label = proven: TestRunDeviceSetLabel_RemoveTakesOneLabelOff
+hactl ent set-area     = proven: TestRunEntSetArea_ClearRemovesTheArea
+hactl ent set-label    = proven: TestRunEntSetLabel_RemoveTakesOneLabelOff

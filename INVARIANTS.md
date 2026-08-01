@@ -2001,3 +2001,75 @@ Stated here rather than discovered later.
   (`dev/surfaces/sharedstate.manifest`) over every site the typed source shows
   writing a file into an instance directory or reading state another process
   can have written — the only places a second caller can be forgotten.
+
+## H-27 — Every assignment a command can make, it can also unmake
+
+`ent set-label` merged labels onto an entity and could not take one back off.
+`ent set-area` required a real, existing area and refused `""` and `none`
+outright. Neither gap was a missing feature so much as a missing SYMMETRY: the
+verb `set-*` names an assignment, and an assignment a command can make but
+never undo leaves exactly one door out — the instance-wide one. Taking a
+single label off a single entity meant `label delete <id> --confirm`, which
+removes that label from every entity, device and area holding it. Clearing one
+entity's area meant `area delete <id> --confirm`, which does the same to every
+holder of that area. Both are correct commands for the question "make this
+value stop existing anywhere"; neither answers "make this ONE assignment stop
+holding", and nothing else did either (finding #81). `device set-label` and
+`device set-area` are the same two gaps one registry over — the class is
+exactly the four `set-*` leaf commands the live tree has today, not a
+hand-picked pair of them, which is the failure this project keeps finding one
+command short of fixed (`dev/surfaces/README.md`'s four defects, all "the
+unfixed half of a fix shipped in the same release").
+
+The rule: a command whose name is `set-<something>` — hactl's one spelling for
+"make this registry field equal this value" — offers a way to unmake what it
+last made, scoped to the one target it names. `ent`/`device set-label` gained
+`--remove <label>` (repeatable), additive to the existing merge-only
+behaviour rather than replacing it — `TestEntSetLabelRoundTrip` pinned merge
+as intentional, and this law does not revisit that, only completes it.
+`ent`/`device set-area` gained `--clear`. Both flags refuse the shape that
+would let them say two things at once: naming a label in both the positional
+adds and `--remove`, or passing an `<area>` alongside `--clear`, ends the
+command rather than picking a winner (H-25's exclusivity clause, one syntax
+over — `refuseAddRemoveOverlap`, `validateAreaTarget`).
+
+**What this law does not claim.** It does not say every command that assigns
+something must offer an inverse regardless of cost or of whether HA's own API
+has one — `label create`/`area create`/`floor create` already have their
+inverse in `label delete`/`area delete`/`floor delete`, because a label or an
+area is itself the object being created, and deleting the object it names IS
+the unmake. The class this law is about is narrower and sharper: a command
+that assigns one object's REFERENCE to another (a label onto an entity, an
+area onto a device) where the only existing way to sever that one reference
+was to destroy the referenced object for everybody holding it.
+
+**Oracle status.** Whether `area_id: null` and `labels: []` actually reach
+Home Assistant's registry as a clear rather than a no-op or a rejection was
+read off HA core's dev-branch source, not probed against the version under
+test — `clearAreaWireValue` (internal/cmd/ent.go) and the two `labels: []`
+call sites in `runEntSetLabel`/`runDeviceSetLabel` carry `[NEEDS ORACLE]`
+markers rather than an assumed answer, and `internal/integration/registry_clear_oracle_test.go`
+is the test that resolves them once a container is available (D-44). The LAW
+does not depend on the mechanism — it says the command has to offer an
+unmake, not that the unmake must be `area_id: null` specifically — but the
+CURRENT implementation's proof does, which is why the markers block `make
+lint` rather than being silently assumed correct.
+
+- Enforced by: `internal/cmd/ent_unmake_test.go`
+  (`TestRunEntSetLabel_RemoveTakesOneLabelOff`, asserting the PARTIAL
+  property that distinguishes `--remove` from `label delete` — a second
+  entity carrying the same label is untouched;
+  `TestRunEntSetLabel_AddAndRemoveSameLabelIsRefused`,
+  `TestRunEntSetLabel_NeitherAddNorRemoveIsRefused`;
+  `TestRunEntSetArea_ClearRemovesTheArea`, the same partial property for
+  `--clear`; `TestRunEntSetArea_AreaAndClearIsRefused`,
+  `TestRunEntSetArea_NeitherAreaNorClearIsRefused`),
+  `internal/cmd/device_unmake_test.go` (the same six, one registry over);
+  sweep cases `TestSweepRemovingOneLabelLeavesTheOtherHolderAlone`,
+  `TestSweepClearingOneEntitysAreaLeavesAnothersAlone`
+  (`internal/livefire/unmake_test.go`, both profiles, H-26's dry-run-then-confirm
+  witness observed throughout).
+- Quantified by: `TestUnmakeSurfaceIsClosed` (`dev/surfaces/unmake.manifest`)
+  over every leaf command in the live cobra tree named `set-*` — so a fifth
+  such command inherits the question the day it is added, rather than
+  silently landing outside a hand-picked list of four.

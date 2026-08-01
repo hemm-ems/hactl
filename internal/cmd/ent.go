@@ -25,15 +25,17 @@ import (
 )
 
 var (
-	flagEntPattern  string
-	flagEntDomain   string
-	flagEntResample string
-	flagEntAttr     string
-	flagEntArea     string
-	flagEntLabel    string
-	flagEntConfirm  bool
-	flagEntStale    bool
-	flagEntRestored bool
+	flagEntPattern     string
+	flagEntDomain      string
+	flagEntResample    string
+	flagEntAttr        string
+	flagEntArea        string
+	flagEntLabel       string
+	flagEntConfirm     bool
+	flagEntStale       bool
+	flagEntRestored    bool
+	flagEntRemoveLabel []string
+	flagEntAreaClear   bool
 )
 
 var entCmd = family(&cobra.Command{
@@ -94,22 +96,31 @@ var entRelatedCmd = &cobra.Command{
 }
 
 var entSetLabelCmd = &cobra.Command{
-	Use:   "set-label <entity_id> <label>...",
-	Short: "Assign labels to an entity (dry-run by default)",
-	Long:  "Set one or more labels on an entity via the HA entity registry. Dry-run by default: previews the merged label set; use --confirm to apply.",
-	Args:  takesAtLeast(2),
+	Use:   "set-label <entity_id> [label...]",
+	Short: "Add or remove labels on an entity (dry-run by default)",
+	Long: "Merge one or more labels onto an entity via the HA entity registry — positional labels are ADDED " +
+		"to the existing set, never replacing it. Use --remove <label> (repeatable) to take a label back off " +
+		"instead; it may be combined with positional labels to add and remove in the same write, but a label " +
+		"cannot be named in both. Dry-run by default: previews the resulting label set; use --confirm to apply.",
+	Args: takesAtLeast(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEntSetLabel(cmd.Context(), cmd.OutOrStdout(), args[0], args[1:])
 	},
 }
 
 var entSetAreaCmd = &cobra.Command{
-	Use:   "set-area <entity_id> <area>",
-	Short: "Assign an area to an entity (dry-run by default)",
-	Long:  "Set the area (room) for an entity via the HA entity registry. Use --confirm to apply.",
-	Args:  takes(2),
+	Use:   "set-area <entity_id> [area]",
+	Short: "Assign or clear an entity's area (dry-run by default)",
+	Long: "Set the area (room) for an entity via the HA entity registry, or use --clear to remove it from its " +
+		"current area (the entity then has no area of its own — H-8's inheritance still applies if its device " +
+		"has one). Pass exactly one of <area> or --clear. Use --confirm to apply.",
+	Args: takesBetween(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
+		var area string
+		if len(args) > 1 {
+			area = args[1]
+		}
+		return runEntSetArea(cmd.Context(), cmd.OutOrStdout(), args[0], area)
 	},
 }
 
@@ -122,7 +133,10 @@ func init() {
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
 	entSetLabelCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set labels (default is dry-run)")
+	entSetLabelCmd.Flags().StringArrayVar(&flagEntRemoveLabel, "remove", nil,
+		"remove this label from the entity instead of adding it (repeatable; use 'label ls' to see available labels)")
 	entSetAreaCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually set area (default is dry-run)")
+	entSetAreaCmd.Flags().BoolVar(&flagEntAreaClear, "clear", false, "remove the entity's area instead of setting one")
 	entRenameCmd.Flags().BoolVar(&flagEntConfirm, "confirm", false, "actually rename and rewrite references (default is dry-run)")
 	entRenameCmd.Flags().BoolVar(&flagEntRenameAllowPartial, "allow-partial", false,
 		"rename even when some dashboards cannot be scanned or written "+
@@ -1540,7 +1554,19 @@ func countRenameReferences(ctx context.Context, src *refSources, target string) 
 	return len(cfgResp.Hits) + len(hits), sweepScope{configSkipped: unreadConfigFiles(cfgResp.Skipped), dash: dashScope}, nil
 }
 
+// runEntSetLabel adds and/or removes labels on an entity (finding #81, H-27):
+// `set-label` could only ever grow an entity's label set, so taking one label
+// back off — without touching its siblings, and without touching the same
+// label on every OTHER entity the way `label delete` does — had no command.
+// Positional labels keep the original merge-only behaviour (TestEntSetLabelRoundTrip
+// pins it as intentional); --remove is the unmake half, additive to it rather
+// than replacing it.
 func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []string) error {
+	if len(labels) == 0 && len(flagEntRemoveLabel) == 0 {
+		return errors.New("no labels given: pass one or more labels to add, or --remove <label> to take one off " +
+			"(use 'label ls' to see available labels)")
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -1557,19 +1583,18 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	if err != nil {
 		return fmt.Errorf("fetching labels: %w", err)
 	}
-	labelIDs := make(map[string]string, len(existingLabels))
-	for _, l := range existingLabels {
-		labelIDs[strings.ToLower(l.Name)] = l.LabelID
-		labelIDs[l.LabelID] = l.LabelID
-	}
+	index := labelIndex(existingLabels)
 
-	resolved := make([]string, 0, len(labels))
-	for _, lbl := range labels {
-		id, ok := labelIDs[strings.ToLower(lbl)]
-		if !ok {
-			return fmt.Errorf("label %q not found (use 'label ls' to see available labels)", lbl)
-		}
-		resolved = append(resolved, id)
+	toAdd, err := resolveLabelRefs(index, labels)
+	if err != nil {
+		return err
+	}
+	toRemove, err := resolveLabelRefs(index, flagEntRemoveLabel)
+	if err != nil {
+		return err
+	}
+	if overlapErr := refuseAddRemoveOverlap(toAdd, toRemove); overlapErr != nil {
+		return overlapErr
 	}
 
 	// Resolve the entity before planning anything. Labels live in the entity
@@ -1587,45 +1612,40 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
 	currentLabels := entry.Labels
-
-	// Merge: add new labels to existing ones (deduplicate)
-	seen := make(map[string]bool, len(currentLabels)+len(resolved))
-	merged := make([]string, 0, len(currentLabels)+len(resolved))
-	for _, l := range currentLabels {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
-	for _, l := range resolved {
-		if !seen[l] {
-			seen[l] = true
-			merged = append(merged, l)
-		}
-	}
+	final, removed := applyLabelDelta(currentLabels, toAdd, toRemove)
 
 	if !flagEntConfirm {
-		return dryRunEntSetLabelSummary(entityID, currentLabels, merged).render(w)
+		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).render(w)
 	}
 
-	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": merged}); err != nil {
+	// [NEEDS ORACLE: when a removal empties the label set, does
+	// `config/entity_registry/update` with `labels: []` clear every label, or
+	// no-op on an empty list? The non-empty case is already proven by
+	// TestEntSetLabelRoundTrip, which round-trips a full replacement list — but
+	// that test has never sent an empty one. TestClearWiresEmptyLabels in
+	// internal/integration/registry_clear_oracle_test.go is the oracle test;
+	// unresolved for the same Docker-unavailable reason as clearAreaWireValue's
+	// marker, which explains the mechanism.]
+	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"labels": final}); err != nil {
 		return fmt.Errorf("updating entity labels: %w", err)
 	}
 
 	// Slices, not their %v rendering: under --json a caller gets real arrays.
 	return done("set entity labels").
 		with("entity_id", entityID).
-		with("labels", nonNil(merged)).
-		text("%s: labels set to %v", entityID, merged).
+		with("labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed).
+		text("%s: labels set to %v", entityID, final).
 		render(w)
 }
 
-func dryRunEntSetLabelSummary(entityID string, current, merged []string) *dryRunPlan {
+func dryRunEntSetLabelSummary(entityID string, current, final, removed []string) *dryRunPlan {
 	// Slices, not their %v rendering: under --json a caller gets real arrays.
 	return dryRun("set entity labels").
 		with("entity_id", entityID).
 		with("current_labels", nonNil(current)).
-		with("new_labels", nonNil(merged))
+		with("new_labels", nonNil(final)).
+		withIf(len(removed) > 0, "removed_labels", removed)
 }
 
 // nonNil turns a nil slice into an empty one, so --json emits [] rather than
@@ -1637,7 +1657,16 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// runEntSetArea sets, or — with --clear — removes an entity's own area
+// (finding #81, H-27). Clearing sends `area_id: nil` over the same
+// EntityRegistryUpdate a set does; see the [NEEDS ORACLE] marker on
+// clearAreaWireValue for why that is not yet proven against the version under
+// test.
 func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) error {
+	if err := validateAreaTarget(area, flagEntAreaClear); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -1649,14 +1678,19 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	}
 	defer func() { _ = ws.Close() }()
 
-	// Resolve area name to area ID
+	// Fetched either way: a clear's preview still names the area it is
+	// leaving, the same way a set's preview names the one it is replacing.
 	areas, err := ws.AreaRegistryList(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching areas: %w", err)
 	}
-	areaEntry, ok := resolveAreaEntry(areas, area)
-	if !ok {
-		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+	var areaEntry haapi.AreaEntry
+	if !flagEntAreaClear {
+		var ok bool
+		areaEntry, ok = resolveAreaEntry(areas, area)
+		if !ok {
+			return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", area)
+		}
 	}
 
 	entries, err := ws.EntityRegistryList(ctx)
@@ -1669,19 +1703,73 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	}
 
 	if !flagEntConfirm {
+		if flagEntAreaClear {
+			return dryRunEntClearAreaSummary(entityEntry, areas).render(w)
+		}
 		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).render(w)
 	}
 
-	if err := ws.EntityRegistryUpdate(ctx, entityID, map[string]any{"area_id": areaEntry.AreaID}); err != nil {
+	if err := ws.EntityRegistryUpdate(ctx, entityID,
+		map[string]any{"area_id": clearAreaWireValue(flagEntAreaClear, areaEntry.AreaID)}); err != nil {
 		return fmt.Errorf("updating entity area: %w", err)
 	}
 
+	if flagEntAreaClear {
+		return done("clear entity area").
+			with("entity_id", entityID).
+			with("area_id", nil).
+			text("%s: area cleared", entityID).
+			render(w)
+	}
 	return done("set entity area").
 		with("entity_id", entityID).
 		with("area_id", areaEntry.AreaID).
 		with("area_name", areaEntry.Name).
 		text("%s: area set to %s", entityID, areaEntry.AreaID).
 		render(w)
+}
+
+// clearAreaWireValue is the one place the assumption behind `--clear` turns
+// into a wire value, for both `ent set-area` and `device set-area`.
+//
+// [NEEDS ORACLE: does `config/entity_registry/update` (and the device
+// registry's equivalent) accept `area_id: null` and read the entry back with
+// its area actually cleared, on the Home Assistant version under test? The
+// claim is read off HA core's dev-branch source
+// (homeassistant/components/config/entity_registry.py, WS_CONFIG_SCHEMA
+// `vol.Optional("area_id"): vol.Any(str, None)`, and
+// entity_registry.async_update_entity accepting area_id=None as "no area") —
+// the instance this repo tests against runs 2026.7.4 and the rig runs
+// `stable`, and neither has been asked. TestClearWiresNullAreaID in
+// internal/integration/registry_clear_oracle_test.go is the oracle test that
+// asks; it has not been run because Docker was held by another track for the
+// whole of this session (see AGENTS.md step 1's "which unknowns block": a
+// different answer changes this function, so it blocks). Resolve by running
+// that test against a throwaway hatest container, then delete this marker and
+// the one beside TestClearWiresNullAreaID.]
+func clearAreaWireValue(wantClear bool, areaID string) any {
+	if wantClear {
+		return nil
+	}
+	return areaID
+}
+
+// validateAreaTarget applies H-25's exclusivity clause to `set-area`'s two
+// ways of naming what the entity's (or device's) area should become: the
+// <area> positional and --clear. Passing both names the target twice; passing
+// neither names it zero times. Shared by `ent set-area` and `device set-area`
+// so the two commands cannot answer the same input differently (D-44).
+func validateAreaTarget(area string, wantClear bool) error {
+	if wantClear && area != "" {
+		return &flagContractError{fmt.Sprintf(
+			"the area argument %q and --clear each say what the area should become and cannot both be honoured; pass one",
+			area)}
+	}
+	if !wantClear && area == "" {
+		return errors.New("no area given: pass an area, or --clear to remove the current one " +
+			"(use 'area ls' to see available areas)")
+	}
+	return nil
 }
 
 func resolveAreaEntry(areas []haapi.AreaEntry, area string) (haapi.AreaEntry, bool) {
@@ -1716,6 +1804,23 @@ func dryRunEntSetAreaSummary(entity haapi.EntityRegistryEntry, area haapi.AreaEn
 		with("entity_id", entity.EntityID).
 		withIf(currentArea != "", "current_area", currentArea).
 		with("new_area", fmt.Sprintf("%s (%s)", area.Name, area.AreaID))
+}
+
+// dryRunEntClearAreaSummary mirrors dryRunEntSetAreaSummary for --clear: same
+// current-area lookup, but the plan's destination is "no area" rather than a
+// resolved one.
+func dryRunEntClearAreaSummary(entity haapi.EntityRegistryEntry, areas []haapi.AreaEntry) *dryRunPlan {
+	currentArea := entity.AreaID
+	for _, a := range areas {
+		if a.AreaID == entity.AreaID {
+			currentArea = fmt.Sprintf("%s (%s)", a.Name, a.AreaID)
+			break
+		}
+	}
+	return dryRun("clear entity area").
+		with("entity_id", entity.EntityID).
+		withIf(currentArea != "", "current_area", currentArea).
+		with("new_area", nil)
 }
 
 // relatedEntry holds one edge in the entity relationship graph.

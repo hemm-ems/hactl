@@ -68,8 +68,11 @@ func TestBlankRefusalNamesThePlaceholder(t *testing.T) {
 		name, want string
 		args       []string
 	}{
-		{"first of two", "(<device>)", []string{"device", "set-area", "", "kitchen"}},
-		{"second of two", "(<area>)", []string{"device", "set-area", "hub", ""}},
+		// ent rename is a fully two-required-positional command (unlike
+		// device/ent set-area's second positional, which finding #81 / H-27
+		// made optional so --clear could take its place).
+		{"first of two", "(<old_entity_id>)", []string{"ent", "rename", "", "sensor.new_name"}},
+		{"second of two", "(<new_entity_id>)", []string{"ent", "rename", "sensor.old_name", ""}},
 		{"single", "(<entity_id>)", []string{"ent", "show", ""}},
 		{"optional", "[url_path]", []string{"dash", "show", ""}},
 	} {

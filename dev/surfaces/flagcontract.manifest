@@ -39,6 +39,7 @@
 
 --allow-partial = proven: TestPartialScopeSurfaceIsClosed
 --area          = proven: TestFilterFlagsAgreeOnCase
+--clear         = proven: TestUnmakeSurfaceIsClosed
 --color         = debt: two meanings, one spelling — the root's is a documented no-op every command inherits, `label create`'s is the label's own colour and silently shadows it. Recorded rather than fixed: renaming either is a breaking CLI change.
 --component     = proven: TestFilterSurfaceIsClosed
 --confirm       = proven: TestConfirmSurfaceIsClosed
@@ -56,6 +57,7 @@
 --options       = proven: TestFlowLookupErrorExplainsThe404Everywhere
 --pattern       = proven: TestGlobIsAnchoredAtEveryIdentifierFormTheListingPrints
 --raw           = proven: TestOutputFormatSurfaceIsClosed
+--remove        = proven: TestUnmakeSurfaceIsClosed
 --restored      = proven: TestEveryNarrowedListingSaysWhatNarrowedIt
 --since         = proven: TestSinceIsDeclaredOnlyOnTheCommandsThatReadIt
 --stats         = proven: TestVersionStats
