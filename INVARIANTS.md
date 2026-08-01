@@ -1864,3 +1864,110 @@ command takes is answered with that flag, which is the help a mistyped
   flag set for the domain clause, and `TestFlagContractSurfaceIsClosed`
   (`dev/surfaces/flagcontract.manifest`) over every flag name more than one
   command offers — the only place the reach clause can be broken.
+
+---
+
+## H-26 — hactl is never the only caller
+
+Every other law here is about hactl and Home Assistant. This one is about
+hactl and the *other* hactl: the second terminal, the CI job, the MCP server,
+the multi-agent fleet all three of its findings were reported from. hactl's
+instance directory is shared state — it carries the `.env` naming the
+instance, the session cache, the write lock and the backups a rollback reads —
+and hactl treated it as private.
+
+The rule has four clauses, and they are the four ways a shared thing can be got
+wrong: **held**, **witnessed**, **unique**, and — the one this law does not
+claim — **honest about what it cannot exclude**.
+
+**Held.** A confirmed write takes the instance's exclusive lock for as long as
+it runs, so two hactl processes writing to one instance never interleave their
+read-modify-write. `auto apply --confirm` fetches the stored entry (that fetch
+is also its backup), validates the candidate against HA over the WebSocket, and
+only then asks the companion to splice the new text in. Measured on the
+reference instance that span is two to three seconds, and two applies launched
+together both read the same starting state inside it: both printed their own
+diff, both printed `applied` and `reload: ok`, both exited 0, and one of the two
+edits was not in the file afterwards (#100). The companion's own read-modify-write
+is milliseconds wide and was never the interesting half.
+
+Serialising does not stop the second write from replacing the first — two
+sequential applies do that too, and it is what the caller asked for. What it
+stops is a write being *planned against a state that no longer exists*: with
+the lock, the second writer's backup holds the first writer's result, so
+`auto rollback` can still reach the version that was replaced. Without it, both
+backups held the pre-race state and the intermediate version was unrecoverable.
+
+**Witnessed.** A `--confirm` write is authorized by a dry-run *of the same
+command, the same target, and the same session*, recorded in the instance cache
+and expiring with it. The guard used to ask a different question — whether the family how-to had
+reached the session — answered out of state under the session key `default`,
+which every process sharing the directory writes. So one caller could switch
+the guard off for another: measured live, a process running `area ls` under
+`HACTL_MANUAL_MODE=full` set `full: true`, and a second process, in another
+directory, in progressive mode, whose first-ever automation command it was,
+then wrote to the instance with no refusal and nothing on stderr (#61).
+
+A delivery record was never evidence about the caller; it is evidence about the
+directory, and a directory is shared. It was also weaker than it read: `auto ls`
+delivers the automation how-to, so `auto ls` followed by `auto apply --confirm`
+satisfied a guard whose entire subject is writes nobody previewed. A preview is
+evidence about the write, and it is what the manual has always instructed.
+
+The session is part of the key, not decoration: without it one caller's preview
+authorizes another caller's write, which is #61 rebuilt two levels down. The
+sweep found exactly that — two sibling cases previewing one automation
+authorized a third whose entire precondition was that nothing had — so a caller
+that names itself with `HACTL_SESSION` has a private record. Callers that leave
+it unset share the key `default` and therefore share their previews, target by
+target. That residue is the same knob the manual documents, and it is stated
+rather than left to be discovered.
+
+**Unique.** A file hactl writes to preserve a state it is about to replace
+never overwrites an existing file. All three of them — the automation backup,
+the script backup, the dashboard snapshot — named the file from a clock at
+one-second resolution and wrote it with `os.WriteFile`, which truncates.
+Demonstrated on the reference instance without needing two writers at all: a
+file was planted at the path the next backup would choose, the apply was run,
+and the backup overwrote it and printed that path to its caller as a recovery
+point (#101). The defect is not that a clock repeats. It is that nothing asked
+whether the name was free.
+
+**What this law does not claim.** A writer that is not this hactl — Home
+Assistant's own UI, a second machine, a hactl pointed at a different directory
+carrying the same URL — is not excluded by a lock on a local file. H-26 makes
+hactl consistent with itself; H-12's read-back is what catches everybody else.
+Stated here rather than discovered later.
+
+- Enforced by: `internal/instancelock/lock_test.go`
+  (`TestLockIsExclusiveAcrossProcesses`, which asks `flock(1)` rather than
+  hactl's own implementation whether the lock is held — flock is per open file
+  description, so a same-process acquire and a cross-process one are different
+  questions and only one of them is the one hactl faces;
+  `TestAcquireGivesUpAndSaysWhoHasIt`, because an unbounded wait on a peer that
+  may itself be blocked is a hang, and a hang is the one failure an agent
+  cannot report; `TestAcquireHonoursContextCancellation`;
+  `TestUnresolvableCacheDirFailsOpenVisibly`), `internal/backupfile/backupfile_test.go`
+  (`TestWriteNeverOverwritesAnExistingBackup`, which freezes the clock so the
+  collision happens by construction — two live writes landed 2.1 s apart
+  however hard they were launched together, so a test that waits for one second
+  to be shared proves nothing; `TestWriteDoesNotClobberAFileItDidNotWrite`, the
+  live sentinel reproduction; `TestLayoutCarriesSubSecondPrecision`, because a
+  stamp that cannot express the retry's advance makes the retry a spin;
+  `TestWriteFailsRatherThanReturningAPathItDidNotWrite`),
+  `internal/cmd/confirm_guard_test.go`
+  (`TestExecute_ConfirmGuardRefusesUnpreviewedWrite`,
+  `TestExecute_ConfirmGuardRefusalDoesNotAuthorizeTheRetry` — the old guard
+  delivered the how-to *as* it refused, so the immediate retry passed;
+  `TestExecute_ConfirmGuardIsNotSatisfiedByAFamilyRead`, the hole stated as a
+  test; `TestExecute_ConfirmGuardPassesAfterDryRun`;
+  `TestWitnessKeyDistinguishesCommandAndTarget`; `TestWitnessExpires`),
+  `internal/livefire/concurrency_test.go`
+  (`TestSweepConcurrentAppliesDoNotShareAStaleRead`,
+  `TestSweepAConfirmedWriteNeverOverwritesABackup`,
+  `TestSweepAConfirmRequiresItsOwnDryRun` — all three on both profiles, driven
+  by rig capability R8).
+- Quantified by: `TestSharedStateSurfaceIsClosed`
+  (`dev/surfaces/sharedstate.manifest`) over every site the typed source shows
+  writing a file into an instance directory or reading state another process
+  can have written — the only places a second caller can be forgotten.

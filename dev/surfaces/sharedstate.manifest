@@ -1,0 +1,48 @@
+#ceiling 4
+# H-26 — hactl is never the only caller. Every function that can destroy a file
+# says whether the file could have been somebody else's.
+#
+# The three backup writers this surface was built for are no longer here, and
+# that is the fix: writer.backup, backupScriptConfig and writeDashboardSnapshot
+# all route through backupfile.Write now, so the census collapsed three sites
+# with one defect into one site with one proof. A fourth backup writer would
+# appear here the day it is added.
+
+internal/backupfile/backupfile.go:Write = proven: TestWriteNeverOverwritesAnExistingBackup
+
+# --- state that is deliberately last-write-wins ----------------------------
+# Both use tmp-file + rename, and both lose a concurrent write by design. What
+# makes that safe is the DIRECTION of the loss: the state is bookkeeping about
+# what a caller has already been shown, and losing it costs one duplicate
+# manual injection or one extra refusal. Neither can turn into a write nobody
+# planned, which is the only outcome this law is protecting.
+internal/manual/state.go:saveState = exempt: session bookkeeping, tmp+rename, last-write-wins by design; a lost record costs one duplicate manual delivery and is self-correcting
+internal/cmd/witness.go:saveWitness = exempt: preview bookkeeping, tmp+rename; a lost record costs one extra refusal naming the dry-run to run, which is the fail-safe direction
+
+# --- not a destroyer in practice -------------------------------------------
+internal/instancelock/lock.go:Acquire = exempt: opens the lock file without O_TRUNC and never writes to it; the file carries no content to destroy
+internal/cmd/setup.go:runSetup = exempt: `hactl setup` exists to write this instance's .env; replacing it is the command the caller ran, not a side effect of one
+
+# --- the test rig owns its own directory ------------------------------------
+internal/hatest/hatest.go:copyTree = exempt: writes a fixture into a t.TempDir() the rig created for this run; no other caller can be holding those paths
+internal/hatest/hatest.go:writeEnvFile = exempt: writes the rig's own .env into a t.TempDir() this run created
+internal/hatest/recorder.go:reownFile = exempt: rewrites a bind-mount file the rig's own container wrote, between two phases of one test
+
+# --- debt -------------------------------------------------------------------
+# The cache is a cache: a clobbered log page is refetched, and no answer is
+# built from what is missing. Recorded rather than fixed because the harm is
+# latency, not a wrong answer.
+internal/cache/store.go:(*Store).AppendLogs = debt: concurrent appends can interleave; the file is a cache and a damaged page is refetched, but nothing proves the refetch
+internal/cache/store.go:(*Store).RefreshLogs = debt: whole-file rewrite with no exclusion; two refreshes racing lose one another's pages, recoverable by refetch and unproven
+internal/cache/store.go:(*Store).TrimLogs = debt: whole-file rewrite racing AppendLogs can drop just-appended rows; same cache argument, same missing proof
+
+# Found by this surface on its first run, and it is NOT a cache. The id
+# registry maps the short ids hactl hands out to the keys they stand for, and
+# Save serialises the whole map under an in-process mutex only — so two hactl
+# processes that both mint an id lose one another's entries, and a short id a
+# caller was given stops resolving. It is the same lost update as #100 in a
+# fourth place. Left as debt deliberately: WP11's scope is the three findings
+# it reproduced, and a fix here needs its own oracle (what does a caller see
+# when an id it was handed no longer resolves?) rather than a lock added in a
+# hurry to a file nobody has watched fail.
+pkg/ids/ids.go:(*Registry).Save = debt: cross-process lost update on the short-id registry; needs its own reproduction before a fix, see H-26 and finding #100

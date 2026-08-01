@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/backupfile"
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
@@ -412,23 +412,21 @@ func (w *Writer) validateCandidate(ctx context.Context, cfg map[string]any) (boo
 // backup saves the current entry to the backups directory, as the bytes that
 // are on disk rather than as a re-serialization of them. A backup that
 // normalizes what it saves cannot restore what it took.
+//
+// The name comes from backupfile, which will not write over a name that is
+// taken (H-26). It used to be `<second>_<id>.yaml` written with os.WriteFile,
+// so two confirmed writes inside one second destroyed one of the two recovery
+// points and told both callers theirs was safe (#101).
 func (w *Writer) backup(ctx context.Context, automationID string) (string, error) {
-	if err := os.MkdirAll(w.backupDir, 0o750); err != nil {
-		return "", fmt.Errorf("creating backup dir: %w", err)
-	}
-
 	remoteText, err := w.remoteEntry(ctx, automationID)
 	if err != nil {
 		return "", fmt.Errorf("fetching current config for backup: %w", err)
 	}
-	yamlData := []byte(remoteText)
 
-	ts := time.Now().Format("2006-01-02T15-04-05")
-	filename := fmt.Sprintf("%s_%s.yaml", ts, automationID)
-	backupPath := filepath.Join(w.backupDir, filename)
-
-	if err := os.WriteFile(backupPath, yamlData, 0o600); err != nil {
-		return "", fmt.Errorf("writing backup: %w", err)
+	backupPath, err := backupfile.Write(w.backupDir, 0o600, []byte(remoteText),
+		func(stamp string) string { return fmt.Sprintf("%s_%s.yaml", stamp, automationID) })
+	if err != nil {
+		return "", err
 	}
 
 	slog.Info("backup created", "path", backupPath)
@@ -586,14 +584,21 @@ func containsAutoID(filename, automationID string) bool {
 	return automationID != "" && extractAutoIDFromBackup(filename) == automationID
 }
 
+// extractAutoIDFromBackup returns the automation id a backup file belongs to.
+//
+// The name is `<stamp>_<id>.yaml` and the stamp contains no underscore — it
+// separates its own fields with `-`, `T` and `.` — so the id is everything
+// after the FIRST underscore, whatever width the stamp has. It used to be
+// `base[20:]`, a hard-coded skip measured off `2026-04-17T09-42-05`, which
+// silently returned the wrong id the moment the stamp grew microseconds to
+// stop backups overwriting each other (H-26). A parser that encodes the
+// length of the thing it is skipping is a second copy of that format.
 func extractAutoIDFromBackup(path string) string {
 	base := filepath.Base(path)
-	// Format: "2026-04-17T09-42-05_climate_schedule.yaml"
-	// Find first underscore after timestamp (20 chars: 2026-04-17T09-42-05)
-	if len(base) < 21 {
+	_, rest, ok := strings.Cut(base, "_")
+	if !ok {
 		return base
 	}
-	rest := base[20:] // skip "2026-04-17T09-42-05_"
 	// Strip extension
 	if idx := len(rest) - 5; idx > 0 && rest[idx:] == extYAML {
 		rest = rest[:idx]

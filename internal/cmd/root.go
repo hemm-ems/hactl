@@ -17,6 +17,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/instancelock"
 )
 
 // defaultTimeout is the bound every connection carries when the caller names
@@ -57,21 +58,103 @@ var rootCmd = family(&cobra.Command{
 		"issues:  " + issuesURL,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+})
+
+// rootPreRun is the root's PersistentPreRunE, installed in init() rather than
+// in the literal above: it calls confirmGuard, which walks a command's parent
+// chain up to rootCmd, and Go rejects that as an initialization cycle.
+func rootPreRun(cmd *cobra.Command, _ []string) error {
 	// The domain check runs before the value is installed anywhere, so a
 	// duration that cannot bound a connection never reaches one: `--timeout
 	// -1s` used to arrive at net.Dialer as a deadline already in the past and
 	// come back as `dial tcp: lookup <host>: i/o timeout` — a network failure
 	// invented out of a flag value (H-25, #56).
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := checkGlobalFlagDomains(); err != nil {
+	if err := checkGlobalFlagDomains(); err != nil {
+		return err
+	}
+	haapi.DefaultTimeout = flagTimeout
+	// Both of these need the command cobra RESOLVED and the flags it PARSED —
+	// the guard checks the target that would be written, and the lock is taken
+	// only for a write. That is why they run here and not in Execute(): the
+	// previous guard scanned unparsed argv for the literal string "--confirm"
+	// and re-implemented --dir extraction beside it.
+	if cliEntry {
+		if err := confirmGuard(cmd, cmd.Flags().Args(), os.Args[1:]); err != nil {
 			return err
 		}
-		haapi.DefaultTimeout = flagTimeout
+	}
+	return acquireWriteLock(cmd)
+}
+
+// cliEntry is true while Execute() is running — i.e. this process is a plain
+// CLI invocation rather than the MCP server or an in-process test run.
+//
+// confirmGuard is scoped to it because the guard's subject is an agent driving
+// hactl through a shell: the MCP server delivers the manual itself and gates
+// writes through its own classification (internal/mcpserver/gate.go), and
+// RunWithOutputContext is also how the integration tier drives the binary. The
+// write LOCK is deliberately NOT scoped to it — two MCP servers on one
+// instance directory are exactly the concurrency it exists for.
+var cliEntry bool
+
+// heldWriteLock is the instance write lock this process holds, and
+// heldWriteLockDir the instance it belongs to. They are package variables for
+// the same reason flagDir is: cobra's hooks and the entry point are different
+// scopes and one has to hand the other something.
+//
+// The invariant is "this process holds at most one instance write lock, and it
+// is the one for the instance it is currently writing" — NOT "every acquire is
+// paired with a release". Pairing is what a lock spanning a cobra Run cannot
+// promise: an entry point can be bypassed (the unit tier calls rootCmd.Execute
+// directly), and flock is per open file description, so a second acquire from
+// the same process on a second descriptor blocks against the first. Making the
+// hold idempotent per instance is what turns that from a deadlock into a
+// no-op; the kernel releases on exit, which is the only release the CLI has
+// ever actually needed.
+var (
+	heldWriteLock    *instancelock.Lock
+	heldWriteLockDir string
+)
+
+// acquireWriteLock takes the instance's exclusive write lock for a confirmed
+// write, so that two hactl processes writing to one instance do not interleave
+// their read-modify-write (H-26). Everything else — reads, previews, help —
+// takes nothing.
+//
+// The wait is the caller's own --timeout, which is what bounds every other
+// wait hactl performs (H-23). A caller that wants to queue behind a long write
+// raises it; a caller that wants to fail fast lowers it, and either way the
+// answer names the lock file rather than hanging.
+func acquireWriteLock(cmd *cobra.Command) error {
+	if cmd == nil || cmd.Flags().Lookup("confirm") == nil {
 		return nil
-	},
-})
+	}
+	if confirmed, err := cmd.Flags().GetBool("confirm"); err != nil || !confirmed {
+		//nolint:nilerr // a --confirm that does not parse is cobra's error to report
+		return nil
+	}
+	cacheDir := stateCacheDir(flagDir)
+	if heldWriteLock.Held() && heldWriteLockDir == cacheDir {
+		return nil // already holding this instance's lock
+	}
+	releaseWriteLock()
+	lock, err := instancelock.Acquire(cmd.Context(), cacheDir, flagTimeout)
+	if err != nil {
+		return err
+	}
+	heldWriteLock, heldWriteLockDir = lock, cacheDir
+	return nil
+}
+
+// releaseWriteLock gives back whatever acquireWriteLock took. Safe when
+// nothing was taken, so both entry points can defer it unconditionally.
+func releaseWriteLock() {
+	heldWriteLock.Release()
+	heldWriteLock, heldWriteLockDir = nil, ""
+}
 
 func init() {
+	rootCmd.PersistentPreRunE = rootPreRun
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")
 	// `--since` is deliberately NOT here: it is declared on the nine commands
 	// that read it (see sinceCommands in since.go), because a flag on a command
@@ -292,12 +375,15 @@ func truncationHint(cmdPath string) string {
 
 // Execute runs the root command.
 func Execute() error {
-	// Before anything runs: a first-of-family --confirm from an agent-shaped
-	// caller is refused (see confirmGuard) — the write must not execute.
-	if err := confirmGuard(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return err
-	}
+	// A --confirm write with no dry-run behind it is refused, and a confirmed
+	// write holds the instance lock while it runs — both in the root's
+	// PersistentPreRunE, which is the first hook that knows which command this
+	// is and what it was told to write.
+	cliEntry = true
+	defer func() {
+		cliEntry = false
+		releaseWriteLock()
+	}()
 
 	var capBuf bytes.Buffer
 	rootCmd.SetOut(&capBuf)
@@ -305,6 +391,14 @@ func Execute() error {
 
 	executed, err := rootCmd.ExecuteC()
 	markGeneratedScript(executed)
+	if err == nil {
+		// A preview that ran and succeeded is what authorizes the matching
+		// --confirm. Recorded here rather than in each preview renderer for
+		// the reason the surfaces exist: there are dozens of write commands
+		// and one entry point, and an enumeration is a list somebody forgets
+		// to extend.
+		noteDryRun(executed, executed.Flags().Args())
+	}
 	// Manual delivery goes to stderr first, so a merged capture reads
 	// manual → marker → result/error (the layout the tuning evals measured);
 	// injection happens on errors too — that's when the agent needs it most.
@@ -369,6 +463,10 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	rootCmd.SetOut(&capBuf)
 	rootCmd.SetArgs(args[1:]) // skip "hactl" binary name
 	defer func() {
+		// A confirmed write taken through this entry point holds the same
+		// instance lock the CLI does; it has to be given back here too, or the
+		// MCP server keeps it for the life of the server process.
+		releaseWriteLock()
 		rootCmd.SetOut(nil)
 		rootCmd.SetArgs(nil)
 		// Reset flags to defaults for next invocation

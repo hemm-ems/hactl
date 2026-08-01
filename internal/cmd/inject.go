@@ -116,76 +116,84 @@ func markRTFMDelivered() {
 	}
 }
 
-// confirmGuard refuses a --confirm write fired as the first command of its
-// family in an agent-shaped session: the family how-to is only delivered
-// *with* that command's result, so nothing informed the write (the measured
-// F4 shape — dev/tuning e08). The refusal delivers core + how-to in the
-// usual layout and exits 1, making the retry an informed one; a proper
-// dry-run→confirm sequence never triggers it because the dry-run call
-// delivers the how-to first. Agent-shaped scripts that intend blind writes
-// opt out with HACTL_MANUAL_MODE=off.
-func confirmGuard(rawArgs []string) error {
-	if !hasConfirmArg(rawArgs) {
-		return nil
-	}
+// confirmGuard refuses a --confirm write that no dry-run of the same target
+// preceded, in an agent-shaped invocation: nothing showed the caller what the
+// write would change, so nothing informed it (the measured F4 shape —
+// dev/tuning e08). The refusal delivers core + how-to in the usual layout and
+// exits 1, making the retry an informed one; the documented
+// dry-run→present→confirm sequence never triggers it, because the dry-run
+// records the witness. Agent-shaped scripts that intend blind writes opt out
+// with HACTL_MANUAL_MODE=off.
+//
+// It used to ask whether the family how-to had reached the session, and that
+// question is answered out of state every process sharing the instance
+// directory can write — see witness.go for the live measurement of one
+// process switching the guard off for another (#61). It was also weaker than
+// it read: `auto ls` delivers the automation how-to, so `auto ls` followed by
+// `auto apply --confirm` passed a guard whose whole subject is writes nobody
+// previewed.
+//
+// cmd is the command cobra resolved and args its positional arguments, so the
+// target this checks is the target that would be written — not a string
+// scanned out of unparsed argv.
+func confirmGuard(cmd *cobra.Command, args []string, rawArgs []string) error {
 	mode := manual.ModeFromEnv()
 	if mode == manual.ModeOff || isTerminal(os.Stdout) || isTerminal(os.Stderr) {
 		return nil
 	}
-	cmd, _, err := rootCmd.Find(rawArgs)
-	if err != nil || cmd == nil || cmd.Flags().Lookup("confirm") == nil {
-		//nolint:nilerr // fail-open by design: not a write command, or an unknown command that must error in cobra, not here
+	if cmd == nil || cmd.Flags().Lookup("confirm") == nil {
 		return nil
 	}
-	top := topCommandName(cmd)
-	family, ok := manual.FamilyFor(top)
-	if !ok || len(manual.FamilySections[family]) == 0 {
+	if confirmed, err := cmd.Flags().GetBool("confirm"); err != nil || !confirmed {
+		//nolint:nilerr // a --confirm that does not parse is cobra's error to report, not this guard's
 		return nil
 	}
-	// The guard runs before cobra parses flags, so --dir must come from the
-	// raw args; stateless delivery (cacheDir "") cannot track "seen" and the
-	// guard would refuse forever — fail open like delivery itself does.
-	cacheDir := stateCacheDir(dirFromArgs(rawArgs))
+	// Stateless delivery (cacheDir "") cannot record a preview, so it cannot
+	// tell "never previewed" from "cannot remember" — and refusing forever
+	// would brick every caller with no resolvable instance directory. Fail
+	// open, like delivery itself does.
+	cacheDir := stateCacheDir(flagDir)
 	if cacheDir == "" {
 		return nil
 	}
-	if !manual.HowToPending(cacheDir, manual.SessionKey(), mode, family, time.Now()) {
+	if hasWitness(cacheDir, manual.SessionKey(), cmd.CommandPath(), args, time.Now()) {
 		return nil
 	}
-	if text := manual.Claim(cacheDir, manual.SessionKey(), mode, family, time.Now()); text != "" {
-		fmt.Fprintf(os.Stderr, "%s\n\n=== RESULT of hactl %s ===\n", text, strings.Join(rawArgs, " "))
+
+	top := topCommandName(cmd)
+	if family, ok := manual.FamilyFor(top); ok && len(manual.FamilySections[family]) > 0 {
+		if text := manual.Claim(cacheDir, manual.SessionKey(), mode, family, time.Now()); text != "" {
+			fmt.Fprintf(os.Stderr, "%s\n\n=== RESULT of hactl %s ===\n", text, strings.Join(rawArgs, " "))
+		}
 	}
-	// Name the command the caller actually ran, and the family by every command
-	// it covers. Interpolating the internal family key told an agent that had
-	// only ever run `area create` that this was its "first label command" —
-	// false about its session, and actionable in the wrong direction.
-	return fmt.Errorf("--confirm refused: the how-to for hactl's %s commands (delivered above) had not "+
-		"reached this session, so it could not have informed this %q call — run the dry-run form, "+
-		"present the plan to the user, and repeat with --confirm only after the user explicitly "+
-		"confirms (scripts: HACTL_MANUAL_MODE=off)", manual.FamilyLabel(family), top)
+	// Name the dry-run to run, verbatim. A refusal a caller cannot act on is a
+	// worse answer than the silence it replaced (H-25's third lesson), and the
+	// dry-run form of any write is the same command with --confirm removed.
+	return fmt.Errorf("--confirm refused: no dry-run of %q was recorded for this instance in the last %s, "+
+		"so nothing has shown what this write would change — run `%s` without --confirm, present the plan "+
+		"to the user, and repeat with --confirm only after the user explicitly confirms "+
+		"(scripts: HACTL_MANUAL_MODE=off)",
+		dryRunForm(cmd, args), witnessTTL, dryRunForm(cmd, args))
 }
 
-// hasConfirmArg scans unparsed args for the --confirm flag.
-func hasConfirmArg(args []string) bool {
-	for _, a := range args {
-		if a == "--confirm" || a == "--confirm=true" {
-			return true
-		}
-	}
-	return false
+// dryRunForm renders the preview a caller has to run before this write: the
+// resolved command and its target, which is exactly what witnessKey records.
+func dryRunForm(cmd *cobra.Command, args []string) string {
+	return strings.TrimSpace(cmd.CommandPath() + " " + strings.Join(args, " "))
 }
 
-// dirFromArgs extracts a --dir value from unparsed args.
-func dirFromArgs(args []string) string {
-	for i, a := range args {
-		if a == "--dir" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if v, ok := strings.CutPrefix(a, "--dir="); ok {
-			return v
-		}
+// noteDryRun records a successful preview so the matching --confirm is
+// allowed. It is the other half of confirmGuard and deliberately sits beside
+// it: the two must agree on what "the same write" means, and they agree by
+// calling one witnessKey.
+func noteDryRun(cmd *cobra.Command, args []string) {
+	if cmd == nil || cmd.Flags().Lookup("confirm") == nil {
+		return
 	}
-	return ""
+	if confirmed, err := cmd.Flags().GetBool("confirm"); err != nil || confirmed {
+		return
+	}
+	recordWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, time.Now())
 }
 
 // stateCacheDir locates the per-instance cache dir for session state. It

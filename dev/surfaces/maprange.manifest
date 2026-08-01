@@ -59,3 +59,4 @@ internal/testaudit/assertions.go:mergeNames = exempt: set union consumed by memb
 pkg/ids/ids.go:(*Registry).Load = exempt: rebuilds the reverse index; Mint refuses colliding short ids, so the pairs are unique and insertion order is immaterial
 
 internal/haapi/flow.go:parseSelector = exempt: the walk is guarded to a map of exactly one entry — HA's `selector` object is `{"<kind>": {…}}` and anything else is refused before it — so there is no order for a canonicalisation to fix
+internal/cmd/witness.go:loadWitness = exempt: the walk copies unexpired previews into a new map and feeds a key lookup, never an ordering; no output is derived from it

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -97,6 +98,61 @@ func (t Target) Write(tb testing.TB, targets, vocab, args []string) (string, err
 		}
 	}
 	return t.exec(tb, args)
+}
+
+// Run is one leg of a concurrent pair: what the process printed and how it
+// ended.
+type Run struct {
+	Args   []string
+	Stdout string
+	Err    error
+}
+
+// Exited reports the process's exit code, so a case can assert the code
+// contract rather than merely "it failed".
+func (r Run) Exited() int { return ExitCode(r.Err) }
+
+// WriteConcurrently is rig capability R8: two writers, same target, launched
+// as close to the same instant as two processes can be.
+//
+// It exists because every case in this tier until now drove hactl one command
+// at a time, and three findings (#61 #100 #101) are only visible when two
+// callers share an instance. A harness that can only run one command cannot
+// express "and then somebody else did this at the same moment", which is the
+// same green-by-construction gap §1 of the FIXPLAN describes for fixtures —
+// one level up, in the driver rather than the corpus.
+//
+// Both legs go through the same guardLiveWrite the single-writer path uses, so
+// the live profile is no more exposed by a race than by a write.
+//
+// The processes are started from goroutines released by one closed channel
+// rather than started in sequence: a `go` statement per writer, with the fork
+// and exec inside it, staggered the two by however long the first exec took.
+// On the reference instance that stagger was larger than the window under
+// test.
+func (t Target) WriteConcurrently(tb testing.TB, targets, vocab []string, legs ...[]string) []Run {
+	tb.Helper()
+	if t.Profile == Live {
+		for _, args := range legs {
+			if err := guardLiveWrite(args, targets, vocab); err != nil {
+				tb.Fatalf("%v", err)
+			}
+		}
+	}
+
+	runs := make([]Run, len(legs))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, args := range legs {
+		wg.Go(func() {
+			runs[i].Args = args
+			<-start
+			runs[i].Stdout, runs[i].Err = t.exec(tb, args)
+		})
+	}
+	close(start)
+	wg.Wait()
+	return runs
 }
 
 func (t Target) exec(tb testing.TB, args []string) (string, error) {

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hemm-ems/hactl/internal/backupfile"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
@@ -810,18 +811,14 @@ func validateScriptCandidate(ctx context.Context, cfg *config.Config, candidate 
 	return true, nil
 }
 
+// backupScriptConfig preserves a script's stored text before a confirmed write
+// replaces it. Named through backupfile so it cannot overwrite another
+// caller's recovery point (H-26) — the sibling defect to the automation
+// backup's, in the sibling command, which is why both go through one writer.
 func backupScriptConfig(dir, scriptID, content string) (string, error) {
-	backupDir := filepath.Join(dir, "backups")
-	if err := os.MkdirAll(backupDir, 0o750); err != nil {
-		return "", fmt.Errorf("creating backup dir: %w", err)
-	}
-	ts := time.Now().Format("2006-01-02T15-04-05")
-	filename := fmt.Sprintf("%s_script_%s.yaml", ts, strings.ReplaceAll(scriptID, string(os.PathSeparator), "_"))
-	backupPath := filepath.Join(backupDir, filename)
-	if err := os.WriteFile(backupPath, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("writing backup: %w", err)
-	}
-	return backupPath, nil
+	safeID := strings.ReplaceAll(scriptID, string(os.PathSeparator), "_")
+	return backupfile.Write(filepath.Join(dir, "backups"), 0o600, []byte(content),
+		func(stamp string) string { return fmt.Sprintf("%s_script_%s.yaml", stamp, safeID) })
 }
 
 func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {

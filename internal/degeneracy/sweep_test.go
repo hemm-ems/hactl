@@ -55,6 +55,8 @@ var unidentifiedWireStructs = map[string]string{
 	"noStoredConfigReport": "hactl's own --json output shape for `dash show` on a dashboard " +
 		"Home Assistant holds no config for",
 	"DashboardCreateParams": "a request body hactl sends, not a payload it decodes",
+	"witnessData": "hactl's own cache file (confirm-witness.json), written and read by hactl " +
+		"itself; nothing on a wire produces it and nothing renders it",
 
 	// ---- transport envelopes: a decode failure here is already an error ----
 	"wsMessage":       "WebSocket transport envelope; a bad frame fails the read, not a render",
@@ -133,6 +135,10 @@ var uncheckedDecodeSites = map[string]string{
 		"degenerate one — the caller has already parsed the same document for its views",
 	"internal/cmd/dash.go:showSingleView:v":               "decodes one raw view into any, for YAML re-encoding",
 	"internal/cmd/svc.go:runSvcCall:data":                 "decodes the user's own --data argument",
+	"internal/cmd/witness.go:loadWitness:loaded": "a witness file that is missing, truncated or " +
+		"corrupt must read as NO previews recorded — the direction that REFUSES. A zero decode " +
+		"here cannot render as an answer because it renders as `--confirm refused`, naming the " +
+		"dry-run to run; the failure mode H-7 guards against is the opposite one",
 	"internal/cmd/flow.go:diagnosticsConfigData:envelope": "raw diagnostics passthrough, with an explicit fallback",
 	"internal/cmd/flow.go:runConfigFlowStep:rawData":      "decodes the user's own --data argument",
 	"internal/cmd/states.go:decodeStateAttributes:attrs": "decodes ONE entity's attributes into " +

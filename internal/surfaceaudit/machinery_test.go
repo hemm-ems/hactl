@@ -197,6 +197,19 @@ func TestExtractorsFindTheirOwnPackage(t *testing.T) {
 		// that rendered one arbitrary entry of a map for a whole release.
 		{"maprange", surfaceaudit.MapRangeSurface, []string{"internal/cmd/wireguard_cmd.go:writeWireguardMonitor"}},
 		{"decode", surfaceaudit.DecodeSurface, []string{"internal/writer/writer.go:(*Writer).remoteEntry"}},
+		// The three backup writers this surface was built for. Naming all three
+		// is the point: each was a separate fix in a separate release before
+		// H-26, and an extractor that found only one would look green while
+		// proving a third of the rule.
+		// backupfile.Write is the one writer the three backup sites were
+		// collapsed into, so an extractor that stopped matching would take the
+		// whole rule with it; the other two are independent packages, so a
+		// derivation that silently narrowed to one of them is caught too.
+		{"sharedstate", surfaceaudit.SharedStateSurface, []string{
+			"internal/backupfile/backupfile.go:Write",
+			"internal/manual/state.go:saveState",
+			"pkg/ids/ids.go:(*Registry).Save",
+		}},
 		// One key per transport kind, because the two legs are derived
 		// independently and the defect was in exactly one of them: the shared
 		// HTTP client both REST callers now build, and the websocket dialer that

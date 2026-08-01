@@ -235,6 +235,24 @@ func TestMapRangeSurfaceIsClosed(t *testing.T) {
 	runGate(t, s, err)
 }
 
+// TestSharedStateSurfaceIsClosed — every function in the module's non-test
+// sources that can destroy a file says whether the file was somebody else's.
+//
+// H-26 states the rule as a universal, and the live-fire run found it broken
+// in three places at once: the automation backup, the script backup and the
+// dashboard snapshot each named their file from a clock at one-second
+// resolution and wrote it with a call that truncates. Three sites, one defect,
+// and each would have been fixed alone in the place it was reported — the
+// exact shape of the four defects this package's doc comment opens with.
+//
+// The census is every destroyer rather than every destroyer under an instance
+// directory, because deciding which paths are "inside" one is a heuristic over
+// string building, and a heuristic that misses is silent.
+func TestSharedStateSurfaceIsClosed(t *testing.T) {
+	s, err := surfaceaudit.SharedStateSurface(repoRoot(t))
+	runGate(t, s, err)
+}
+
 // TestAutomationRefSurfaceIsClosed — every command entrypoint that takes an
 // automation reference hands it to the one shared resolver, or is
 // dispositioned for not doing so.
