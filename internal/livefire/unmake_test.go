@@ -21,17 +21,22 @@ import (
 // `label delete` too; the assertion that matters is that a SECOND holder of
 // the same value is untouched.
 //
-// unmakeEntityA and unmakeEntityB are two real, distinct, deviceless entities
-// with no area/label of their own on the reference instance (a template
-// sensor and a helper, so H-8's device-area inheritance cannot mask a clear as
-// a no-op): sensor.pg_w7_template_sensor (used the same way in
-// TestLiveWriteGuardAllowsAPlaygroundWrite) and input_boolean.pg_core_flag_a
-// (FIXPLAN-livefire.md WP7 lesson 1). The rig has no such fixture — its
-// entities carry no registry area/label of their own either — so on the rig
-// two arbitrary config-defined entities serve the same role.
+// unmakeEntities are two real, distinct, deviceless entities with no area or
+// label of their own (a template sensor and a helper, so H-8's device-area
+// inheritance cannot mask a clear as a no-op). The rig's entities carry no
+// registry area/label either, so two arbitrary config-defined ones serve.
+//
+// Both live ids were verified present on the reference instance on 2026-08-01,
+// which is the point: the first draft named input_boolean.pg_core_flag_a,
+// taken from FIXPLAN-livefire.md's WP7 notes rather than from the instance,
+// and that entity no longer exists. `ent show` 404s on it, so the dry run
+// exited 1 and BOTH cases failed on the live profile while passing on the rig
+// — a playground object cited from a document is a claim, and the sweep is
+// where a stale one surfaces. Re-verify with `ent ls --pattern 'pg_*'` rather
+// than trusting this comment if either case starts failing to resolve.
 func unmakeEntities(tgt Target) (a, b string) {
 	if tgt.Profile == Live {
-		return "sensor.pg_w7_template_sensor", "input_boolean.pg_core_flag_a"
+		return "sensor.pg_w7_template_sensor", "input_boolean.pg_w5_renamed"
 	}
 	return "input_boolean.guest_mode", "input_boolean.alarm_armed"
 }
@@ -78,7 +83,12 @@ func entShow(t *testing.T, tgt Target, entity string) entShowFields {
 func dryRunThenConfirm(t *testing.T, tgt Target, targets, vocab, args []string) {
 	t.Helper()
 	if out, err := tgt.Read(t, args...); err != nil {
-		t.Fatalf("dry run %v: %v\n%s", args, err, out)
+		// Read returns stdout, and every error message hactl prints goes to the
+		// other stream — so reporting `out` alone said "exit status 1" and
+		// nothing about the cause, which cost a whole sweep run to diagnose by
+		// hand. The dry run is read-only, so asking again for stderr is free.
+		stderr, _ := tgt.ReadDiagnostic(t, args...)
+		t.Fatalf("dry run %v: %v\nstdout: %s\nstderr: %s", args, err, out, stderr)
 	}
 	confirmArgs := append(append([]string{}, args...), "--confirm")
 	if out, err := tgt.Write(t, targets, vocab, confirmArgs); err != nil {
