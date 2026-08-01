@@ -16,6 +16,10 @@ var (
 	testedHA = "" // comma-separated HA versions tested against (e.g. "2026.4, 2026.3")
 )
 
+// flagVersion backs the root's own `--version`; see init for why cobra's is not
+// used.
+var flagVersion bool
+
 // Canonical project URLs. Printed by `hactl version` and the root help so
 // agents and users can find the issue tracker without inferring it from
 // local remotes or forks (hemm-ems/hactl#43).
@@ -71,11 +75,28 @@ func printVersion(w io.Writer) {
 func init() {
 	rootCmd.AddCommand(versionCmd)
 
-	// `--version` and `hactl version` must give the same first line: the brew
-	// formula's `test do` runs the flag form (homebrew-tap/hactl.rb, mirrored
-	// from .goreleaser.yaml), while everything else prints via printVersion.
-	// Set here rather than in root.go's literal because this file owns the
-	// ldflags-set version/commit/date vars.
-	rootCmd.Version = version
-	rootCmd.SetVersionTemplate(fmt.Sprintf("hactl %s (commit %s, built %s)\n", version, commit, date))
+	// `--version` and `hactl version` are two spellings of one question, so
+	// they go through one function.
+	//
+	// They used to go through two. Cobra answers its built-in `--version` from
+	// a template string, before PersistentPreRun and before any Run, so
+	// `hactl --version --json` printed the plain banner while `hactl version
+	// --json` printed JSON — at exit 0, in either flag order, with nothing
+	// saying --json had been dropped (H-25, #13). A template cannot read a
+	// flag, so the fix is to stop using one: leaving rootCmd.Version empty
+	// keeps cobra from installing its flag OR its handler, and the root's own
+	// RunE answers instead.
+	//
+	// The flag is local to the root, exactly as cobra's was, so `ent ls
+	// --version` stays an unknown flag — and flagErrorHelp now answers it with
+	// where --version does live.
+	rootCmd.Flags().BoolVarP(&flagVersion, "version", "v", false, "print version information and exit")
+	helpForRoot := rootCmd.RunE
+	rootCmd.RunE = func(c *cobra.Command, args []string) error {
+		if flagVersion {
+			printVersion(c.OutOrStdout())
+			return nil
+		}
+		return helpForRoot(c, args)
+	}
 }

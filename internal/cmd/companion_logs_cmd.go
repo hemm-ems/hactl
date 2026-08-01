@@ -59,7 +59,7 @@ func runCompanionLogs(cmd *cobra.Command, w io.Writer) error {
 	res, err := cc.Logs(ctx, companion.LogsParams{
 		Component: flagLogsComponent,
 		Level:     flagLogsLevel,
-		Since:     flagSince,
+		Since:     sinceWindow(),
 		Limit:     limit,
 	})
 	if err != nil {

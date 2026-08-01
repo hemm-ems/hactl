@@ -202,7 +202,7 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"id", "state", "area", "labels", runsColumn(flagSince), "errors", "last_err"},
+		Headers: []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"},
 		Rows:    make([][]string, len(rows)),
 	}
 	for i, r := range rows {

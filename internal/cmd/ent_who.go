@@ -89,7 +89,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 			})
 		}
 		_, _ = fmt.Fprintf(w, "no changes for %s in the last %s (source: %s)\n",
-			entityID, flagSince, actorSourceLogbook)
+			entityID, sinceWindow(), actorSourceLogbook)
 		return nil
 	}
 
@@ -233,7 +233,7 @@ func runEntWho(ctx context.Context, w io.Writer, entityID string) error {
 
 	// Summary table.
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintf(w, "summary (%s):\n", flagSince)
+	_, _ = fmt.Fprintf(w, "summary (%s):\n", sinceWindow())
 	sumTbl := &format.Table{
 		Headers: []string{"changed_by", "count"},
 		Rows:    make([][]string, len(summary)),

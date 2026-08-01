@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -109,6 +110,28 @@ func startContractCompanion(t *testing.T) *contractCompanion {
 			"ingress_active":       false,
 			"auth_mode":            "bearer",
 		})
+	})
+
+	// The document routes: the five commands the manual names as unreachable by
+	// --json all print `content` verbatim. They are stubbed here so
+	// TestManualNamesTheCommandsJSONDoesNotReach can RUN each of them and see
+	// that the answer really is not a JSON document — the measurement that
+	// `tpl eval` sat on the wrong side of for as long as the list was written by
+	// hand (#12).
+	for route, identity := range map[string]map[string]any{
+		"/v1/config/automation": {"id": "morning"},
+		"/v1/config/script":     {"id": "wakeup"},
+		"/v1/config/template":   {"unique_id": "tpl1"},
+	} {
+		doc := map[string]any{"content": "alias: A document\nsequence: []\n"}
+		maps.Copy(doc, identity)
+		mux.HandleFunc(route, func(w http.ResponseWriter, _ *http.Request) { contractJSON(w, doc) })
+	}
+	mux.HandleFunc("/v1/config/file", func(w http.ResponseWriter, _ *http.Request) {
+		contractJSON(w, map[string]any{"path": "configuration.yaml", "content": "homeassistant:\n  name: Home\n"})
+	})
+	mux.HandleFunc("/v1/config/block", func(w http.ResponseWriter, _ *http.Request) {
+		contractJSON(w, map[string]any{"path": "template.yaml", "id": "tpl1", "content": "- sensor:\n    - name: T\n"})
 	})
 
 	// GET /v1/config/files — config files.

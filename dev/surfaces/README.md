@@ -80,6 +80,7 @@ not an act at all. That asymmetry is the whole design.
 | `positional` | the live cobra tree | every command declares its positional contract, so a blank identifier, an unexpected positional and an unknown subcommand are all refused before the command runs (H-22) |
 | `boolcell` | every bool-to-cell rendering in the typed source — a call into the renderer vocabulary, or a variable a function assigns two of its words | a boolean rendered into a table cell reaches `--json` as a JSON boolean (`SetMachine`), never as its human wording (H-10) |
 | `outputformat` | the live cobra tree | a command declaring an output-format flag beside `--json` refuses the combination rather than silently picking a winner (H-10) |
+| `flagcontract` | the live cobra tree | a flag more than one command offers means one thing in all of them, and every command that offers it acts on it (H-25) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

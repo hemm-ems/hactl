@@ -19,6 +19,11 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
+// defaultTimeout is the bound every connection carries when the caller names
+// none. It is a constant rather than a literal in the flag declaration so the
+// per-invocation reset and the declaration cannot drift.
+const defaultTimeout = 30 * time.Second
+
 var (
 	flagDir       string
 	flagSince     string
@@ -52,15 +57,26 @@ var rootCmd = family(&cobra.Command{
 		"issues:  " + issuesURL,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	// The domain check runs before the value is installed anywhere, so a
+	// duration that cannot bound a connection never reaches one: `--timeout
+	// -1s` used to arrive at net.Dialer as a deadline already in the past and
+	// come back as `dial tcp: lookup <host>: i/o timeout` — a network failure
+	// invented out of a flag value (H-25, #56).
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := checkGlobalFlagDomains(); err != nil {
+			return err
+		}
 		haapi.DefaultTimeout = flagTimeout
+		return nil
 	},
 })
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")
-	rootCmd.PersistentFlags().StringVar(&flagSince, "since", "24h", "time range for queries (e.g. 24h, 7d)")
-	rootCmd.PersistentFlags().IntVar(&flagTop, "top", 10, "max items to display in tables (never truncates --json)")
+	// `--since` is deliberately NOT here: it is declared on the nine commands
+	// that read it (see sinceCommands in since.go), because a flag on a command
+	// that cannot act on it is the defect H-25 exists for.
+	rootCmd.PersistentFlags().IntVar(&flagTop, "top", 10, "max items to display in tables (0 = every row); never truncates --json")
 	rootCmd.PersistentFlags().BoolVar(&flagFull, "full", false, "show full/raw output")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "output as JSON")
 	// --color is not yet implemented: no command emits ANSI escapes. The flag
@@ -78,8 +94,8 @@ func init() {
 	// --timeout 1s` returned after 1.01s. The wording is unchanged because it was
 	// never wrong — H-23 is the code catching up with it — and the parenthesis
 	// names the set, which is what a caller bounding worst-case latency needs.
-	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second,
-		"per-request timeout for HA/companion API calls (bounds every connection: REST, WebSocket, companion)")
+	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", defaultTimeout,
+		"per-request timeout for HA/companion API calls (bounds every connection: REST, WebSocket, companion; must be positive)")
 
 	// Cobra's built-in help output must never go through the --tokensmax cap
 	// (defect C): wrap the default HelpFunc purely to record that help was
@@ -90,6 +106,12 @@ func init() {
 		helpRendered = true
 		defaultHelpFunc(cmd, args)
 	})
+
+	// Cobra consults the nearest FlagErrorFunc up the parent chain, so one
+	// installed here answers for every command in the tree. See flagErrorHelp:
+	// a mistyped flag gets the help a mistyped command has always got, and a
+	// flag that belongs to a different command is answered with its address.
+	rootCmd.SetFlagErrorFunc(flagErrorHelp)
 }
 
 // statsWriter wraps an io.Writer and counts bytes written.
@@ -351,7 +373,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		rootCmd.SetArgs(nil)
 		// Reset flags to defaults for next invocation
 		flagDir = ""
-		flagSince = "24h"
+		flagSince = defaultSinceWindow
 		flagTop = 10
 		flagFull = false
 		flagJSON = false
@@ -359,6 +381,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		flagStats = false
 		flagTokens = false
 		flagTokensMax = 500
+		flagTimeout = defaultTimeout
 		helpRendered = false
 		structuredOutput = false
 		// pflag records `Changed` on the flag object, which outlives an
@@ -368,6 +391,12 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 		rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 		resetSubcommandFlags()
 	}()
+
+	// Cleared BEFORE the run, not after it like the flag values above: this one
+	// is an observation of the invocation rather than state carried into it, and
+	// a reset in the deferred block would erase the answer before the caller
+	// could read it. TestEveryCommandDeclaringSinceReadsIt is that caller.
+	sinceWasRead = false
 
 	// Set the context on the target command explicitly: cobra only
 	// propagates the root context to a subcommand whose ctx is still nil,

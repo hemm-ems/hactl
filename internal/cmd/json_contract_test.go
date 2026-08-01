@@ -95,9 +95,16 @@ var metaCommands = map[string]bool{
 //   - `cat`/`diff` exist for YAML round-tripping — see the "pipe-friendly,
 //     round-trippable" comment on script.go's runScriptCat, and the identical
 //     pattern on auto/helper/tpl cat and auto/script diff.
-//   - `eval`'s result IS a rendered template string (tpl eval).
 //   - `file`/`block` print a raw config file or block verbatim (config file,
 //     config block).
+//
+// `eval` was on this list and did not belong: `tpl eval --json` has answered
+// with a JSON envelope since H-10 forced it (HA renders a template to a STRING,
+// and for non-scalars that string is Python's repr, so the text is returned
+// verbatim INSIDE a document rather than as one). The manual's own enumeration
+// of the commands --json does not reach copied the error and omitted `rtfm`,
+// which really does ignore it — a hand-written list wrong in both directions at
+// once (#12). It is derived now: TestManualNamesTheCommandsJSONDoesNotReach.
 //
 // Forcing --json on these would fight their actual, documented contract, so
 // they are excluded from the JSON sweep on design grounds — not because they
@@ -105,7 +112,6 @@ var metaCommands = map[string]bool{
 var verbatimByDesign = map[string]bool{
 	"cat":   true,
 	"diff":  true,
-	"eval":  true,
 	"file":  true,
 	"block": true,
 }
@@ -292,6 +298,14 @@ func buildContractFixture(t *testing.T) *contractFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, historyJSON)
 		},
+		// `tpl eval` joined this sweep when `eval` left verbatimByDesign, where
+		// it never belonged: it answers --json with a JSON envelope and has
+		// since H-10. Home Assistant renders a template to plain text, not JSON,
+		// so the handler answers as HA does.
+		"/api/template": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = fmt.Fprint(w, "2")
+		},
 		"/api/logbook/": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, logbookJSON)
@@ -456,6 +470,7 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"dash resources":      nil,
 		"dash grep":           {"light.kitchen"},
 		"log show":            {f.logShowID},
+		"tpl eval":            {"{{ 1 + 1 }}"},
 
 		// The eight the deleted companionRequired list used to skip. They are
 		// ordinary rows here — the only thing that made them special was the

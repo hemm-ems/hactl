@@ -5,10 +5,61 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
+// defaultSinceWindow is the look-back every command that takes --since starts
+// from.
+const defaultSinceWindow = "24h"
+
+// sinceCommands is every command that reads the window — which, since H-25, is
+// also every command that DECLARES the flag.
+//
+// `--since` used to be a root persistent flag: declared on all 112 commands,
+// read by these nine. `area ls --since garbage-value-xyz` exited 0 with output
+// byte-identical to `area ls`, and six more families did the same, while `log`
+// and `changes` refused the identical value — so whether a mistyped window was
+// an error depended on which command the caller happened to be running
+// (#54). Every one of those help screens advertised the flag.
+//
+// Declaring it here rather than gating it at the root is what makes the fix
+// structural: cobra refuses an undeclared flag on its own, `area ls --help`
+// stops promising an effect that does not exist, and there is no registry of
+// "commands exempt from --since" to fall out of step with the code. What the
+// caller gets instead is the flag's address — flagErrorHelp answers `area ls
+// --since 1h` by naming the commands below.
+func sinceCommands() []*cobra.Command {
+	return []*cobra.Command{
+		autoLsCmd, ccLogsCmd, changesCmd, companionLogsCmd,
+		entAnomaliesCmd, entHistCmd, entWhoCmd, logCmd, scriptLsCmd,
+	}
+}
+
+func init() {
+	for _, c := range sinceCommands() {
+		c.Flags().StringVar(&flagSince, "since", defaultSinceWindow, "time range for queries (e.g. 24h, 7d)")
+	}
+}
+
+// sinceWasRead records that the running command consulted the window. It is
+// reset per invocation alongside the flag values (RunWithOutputContext).
+//
+// It exists so that sinceCommands can be PROVEN to be the consumption set
+// rather than asserted to be: TestEveryCommandDeclaringSinceReadsIt drives each
+// of the nine through the real entry point and fails on one that declares the
+// flag and never looks at it — the exact state the whole tree was in.
+var sinceWasRead bool
+
+// sinceWindow is the only read of the --since flag. Every consumer goes through
+// it, so the instrumentation above cannot be bypassed by a new call site.
+func sinceWindow() string {
+	sinceWasRead = true
+	return flagSince
+}
+
 // parseSince converts a duration string like "24h" or "7d" to time.Duration.
-// Shared by every command that honors the global --since flag.
+// Shared by every command that honors the --since flag.
 //
 // --since names how far BACK to look, so a negative value is always a mistake.
 // Accepting one silently inverted the query window (since > until), which HA

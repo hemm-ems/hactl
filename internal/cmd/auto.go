@@ -237,7 +237,7 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		}
 	}
 
-	headers := []string{"id", "state", "area", "labels", runsColumn(flagSince), "errors", "last_err"}
+	headers := []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"}
 	if anyRestored {
 		headers = append(headers, restoredColumn)
 	}

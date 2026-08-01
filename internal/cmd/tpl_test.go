@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,23 +52,36 @@ func TestResolveTemplate_FromFile(t *testing.T) {
 	}
 }
 
-func TestResolveTemplate_FilePriority(t *testing.T) {
+// TestResolveTemplate_RefusesTwoTemplates replaces TestResolveTemplate_FilePriority,
+// which asserted the defect: it required that `-f` win over the positional
+// argument silently, so `tpl eval "{{ 1+1 }}" -f file.jinja` printing the
+// file's answer and discarding the argument was pinned as correct behaviour
+// (H-25, #6). The name was the tell — "priority" is a decision nobody had made
+// and nothing documented, and the same silent precedence between `--raw`,
+// `--yaml` and `--json` was already refused one flag over (D-26).
+//
+// Each input alone is still asserted, by the two neighbouring tests: without
+// them "refuse both" is satisfied by refusing either.
+func TestResolveTemplate_RefusesTwoTemplates(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.j2"
-	content := "from_file"
-	if err := writeTestFile(tmpFile, content); err != nil {
+	if err := writeTestFile(tmpFile, "from_file"); err != nil {
 		t.Fatalf("writing test file: %v", err)
 	}
 
 	flagTplFile = tmpFile
 	defer func() { flagTplFile = "" }()
 
-	// Even with inline arg, file takes priority
 	tpl, err := resolveTemplate([]string{"from_arg"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("resolveTemplate accepted both and answered %q — one of the two inputs was discarded in silence", tpl)
 	}
-	if tpl != "from_file" {
-		t.Errorf("tpl = %q, want 'from_file' (file takes priority)", tpl)
+	if !errors.Is(err, errFlagContract) {
+		t.Errorf("refusal is %v, want the flag contract's own error", err)
+	}
+	for _, want := range []string{"from_arg", tmpFile, "only one can be honoured"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
 	}
 }
 

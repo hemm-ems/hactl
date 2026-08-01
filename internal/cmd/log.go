@@ -392,7 +392,7 @@ func applyLogSince(entries []analyze.LogEntry, sinceSet bool) ([]analyze.LogEntr
 	if !sinceSet {
 		return entries, nil
 	}
-	d, err := parseSince(flagSince)
+	d, err := parseSince(sinceWindow())
 	if err != nil {
 		return nil, err
 	}

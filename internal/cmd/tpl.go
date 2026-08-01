@@ -204,7 +204,23 @@ func runTplEval(ctx context.Context, w io.Writer, args []string) error {
 	return nil
 }
 
+// resolveTemplate picks the template to render from the two places a caller may
+// put one.
+//
+// Both at once is refused. `tpl eval "{{ 1+1 }}" -f file.jinja` used to evaluate
+// the file and discard the argument, printing nothing on either stream about
+// the input it had thrown away (H-25, #6) — the same defect `dash show --raw
+// --yaml` had one flag over, and refused for the same reason (D-26): a
+// precedence nobody documented is a rule every caller has to learn, and naming
+// the winner in the output is not available under `--json`. This is the only
+// place in the tree where a positional and a flag name the same input; every
+// other `-f` sits beside a positional that names the OBJECT being written.
 func resolveTemplate(args []string) (string, error) {
+	if flagTplFile != "" && len(args) > 0 {
+		return "", &flagContractError{fmt.Sprintf(
+			"the template argument %q and -f %s each name a template to evaluate and only one can be honoured; pass one",
+			args[0], flagTplFile)}
+	}
 	if flagTplFile != "" {
 		data, err := os.ReadFile(flagTplFile) //nolint:gosec // file path provided by user via CLI flag
 		if err != nil {

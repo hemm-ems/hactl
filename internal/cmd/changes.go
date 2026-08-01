@@ -57,7 +57,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func runChanges(ctx context.Context, w io.Writer) error {
 	}
 
 	if len(entries) == 0 && !flagJSON {
-		_, _ = fmt.Fprintln(w, "no changes in the last "+flagSince)
+		_, _ = fmt.Fprintln(w, "no changes in the last "+sinceWindow())
 		return nil
 	}
 

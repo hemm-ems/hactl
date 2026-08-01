@@ -35,7 +35,7 @@ func maybeInjectManual(executed *cobra.Command, rawArgs []string) {
 		}
 		return
 	}
-	if !shouldInject(mode, stdoutTTY, stderrTTY, flagJSON, top, len(rawArgs) == 0) {
+	if !shouldInject(mode, stdoutTTY, stderrTTY, top, len(rawArgs) == 0) {
 		return
 	}
 
@@ -56,13 +56,26 @@ func maybeInjectManual(executed *cobra.Command, rawArgs []string) {
 // commands handle the manual themselves or must stay clean (mcp, setup,
 // completion machinery).
 //
-// --json output is also exempt: the caller is a machine parsing structured
-// output that won't read prose, and (unlike a human's separate stderr) agent
-// harnesses routinely merge stdout+stderr, so injecting the manual there just
-// corrupts the JSON stream. The how-to is left un-consumed so a later
-// human-readable call can still receive it.
-func shouldInject(mode manual.Mode, stdoutTTY, stderrTTY, jsonOut bool, top string, bareInvocation bool) bool {
-	if mode == manual.ModeOff || stdoutTTY || stderrTTY || jsonOut || bareInvocation {
+// Delivery is decided by who is listening, never by what shape the answer takes
+// (H-25). `--json` used to be a fourth condition here, and the cost was
+// measured on a real instance: with a brand-new HACTL_SESSION, `health --json`
+// and `device ls --json` wrote ZERO bytes to stderr and recorded no session at
+// all, while the same commands without the flag delivered 10 262 and 11 742
+// bytes — so an agent that reads only structured output, the exact caller this
+// manual is written for, never received the routing table, the confirm
+// convention or any family how-to, with nothing saying anything had been
+// skipped (#50).
+//
+// hactl already disagreed with itself about this: confirmGuard delivers the
+// how-to under `--json` (12 447 bytes, measured in the same run), because its
+// refusal is meaningless without it. The argument for the exemption was that
+// agent harnesses merge stdout and stderr and prose would corrupt the JSON
+// stream — but that is already true of every error hactl prints and of the
+// slog warnings it emits mid-command, both of which go to stderr under `--json`
+// today. `--json` is a promise about STDOUT, and the manual has never been on
+// stdout: docs/manual.md's own delivery section says so in as many words.
+func shouldInject(mode manual.Mode, stdoutTTY, stderrTTY bool, top string, bareInvocation bool) bool {
+	if mode == manual.ModeOff || stdoutTTY || stderrTTY || bareInvocation {
 		return false
 	}
 	return !manual.Exempt[top]

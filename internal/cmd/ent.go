@@ -563,7 +563,7 @@ func errUnknownEntity(ctx context.Context, client *haapi.Client, entityID string
 	}
 	return fmt.Errorf("entity %q: no live state, and no recorded history in the last %s "+
 		"(check the entity_id with `ent ls --pattern '*%s*'`, or widen --since)",
-		entityID, flagSince, lastIDSegment(entityID))
+		entityID, sinceWindow(), lastIDSegment(entityID))
 }
 
 // parseResampleDuration parses --resample and rejects values the resampler
@@ -597,7 +597,7 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}
@@ -707,7 +707,7 @@ func runEntAnomalies(ctx context.Context, w io.Writer, entityID string) error {
 		return err
 	}
 
-	sinceDur, err := parseSince(flagSince)
+	sinceDur, err := parseSince(sinceWindow())
 	if err != nil {
 		return err
 	}

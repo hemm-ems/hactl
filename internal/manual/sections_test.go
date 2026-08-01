@@ -54,10 +54,22 @@ func TestFamiliesListMatchesMap(t *testing.T) {
 // with a plausible wrong answer, which is exactly what an agent scripts
 // against. Raising this number is a decision with an author, the same way
 // dev/surfaces ceilings are — not something to do to fit a paragraph.
+//
+// It moved again, 8704 to 9216, for H-25 — the same clause about the other kind
+// of input, and for the same reason. Three facts an agent cannot get anywhere
+// else went into the core: `--since` is no longer global and the row names the
+// nine commands that take it (a call that used to exit 0 doing nothing is now
+// exit 1); the enumerated commands `--json` does not reach, which the manual had
+// wrong in both directions and which is now derived from the tree by
+// TestManualNamesTheCommandsJSONDoesNotReach; and the bad-input bullet's two new
+// members. The core sat 7 bytes under the old bound when this was written, so
+// the alternative to raising it was deleting tuned prose to make room —
+// dev/tuning measured that prose, and trading it for this would be a change
+// nobody had measured.
 func TestCoreTextSize(t *testing.T) {
 	n := len(CoreText())
-	if n < 4096 || n > 8704 {
-		t.Errorf("CoreText() is %d bytes, want 4096..8704 (~1-2k tokens)", n)
+	if n < 4096 || n > 9216 {
+		t.Errorf("CoreText() is %d bytes, want 4096..9216 (~1-2k tokens)", n)
 	}
 }
 

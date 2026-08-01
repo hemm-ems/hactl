@@ -203,9 +203,8 @@ one hactl prints (`auto show --json`'s `config_id`, `auto create`'s result);
 
 `auto show` summarizes; `auto cat` prints the stored config itself, so it is what
 you feed back into `auto diff -f` / `auto apply -f`. It needs the companion.
-Output is YAML by design —
-`--json` does not change it (same for `script|helper|tpl cat`, `auto|script diff`,
-`tpl eval`, `config file|block`).
+Output is YAML by design — `--json` does not change it; the full list of
+commands `--json` does not reach is under Output conventions.
 
 Condensed trace format:
 ```
@@ -973,8 +972,8 @@ hactl auto ls --restored                       # same, automation-scoped table
 - **Stable IDs:** `trc:a7` (`auto`/`script show`), `log:f2` (`log` incl. `--unique`, `cc logs`) — kept in `cache/ids.json` until `cache clear`; `ent anomalies` mints none.
 - **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included. Boolean columns are JSON booleans (`"admin": true`); numeric cells stay strings (`"runs_24h": "0"`) — parse them, never test them for truthiness.
 - **No decoration:** no emojis, no color.
-- **JSON mode:** `--json` extracts fields; filter first on large datasets. The verbatim commands above ignore it, as do `auto|script diff` and `tpl eval`. Previews return `{"dry_run":true,"action","details","hint"}`, a confirmed write `{"dry_run":false,"ok":true,"action","details"}` (+`"warnings"`) — read `dry_run`, not your flags.
-- **Bad input is refused, not absorbed** (exit 1, stderr, empty stdout): a blank identifier (an empty string is never a wildcard), an argument a command does not take (`ent ls sensor` → `--domain sensor`), or an unknown subcommand in any family. Nothing mistyped ever exits 0 with help.
+- **JSON mode:** `--json` extracts fields; filter first on large datasets. **Commands `--json` does not reach:** `auto|script|helper|tpl cat`, `auto|script diff`, `config file|block`, `rtfm` — each prints one document verbatim; every other command honours it. Previews return `{"dry_run":true,"action","details","hint"}`, a confirmed write `{"dry_run":false,"ok":true,"action","details"}` (+`"warnings"`) — read `dry_run`, not your flags.
+- **Bad input is refused, not absorbed** (exit 1, stderr, empty stdout): a blank identifier (an empty string is never a wildcard), an argument a command does not take (`ent ls sensor` → `--domain sensor`), an unknown subcommand in any family, a flag the command does not take (the error names the ones that do), a value outside a flag's range (`--top -1`, `--timeout 0s`), or two inputs naming one thing (`dash show --raw --yaml`). Nothing mistyped ever exits 0 with help.
 - **Dry runs resolve their target** and parse the `-f` file before printing a plan: a preview fails exactly where `--confirm` would, so a misspelled id is an error, not a plan. A family's **first `--confirm`** is refused non-interactively (how-to on stderr, exit 1) — dry-run first, then repeat.
 - **`--stats`:** response size + token estimate on stderr, after any command including a failing one.
 
@@ -985,15 +984,15 @@ hactl auto ls --restored                       # same, automation-scoped table
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--dir` | auto | Instance directory (overrides `HACTL_DIR` and auto-discovery) |
-| `--since` | `24h` | Time range (`1h`, `7d`, `30d`, …) |
-| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `--json` returns the full set regardless |
+| `--since` | `24h` | Time range (`1h`, `7d`, …) — **only on** `log`, `cc logs`, `companion logs`, `changes`, `auto ls`, `script ls`, `ent hist`, `ent anomalies`, `ent who` |
+| `--top` | `10` | Max rows in tables (CLI only — not a tool kwarg; use filters instead). `0` = every row. `--json` returns the full set regardless |
 | `--full` | off | Raw/verbose: all attributes (`ent show`), raw JSON (`trace show`). **Lifts both caps** — `--top` rows and `--tokensmax` tokens — so it can return a lot; an explicit `--tokensmax` still wins |
 | `--json` | off | JSON output |
 | `--color` | off | No-op — accepted, changes nothing |
 | `--stats` | off | Print response size + token estimate to stderr |
 | `--tokens` | off | Print compact token estimate |
 | `--tokensmax` | `500` | Cap output at N tokens; `0` = no cap. Not applied to documents (see above) |
-| `--timeout` | `30s` | Per-request timeout for HA/companion API calls |
+| `--timeout` | `30s` | Per-request timeout for HA/companion API calls; must be positive |
 
 ---
 
@@ -1027,7 +1026,8 @@ Parts of this manual may already have reached you automatically: when both stdou
 - `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
 - `off` also disables the first-`--confirm` guard (the refusal of a family's first write before its how-to arrived) — it is meant for scripts and pipelines that pre-load this manual another way, not a token-saving knob for interactive agents
 - `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand
-- Humans at a terminal never see it; stdout (incl. `--json`) stays untouched; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
+- Humans at a terminal never see it; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
+- **Delivery is decided by who is listening, never by the shape of the answer.** `--json` is a promise about stdout and the manual has never been on stdout, so `health --json` and `device ls --json` deliver on stderr exactly as they do without the flag — an agent that reads only structured output is the caller this manual is written for, and it used to be the one caller that never received it
 
 ---
 

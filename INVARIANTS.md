@@ -1795,3 +1795,72 @@ not. The report is rendered before the verdict is returned and reaches stdout
 - Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`) for
   the transport half — the set of places a cause can be produced is the set of
   connections H-23 closes.
+
+## H-25 — A flag hactl offers is a flag hactl honours
+
+H-22 gave every command a positional contract. This is its other half, and it
+says the same thing about the other kind of input: a flag appears on the
+commands that act on it, it accepts the values it says it accepts, and where two
+inputs name the same thing, passing both ends the command. There is no third
+state between honouring a flag and refusing one. A flag that is declared and
+ignored is the defect; documenting the gap is not the fix.
+
+The live-fire run found nine symptoms of the missing rule, in three shapes.
+
+**Reach.** `--since` was a root persistent flag: 112 commands offered it and
+nine read it. `area ls --since garbage-value-xyz` exited 0 with output
+byte-identical to `area ls`, while `log` and `changes` refused the identical
+value — so whether a mistyped window was an error depended on which command you
+happened to be running, and every one of those help screens advertised the flag.
+`rtfm --json` printed Markdown while the manual's enumeration of the commands
+`--json` does not reach failed to name it, and did name `tpl eval`, which
+honours it. `hactl --version --json` printed the plain banner while `hactl
+version --json` printed JSON.
+
+**Domain.** `--top -1`, `--top 0`, `--tokensmax -5` and `--timeout 0s` were each
+reinterpreted rather than refused. `--top 0` silently meant "no cap", documented
+for `--tokensmax` and for nothing else. The sharp one is `--timeout`: H-23 says
+every connection hactl opens is bounded by the caller's `--timeout`, so a `0s`
+that removes the bound makes that law vacuous — and a negative reached
+`net.Dialer` as a deadline already in the past, so hactl answered `dial tcp:
+lookup <host>: i/o timeout` against a host that was up. A flag value became a
+network diagnosis. A cap and a bound are different promises, and the flag that
+promises a bound may not be talked out of it: `--top 0` and `--tokensmax 0` mean
+"no cap" and say so, `--timeout 0s` is refused.
+
+**Exclusivity.** `tpl eval "{{ 1+1 }}" -f file.jinja` evaluated the file and
+discarded the argument, printing nothing on either stream about the input it had
+thrown away — the defect `dash show --raw --yaml` had one flag over, refused
+since D-26 for the reason that applies here too: an undocumented precedence is a
+rule every caller has to learn instead of a question the tool answers, and
+naming the winner in the output is not available under `--json`.
+
+The corollary the reach clause earns: because a flag a command cannot act on is
+now an error rather than silence, that error owes the caller an address.
+`unknown flag: --since` alone would make the next move a guess, so the refusal
+names the commands that do declare it — and a flag that resembles one the
+command takes is answered with that flag, which is the help a mistyped
+*subcommand* has always received.
+
+- Enforced by: `internal/cmd/flagcontract_test.go`
+  (`TestSinceIsDeclaredOnlyOnTheCommandsThatReadIt` and
+  `TestEveryCommandDeclaringSinceReadsIt` — the declaration set and the
+  consumption set are proven equal, the second by instrumenting the only read of
+  the flag and driving each of the nine; `TestACommandThatCannotActOnSinceRefusesItAndSaysWhereItLives`
+  over every other command in the tree;
+  `TestGlobalFlagDomainsRefuseWhatTheyCannotHonour` with the legal values
+  asserted beside the illegal ones; `TestATimeoutThatCannotBoundNeverReachesATransport`,
+  which is about ORDER — the refusal happens before the value is installed;
+  `TestUnknownFlagOffersTheNearestFlagTheCommandTakes` with a flag resembling
+  nothing as its control; `TestVersionFlagAndVersionCommandAgreeInBothModes`;
+  `TestManualNamesTheCommandsJSONDoesNotReach`, which runs every command the
+  manual names; `TestSinceIsReadThroughOneAccessor`, which holds the source to
+  the single-accessor claim the consumption proof rests on),
+  `internal/cmd/tpl_test.go`
+  (`TestResolveTemplate_RefusesTwoTemplates`, replacing a test that asserted the
+  defect), `internal/cmd/inject_test.go`
+  (`TestManualDeliveryIsNotDecidedByOutputFormat`).
+- Quantified by: `TestEveryNumericGlobalFlagStatesItsDomain` over the root's own
+  flag set for the domain clause, and `TestFlagContractSurfaceIsClosed`
+  (`dev/surfaces/flagcontract.manifest`) over every flag name more than one
+  command offers — the only place the reach clause can be broken.
