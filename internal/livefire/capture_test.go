@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,8 +71,6 @@ func TestCaptureRealDataFixture(t *testing.T) {
 		t.Logf("wrote .storage/%s", domain)
 	}
 
-	captureConfigTree(t, &s)
-
 	// The id mapping goes to a path the CAPTURER names, never into the fixture.
 	//
 	// It was written into `.storage/` first, and the leak gate caught it on the
@@ -97,19 +96,91 @@ func TestCaptureRealDataFixture(t *testing.T) {
 	}
 }
 
-// captureConfigTree derives the fixture's hand-written YAML from the archived
-// snapshot rather than from a fresh read.
+// TestCaptureConfigTreeFixture derives the fixture's hand-written YAML from the
+// archived snapshot rather than from a fresh read.
 //
 // SPEC-realdata-fixture.md §5: the config tree is already captured
 // (`_archive/livefire-2026-07-30/snapshot/`), so no live read is needed and
-// none is made. That is also what makes this half reproducible in a way the
-// live half is not — the snapshot is frozen, the instance is not.
+// none is made. That is why it is a test of its own rather than a step inside
+// the live capture: this half is reproducible by anybody holding the archive,
+// with no house involved, and the half above is not — the snapshot is frozen
+// and the instance is not.
 //
-// The generator REFUSES on shape drift instead of writing a smaller file. That
-// is S4, and it is not theoretical: the first run of this dropped eight
-// `unique_id` values carrying an umlaut, because they were being run through
-// the entity-slug sanitizer and a slug has no room for one. Nothing would have
-// reported it — the file would simply have been tidier than the house.
+// The two share no state and do not need to. The Sanitizer's answers are a pure
+// function of the source value (a hash, never a counter — see the package doc),
+// so a fresh one here maps `sensor.kwl_abluft` to exactly what the helper
+// capture mapped it to, and the two halves agree without being run together.
+func TestCaptureConfigTreeFixture(t *testing.T) {
+	if os.Getenv("HACTL_CAPTURE_FIXTURE") == "" {
+		t.Skip("set HACTL_CAPTURE_FIXTURE=1 to regenerate the config tree from the archived snapshot")
+	}
+	var s realdata.Sanitizer
+	captureConfigTree(t, &s)
+}
+
+// configFile is one hand-written YAML file of the reference instance, and what
+// has to happen to it on the way into the fixture.
+type configFile struct {
+	name string
+	// exclusions are the entries that cannot be carried, each with its reason
+	// (realdata.Exclusion). SPEC §5's bootability rule: what is dropped is named.
+	exclusions []realdata.Exclusion
+	// inert stops every entry from running here — see realdata.Inert.
+	inert bool
+	// keepHead preserves everything above the generated marker in the file that
+	// is already in the fixture, because other cases name those entries.
+	keepHead bool
+}
+
+var configFiles = []configFile{
+	{name: "template.yaml"},
+	{
+		name:     "automations.yaml",
+		inert:    true,
+		keepHead: true,
+		exclusions: []realdata.Exclusion{
+			{
+				Marker: "use_blueprint:",
+				Why: "defined by a community-authored blueprint the fixture does not carry — " +
+					"FIXPLAN §7's licensing question, still Jan's to settle",
+			},
+			{
+				Marker: "platform: mqtt",
+				Why:    "triggered by MQTT, and the rig boots Home Assistant with no broker",
+			},
+			{
+				Marker: "platform: device",
+				Why:    "triggered by a device that exists in one house and no fixture can seed",
+			},
+		},
+	},
+}
+
+// generatedHeader separates a fixture file's hand-authored half from its
+// captured one. Its first line is what the next capture cuts at.
+var generatedHeader = []string{
+	"# === EVERYTHING BELOW THIS LINE IS GENERATED ===============================",
+	"#",
+	"# TestCaptureConfigTreeFixture writes it, from a sanitized derivative of the",
+	"# reference instance's own automations.yaml. The next capture discards and",
+	"# rewrites all of it; an entry another case names belongs ABOVE this line.",
+	"#",
+	"# The entries carry `initial_state: false` because they cannot do here what",
+	"# they were written to do — their services are not installed and their entities",
+	"# mostly do not exist, so running them produces error log entries and nothing",
+	"# else. They are carried for their SHAPE. See realdata.Inert.",
+	"# ---------------------------------------------------------------------------",
+}
+
+// captureConfigTree writes each configFile into the fixture.
+//
+// The generator REFUSES on drift instead of writing a smaller file. That is S4,
+// and it is not theoretical: one run dropped eight `unique_id` values carrying
+// an umlaut, because they were being run through the entity-slug sanitizer and
+// a slug has no room for one; another left the second line of a wrapped alias
+// dangling and produced 9,600 lines of YAML that Home Assistant refused to
+// parse. The first was caught by ShapeDrift and the second was not caught by
+// anything, which is why StructureDrift exists.
 func captureConfigTree(t *testing.T, s *realdata.Sanitizer) {
 	t.Helper()
 
@@ -122,28 +193,76 @@ func captureConfigTree(t *testing.T, s *realdata.Sanitizer) {
 		snapshot = filepath.Join(root, "..", "_archive", "livefire-2026-07-30", "snapshot")
 	}
 
-	for _, name := range []string{"template.yaml"} {
-		src, readErr := os.ReadFile(filepath.Clean(filepath.Join(snapshot, name)))
+	for _, file := range configFiles {
+		raw, readErr := os.ReadFile(filepath.Clean(filepath.Join(snapshot, file.name)))
 		if readErr != nil {
-			t.Fatalf("reading %s from the snapshot at %s: %v", name, snapshot, readErr)
+			t.Fatalf("reading %s from the snapshot at %s: %v", file.name, snapshot, readErr)
 		}
-		before := realdata.MeasureConfig(string(src))
-		out := realdata.SanitizeConfigText(string(src), s)
+		src := string(raw)
+
+		if len(file.exclusions) > 0 {
+			var removed map[string]int
+			src, removed = realdata.DropTopLevelItems(src, file.exclusions)
+			for _, line := range realdata.ExclusionReport(removed) {
+				t.Logf("%s: %s", file.name, line)
+			}
+		}
+		if file.inert {
+			var changed int
+			src, changed = realdata.Inert(src)
+			t.Logf("%s: %d entries given `initial_state: false`", file.name, changed)
+		}
+
+		// Measured AFTER the declared edits, so drift reports what the
+		// SANITIZER did. What the edits above did is reported by them.
+		before := realdata.MeasureConfig(src)
+		out := realdata.SanitizeConfigText(src, s)
 		if drift := realdata.ShapeDrift(before, realdata.MeasureConfig(out)); len(drift) > 0 {
 			t.Fatalf("sanitizing %s changed its shape, so the fixture would carry less than the "+
-				"instance does: %v", name, drift)
+				"instance does: %v", file.name, drift)
 		}
-		dst := filepath.Join(fixtureDir(t), name)
-		//nolint:gosec // G703: `name` is a constant from the loop above and the
-		// directory is this repository's own testdata; the taint gosec follows
-		// is HACTL_SNAPSHOT_DIR, which selects what is READ, never where the
-		// result is written.
+		if drift := realdata.StructureDrift(src, out); len(drift) > 0 {
+			t.Fatalf("sanitizing %s produced a different document: %v", file.name, drift)
+		}
+
+		dst := filepath.Join(fixtureDir(t), file.name)
+		if file.keepHead {
+			out = handAuthoredHead(t, dst) + strings.Join(generatedHeader, "\n") + "\n" + out
+		}
+		//nolint:gosec // G703: `file.name` is a constant from the table above and
+		// the directory is this repository's own testdata; the taint gosec
+		// follows is HACTL_SNAPSHOT_DIR, which selects what is READ, never where
+		// the result is written.
 		if writeErr := os.WriteFile(dst, []byte(out), 0o600); writeErr != nil {
 			t.Fatalf("writing %s: %v", dst, writeErr)
 		}
-		t.Logf("wrote %s — %d lines, %d top-level blocks, %d unique_ids, %d lines with non-ASCII",
-			name, before.Lines, before.TopLevelDash, before.UniqueIDs, before.NonASCII)
+		t.Logf("wrote %s — %d lines, %d top-level items, %d unique_ids, %d lines with non-ASCII",
+			file.name, before.Lines, before.TopLevelDash, before.UniqueIDs, before.NonASCII)
 	}
+}
+
+// handAuthoredHead returns everything in the fixture file above the generated
+// marker, and refuses a file that has lost it.
+//
+// A capture that silently overwrote the hand-authored half would take
+// `climate_schedule` with it — the automation the concurrency cases rewrite —
+// and the failure would be four families away from its cause.
+func handAuthoredHead(t *testing.T, path string) string {
+	t.Helper()
+	existing, err := os.ReadFile(path) //nolint:gosec // G304: a path under this repo's testdata
+	if err != nil {
+		t.Fatalf("reading the fixture's %s to keep its hand-authored half: %v", path, err)
+	}
+	head, _, found := strings.Cut(string(existing), generatedHeader[0])
+	if !found {
+		t.Fatalf("%s carries no generated marker, so this capture cannot tell the hand-authored "+
+			"entries from the captured ones; the marker is %q", path, generatedHeader[0])
+	}
+	if strings.TrimSpace(head) == "" {
+		t.Fatalf("%s has nothing above the generated marker — the hand-authored entries other "+
+			"cases name are gone", path)
+	}
+	return head
 }
 
 // captureHelpers projects the instance's storage-backed helpers out of two
@@ -306,6 +425,7 @@ func init() {
 	// A capture writes into the repository's testdata. Saying so once, here,
 	// beats discovering it from a dirty worktree.
 	if os.Getenv("HACTL_CAPTURE_FIXTURE") != "" {
-		fmt.Fprintln(os.Stderr, "HACTL_CAPTURE_FIXTURE is set: TestCaptureRealDataFixture will REWRITE testdata/fixtures/realistic-instance/.storage")
+		fmt.Fprintln(os.Stderr, "HACTL_CAPTURE_FIXTURE is set: the capture tests will REWRITE "+
+			"testdata/fixtures/realistic-instance/.storage and its captured YAML")
 	}
 }

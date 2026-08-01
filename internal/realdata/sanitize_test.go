@@ -149,6 +149,50 @@ sensor:
 	}
 }
 
+// TestDerivedGateDoesNotSearchTheTreeForPunctuation is where the derived gate
+// was firing on a coincidence rather than on a survival.
+//
+// The reference instance has three input_numbers named "1. ", "2. " and "3. ".
+// Each is a `name:` value with a non-letter in it, so the rule that decides
+// substring-versus-whole-value searched the entire tree for the three-character
+// string "2. " — which occurs inside any numbered list anybody ever wrote, and
+// did occur inside a sanitized automation description. A value with no letters
+// at all carries no words. It is still compared as a WHOLE value, and a digit
+// run long enough to be an account or a phone number is still searched for;
+// three characters of punctuation are not evidence of anything.
+func TestDerivedGateDoesNotSearchTheTreeForPunctuation(t *testing.T) {
+	source := t.TempDir()
+	writeFile(t, source, "configuration.yaml", "input_number:\n  first:\n    name: \"2. \"\n"+
+		"  phone:\n    name: \"0170 1234567\"\n")
+
+	literals, err := realdata.SensitiveLiterals(source)
+	if err != nil {
+		t.Fatalf("extracting: %v", err)
+	}
+
+	incidental := t.TempDir()
+	writeFile(t, incidental, "automations.yaml", "- description: \"step 1. then 2. then 3.\"\n")
+	if leaks, scanErr := realdata.Contains(incidental, literals); scanErr != nil || len(leaks) != 0 {
+		t.Errorf("the gate reported %v on a tree that merely numbers a list (err=%v)", leaks, scanErr)
+	}
+
+	// The whole-value comparison still applies, so a fixture that really kept
+	// the name is still caught.
+	kept := t.TempDir()
+	writeFile(t, kept, "helpers.yaml", "input_number:\n  first:\n    name: \"2. \"\n")
+	if leaks, scanErr := realdata.Contains(kept, literals); scanErr != nil || len(leaks) == 0 {
+		t.Errorf("the gate missed a name it carried over verbatim (err=%v)", scanErr)
+	}
+
+	// And a digit run long enough to identify somebody is still searched for
+	// anywhere it appears.
+	buried := t.TempDir()
+	writeFile(t, buried, "automations.yaml", "- description: \"call 0170 1234567 if it trips\"\n")
+	if leaks, scanErr := realdata.Contains(buried, literals); scanErr != nil || len(leaks) == 0 {
+		t.Errorf("the gate missed a phone number inside free text (err=%v)", scanErr)
+	}
+}
+
 // The shape gate is the half that does not need the source, so it is tested
 // without one — on values no capture ever contained.
 func TestShapeGateRefusesRealWorldShapesItHasNeverSeen(t *testing.T) {

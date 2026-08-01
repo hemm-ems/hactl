@@ -1,9 +1,12 @@
 package realdata
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,8 +33,11 @@ import (
 //   - an entity reference `<domain>.<object_id>` anywhere, including inside a
 //     Jinja expression, so `states('sensor.x')` stays valid and every reference
 //     to one entity keeps agreeing with every other;
-//   - the value of a `name:` / `friendly_name:` / `alias:` key;
-//   - the value of a `unique_id:` key.
+//   - the value of a `name:` / `friendly_name:` / `alias:` / `title:` key;
+//   - the value of a `unique_id:` key;
+//   - the words and numbers of a free-text value — a `description:` above all,
+//     which is where the reference instance's automations name the people who
+//     live there. See prose.go.
 //
 // Everything else is passed through untouched, and the leak gate is what says
 // whether that was enough. This file may not decide it is safe; it can only
@@ -62,14 +68,45 @@ var entityDomains = []string{
 }
 
 var (
-	entityRef  = regexp.MustCompile(`\b(` + strings.Join(entityDomains, "|") + `)\.([a-z0-9_]+)\b`)
-	namedValue = regexp.MustCompile(`(?m)^(\s*(?:-\s+)?(?:name|friendly_name|alias|title):\s*)(.+?)(\s*)$`)
-	uniqueID   = regexp.MustCompile(`(?m)^(\s*(?:-\s+)?unique_id:\s*)(.+?)(\s*)$`)
+	entityRef = regexp.MustCompile(`\b(` + strings.Join(entityDomains, "|") + `)\.([a-z0-9_]+)\b`)
+	// One `key: value` line, split into the parts that have to be put back
+	// exactly: the indentation and any `- `, the key, the space after the colon,
+	// the value, and the trailing whitespace. The last of those is not
+	// cosmetic — 117 of the reference instance's 169 files carry trailing
+	// whitespace and ShapeDrift counts it.
+	valueLine = regexp.MustCompile(`^([ \t]*(?:-[ \t]+)?)([A-Za-z_]+):([ \t]*)(.*?)([ \t]*)$`)
 	// A whole-line comment only. A `#` after a value is far more often inside a
 	// template or a quoted string than it is a comment, and rewriting one of
 	// those would change what the document MEANS rather than what it says.
 	wholeLineComment = regexp.MustCompile(`(?m)^([ \t]*)#([ \t]*)([^\n]*)$`)
 )
+
+// valueKind is how a key's value has to be replaced.
+type valueKind int
+
+const (
+	kindName   valueKind = iota // a display name: replaced wholesale, rune length kept
+	kindOpaque                  // a token HA stores and never parses: a unique_id
+	kindProse                   // free text: replaced word by word (see prose.go)
+)
+
+// sensitiveValueKeys are the keys whose value identifies somebody, and which
+// replacement each one needs.
+//
+// This is a list of POSITIONS rather than of values, the same rule the leak
+// gate is built on: what sits at one of these keys is replaced whether or not
+// it looks like it matters.
+var sensitiveValueKeys = map[string]valueKind{
+	"name":          kindName,
+	"friendly_name": kindName,
+	"alias":         kindName,
+	"title":         kindName,
+	"unique_id":     kindOpaque,
+	"description":   kindProse,
+	"message":       kindProse,
+	"option":        kindProse,
+	"effect":        kindProse,
+}
 
 // SanitizeConfigText rewrites one config file's identifying values, leaving
 // every byte that is not one of them exactly where it was.
@@ -79,27 +116,7 @@ func SanitizeConfigText(src string, s *Sanitizer) string {
 		return parts[1] + "." + s.Identifier(parts[2])
 	})
 
-	out = uniqueID.ReplaceAllStringFunc(out, func(match string) string {
-		p := uniqueID.FindStringSubmatch(match)
-		// Opaque, not Identifier: Home Assistant never parses a unique_id, and
-		// eight of the reference instance's carry an umlaut that Identifier's
-		// slug grammar would delete.
-		return p[1] + quoteLike(p[2], s.Opaque(unquote(p[2]))) + p[3]
-	})
-
-	out = namedValue.ReplaceAllStringFunc(out, func(match string) string {
-		p := namedValue.FindStringSubmatch(match)
-		value := unquote(p[2])
-		// A block scalar or a template is a VALUE with structure, not a name;
-		// rewriting `name: >` would destroy the document. Names that are
-		// themselves templates keep whatever the entity rewrite above already
-		// did to them.
-		if value == "" || strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|") ||
-			strings.Contains(value, "{{") || strings.Contains(value, "{%") {
-			return match
-		}
-		return p[1] + quoteLike(p[2], s.Name(value)) + p[3]
-	})
+	out = sanitizeValues(out, s)
 
 	// Comments last, and they have to be done at all: §11 lists comment
 	// POSITIONS as a shape to carry, and it is easy to read that as licence to
@@ -119,6 +136,162 @@ func SanitizeConfigText(src string, s *Sanitizer) string {
 		return p[1] + "#" + p[2] + s.Name(p[3])
 	})
 	return out
+}
+
+// sanitizeValues walks the document a line at a time, because a YAML scalar is
+// not a line.
+//
+// A regular expression over `key: value` was what this used to be, and it wrote
+// a file Home Assistant refused to parse. The reference instance has aliases
+// long enough that the emitter wrapped them, so `alias: 'Übergabe ...` continued
+// on the next line — the pattern replaced the first line's value with a shorter
+// synthetic name and left `  auf '` behind as a dangling scalar. Nothing caught
+// it: the count-based shape checks all passed, and the file was 9,600 lines
+// long. StructureDrift exists because of that morning.
+func sanitizeValues(src string, s *Sanitizer) string {
+	lines := strings.Split(src, "\n")
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); {
+		m := valueLine.FindStringSubmatch(lines[i])
+		kind, sensitive := valueKind(-1), false
+		if m != nil {
+			kind, sensitive = sensitiveValueKeys[m[2]]
+		}
+		if !sensitive || m[4] == "" {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		head, value, trailing := m[1]+m[2]+":"+m[3], m[4], m[5]
+
+		// A scalar that wraps. Word-by-word substitution is the only rewrite
+		// that can touch it without moving a line boundary, so a wrapped name
+		// is treated as prose regardless of its key.
+		if end := scalarEnd(lines, i+1, len(m[1]), value); end > i+1 {
+			body := strings.Join(append([]string{value + trailing}, lines[i+1:end]...), "\n")
+			out = append(out, strings.Split(head+s.proseText(body), "\n")...)
+			i = end
+			continue
+		}
+		out = append(out, head+s.replaceValue(kind, value)+trailing)
+		i++
+	}
+	return strings.Join(out, "\n")
+}
+
+// replaceValue rewrites one single-line value according to its key's kind.
+func (s *Sanitizer) replaceValue(kind valueKind, value string) string {
+	bare := unquote(value)
+	switch {
+	case kind == kindOpaque:
+		// Opaque, not Identifier: Home Assistant never parses a unique_id, and
+		// eight of the reference instance's carry an umlaut that Identifier's
+		// slug grammar would delete.
+		return quoteLike(value, s.Opaque(bare))
+	case kind == kindProse:
+		return s.proseText(value)
+	case strings.HasPrefix(bare, ">") || strings.HasPrefix(bare, "|"):
+		// A block scalar indicator is structure, not a name. Its content is on
+		// the following lines and the wrapped branch above has it.
+		return value
+	case strings.Contains(bare, "{{") || strings.Contains(bare, "{%"):
+		// A name that is a template: the expression is what the entity pass
+		// already rewrote and has to keep, the words around it are not.
+		return s.proseText(value)
+	}
+	return quoteLike(value, s.Name(bare))
+}
+
+// scalarEnd returns the index one past the last continuation line of the scalar
+// that starts with value on the key's line.
+//
+// Indentation alone is not the rule, and reading it as the rule cost a
+// regeneration: a `unique_id:` in template.yaml is followed by a blank line and
+// two more-indented COMMENT lines, so an indentation-only scan swallowed the
+// comments into the value and replaced them. What a following line means
+// depends on the scalar's style, so that is what this branches on.
+func scalarEnd(lines []string, from, column int, value string) int {
+	switch {
+	case strings.HasPrefix(value, "|"), strings.HasPrefix(value, ">"):
+		// A block scalar owns everything more indented than its key, `#` lines
+		// included: inside one, a `#` is content.
+		end := from
+		for j := from; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) != "" && indentOf(lines[j]) <= column {
+				break
+			}
+			end = j + 1
+		}
+		return trimBlank(lines, from, end)
+	case value[0] == '\'', value[0] == '"':
+		// A quoted scalar ends where its quote closes, wherever that is. Nothing
+		// in between is a comment, and a blank line in the middle is a
+		// paragraph break the fixture is carrying on purpose.
+		if quoteCloses(value) {
+			return from
+		}
+		for j := from; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) != "" && indentOf(lines[j]) <= column {
+				break // unterminated; leave it alone and let StructureDrift judge
+			}
+			if quoteCloses(value[:1] + strings.TrimSpace(lines[j])) {
+				return j + 1
+			}
+		}
+		return from
+	}
+	// A plain scalar. A comment or a blank line ends it as far as this is
+	// concerned — under-reaching here means a tail goes unsanitized, which the
+	// leak gate reports, and over-reaching means rewriting something that was
+	// never part of the value, which nothing would report.
+	end := from
+	for j := from; j < len(lines); j++ {
+		text := strings.TrimSpace(lines[j])
+		if text == "" || strings.HasPrefix(text, "#") || indentOf(lines[j]) <= column {
+			break
+		}
+		end = j + 1
+	}
+	return end
+}
+
+// trimBlank drops trailing blank lines from a block scalar's span: they are as
+// much the next node's separator as this one's content, and leaving them out
+// keeps the substitution off a line it has nothing to do with.
+func trimBlank(lines []string, from, end int) int {
+	for end > from && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return end
+}
+
+// quoteCloses reports whether a quoted scalar beginning at s[0] is terminated
+// within s, honouring YAML's two escapes: `''` inside single quotes and a
+// backslash inside double quotes.
+func quoteCloses(s string) bool {
+	quote := s[0]
+	for i := 1; i < len(s); i++ {
+		switch {
+		case quote == '"' && s[i] == '\\':
+			i++
+		case s[i] != quote:
+		case quote == '\'' && i+1 < len(s) && s[i+1] == '\'':
+			i++
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// indentOf is the column the first non-blank byte of a line sits at.
+func indentOf(line string) int {
+	for i, r := range line {
+		if r != ' ' && r != '\t' {
+			return i
+		}
+	}
+	return len(line)
 }
 
 // unquote strips one layer of YAML quoting for the value being replaced.
@@ -244,6 +417,76 @@ func ShapeDrift(before, after ConfigShape) []string {
 		drift = append(drift, "lines carrying non-ASCII: "+itoa(before.NonASCII)+" -> "+itoa(after.NonASCII))
 	}
 	return drift
+}
+
+// StructureDrift reports how the derivative's document differs from the
+// source's, as Home Assistant's own parser would see them.
+//
+// ShapeDrift counts things in the TEXT, and every one of its counts agreed on
+// the run that produced a file HA refused to load: the line count matched, the
+// list-item count matched, the trailing-whitespace count matched, and a
+// replacement had still left a wrapped scalar's second line dangling. Nothing
+// short of parsing can tell you that, so this parses.
+//
+// Values are expected to differ — replacing them is the point. Keys, nesting
+// and the number of children are not.
+func StructureDrift(before, after string) []string {
+	var source, derivative yaml.Node
+	if err := yaml.Unmarshal([]byte(before), &source); err != nil {
+		return []string{"the SOURCE is not valid YAML: " + err.Error()}
+	}
+	if err := yaml.Unmarshal([]byte(after), &derivative); err != nil {
+		return []string{"the derivative is not valid YAML: " + err.Error()}
+	}
+	var drift []string
+	compareNodes(&source, &derivative, "$", &drift)
+	return drift
+}
+
+// maxStructureDrift bounds the report. A derivative that has drifted at three
+// places has drifted; printing the other nine hundred helps nobody.
+const maxStructureDrift = 3
+
+func compareNodes(before, after *yaml.Node, path string, drift *[]string) {
+	if len(*drift) >= maxStructureDrift {
+		return
+	}
+	switch {
+	case before.Kind != after.Kind:
+		*drift = append(*drift, fmt.Sprintf("%s: %s became %s", path, nodeKind(before), nodeKind(after)))
+		return
+	case len(before.Content) != len(after.Content):
+		*drift = append(*drift, fmt.Sprintf("%s: %d children became %d", path, len(before.Content), len(after.Content)))
+		return
+	}
+	for i := range before.Content {
+		child := fmt.Sprintf("%s[%d]", path, i)
+		if before.Kind == yaml.MappingNode && i%2 == 0 {
+			if before.Content[i].Value != after.Content[i].Value {
+				*drift = append(*drift, fmt.Sprintf("%s: the key %q became %q",
+					path, before.Content[i].Value, after.Content[i].Value))
+				continue
+			}
+			child = path + "." + before.Content[i].Value
+		}
+		compareNodes(before.Content[i], after.Content[i], child, drift)
+	}
+}
+
+func nodeKind(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.DocumentNode:
+		return "a document"
+	case yaml.SequenceNode:
+		return "a list"
+	case yaml.MappingNode:
+		return "a mapping"
+	case yaml.ScalarNode:
+		return "a scalar"
+	case yaml.AliasNode:
+		return "an alias"
+	}
+	return "nothing"
 }
 
 func itoa(n int) string {

@@ -17,6 +17,7 @@
 # --- wire documents: the H-7 class this surface exists for ---------------------
 internal/writer/writer.go:(*Writer).remoteEntry = proven: TestWriter_Diff_EmptyRemoteConfigIsUnparsed
 internal/writer/writer.go:(*Writer).Rollback = proven: TestWriter_Rollback_RefusesEmptyBackup
+internal/realdata/configtext.go:StructureDrift = proven: TestStructureDriftCatchesADanglingScalar
 
 # --- the user's own input files: a parse failure aborts, empty is refused ------
 internal/cmd/auto.go:validateAutoCreateCandidate = exempt: parses the user's own local YAML create input; a parse failure aborts before any output, and content is judged by HA's validate_config

@@ -205,16 +205,30 @@ func literalCandidates(raw string) []string {
 // is indistinguishable from vocabulary, so it is only alarming when it IS the
 // whole value.
 //
+// The second clause is the same argument made about the other heap. The
+// reference instance has three input_numbers named "1. ", "2. " and "3. ", and
+// each is a `name:` value with a non-letter in it, so the shape rule alone
+// searches the whole tree for the three-character string "2. " — which occurs
+// inside any numbered list anybody ever wrote, and does occur inside a
+// sanitized automation description. A value with no letters carries no words:
+// as a whole value it is still compared, and if it is a number long enough to
+// identify an account or a phone it is still searched for, but three characters
+// of punctuation are noise.
+//
 // Nothing identifying escapes through that: coordinates, MACs and routable
 // IPv4s are caught by ShapeLeaks whatever they look like, and that gate does
 // not consult this list at all.
 func distinctiveLiteral(value string) bool {
+	distinctive, letters := false, false
 	for _, r := range value {
+		if unicode.IsLetter(r) {
+			letters = true
+		}
 		if r > unicode.MaxASCII || (!unicode.IsLetter(r) && r != '\'') {
-			return true
+			distinctive = true
 		}
 	}
-	return false
+	return distinctive && (letters || runeLen(value) >= 6)
 }
 
 // Contains reports every sensitive literal that survived into the derivative.

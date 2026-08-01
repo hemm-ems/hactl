@@ -64,3 +64,4 @@ internal/realdata/helpers.go:HelperDomains = exempt: the walk builds a slice tha
 internal/realdata/helpers.go:StorageCollections = exempt: the walk builds a map keyed by domain, one output file per key, and each file's item list is sorted by id before encoding — no output of this function is a function of the walk's order
 internal/realdata/leak.go:Contains = proven: TestLeakReportIsOrderedByLocationNotByMapWalk
 internal/realdata/configtext.go:ShapeDrift = proven: TestShapeDriftIsOrderedNotMapWalked
+internal/realdata/bootability.go:ExclusionReport = proven: TestExclusionReportIsOrderedNotMapWalked

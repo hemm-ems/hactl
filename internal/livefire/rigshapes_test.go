@@ -265,6 +265,158 @@ func TestRigFixtureTemplateFileHasASharedBlock(t *testing.T) {
 	}
 }
 
+// TestRigFixtureAutomationsAreAtInstanceScale is §11's automations.yaml row.
+//
+// The rig's file was twelve hand-authored entries in 190 lines. The reference
+// instance's is 339 entries in 9,600, and findings #0 #93 #95 #99 are all about
+// what `auto apply` does to a file: it re-dumps the whole document to change one
+// entry. At twelve entries a re-dump that reformats everything is a diff nobody
+// looks at twice; at three hundred it is the finding. Scale is the shape, and it
+// is the one a hand-authored fixture will never have, because nobody writes
+// three hundred automations by hand to test a writer.
+//
+// The forms matter as much as the count. Home Assistant accepts `trigger:` and
+// `triggers:`, `action:` and `actions:`, `condition:` and `conditions:` — the
+// old singular and the new plural — and the reference instance uses both,
+// because entries written years apart never got rewritten. A fixture that uses
+// one of each pair cannot tell a reader that handles only the modern spelling
+// from one that handles both.
+func TestRigFixtureAutomationsAreAtInstanceScale(t *testing.T) {
+	doc := parseFixtureFile(t, "automations.yaml")
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.SequenceNode {
+		t.Fatal("automations.yaml is not a list")
+	}
+	entries := doc.Content[0].Content
+
+	// 300 rather than the instance's 339: the derivative tracks an instance that
+	// moves, and a test pinned to today's exact count fails on the next capture
+	// for no reason. Fourteen entries are dropped on the way in for bootability
+	// (see configFiles), and that is declared, not silent.
+	if len(entries) < 300 {
+		t.Errorf("automations.yaml holds %d entries; the reference instance has 339 and the "+
+			"question `auto apply` answers is not the same question at twelve", len(entries))
+	}
+
+	keys := map[string]int{}
+	longestAlias := 0
+	for _, entry := range entries {
+		if entry.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i+1 < len(entry.Content); i += 2 {
+			key, value := entry.Content[i].Value, entry.Content[i+1]
+			keys[key]++
+			if key == "alias" && len([]rune(value.Value)) > longestAlias {
+				longestAlias = len([]rune(value.Value))
+			}
+		}
+	}
+
+	for _, pair := range [][2]string{{"trigger", "triggers"}, {"action", "actions"}, {"condition", "conditions"}} {
+		if keys[pair[0]] == 0 || keys[pair[1]] == 0 {
+			t.Errorf("automations.yaml uses %q %d times and %q %d times — Home Assistant accepts "+
+				"both spellings and the reference instance has both, so a reader that handles one "+
+				"of them passes here",
+				pair[0], keys[pair[0]], pair[1], keys[pair[1]])
+		}
+	}
+	if keys["use_blueprint"] == 0 {
+		t.Error("no entry is defined by use_blueprint — the form with no trigger, condition or " +
+			"action of its own is gone")
+	}
+	if longestAlias < 40 {
+		t.Errorf("the longest alias is %d characters; the rig's were ~25 and every truncation "+
+			"finding (#9 #14 #51 #87) needs something worth truncating", longestAlias)
+	}
+
+	// A scalar the emitter had to WRAP. It is not visible in the parsed
+	// document at all — yaml.Node hands back the folded string — and it is the
+	// shape that produced 9,600 lines Home Assistant refused to parse, because a
+	// line-oriented replacement rewrote the first line of one and left the
+	// second dangling. So it is counted in the bytes, where it exists.
+	if wrapped := wrappedScalars(t, "automations.yaml"); wrapped == 0 {
+		t.Error("no value in automations.yaml wraps onto a second line — the shape that broke " +
+			"the generator (realdata.sanitizeValues) cannot occur here")
+	}
+}
+
+// wrappedScalars counts the values in a fixture file that continue onto a
+// following line.
+//
+// A continuation is a line indented further than the key above it and carrying
+// no key of its own — which is exactly the rule realdata.scalarEnd applies, and
+// deliberately so: this is the manifest asking whether the shape that rule
+// exists for is still in the file.
+func wrappedScalars(tb testing.TB, rel string) int {
+	tb.Helper()
+	raw, err := os.ReadFile(filepath.Join(fixtureDir(tb), rel)) //nolint:gosec // G304: this repo's testdata
+	if err != nil {
+		tb.Fatalf("reading %s: %v", rel, err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	count := 0
+	for i := 0; i+1 < len(lines); i++ {
+		key, _, isKey := strings.Cut(strings.TrimSpace(lines[i]), ": ")
+		if !isKey || strings.ContainsAny(key, " #") {
+			continue
+		}
+		next := lines[i+1]
+		indent := len(lines[i]) - len(strings.TrimLeft(lines[i], " "))
+		nextIndent := len(next) - len(strings.TrimLeft(next, " "))
+		trimmed := strings.TrimSpace(next)
+		if trimmed == "" || nextIndent <= indent || strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "- ") || strings.Contains(trimmed, ": ") ||
+			strings.HasSuffix(trimmed, ":") {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// TestRigServesEveryAutomationItCarries is the served half, and it exists
+// because the fixture spent months claiming a shape Home Assistant had thrown
+// away.
+//
+// `enabled: false` is not a key the automation schema has. The entry carrying it
+// was refused with `extra keys not allowed`, disabled, and logged once at boot —
+// and the fixture went on describing itself as holding a disabled automation.
+// Every per-entry assertion still passed, because none of them asked Home
+// Assistant whether the entry existed.
+//
+// So the claim is the file and the evidence is the instance, and the gap between
+// them is what this measures. It is rig-only: the live profile's automations.yaml
+// is Jan's and this suite does not get to have an opinion about its contents.
+func TestRigServesEveryAutomationItCarries(t *testing.T) {
+	doc := parseFixtureFile(t, "automations.yaml")
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.SequenceNode {
+		t.Fatal("automations.yaml is not a list")
+	}
+	inFile := len(doc.Content[0].Content)
+
+	tgt := Target{Profile: Rig, Dir: rigHA.Dir(), Bin: hactlBin}
+	rows := readRows(t, tgt, "auto", "ls", "--top", "0", "--json", "--tokensmax", "0")
+	if len(rows) != inFile {
+		t.Errorf("automations.yaml holds %d entries and Home Assistant serves %d — the difference "+
+			"is entries HA dropped at boot, which it reports in one log line and nothing here "+
+			"reads. Check the container's log for `could not be validated`.", inFile, len(rows))
+	}
+
+	// Counting is not enough, and that is the trap this case was written into.
+	// Home Assistant does not drop an automation whose config it refuses: it
+	// registers the entity anyway, `unavailable`, so the user can see that
+	// something is wrong. The count therefore agreed while the entry did nothing
+	// — the same shape as the `counter` without `minimum` in SPEC §6, where
+	// accepting an item and the item working turned out to be different claims.
+	for _, row := range rows {
+		state, _ := row["state"].(string)
+		if state == "unavailable" || state == "unknown" {
+			t.Errorf("%v is %s — Home Assistant registered the entity and refused the config, "+
+				"so the entry is in the file, counted here, and doing nothing", row["id"], state)
+		}
+	}
+}
+
 // TestRigFixtureBlueprintCarriesInputTags is the other half of finding #20's
 // shape: a custom YAML tag in a file that contains no !include whatsoever.
 //
