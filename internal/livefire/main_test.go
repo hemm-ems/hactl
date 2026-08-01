@@ -49,6 +49,32 @@ var rigHistory = backfilledSeries{
 	Span:     2*time.Hour + 5*time.Minute,
 }
 
+// rigEmptyStateSeries is the shape behind finding #38: a history series in
+// which the `state` key is present on every record and empty on some of them.
+//
+// The rig could not express it before. Every fixture entity holds a value, so
+// the degeneracy guard's premise — that an empty state means the payload was
+// empty, not the entity — was never contradicted here, and `ent hist` stayed
+// green on the rig while exiting 1 with no stdout against a real house. The
+// reference instance served 62 of 407 records this way over 400 days, on two
+// unrelated entities, so it is a property of Home Assistant and not of one
+// sensor.
+//
+// The values are categorical rather than numeric on purpose: this is what a
+// template or pushed sensor looks like when it has not computed a category
+// yet, which is where the shape was found. Consecutive samples never repeat —
+// including across the blanks — because HA's significant_changes_only filter
+// drops a repeat, and a dropped blank is the one sample the case needs.
+var rigEmptyStateSeries = struct {
+	EntityID string
+	States   []string
+	Step     time.Duration
+}{
+	EntityID: "sensor.sweep_category",
+	States:   []string{"normal", "", "guenstig", "", "teuer", "", "normal"},
+	Step:     10 * time.Minute,
+}
+
 func TestMain(m *testing.M) {
 	// The rig profile always runs. The live profile joins it only when
 	// HACTL_LIVEFIRE_DIR names a configured instance, so `go test` can never
@@ -122,8 +148,25 @@ func backfillRigHistory(inst *hatest.Instance) error {
 		})
 	}
 
-	if err := inst.Backfill(ctx, hatest.Series{EntityID: rigHistory.EntityID, Samples: samples}); err != nil {
-		return fmt.Errorf("backfilling %s: %w", rigHistory.EntityID, err)
+	// The empty-state series shares this backfill so the container stops once.
+	// It is anchored to the same end instant, far enough back that both series
+	// sit inside any window a case asks for.
+	blanks := make([]hatest.Sample, 0, len(rigEmptyStateSeries.States))
+	for i, state := range rigEmptyStateSeries.States {
+		at := end.Add(-time.Duration(len(rigEmptyStateSeries.States)-i) * rigEmptyStateSeries.Step)
+		blanks = append(blanks, hatest.Sample{
+			At:    at,
+			State: state,
+			Attrs: map[string]any{"friendly_name": "Sweep Category"},
+		})
+	}
+
+	if err := inst.Backfill(ctx,
+		hatest.Series{EntityID: rigHistory.EntityID, Samples: samples},
+		hatest.Series{EntityID: rigEmptyStateSeries.EntityID, Samples: blanks},
+	); err != nil {
+		return fmt.Errorf("backfilling %s and %s: %w",
+			rigHistory.EntityID, rigEmptyStateSeries.EntityID, err)
 	}
 	return nil
 }

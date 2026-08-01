@@ -41,17 +41,22 @@ type statesEnvelope struct {
 	Attributes json.RawMessage `json:"attributes"`
 }
 
-// Identity reports the entity key and its state — the same pair entityState
-// declares (H-14). It sits on the envelope rather than on the domain structs so
-// the degeneracy check keeps quantifying over the WHOLE payload after the
-// filter moved earlier: a payload that lost `entity_id` matches no domain
-// prefix, so a filter-first listing that checked only its survivors would
-// answer "no automations found" at exit 0 — an unavailable source rendered as a
-// confident negative, which is the H-7 failure this check exists to stop.
+// Identity reports the entity key — the same identity entityState declares
+// (H-14). It sits on the envelope rather than on the domain structs so the
+// degeneracy check keeps quantifying over the WHOLE payload after the filter
+// moved earlier: a payload that lost `entity_id` matches no domain prefix, so a
+// filter-first listing that checked only its survivors would answer "no
+// automations found" at exit 0 — an unavailable source rendered as a confident
+// negative, which is the H-7 failure this check exists to stop.
+//
+// `state` was part of it until finding #38, inherited from entityState along
+// with the false premise behind it: Home Assistant serves a present-but-empty
+// state, so an empty one is an answer and not a missing field. Copying a
+// sibling's identity copied its defect — the reason this file's declaration is
+// now justified per field rather than by pointing at the neighbour.
 func (s *statesEnvelope) Identity() []degeneracy.Field {
 	return []degeneracy.Field{
 		{Name: "entity_id", Value: &s.EntityID},
-		{Name: "state", Value: &s.State},
 	}
 }
 

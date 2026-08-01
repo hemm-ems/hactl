@@ -191,6 +191,237 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/analyze/trace.go:stepOutcome:result":           "step results are free-form per step type",
 }
 
+// inheritedUnprobed marks an identity field that was declared before this gate
+// existed and whose premise has never been checked against a live instance.
+//
+// It is debt, written down. It is not an excuse: the baseline below may only
+// shrink, so every one of these is a question someone still owes an answer to.
+const inheritedUnprobed = "inherited: declared before this gate existed; its premise has not been probed"
+
+// unprobedIdentityFieldBaseline is how many inheritedUnprobed entries existed
+// when the gate was built. TestSweep_UnprobedIdentityFieldsOnlyShrink refuses
+// any number above it, so the debt is a ratchet rather than a habit. Lower it
+// whenever a field is probed — never raise it.
+const unprobedIdentityFieldBaseline = 81
+
+// identityFieldEvidence is the field-level half of the H-14 classification, and
+// it exists because the struct-level half could not have caught finding #38.
+//
+// unidentifiedWireStructs asks a question about each STRUCT — does it declare
+// an identity, or say why it cannot. Both answers are checkable and the sweep
+// is green either way. What no gate asked was whether a declared identity field
+// is SOUND: whether the zero value it treats as evidence of a missing wire
+// field is a value Home Assistant can legitimately send.
+//
+// For `state` it could. Five structs declared it, all on one comment — "HA
+// rejects an empty state string" — that was never probed and is false. Home
+// Assistant served 62 of 407 history records with `"state": ""`, the key
+// present on every one, and `ent hist` exited 1 with empty stdout as a result.
+// The check compares the decoded value against Go's zero value and cannot see
+// whether the wire carried the key, so a legitimate empty value and a renamed
+// field are the same observation to it. That makes "empty is never legitimate
+// here" a premise every identity field rests on, and this map is where each one
+// states its grounds.
+//
+// A reason of inheritedUnprobed is the honest answer for a field nobody has
+// checked. Fabricating a plausible-sounding justification here would be the
+// exact failure the map exists to prevent, one layer up.
+var identityFieldEvidence = map[string]string{
+	"AreaEntry.area_id":                    inheritedUnprobed,
+	"AutomationCreateResponse.id":          inheritedUnprobed,
+	"AutomationCreateResponse.status":      inheritedUnprobed,
+	"AutomationResponse.id":                inheritedUnprobed,
+	"CheckConfigResponse.status":           inheritedUnprobed,
+	"ConfigBlockResponse.id":               inheritedUnprobed,
+	"ConfigBlockResponse.path":             inheritedUnprobed,
+	"ConfigDeleteResponse.status":          inheritedUnprobed,
+	"ConfigFileResponse.path":              inheritedUnprobed,
+	"ConfigWriteResponse.status":           inheritedUnprobed,
+	"DeviceConsumption.stat_consumption":   inheritedUnprobed,
+	"DeviceRegistryEntry.id":               inheritedUnprobed,
+	"EnergyFlow.stat_energy_from":          inheritedUnprobed,
+	"EnergySource.type":                    inheritedUnprobed,
+	"EntityRegistryEntry.entity_id":        inheritedUnprobed,
+	"FloorEntry.floor_id":                  inheritedUnprobed,
+	"FlowResult.type":                      inheritedUnprobed,
+	"HealthResponse.status":                inheritedUnprobed,
+	"HealthResponse.version":               inheritedUnprobed,
+	"HelperCreateResponse.id":              inheritedUnprobed,
+	"HelperCreateResponse.status":          inheritedUnprobed,
+	"HelperDefinition.domain":              inheritedUnprobed,
+	"HelperDefinition.id":                  inheritedUnprobed,
+	"HelperResponse.domain":                inheritedUnprobed,
+	"HelperResponse.id":                    inheritedUnprobed,
+	"IntegrationManifest.domain":           inheritedUnprobed,
+	"LabelEntry.label_id":                  inheritedUnprobed,
+	"LogEntry.level":                       inheritedUnprobed,
+	"LogEntry.name":                        inheritedUnprobed,
+	"LovelaceDashboard.id":                 inheritedUnprobed,
+	"LovelaceDashboard.url_path":           inheritedUnprobed,
+	"LovelaceResource.id":                  inheritedUnprobed,
+	"LovelaceResource.url":                 inheritedUnprobed,
+	"RefChange.after":                      inheritedUnprobed,
+	"RefChange.before":                     inheritedUnprobed,
+	"RefChange.location":                   inheritedUnprobed,
+	"RefEntity.location":                   inheritedUnprobed,
+	"RefEntity.matched_value":              inheritedUnprobed,
+	"RefReplaceResponse.status":            inheritedUnprobed,
+	"RefScanHit.location":                  inheritedUnprobed,
+	"RefScanHit.matched_value":             inheritedUnprobed,
+	"RefScanResponse.target":               inheritedUnprobed,
+	"RelatedEntityEntry.entity_id":         inheritedUnprobed,
+	"RelatedEntityEntry.relationship":      inheritedUnprobed,
+	"RelatedEntityResponse.entity_id":      inheritedUnprobed,
+	"SchemaField.name":                     inheritedUnprobed,
+	"ScriptCreateResponse.id":              inheritedUnprobed,
+	"ScriptCreateResponse.status":          inheritedUnprobed,
+	"ScriptDefinition.id":                  inheritedUnprobed,
+	"ScriptResponse.id":                    inheritedUnprobed,
+	"ServiceDomain.domain":                 inheritedUnprobed,
+	"ServiceStateChange.entity_id":         inheritedUnprobed,
+	"SkippedFile.location":                 inheritedUnprobed,
+	"SkippedFile.reason":                   inheritedUnprobed,
+	"StaleRef.location":                    inheritedUnprobed,
+	"StaleRef.matched_value":               inheritedUnprobed,
+	"StatusResponse.version":               inheritedUnprobed,
+	"SystemLogEntry.level":                 inheritedUnprobed,
+	"SystemLogEntry.name":                  inheritedUnprobed,
+	"TemplateCreateResponse.status":        inheritedUnprobed,
+	"TemplateCreateResponse.unique_id":     inheritedUnprobed,
+	"TemplateDefinition.domain":            inheritedUnprobed,
+	"TemplateResponse.unique_id":           inheritedUnprobed,
+	"TraceSummary.domain":                  inheritedUnprobed,
+	"TraceSummary.item_id":                 inheritedUnprobed,
+	"TraceSummary.run_id":                  inheritedUnprobed,
+	"UserEntry.id":                         inheritedUnprobed,
+	"ValidateResult.error":                 inheritedUnprobed,
+	"WireGuardActionResponse.status":       inheritedUnprobed,
+	"WireGuardActionResponse.tunnel":       inheritedUnprobed,
+	"WireGuardPeer.public_key":             inheritedUnprobed,
+	"WireGuardStatusResponse.tunnel":       inheritedUnprobed,
+	"WiringResponse.domain":                inheritedUnprobed,
+	"addonEntry.slug":                      inheritedUnprobed,
+	"addonInfo.slug":                       inheritedUnprobed,
+	"configEntry.domain":                   inheritedUnprobed,
+	"configEntry.entry_id":                 inheritedUnprobed,
+	"haConfig.version":                     inheritedUnprobed,
+	"haIssue.domain":                       inheritedUnprobed,
+	"haIssue.issue_id":                     inheritedUnprobed,
+	"logbookEntry.when":                    inheritedUnprobed,
+
+	// ---- probed: each cites what was asked of a live instance, and when ----
+	"entityState.entity_id": "probed 2026-08-01: /api/states on the reference instance returned 4488 " +
+		"records, entity_id non-empty on every one",
+	"statesEnvelope.entity_id": "probed 2026-08-01: the same /api/states payload entityState decodes; " +
+		"4488 records, entity_id non-empty on every one",
+	"automationEntity.entity_id": "probed 2026-08-01: the same /api/states payload; 4488 records, " +
+		"entity_id non-empty on every one",
+	"scriptEntity.entity_id": "probed 2026-08-01: the same /api/states payload; 4488 records, " +
+		"entity_id non-empty on every one",
+	"historyEntry.last_changed": "probed 2026-08-01: 407 history records over 400 days all carried " +
+		"last_changed and none was empty — the same payload whose state was empty 62 times (finding #38)",
+	"historyEntryFull.last_changed": "probed 2026-08-01: as historyEntry.last_changed, same payload " +
+		"and window",
+	"WireGuardStatusResponse.state": "contract: the companion spec declares state as an enum of " +
+		"active|inactive, so empty is not a value the route can emit",
+}
+
+// identityFields derives every field name declared inside an Identity method,
+// keyed Type.field. Source-derived like everything else in this sweep: adding a
+// field to an Identity fails the gate below until its grounds are written down.
+func identityFields(files map[string]*ast.File) map[string]bool {
+	got := map[string]bool{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "Identity" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+				continue
+			}
+			t := fn.Recv.List[0].Type
+			if star, isStar := t.(*ast.StarExpr); isStar {
+				t = star.X
+			}
+			id, isIdent := t.(*ast.Ident)
+			if !isIdent {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				kv, isKV := n.(*ast.KeyValueExpr)
+				if !isKV {
+					return true
+				}
+				key, isKey := kv.Key.(*ast.Ident)
+				if !isKey || key.Name != "Name" {
+					return true
+				}
+				if lit, isLit := kv.Value.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+					got[id.Name+"."+strings.Trim(lit.Value, `"`)] = true
+				}
+				return true
+			})
+		}
+	}
+	return got
+}
+
+// TestSweep_EveryIdentityFieldStatesItsGrounds is the field-level H-14 gate.
+// Every field any Identity declares must appear in identityFieldEvidence, and
+// every entry there must still correspond to a declared field — so the ledger
+// can neither miss a new field nor keep a stale one.
+func TestSweep_EveryIdentityFieldStatesItsGrounds(t *testing.T) {
+	root := repoRoot(t)
+	declared := map[string]bool{}
+	for _, pkg := range degeneracy.WirePackages {
+		for k := range identityFields(parsePackage(t, root, pkg)) {
+			declared[k] = true
+		}
+	}
+
+	var undeclared []string
+	for field := range declared {
+		if reason, ok := identityFieldEvidence[field]; !ok || strings.TrimSpace(reason) == "" {
+			undeclared = append(undeclared, field)
+		}
+	}
+	sort.Strings(undeclared)
+	for _, field := range undeclared {
+		t.Errorf("identity field %s states no grounds — add a row to identityFieldEvidence saying why "+
+			"an empty value there cannot be an answer Home Assistant legitimately sends. If nobody has "+
+			"asked a live instance, say inheritedUnprobed rather than inventing a reason.", field)
+	}
+
+	var stale []string
+	for field := range identityFieldEvidence {
+		if !declared[field] {
+			stale = append(stale, field)
+		}
+	}
+	sort.Strings(stale)
+	for _, field := range stale {
+		t.Errorf("identityFieldEvidence carries %s, which no Identity declares any more — delete the row", field)
+	}
+}
+
+// TestSweep_UnprobedIdentityFieldsOnlyShrink ratchets the debt down. An
+// identity field whose premise nobody checked is how finding #38 shipped; the
+// count may fall as fields get probed and may never rise.
+func TestSweep_UnprobedIdentityFieldsOnlyShrink(t *testing.T) {
+	unprobed := 0
+	for _, reason := range identityFieldEvidence {
+		if reason == inheritedUnprobed {
+			unprobed++
+		}
+	}
+	if unprobed > unprobedIdentityFieldBaseline {
+		t.Errorf("%d identity fields are unprobed, baseline is %d — a new field must state real grounds, "+
+			"not inherit the debt", unprobed, unprobedIdentityFieldBaseline)
+	}
+	if unprobed < unprobedIdentityFieldBaseline {
+		t.Errorf("%d identity fields are unprobed, below the baseline of %d — lower "+
+			"unprobedIdentityFieldBaseline to %d so the ratchet holds", unprobed, unprobedIdentityFieldBaseline, unprobed)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))

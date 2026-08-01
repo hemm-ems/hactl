@@ -150,6 +150,38 @@ func TestParseHistoryResponse_NonNumeric(t *testing.T) {
 	}
 }
 
+// Finding #38: a present-but-empty `state` is a legitimate Home Assistant
+// answer, and the degeneracy guard read it as a renamed or removed wire field.
+//
+// The payload below is the shape the reference instance actually served for
+// `sensor.strompreis_kategorie` — 62 of 407 records over a 400-day window
+// carried `"state": ""`, every one of them with the key present. The premise
+// this test exists to kill was written as a comment on entityState.Identity():
+// "HA rejects an empty state string ... so a blank one means the payload, not
+// the entity, is empty." Home Assistant does no such thing. A second entity on
+// the same instance carries the same shape, so it is a class and not one
+// entity's quirk.
+//
+// The whole command died on it: `ent hist` and `ent anomalies` exited 1 with
+// empty stdout, because fetchHistoryPoints checks before it filters.
+func TestParseHistoryResponse_PresentButEmptyState(t *testing.T) {
+	data := []byte(`[[
+		{"entity_id":"sensor.strompreis_kategorie","state":"normal","last_changed":"2026-07-26T18:22:40.815951+00:00"},
+		{"entity_id":"sensor.strompreis_kategorie","state":"","last_changed":"2026-07-26T19:22:40.815951+00:00"},
+		{"entity_id":"sensor.strompreis_kategorie","state":"guenstig","last_changed":"2026-07-26T20:22:40.815951+00:00"}
+	]]`)
+
+	points, err := parseHistoryResponse(data)
+	if err != nil {
+		t.Fatalf("a legitimately empty state was read as a missing wire field: %v", err)
+	}
+	// None of the three is numeric, so none becomes a point. The assertion that
+	// matters is the one above: the command got an answer instead of an error.
+	if len(points) != 0 {
+		t.Fatalf("expected 0 numeric points, got %d", len(points))
+	}
+}
+
 func TestFilterEntitiesByPattern(t *testing.T) {
 	states := []entityState{
 		{EntityID: "sensor.wp_vorlauf"},

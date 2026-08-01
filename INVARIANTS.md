@@ -1045,6 +1045,30 @@ person who trips it. Both of those cry-wolf identities were in the first draft
 of this invariant and were removed only after reading the companion routes that
 emit the field.
 
+That converse binds per FIELD, not only per struct, and for a year nothing
+enforced it there. `state` was an identity field on five structs on the
+strength of one comment — "HA rejects an empty state string ... so a blank one
+means the payload, not the entity, is empty" — which was authored from hactl's
+model of Home Assistant rather than probed against one, and is false. Home
+Assistant served 62 of 407 history records with `"state": ""`, the key present
+on every record, so `ent hist` and `ent anomalies` exited 1 with empty stdout
+on a real entity: the cry-wolf failure this invariant already forbade, reached
+through a field rather than a struct (finding #38). The struct-level sweep
+stayed green throughout, and correctly — it asks whether a struct is
+*classified*, never whether a classification is *sound*.
+
+The check compares a decoded value against Go's zero value; `encoding/json`
+gives an absent key and a present-but-empty one the same zero value, so it
+cannot distinguish "the wire never sent this" from "the wire sent it empty".
+Every identity field therefore rests on a premise — that empty is not a value
+this wire can carry — and that premise is now written down per field, with its
+grounds, in `identityFieldEvidence`. A field whose premise nobody has probed
+says so rather than carrying an invented justification, and the count of those
+may only fall: fabricating a plausible reason there would reproduce the exact
+failure the ledger exists to prevent, one layer up. The error text was corrected
+in the same change — it said a record "carries no" the field, which is a claim
+about the wire that a value comparison cannot make.
+
 This generalises H-7. `trace/get` decoded every automation run into an all-zero
 struct because hactl read the wrong wire tags, and `overallResult` rendered
 every run as `PASS` for months while sitting at 100% statement coverage (D1).
@@ -1063,6 +1087,12 @@ token and one scan.
   legitimate answer; `TestSweep_EveryDecodeSiteIsChecked` — every
   `json.Unmarshal` in those packages sits in a function that also calls
   `degeneracy.Check`, or is listed in `uncheckedDecodeSites` with a reason).
+- Soundness enforced by: `internal/degeneracy/sweep_test.go`
+  (`TestSweep_EveryIdentityFieldStatesItsGrounds` — every field name declared
+  inside any `Identity` method carries a row in `identityFieldEvidence` saying
+  why empty cannot be a legitimate answer there, and a row whose field no longer
+  exists fails too; `TestSweep_UnprobedIdentityFieldsOnlyShrink` — the number of
+  fields whose premise is unprobed is a ratchet that may only fall).
   Both tables are derived from the source and fail on a *stale* entry as well as
   a missing one, so the classification cannot rot silently and an anonymous
   decode target — which can never declare an identity — cannot ship unnoticed.

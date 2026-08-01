@@ -238,7 +238,12 @@ func (c *collector) err(source string) error {
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		typeName, field, _ := strings.Cut(k, ".")
-		parts = append(parts, fmt.Sprintf("%d of %d %s records carry no %q",
+		// "carry no %q" was the wording until finding #38, and it claimed
+		// something this check cannot observe: it compares the decoded value
+		// against Go's zero value, which an absent key and a present-but-empty
+		// one both produce. Saying the field was missing sent a reader hunting
+		// for a renamed field in a payload that carried it on every record.
+		parts = append(parts, fmt.Sprintf("%d of %d %s records decoded %q as empty",
 			c.missing[k], c.seen[typeName], typeName, field))
 	}
 	return fmt.Errorf("%s returned %s data: %s — the payload does not match the shape hactl decodes "+
