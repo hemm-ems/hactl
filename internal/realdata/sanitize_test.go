@@ -270,3 +270,38 @@ sensor:
 		}
 	}
 }
+
+// H-16 for the shape report: ShapeDrift walks three maps, and a drift list
+// whose order moves between runs is a diff a reviewer cannot read.
+//
+// The block-key comparison is the one that matters — it iterates the union of
+// two `map[string]int`, which Go randomises — so the assertion uses several
+// keys that all drift at once. With one key the test would pass on an
+// unsorted implementation.
+func TestShapeDriftIsOrderedNotMapWalked(t *testing.T) {
+	before := realdata.MeasureConfig(
+		"- sensor:\n  - name: a\n- binary_sensor:\n  - name: b\n- switch:\n  - name: c\n- trigger:\n  - x: 1\n")
+	after := realdata.MeasureConfig("- sensor:\n  - name: a\n")
+
+	first := realdata.ShapeDrift(before, after)
+	if len(first) < 4 {
+		t.Fatalf("want several drifting keys to have an order worth pinning, got %d: %v", len(first), first)
+	}
+	for range 12 {
+		again := realdata.ShapeDrift(before, after)
+		if len(again) != len(first) {
+			t.Fatalf("ShapeDrift reported %d entries then %d", len(first), len(again))
+		}
+		for i := range first {
+			if again[i] != first[i] {
+				t.Fatalf("entry %d moved between runs: %q then %q", i, first[i], again[i])
+			}
+		}
+	}
+
+	// And the report is empty when nothing moved, or every capture would look
+	// like a regression.
+	if drift := realdata.ShapeDrift(before, before); len(drift) != 0 {
+		t.Errorf("ShapeDrift reported %v for an unchanged shape", drift)
+	}
+}

@@ -222,9 +222,15 @@ rule
 skips=$(awk '$1 == "skip"' "$WORK/outcomes" | wc -l | tr -d ' ')
 sed -nE 's/.*"Action":"skip".*"Test":"([^"]*)".*/\1/p' "$WORK/sweep.json" | sort -u |
   while read -r name; do
+    # The reason is the last Output line the case emitted that is not go test's
+    # own bookkeeping. The leading-anchor patterns need to tolerate indentation:
+    # go test indents a subtest's `--- SKIP:` line, so `^--- SKIP` matched
+    # nothing and the bookkeeping line WAS the reason in the first version of
+    # this report — a skip whose stated reason is the word "SKIP".
     reason=$(grep -F "\"Test\":\"$name\"" "$WORK/sweep.json" |
-             sed -nE 's/.*"Output":"( *[a-z_]*_test\.go:[0-9]*: )?([^"]*)".*/\2/p' |
-             grep -viE '^\s*$|^--- SKIP|^=== ' | tail -1)
+             sed -nE 's/.*"Output":"( *[a-z_]*_test\.go:[0-9]+: )?(.*)"[,}].*/\2/p' |
+             sed -E 's/\\n$//' |
+             grep -vE '^[[:space:]]*$|^[[:space:]]*(---|===) ' | tail -1)
     printf '  %-64s %s\n' "$name" "${reason:-<no reason recorded>}"
   done
 echo

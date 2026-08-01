@@ -1,126 +1,2107 @@
-# template.yaml — the shape behind finding #89.
-#
-# A top-level `- sensor:` item is a BLOCK, and every entity inside it shares
-# that block's fate: one invalid sibling takes the whole block's entities off
-# the instance. On the reference instance the first `- sensor:` block held two
-# production sensors, so an appended entry landed next to them, and a mistake
-# in the appended entry would have removed both.
-#
-# So the file needs more than one block of the same domain, and the first block
-# needs entities worth losing. Both properties are load-bearing: with a single
-# block "append to the first block" and "append to the right block" are the
-# same instruction, and with one entity per block a poisoned block costs
-# nothing and the test proves nothing.
+- sensor:
+  - name: "Öffnung Landing Schedule"
+    unit_of_measurement: "kWh"
+    state: "{{(states('sensor.landing_window_porch_l')|float(0) + states('input_number.loft_counter_boiler_vestibule_vest')|
+      float(0)) | round(1)}} "
+    unique_id: boiler_gantry_threshold_mode_lof
+
+  - name: "Utility Latch Air"
+    unit_of_measurement: "W"
+    device_class: "power"
+    state: >
+      {{max(float(states('sensor.gantry_vestibule_pantry'), 0) ,0)| round(1) }}
+
+    unique_id: boiler_landing_landing_uti
 
 - sensor:
-    - name: "Outdoor Temperature"
-      unique_id: tpl_outdoor_temp
-      unit_of_measurement: "°C"
-      device_class: temperature
-      state_class: measurement
-      state: "{{ states('input_number.outdoor_temperature') | float(0) }}"
+  - name: "Boiler Senso"
+    unique_id: setpoint_win
+    state: >-
+      {% set h = states('sensor.gantry_meter_latc') %}
+      {% set a = states('sensor.latch_mode_worksho') %}
+      {% set b = states('sensor.landing_window_pantr') %}
+      {% set bad = ['unknown','unavailable','none',''] %}
+      {% if h|lower in bad or a|lower in bad or b|lower in bad %}
+        {{ this.state }}
+      {% else %}
+        {% set dist_home_km = h | float / 1000 %}
+        {% set dist_work_km = [a | float, b | float] | min / 1000 %}
+        {% set off = 5 %}
+        {% if dist_home_km < 0.2 %}
+          {% set pos = 94 + off %}
+        {% elif dist_work_km < 0.6 %}
+          {% set pos = 41 + off %}
+        {% elif dist_home_km > 100 %}
+          {% set pos = 8 * (10000 - [dist_home_km, 10000] | min) / 10000 %}
+        {% else %}
+          {% set raw = 52.5 + 35 * dist_work_km / (dist_work_km + dist_home_km) %}
+          {% set pos = [[raw, 53] | max, 89] | min %}
+        {% endif %}
+        {{ pos | round(1) }}
+      {% endif %}
+    attributes:
+      zone: >-
+        {% set h = states('sensor.gantry_meter_latc') %}
+        {% set a = states('sensor.latch_mode_worksho') %}
+        {% set b = states('sensor.landing_window_pantr') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad or b|lower in bad %}
+          {{ this.attributes.zone | default('unknown') }}
+        {% else %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = [a | float, b | float] | min / 1000 %}
+          {% if dist_home_km < 0.2 %}home
+          {%- elif dist_work_km < 0.6 %}work
+          {%- elif dist_home_km > 100 %}far
+          {%- else %}going
+          {%- endif %}
+        {% endif %}
+      speed: >-
+        {% set h = states('sensor.gantry_meter_latc') %}
+        {% set a = states('sensor.latch_mode_worksho') %}
+        {% set b = states('sensor.landing_window_pantr') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad or b|lower in bad %}
+          3
+        {% else %}
+          {% set prev = this.state | float(-1) %}
+          {% set prev_zone =
+               'unknown' if prev < 0 else
+               'far'     if prev < 15 else
+               'work'    if prev < 52 else
+               'going'   if prev < 90 else
+               'home' %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = [a | float, b | float] | min / 1000 %}
+          {% if dist_home_km < 0.2 %}{% set zone = 'home' %}
+          {%- elif dist_work_km < 0.6 %}{% set zone = 'work' %}
+          {%- elif dist_home_km > 100 %}{% set zone = 'far' %}
+          {%- else %}{% set zone = 'going' %}{% endif %}
+          {{ 60 if zone != prev_zone else 3 }}
+        {% endif %}
 
-    - name: "Indoor Humidity"
-      unique_id: tpl_indoor_humidity
-      unit_of_measurement: "%"
-      device_class: humidity
-      state_class: measurement
-      state: "{{ states('input_number.indoor_humidity') | float(0) }}"
+  - name: "Meter Mode Boil"
+    unique_id: landing_annex_s
+    state: >-
+      {% set h = states('sensor.cellar_scullery_vest') %}
+      {% set a = states('sensor.utility_utility_set') %}
+      {% set bad = ['unknown','unavailable','none',''] %}
+      {% if h|lower in bad or a|lower in bad %}
+        {{ this.state }}
+      {% else %}
+        {% set dist_home_km = h | float / 1000 %}
+        {% set dist_work_km = a | float / 1000 %}
+        {% set off = 4 %}
+        {% if dist_home_km < 0.2 %}
+          {% set pos = 94 + off %}
+        {% elif dist_work_km < 0.6 %}
+          {% set pos = 41 + off %}
+        {% elif dist_home_km > 100 %}
+          {% set pos = 8 * (10000 - [dist_home_km, 10000] | min) / 10000 %}
+        {% else %}
+          {% set raw = 52.5 + 35 * dist_work_km / (dist_work_km + dist_home_km) %}
+          {% set pos = [[raw, 53] | max, 89] | min %}
+        {% endif %}
+        {{ pos | round(1) }}
+      {% endif %}
+    attributes:
+      zone: >-
+        {% set h = states('sensor.cellar_scullery_vest') %}
+        {% set a = states('sensor.utility_utility_set') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          {{ this.attributes.zone | default('unknown') }}
+        {% else %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}home
+          {%- elif dist_work_km < 0.6 %}work
+          {%- elif dist_home_km > 100 %}far
+          {%- else %}going
+          {%- endif %}
+        {% endif %}
+      speed: >-
+        {% set h = states('sensor.cellar_scullery_vest') %}
+        {% set a = states('sensor.utility_utility_set') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          3
+        {% else %}
+          {% set prev = this.state | float(-1) %}
+          {% set prev_zone =
+               'unknown' if prev < 0 else
+               'far'     if prev < 15 else
+               'work'    if prev < 52 else
+               'going'   if prev < 90 else
+               'home' %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}{% set zone = 'home' %}
+          {%- elif dist_work_km < 0.6 %}{% set zone = 'work' %}
+          {%- elif dist_home_km > 100 %}{% set zone = 'far' %}
+          {%- else %}{% set zone = 'going' %}{% endif %}
+          {{ 60 if zone != prev_zone else 3 }}
+        {% endif %}
 
-# A second block of the SAME domain. An entry appended here is invisible to the
-# entities above, which is the whole difference the placement decides.
+  - name: "Annex Counter"
+    unique_id: hallway_porch
+    state: >-
+      {% set h = states('sensor.porch_limit_schedul') %}
+      {% set a = states('sensor.gantry_landing_thr') %}
+      {% set bad = ['unknown','unavailable','none',''] %}
+      {% if h|lower in bad or a|lower in bad %}
+        {{ this.state }}
+      {% else %}
+        {% set dist_home_km = h | float / 1000 %}
+        {% set dist_work_km = a | float / 1000 %}
+        {% set off = 2 %}
+        {% if dist_home_km < 0.2 %}
+          {% set pos = 94 + off %}
+        {% elif dist_work_km < 0.6 %}
+          {% set pos = 41 + off %}
+        {% elif dist_home_km > 100 %}
+          {% set pos = 8 * (10000 - [dist_home_km, 10000] | min) / 10000 %}
+        {% else %}
+          {% set raw = 52.5 + 35 * dist_work_km / (dist_work_km + dist_home_km) %}
+          {% set pos = [[raw, 53] | max, 89] | min %}
+        {% endif %}
+        {{ pos | round(1) }}
+      {% endif %}
+    attributes:
+      zone: >-
+        {% set h = states('sensor.porch_limit_schedul') %}
+        {% set a = states('sensor.gantry_landing_thr') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          {{ this.attributes.zone | default('unknown') }}
+        {% else %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}home
+          {%- elif dist_work_km < 0.6 %}work
+          {%- elif dist_home_km > 100 %}far
+          {%- else %}going
+          {%- endif %}
+        {% endif %}
+      speed: >-
+        {% set h = states('sensor.porch_limit_schedul') %}
+        {% set a = states('sensor.gantry_landing_thr') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          3
+        {% else %}
+          {% set prev = this.state | float(-1) %}
+          {% set prev_zone =
+               'unknown' if prev < 0 else
+               'far'     if prev < 15 else
+               'work'    if prev < 52 else
+               'going'   if prev < 90 else
+               'home' %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}{% set zone = 'home' %}
+          {%- elif dist_work_km < 0.6 %}{% set zone = 'work' %}
+          {%- elif dist_home_km > 100 %}{% set zone = 'far' %}
+          {%- else %}{% set zone = 'going' %}{% endif %}
+          {{ 60 if zone != prev_zone else 3 }}
+        {% endif %}
+
+  - name: "Cellar Setpoin"
+    unique_id: gantry_setpoin
+    state: >-
+      {% set h = states('sensor.threshold_pantry_sc') %}
+      {% set a = states('sensor.workshop_counter_w') %}
+      {% set bad = ['unknown','unavailable','none',''] %}
+      {% if h|lower in bad or a|lower in bad %}
+        {{ this.state }}
+      {% else %}
+        {% set dist_home_km = h | float / 1000 %}
+        {% set dist_work_km = a | float / 1000 %}
+        {% set off = 0 %}
+        {% if dist_home_km < 0.2 %}
+          {% set pos = 94 + off %}
+        {% elif dist_work_km < 0.6 %}
+          {% set pos = 41 + off %}
+        {% elif dist_home_km > 100 %}
+          {% set pos = 8 * (10000 - [dist_home_km, 10000] | min) / 10000 %}
+        {% else %}
+          {% set raw = 52.5 + 35 * dist_work_km / (dist_work_km + dist_home_km) %}
+          {% set pos = [[raw, 53] | max, 89] | min %}
+        {% endif %}
+        {{ pos | round(1) }}
+      {% endif %}
+    attributes:
+      zone: >-
+        {% set h = states('sensor.threshold_pantry_sc') %}
+        {% set a = states('sensor.workshop_counter_w') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          {{ this.attributes.zone | default('unknown') }}
+        {% else %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}home
+          {%- elif dist_work_km < 0.6 %}work
+          {%- elif dist_home_km > 100 %}far
+          {%- else %}going
+          {%- endif %}
+        {% endif %}
+      speed: >-
+        {% set h = states('sensor.threshold_pantry_sc') %}
+        {% set a = states('sensor.workshop_counter_w') %}
+        {% set bad = ['unknown','unavailable','none',''] %}
+        {% if h|lower in bad or a|lower in bad %}
+          3
+        {% else %}
+          {% set prev = this.state | float(-1) %}
+          {% set prev_zone =
+               'unknown' if prev < 0 else
+               'far'     if prev < 15 else
+               'work'    if prev < 52 else
+               'going'   if prev < 90 else
+               'home' %}
+          {% set dist_home_km = h | float / 1000 %}
+          {% set dist_work_km = a | float / 1000 %}
+          {% if dist_home_km < 0.2 %}{% set zone = 'home' %}
+          {%- elif dist_work_km < 0.6 %}{% set zone = 'work' %}
+          {%- elif dist_home_km > 100 %}{% set zone = 'far' %}
+          {%- else %}{% set zone = 'going' %}{% endif %}
+          {{ 60 if zone != prev_zone else 3 }}
+        {% endif %}
+
+
+
+
 - sensor:
-    - name: "Power Consumption"
-      unique_id: tpl_power_consumption
-      unit_of_measurement: "W"
-      device_class: power
-      state_class: measurement
-      state: "{{ states('input_number.power_consumption') | float(0) }}"
+  - name: "Landing Threshold Scull"
+    unit_of_measurement: "W"
+    device_class: "power"
+    state: >
+      {{max( - float(states('sensor.gantry_vestibule_pantry'), 0) ,0)| round(1) }}
+    unique_id: vestibule_porch_gantry_porch
 
-    - name: "Daily Energy"
-      unique_id: tpl_daily_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: >-
-        {{ (states('input_number.power_consumption') | float(0) * 24 / 1000) | round(2) }}
+- sensor:
+  - name: "Boiler Window Boiler"
+    unit_of_measurement: "W"
+    device_class: "power"
+    state: >
+      {{max(float(states('sensor.mode_setpoin'), 0) ,0)| round(1) }}
+    unique_id: cistern_window_threshold_annex_g
+
+- sensor:
+  - name: "Vestibule Threshold Airlock Util"
+    unit_of_measurement: "W"
+    device_class: "power"
+    state: >
+      {{max(float(states('sensor.mode_setpoin'), 0) ,0)| round(1) }}
+    unique_id: hallway_schedule_meter_limit_utili
+
+- sensor:
+  - name: "Loft Sensor Utility Pantry Lo"
+    unit_of_measurement: "W"
+    device_class: "power"
+    state: >
+      {{max(float(states('sensor.mode_setpoin'), 0) ,0)| round(1) }}
+    unique_id: setpoint_setpoint_boiler_hallwa
+
+
+
+
+- sensor:
+  - name: "Workshop Limit Hallway Airloc"
+    unit_of_measurement: "EUR/kWh"
+    state: "{{ states('sensor.latch_pantry') | float(0) }}"
+    unique_id: scullery_counter_limit_latch_utili
+
+
 
 - binary_sensor:
-    - name: "Front Door"
-      unique_id: tpl_front_door
-      device_class: door
-      state: "{{ is_state('input_boolean.guest_mode', 'on') }}"
+  - name: "Annex Offset Boiler Airlock Utility"
+    state: "{{is_state('sensor.workshop_limit_utility_pan', 'https://home.kippings.de:8123/lovelace/wallpanel?kiosk')}}"
+    unique_id: airlock_schedule_window_window
 
-    - name: "High Humidity Alert"
-      unique_id: tpl_high_humidity
-      device_class: moisture
-      state: "{{ states('input_number.indoor_humidity') | float(0) > 70 }}"
+  - unique_id: boiler_mode_p
+    name: Workshop Setp
+    device_class: occupancy
+    state: >-
+      {{
+        is_state('input_boolean.annex_vestibule', 'on')
+        or is_state('binary_sensor.window_boiler_util', 'on')
+        or is_state('binary_sensor.cellar_airlock_gantry_la', 'on')
+        or is_state('binary_sensor.limit_boiler_li', 'on')
+        or states('sensor.loft_boiler_setpoi') | float(0) > 50
+        or states('sensor.pantry_porch_annex_me') | float(0) > 25
+        or states('sensor.pantry_landing_cellar_hallway_s') | float(0) > 2
+        or states('sensor.boiler_airlock_pantry_counter_l') | float(0) > 2
+      }}
+- binary_sensor:
+  - name: "Scullery Schedule Meter Sculle"
+    state: |-
+      {% set motion = is_state('binary_sensor.landing_scullery_lo', 'on') %}
+      {% set door_closed = is_state('binary_sensor.meter_vestibule_mode_schedule', 'off') %}
+      {% set last_motion = states.binary_sensor.landing_scullery_lo.last_changed %}
+      {% set timeout = now() - last_motion < timedelta(minutes=5) %}
+      {{ motion or (door_closed and timeout) }}
+    delay_off:
+      minutes: 2
+    unique_id: boiler_cistern_meter_landing_vestib
 
-# The meters .storage/energy points at. Energy preferences are statistic ids
-# and HA will serve them whether or not the entities exist — which is exactly
-# why they exist here. A fixture whose energy dashboard reads from six ghosts
-# proves that `energy show` can print a string; one whose meters are real
-# entities can also be asked whether it printed the right string about the
-# right meter.
+
 - sensor:
-    - name: "Grid Import Energy"
-      unique_id: tpl_grid_import_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: "{{ (states('input_number.power_consumption') | float(0) / 100) | round(2) }}"
+  - default_entity_id: sensor.boiler_cellar
+    name: Öffnung Sculle
+    state: "{{ states('binary_sensor.vestibule_annex_gantry_utility') }}"
+    icon: >
+      {% if is_state('binary_sensor.vestibule_annex_gantry_utility', 'Zu') %}
+        mdi:door
+      {% else %}
+        mdi:door-open
+      {% endif %}
+    unique_id: boiler_gantry_porch_meter_airlock_boiler_thr
 
-    - name: "Grid Export Energy"
-      unique_id: tpl_grid_export_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: "1.5"
 
-    - name: "Solar Yield Energy"
-      unique_id: tpl_solar_yield_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: "7.25"
+- sensor:
+  - name: "Meter Latch Land"
+    unit_of_measurement: "W"
+    state: 51
+    unique_id: boiler_cellar_annex_c
 
-    - name: "Battery Discharge Energy"
-      unique_id: tpl_battery_discharge_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: "2.5"
+- sensor:
+  - name: "Landing Schedule Boiler"
+    unit_of_measurement: "W"
+    state: >
+      {% if is_state('switch.ves', 'on') %}
+        18
+      {% else %}
+        0.5
+      {% endif %}
+    unique_id: workshop_hallway_s
 
-    - name: "Battery Charge Energy"
-      unique_id: tpl_battery_charge_energy
-      unit_of_measurement: "kWh"
-      device_class: energy
-      state_class: total_increasing
-      state: "3.0"
+- sensor:
+  - name: "Maß Landing Sensor Annex M"
+    unit_of_measurement: "W"
+    state: 20.0
+    device_class: power
+    state_class: "measurement"
+    unique_id: workshop_cellar_boi
 
-    - name: "Gas Meter Energy"
-      unique_id: tpl_gas_meter_energy
-      unit_of_measurement: "m³"
-      device_class: gas
-      state_class: total_increasing
-      state: "12.5"
-
-    - name: "Water Meter Volume"
-      unique_id: tpl_water_meter_volume
-      unit_of_measurement: "m³"
-      device_class: water
-      state_class: total_increasing
-      state: "4.75"
-
-# A trigger-based block: the entities under it are keyed by the block's
-# trigger, not by the domain, so an entry appended to it inherits a trigger it
-# never asked for. This is the shape that made `tpl create` corrupt
-# template.yaml in 2026-07-13 and the reason the companion's writer is
-# block-aware rather than domain-aware.
 - trigger:
-    - platform: time_pattern
-      minutes: "/5"
+  - platform: state
+    entity_id: sensor.limit_limit_threshold_annex
+    not_to:
+    - "unknown"
+    - "unavailable"
+    - "0"
+- sensor:
+  - unique_id: schedule_landing_cellar_boiler
+    name: Workshop Setpoi
+    unit_of_measurement: "°"
+    state: "{{ state_attr('sun.sch', 'elevation') }}"
+
+- sensor:
+  - unique_id: annex_gantry_meter_airlock_ha
+    name: Airlock Windo
+    unit_of_measurement: "°"
+    state: "{{ state_attr('sun.sch', 'azimuth') }}"
+- sensor:
+  - name: "Loft Sensor Pantry Cistern Annex Annex"
+    unique_id: counter_vestibule_hallway_setpoint_th
+    unit_of_measurement: ml
+    state: "{{ trigger.to_state.state }}"
+
+- sensor:
+  - name: "Landing Offset Porch"
+    device_class: power
+    unit_of_measurement: "W"
+    unique_id: threshold_landing_annex_util
+    state: |-
+      {{  (float(states('sensor.loft_limit_counter_window_ce'), 0)
+      + float(states('sensor.airlock_scullery_latch_workshop_met'), 0)
+      + float(states('sensor.latch_workshop_annex_an'), 0)
+      + float(states('sensor.cellar_annex_limit_landing_cis'), 0)
+      + float(states('sensor.mode_threshold_gantry_landin'), 0)
+      + float(states('sensor.latch_loft_setpoint_utili'), 0)
+      + float(states('sensor.scullery_cistern_land'), 0)
+      + float(states('sensor.mode_workshop_porc'), 0)
+      + float(states('sensor.mode_window_limit_sc'), 0)
+      + float(states('sensor.schedule_setpoint_porch_uti'), 0)
+      + float(states('sensor.limit_loft_window_schedule_m'), 0)
+      + float(states('sensor.latch_cistern'), 0)
+      + float(states('sensor.loft_gantry_loft_limit'), 0)
+      )| round(1)}}
+    state_class: "measurement"
+
+- sensor:
+  - name: "Maß Porch Target Utility Landing"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: "measurement"
+    state: |-
+      {{ (float(states('sensor.mode_latch_schedule_schedu'), 50) 
+        - float(states('sensor.annex_schedule_mode_setpoint_latch_l'), 50)
+        - float(states('sensor.latch_counter_mode_cistern'), 50)
+        - float(states('sensor.limit_cistern_cistern_airlock_ve'), 50)) | round (1)
+      }}
+
+    unique_id: hallway_hallway_limit_gantry_v
+
+- sensor:
+  - name: "Annex Interval Porch"
+    unit_of_measurement: "W"
+    state_class: "measurement"
+    state: |-
+      {{ min (float(states('sensor.gantry_vestibule_pantry'), 50) , 500)
+      }}
+
+    unique_id: cellar_meter_latch_utilit
+
+- sensor:
+  - name: "Porch Mode Boiler Boi"
+    unit_of_measurement: "W"
+    state_class: "measurement"
+    state: |-
+      {{ min (float(states('sensor.gantry_vestibule_pantry'), 50) , 1000)
+      }}
+
+    unique_id: utility_gantry_schedule_an
+
+- sensor:
+  - name: "Meter Schedule"
+    unit_of_measurement: "mred"
+    state: "{{ (10**6 / states('sensor.setpoint_meter') | float(4000)) | round }}"
+    unique_id: cistern_boiler_annex_worksh
+
+- sensor:
+  - name: "Hallway Target Pantry Cella"
+    unit_of_measurement: "%fan"
+    state: "{{ int (state_attr('fan.landing_mode_mo', 'percentage') ,0) }}"
+    unique_id: landing_landing_pantry_porch_counter_c
+
+- sensor:
+  - name: "Cellar Setpoint Pan"
+    unique_id: pantry_latch_annex_gantry_me
+    unit_of_measurement: "°C"
+    device_class: "temperature"
+    state_class: "measurement"
+    availability: >-
+      {{ states('sensor.counter_scullery_workshop') not in ['unknown', 'unavailable',
+      'none'] and
+         states('sensor.boiler_loft_threshold_s') not in ['unknown', 'unavailable',
+      'none'] and
+         float(states('sensor.boiler_loft_threshold_s'), 0) <= 100 }}
+    state: >
+      {% set T = float(states('sensor.counter_scullery_workshop')) %}
+      {% set RH = float(states('sensor.boiler_loft_threshold_s')) %}
+      {% set a = 17.27 %}
+      {% set b = 237.7 %}
+      {% set alpha = ((a * T) / (b + T)) + (RH / 100.0) | log %}
+      {{ ((b * alpha) / (a - alpha)) | round(1) }}
+
+- sensor:
+  - name: "Vestibule Offset Meter Met"
+    unit_of_measurement: "p_idx"
+    state: |-
+      {{ max( float (states('sensor.mode_mode_counter_counter_mode_uti') ,0),
+       float (states('sensor.pantry.anwesenheitsindex_esp_av_wozi') ,0),
+       float (states('sensor.landing_cellar_pantry_li') ,0),
+       float (states('sensor.mode_mode_counter_counter_mode_uti') ,0) )  
+      }}
+    unique_id: utility_schedule_annex_airlock_sculle
+
+- sensor:
+  - name: "Vestibule Schedule Po"
+    unit_of_measurement: "p_idx"
+    state: |-
+      {{ min( (float (states('sensor.mode_mode_counter_counter_mode_uti') ,0)+
+       float (states('sensor.pantry.anwesenheitsindex_esp_av_wozi') ,0)+
+       float (states('sensor.landing_cellar_pantry_li') ,0)+
+       float (states('sensor.mode_mode_counter_counter_mode_uti') ,0)),8 )  
+      }}
+    unique_id: utility_utility_airlock_latch_land
+
+- binary_sensor:
+  - name: "Maß Pantry Interval L"
+    state: "{{ float (states('sensor.utility_setpoint_setpoint') ,0) > 5  }}"
+    unique_id: meter_landing_pantry_landing
+
+- binary_sensor:
+  - name: "Vestibule Limit Annex Landing Wor"
+    state: |-
+      {{states('input_select.workshop_hallway_pantry_threshold')
+      == states('input_select.hallway_porch_cistern_cister')}}
+
+    unique_id: meter_counter_vestibule_gantry_counte
+
+- binary_sensor:
+  - name: "Hallway Offset Utility"
+    state: |-
+      {{ float(states('sensor.counter_annex_ai'), 50) - 7  
+      >  float(states('sensor.latch_scullery_schedule_ai'), 50)}}
+    unique_id: limit_landing_threshold_threshold
+
+- binary_sensor:
+  - name: "Gantry Schedule Utility Por"
+    state: |-
+      {% set data = state_attr('sensor.landing_counter_loft_thres', 'data') %}
+      {% if data %}
+        {% set now = now() %}
+        {% set until = now + timedelta(hours=24) %}
+
+        {% set temps = data
+            | selectattr('datetime', '>=', now.isoformat())
+            | selectattr('datetime', '<=', until.isoformat())
+            | map(attribute='value')
+            | list %}
+
+        {{ temps | select('lt', 0) | list | count > 0 }}
+      {% else %}
+        true
+      {% endif %}
+    unique_id: boiler_setpoint_limit_window_utility_annex_pantry
+
+- sensor:
+  - name: "Annex Latch Vestibule Ga"
+    state: >
+      {% if is_state("sensor.loft_vestibule_cel", "unkown") -%}
+        50
+      {%- else -%}
+          {{min( 
+              max( float(states("sensor.loft_vestibule_cel"),2000) /100 
+              , int(states("input_number.annex_limit_pantry_airlock") , 100)*1.5 
+              , min(float(state_attr("sun.sch", "elevation"),0) *10 , 85)
+              , 30)
+          ,100) | round(0)  }}
+      {%- endif %}
+    unique_id: gantry_meter_landing_hallw
+    unit_of_measurement: "light"
+
+- binary_sensor:
+  - name: "Öffnung Hallway"
+    state: "{{is_state('binary_sensor.vestibule_annex_gantry_utility', 'on') and is_state('binary_sensor.gantry_cistern_m',
+      'on') and is_state('input_boolean.window_cella', 'on') }}"
+    unique_id: airlock_counter_airlock
+
+- binary_sensor:
+  - name: "Scullery Counter Mete"
+    state: "{{states('input_number.scullery_setpoin')|int >0}}"
+    unique_id: counter_meter_lan
+
+- binary_sensor:
+  - name: "Annex Setpoi"
+    state: "{{is_state('calendar.hallway_cellar', 'on')}}"
+    unique_id: meter_setpoint_landing
+
+- binary_sensor:
+  - name: Maß Utility Offset Hallway Landing Wo
+    state: >-
+      {{ is_state('binary_sensor.vestibule_annex_gantry_utility','on')  and  is_state('binary_sensor.gantry_cistern_m','on')
+      and int(states('sensor.scullery_threshold_airlock'),0) < 200 }}"
+    unique_id: counter_landing_schedule_ve
+    delay_on: "00:10:00"       # statt "10 min"
+    delay_off: "00:02:00"      # statt "2 min"
+
+- binary_sensor:
+  - name: "Cistern Limit Worksho"
+    state: "{{states('input_number.loft_counter')|int >0}}"
+    unique_id: schedule_gantry_gantry
+
+- binary_sensor:
+  - name: "Cistern Mode Annex Gantry Ci"
+    state: >
+      {%- if (states('binary_sensor.cistern_sc') == 'on' and states('calendar.hallway_cellar'))
+      == 'off'  and states('person.met') == 'home' and (states('input_number.annex_latch_setpoint_lo')|int(0)
+      >0) -%}
+        on
+      {%- else -%}
+        off
+      {%- endif -%}
+    unique_id: schedule_mode_landi
+
+- binary_sensor:
+  - name: Hallway Sched
+    state: "{{ is_state('person.met','home') or  is_state('person.counte','home')\
+      \  }}"
+    unique_id: counter_annex_gantry_mode_l
+
+- binary_sensor:
+  - name: "Airlock Setpoint Annex Hal"
+    state: >
+      {%- if ( is_state('binary_sensor.vestibule_boi', 'on' ) 
+            and is_state('sensor.boiler_cellar', 'off' ) 
+            and is_state('sensor.landing_setpoint_sc', 'Closed' ) 
+            and  float(states("sensor.limit_workshop_setpoint"),12) < 18
+      ) -%}
+        on
+      {%- else -%}
+        off
+      {%- endif -%}
+    unique_id: vestibule_airlock_latch_thresh
+
+# Süd Porch Interval
+- sensor:
+  - name: "Wärme Cellar Mode Workshop Pantry V"
+    unit_of_measurement: "%delta"
+    state: >2-
+
+      {% set feuchte_abzug_innen = float(states('sensor.window_limit_counter_counter_b')
+      ,50)-5 %}
+      {% set feuchte_kuche = float(states('sensor.vestibule_met'),50) %}
+      {{(feuchte_abzug_innen - feuchte_kuche)}}
+    unique_id: meter_utility_scullery_loft_porch_wor
+
+  - name: "Wärme Vestibule Latch Hallway Land"
+    unit_of_measurement: "%delta"
+    state: >2-
+
+      {% set feuchte_abzug_aussen = float(states('sensor.vestibule_pantry_pantry_meter_w')
+      ,50)-5 %}
+      {% set feuchte_kuche = float(states('sensor.vestibule_met'),50) %}
+      {{(feuchte_abzug_aussen - feuchte_kuche)}}
+    unique_id: vestibule_utility_hallway_landing
+
+- sensor:
+  - name: "Öffnung Scullery Mode Ves"
+    state: >-
+      {% set herd_verbrauch = float(states('sensor.gantry_boiler_pantry_workshop_boile')
+      ,50) %}
+      {% set feuchte_abzug_aussen = float(states('sensor.vestibule_pantry_pantry_meter_w')
+      ,50) %}
+      {% set feuchte_abzug_innen = float(states('sensor.window_limit_counter_counter_b')
+      ,50)-5 %}
+      {% set feuchte_kuche = float(states('sensor.vestibule_met'),50) %}
+      {% set ansteerungswert = float(states('sensor.vestibule_cellar_setpoint_pantry'),0)/100
+      %}
+      {% set pm25 = float(states('sensor.cellar_met'),10) %}
+
+
+      {% set reueckkopplungswert = 3 %}  {# wenn dunst schon läuft, die differenzen
+      stwärker gewichten#}
+      {# Ansteuerungswert als Multiplikatore [1..reueckkopplungswert+1] #}
+      {% set ansteerungswert = ansteerungswert * reueckkopplungswert + 1 %}
+
+      {# Parameter für PM2.5-Werte #}
+      {% set pm25_min = 60 %}  {# Unterhalb dieses Wertes wird PM2.5 ignoriert #}
+      {% set pm25_max = 1000 %} {# Ab diesem Wert wird die maximale Steuerung erreicht
+      (100%) #}
+
+
+      {# Mindest-Ansteuerung für den Lüfter basierend auf dem Herdverbrauch #}
+      {% set min_steuerung = 35 if herd_verbrauch > 150 else 0 %}
+
+      {# Berechnung der Feuchtedifferenz und Feuchtezuschlag #}
+      {% set feuchtedifferenz = max((feuchte_abzug_aussen - feuchte_kuche),(feuchte_abzug_innen
+      - feuchte_kuche)*2)  %}
+      {% set feuchtezuschlag = 0 %}
+
+      {# wenn feuchte 10% über küche , wenn der Ansteuerwert hoch ist, dann feucht
+      stärker gewichten#}
+      {% if feuchtedifferenz > (feuchte_kuche * 0.10) %}
+        {% set feuchtezuschlag = feuchtedifferenz * ansteerungswert %} {# Faktor für
+      Feuchtezuschlag anpassen #}
+      {% endif %}
+
+
+      {# Berechnung des pm25-Zuschlags #}
+      {# pm25-Werte über 100 werden berücksichtigt, wobei 2000 einem Steuerwert von
+      100 entspricht #}
+      {# Berechnung des pm25-Zuschlags mit parametrierten Grenzen #}
+      {% if pm25 > pm25_min %}
+        {% set pm25_zuschlag = (pm25 - pm25_min) * (100 / (pm25_max - pm25_min)) *
+      ansteerungswert%}
+      {% else %}
+        {% set pm25_zuschlag = 0 %}
+      {% endif %}
+
+      {# Kombinierter Ansteuerwert als das Minimum der berechneten Werte #}
+      {% set steuerung = max(min_steuerung,( feuchtezuschlag /2), pm25_zuschlag) %}
+
+
+      {# Berechnung der maximal erlaubten Änderung pro Sekunde (20 % pro Minute =
+      0,33 % pro Sekunde) #}
+      {% set max_aenderung = 20 / 60 %}
+
+
+
+      {# Begrenzen des Ansteuerwerts auf maximal 100 % #}
+      {% set steuerung = min(steuerung, 70) %}
+
+      {{ steuerung | round(2)}}
+
+    state_class: "measurement"
+    unit_of_measurement: "%fan"
+    unique_id: gantry_cistern_limit_gantry
+
+- sensor:
+  - name: "Übergabe Airlock Setpoint"
+    state: >-
+      {% set sollwert_raw = float(states('sensor.vestibule_airlock_worksho'),0) %}  {%
+      set sollwert_filt = float(states('sensor.cistern_meter_scullery_latch_limit_hall'),0)
+      %}    
+
+      {# ab 70% nur rawwerte als boost -> limit filt val#}        {% if sollwert_filt
+      > 70 %}
+        {% set sollwert_filt =  70 %} {# Faktor für Feuchtezuschlag anpassen #}
+      {% endif %}
+
+      {# ab 70% nur rawwerte als boost #}
+      {% set steuerung = max(sollwert_raw, sollwert_raw) %}
+
+      {{ steuerung | round(2)}}
+
+    state_class: "measurement"
+    unit_of_measurement: "%fan"
+    unique_id: workshop_scullery_hallway_annex_cistern
+
+- sensor:
+  - name: "Boiler Sch"
+    availability: "{{ states('sensor.window_mode') not in ['unknown', 'unavailable',
+      'none'] }}"
+    state: >-
+      {% macro aqi(val, val_l, val_h, aqi_l, aqi_h) -%}
+        {{(((aqi_h-aqi_l)/(val_h - val_l) * (val - val_l)) + aqi_l)|round(0)}}
+      {%- endmacro %}
+      {% set v = float(states('sensor.window_mode')) | round(1) %}
+      {% if v <= 12.0 %}
+         {{aqi(v, 0, 12.0, 0, 50)}}
+      {% elif 12.0 < v <= 35.4 %}
+         {{aqi(v, 12.1, 35.4, 51, 100)}}
+      {% elif 35.4 < v <= 55.4 %}
+         {{aqi(v, 35.5, 55.4, 101, 150)}}
+      {% elif 55.4 < v <= 150.5 %}
+         {{aqi(v, 55.5, 150.4, 151, 200)}}
+      {% elif 150.4 < v <= 250.4 %}
+         {{aqi(v, 150.4, 250.4, 201, 300)}}
+      {% elif 250.5 < v <= 500.4 %}
+         {{aqi(v, 250.5, 500.4, 301, 500)}}
+      {% else %}
+         500
+      {% endif %}
+    device_class: aqi
+    state_class: "measurement"
+
+- sensor:
+  - name: "Übergabe Porch"
+    state: >-
+      {% macro aqi(val, val_l, val_h, aqi_l, aqi_h) -%}
+        {{ (((aqi_h - aqi_l) / (val_h - val_l) * (val - val_l)) + aqi_l) | round(0)
+      }}
+      {%- endmacro %}
+
+      {% set v_raw = states('sensor.cellar_met') %}
+      {% if v_raw not in ['unavailable', 'unknown', 'none', '', None] %}
+        {% set v = v_raw | float(0) | round(1) %}
+        {% if v <= 12.0 %}
+          {{ aqi(v, 0, 12.0, 0, 50) }}
+        {% elif 12.0 < v <= 35.4 %}
+          {{ aqi(v, 12.1, 35.4, 51, 100) }}
+        {% elif 35.4 < v <= 55.4 %}
+          {{ aqi(v, 35.5, 55.4, 101, 150) }}
+        {% elif 55.4 < v <= 150.4 %}
+          {{ aqi(v, 55.5, 150.4, 151, 200) }}
+        {% elif 150.4 < v <= 250.4 %}
+          {{ aqi(v, 150.4, 250.4, 201, 300) }}
+        {% elif 250.5 < v <= 500.4 %}
+          {{ aqi(v, 250.5, 500.4, 301, 500) }}
+        {% else %}
+          999  {# Symbolischer Maximalwert #}
+        {% endif %}
+      {% else %}
+        999
+      {% endif %}
+    availability: "{{ states('sensor.cellar_met') not in ['unavailable', 'unknown',
+      'none'] }}"
+    device_class: aqi
+    state_class: "measurement"
+
+- sensor:
+  - name: "Scullery Sched"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if int(states('sensor.airlock_ha'),0) >90 and is_state("binary_sensor.vestibule_boi",
+      "on") -%}
+        {{ min(int(states('sensor.airlock_ha'),0)/3,75) | round(1)}}
+      {%- else -%}
+        0
+      {%- endif %}
+    unique_id: limit_utility_scullery_hallway
+
+- sensor:
+  - name: "Vestibule Target Ai"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if int(states('sensor.mode_airlock_meter_scullery_m'),0) > 25 or 
+        int(states('sensor.gantry_annex_loft_la') ,0) > 28 %}
+        48
+      {%- else -%}
+        0
+      {%- endif %}
+    unique_id: mode_mode_counter_cellar_gantry
+
+- sensor:
+  - name: "Utility Window Hallwa"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if int(states('sensor.counter_annex_ai'),0) > 75 -%}
+        {{ min(int(states('sensor.counter_annex_ai'),0)/2,80)}}
+      {%- else -%}
+        0
+      {%- endif %}
+    unique_id: annex_setpoint_vestibule_setpoint_set
+
+- sensor:
+  - name: "Vestibule Windo"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if is_state('input_boolean.latc','on')  -%}
+        42
+      {%- else -%}
+        0
+      {%- endif %}
+    unique_id: scullery_pantry_annex_annex_latch_m
+
+- sensor:
+  - name: "Cistern Counte"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if (float(states('sensor.gantry_an'),400) < 600) or
+       is_state("switch.limit_mode_gantry", "off")  -%}
+        0
+      {%- elif ( now().hour >= 22) -%}
+          40
+      {%- else -%}
+
+        {{float(states('sensor.gantry_an'),400)/50 + 26}}
+      {%- endif %}
+    unique_id: landing_annex_utility_boiler_a
+
+- sensor:
+  - name: "Cistern Target Pantry Ha"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if is_state('binary_sensor.landing_landi','on')  -%}
+        33
+      {%- else -%}
+        100
+      {%- endif %}
+    unique_id: hallway_mode_schedule_meter_loft
+
+- sensor:
+  - name: "Wärme Scullery Setpoint Gantry Ga"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if is_state('binary_sensor.airlock_schedule', 'on') %}
+        43
+      {% else %}
+        100
+      {% endif %}
+    unique_id: threshold_annex_counter_landing
+
+- sensor:
+  - name: "Loft Schedule Annex Annex L"
+    unit_of_measurement: "d°C"
+    state: >-
+      {{(float(states('sensor.cellar_pantry_cellar'),25) -
+      float(states('sensor.landing_schedule_wind'),25)) | round (1)}}
+    unique_id: workshop_vestibule_counter_c
+
+- sensor:
+  - name: "Annex Offset Cistern Hallway"
+    unit_of_measurement: "d°C"
+    state: >-
+      {{(float(states('sensor.cellar_counter_limit_ut'),25) -
+      float(states('sensor.counter_scullery_workshop'),25)) | round (1)}}
+    unique_id: schedule_annex_porch_cella
+
+- sensor:
+  - name: "Zähler Cellar Limit Landing Airlock Met"
+    unit_of_measurement: "W"
+    state: >-
+      {{((float(states('sensor.landing_window_window'),25) -
+      float(states('sensor.gantry_annex_utility_l'),25)) /3600 *100 )| round (1)}}
+    unique_id: window_utility_scullery_scu
+
+- sensor:
+  - name: "Meter Counter Landing"
+    unit_of_measurement: "J/m3"
+    state: >-
+      {% set R_Luft = 287.05 %}              {# Gaskonstante trockene Luft (J/kg·K)
+      #C
+      {% set R_Wasserdampf = 461.5 %}       {# Gaskonstante Wasserdampf (J/kg·K) #}
+      {% set c_v_Luft = 717.0 %}            {# Wärmekapazität trockene Luft (J/kg·K)
+      #C
+      {% set c_v_Wasserdampf = 1418.0 %}    {# Wärmekapazität Wasserdampf (J/kg·K)
+      #C
+      {% set h_fg = 2.5e6 %}                 {# Verdampfungsenthalpie Wasser (J/kg)
+      #C
+
+      {# Eingangswerte aus Sensoren #}
+      {% set T = float(states('sensor.counter_scullery_workshop'),20)  + 273.15 %}   {%
+      set p = float(states('sensor.gantry_limit') ,999) * 100 %}         {% set phi
+      = float(states('sensor.airlock_cellar_latch_loft_s') ,80)/ 100 %}     
+
+      {# Funktion zur Berechnung des Sättigungsdampfdrucks #}
+      {% set p_sat = 611.2 * (2.718281828459045 ** ((17.67 * (T - 273.15)) / ((T -
+      273.15) + 243.5))) %}
+
+      {# Partialdrücke #}
+      {% set p_Wasserdampf = phi * p_sat %}
+      {% set p_Luft = p - p_Wasserdampf %}
+
+      {# Dichten #}
+      {% set rho_Luft = p_Luft / (R_Luft * T) %}
+      {% set rho_Wasserdampf = p_Wasserdampf / (R_Wasserdampf * T) %}
+
+      {# Innere Energie #}
+      {% set u_Luft = c_v_Luft * T * rho_Luft %}
+      {% set u_Wasserdampf = (c_v_Wasserdampf * T + h_fg) * rho_Wasserdampf %}
+      {% set u_total = u_Luft + u_Wasserdampf %}
+
+      {{ u_total | round(2) }}
+    unique_id: airlock_setpoint_setpoint_uti
+
+- sensor:
+  - name: "Utility Mode Airlock"
+    unit_of_measurement: "J/m3"
+    state: >-
+      {% set R_Luft = 287.05 %}              {# Gaskonstante trockene Luft (J/kg·K)
+      #C
+      {% set R_Wasserdampf = 461.5 %}       {# Gaskonstante Wasserdampf (J/kg·K) #}
+      {% set c_v_Luft = 717.0 %}            {# Wärmekapazität trockene Luft (J/kg·K)
+      #C
+      {% set c_v_Wasserdampf = 1418.0 %}    {# Wärmekapazität Wasserdampf (J/kg·K)
+      #C
+      {% set h_fg = 2.5e6 %}                 {# Verdampfungsenthalpie Wasser (J/kg)
+      #C
+
+      {# Eingangswerte aus Sensoren #}
+      {% set T = float(states('sensor.cellar_counter_limit_ut'),20)  + 273.15 %}   {%
+      set p = float(states('sensor.gantry_limit') ,999) * 100 %}         {% set phi
+      = float(states('sensor.pantry_boiler_cistern_win') ,80)/ 100 %}     
+
+      {# Funktion zur Berechnung des Sättigungsdampfdrucks #}
+      {% set p_sat = 611.2 * (2.718281828459045 ** ((17.67 * (T - 273.15)) / ((T -
+      273.15) + 243.5))) %}
+
+      {# Partialdrücke #}
+      {% set p_Wasserdampf = phi * p_sat %}
+      {% set p_Luft = p - p_Wasserdampf %}
+
+      {# Dichten #}
+      {% set rho_Luft = p_Luft / (R_Luft * T) %}
+      {% set rho_Wasserdampf = p_Wasserdampf / (R_Wasserdampf * T) %}
+
+      {# Innere Energie #}
+      {% set u_Luft = c_v_Luft * T * rho_Luft %}
+      {% set u_Wasserdampf = (c_v_Wasserdampf * T + h_fg) * rho_Wasserdampf %}
+      {% set u_total = u_Luft + u_Wasserdampf %}
+
+      {{ u_total | round(2) }}
+    unique_id: counter_window_threshold_sche
+
+- binary_sensor:
+  - name: "Maß Loft Interval"
+    state: >
+      {{ float(states('sensor.meter_schedule_cistern_m'),0) > 40 or float(states('sensor.loft_gantry_gantry_latch'),0)
+      > 40 }}
+    delay_on: "00:00:20"
+    delay_off: "00:01:20"
+    unique_id: pantry_latch_airlock_uti
+
+- sensor:
+  - name: "Boiler Offset Pan"
+    unit_of_measurement: "°C"
+    state: >-
+      {{(state_attr('climate.counter_thre','current_temperature'))}}
+    unique_id: meter_threshold_threshold_g
+
+- sensor:
+  - name: "Vestibule T"
+    state: >-
+      mytekx
+    unique_id: scullery_pantry_scullery_schedu
+
+- sensor:
+  - name: "Süd Utility Sensor"
+    state: >-
+      {% set muellarten = {
+          'Rest': states('sensor.pantry_b') | int,
+          'Plastik': states('sensor.porch_pantry') | int,
+          'Pappe': states('sensor.threshold_c') | int
+      } %}
+      {% set relevante_termine = muellarten.items() | selectattr('1', 'lt', 8) | sort(attribute='1')
+      | list %}     {% set ns = namespace(result='') %}
+      {% for i in range(relevante_termine | length) %}
+        {% set name, tage = relevante_termine[i] %}
+        {% if tage == 0 %}
+          {% set ns.result = ns.result + name ~ ': HEUTE' %}
+        {% elif tage == 1 %}
+          {% set ns.result = ns.result + name ~ ': MORGEN' %}
+        {% else %}
+          {% set ns.result = ns.result + name ~ ' in ' ~ tage ~ 'd' %}
+        {% endif %}
+        {% if i < relevante_termine | length - 1 %}
+          {% set ns.result = ns.result + ', ' %}
+        {% endif %}
+      {% endfor %}
+      {{ns.result}}
+    unique_id: counter_cistern_threshold_c
+
+- sensor:
+  - name: "Utility Thres"
+    state: >-
+      {{states('input_select.window_w')}}
+
+    icon: >-
+      {% if is_state("input_select.window_w", "Auto") %}
+        mdi:fan-auto
+      {% elif  is_state("input_select.window_w", "Schwach") %}
+        mdi:fan-minus
+      {% elif  is_state("input_select.window_w", "Stark") %}
+        mdi:fan-plus
+      {% else %}
+        mdi:fan-off
+      {% endif %}
+    unique_id: boiler_airlock_utility_porch_por
+
+- binary_sensor:
+  - name: "Öffnung Hallway Setpoint Pa"
+    state: >-
+      {{float(states('sensor.boiler_schedule_g'),25) < 15 and
+      float(states('sensor.pantry_hallway_utility'),25) > 23}}
+    unique_id: counter_annex_schedule_vestib
+
+- binary_sensor:
+  - name: "Öffnung Loft Counter Vestibule"
+    state: >-
+      {{float(states('sensor.cellar_pantry_cellar'),25) >  float(states('sensor.counter_scullery_workshop'),25)
+      }}
+    unique_id: cistern_meter_scullery_annex_porch_win
+
+      #
+      #    Cellar Offset Scullery Cistern Workshop Utility Cellar Landing
+  # Zähler Vestibule Counter Vestibule Landing Landi
+- sensor:
+  - name: "Pantry Setpoint Utility"
+    unit_of_measurement: "%fan"
+    state: >-
+      {% if is_state("input_select.window_w", "Auto") %}
+          {{ min(
+            max(float(states('input_number.meter_scullery_gantry_ve'),0),
+            float(states('input_number.vestibule_schedule_setpoin'),0),
+            float(states('input_number.workshop_gantry_limit'),0),
+            float(states('sensor.porch_setpoint'),0),
+            float(states('sensor.limit_counter'),0),
+            float(states('sensor.porch_schedule_wi'),0),
+            float(states('input_number.utility_boiler_landing_loft'),0),
+            float(states('sensor.threshold_loft_win'),0),
+            float(states('sensor.boiler_window_pantry'),0),
+            ),  
+          float(states('sensor.pantry_airlock_threshold_utility'))  ,100) | round(1)}}
+
+      {% elif  is_state("input_select.window_w", "Schwach") %}
+
+        {{float(states('input_number.mode_gantry_boiler_hall'),34)}}
+        
+      {% elif  is_state("input_select.window_w", "Stark") %}
+        {{float(states('input_number.pantry_counter_th'),55)}}
+      {% else %}
+        0
+      {% endif %}
+
+    unique_id: schedule_cellar_workshop_cellar_wind
+
+- sensor:
+  - name: "Pantry Mod"
+    state: " {{(( as_timestamp(now())|int)+60) | timestamp_custom('%-H:%M') }}"
+    unique_id: airlock_landing_setpoint
+
+- trigger:
+  - platform: time_pattern
+    minutes: /10
   sensor:
-    - name: "Five Minute Tick"
-      unique_id: tpl_five_minute_tick
-      state: "{{ now().minute }}"
+    # Öffnung Gantry Offset Workshop Porch Meter Scullery Cistern Cellar Loft Annex Cistern Pantry
+  - name: "Landing Mode Annex Scu"
+    state: "{{(as_timestamp(today_at( states('input_datetime.landing_vestib')))| \
+      \ timestamp_local(0) )}}"
+    device_class: timestamp
+    unique_id: porch_airlock_utili
+
+  - name: "Cellar Interval Cister"
+    state: "{{(as_timestamp(today_at( states('input_datetime.annex_meter_wo')))| \
+      \ timestamp_local(0) )}}"
+    device_class: timestamp
+    unique_id: cistern_meter_cellar_b
+
+  - name: "Vestibule Threshold Loft Cist"
+    state: "{{(as_timestamp(today_at( states('input_datetime.pantry_boiler_counter')))|
+      timestamp_local(0) )}}"
+    device_class: timestamp
+    unique_id: mode_annex_vestibule
+
+- trigger:
+  - platform: time_pattern
+    minutes: /5
+  sensor:
+  - name: "Cistern Offset Cellar Gantry Cistern Cistern"
+    state: "{{ (float(states('sensor.loft_vestibule_vestibule_threshold_porc'),50))
+      }}"
+    device_class: power
+    unique_id: schedule_scullery_latch_latch_airlo
+    unit_of_measurement: "W"
+
+- trigger:
+  - platform: time_pattern
+    hours: "*"
+    minutes: 59
+  sensor:
+  - name: "Workshop Threshold Utility Meter Lo"
+    state: "{{ (float(states('sensor.boiler_counter_airlock_threshold_v'),50))/1000
+      }}"
+    device_class: energy
+    unique_id: loft_counter_hallway_pantry_loft
+    unit_of_measurement: "kWh"
+
+# Pantry Interval Utility Utility Boiler Landing Loft Boiler Cellar Cistern Scullery Hallway Loft Porch Scullery Pantry Boiler
+- trigger:
+  - platform: time_pattern
+    minutes: "*"
+  - platform: homeassistant
+    event: start
+  - platform: event
+    event_type: event_template_reloaded
+  action:
+  - service: weather.loft_vestibul
+    target:
+      entity_id: weather.vestibule_window_gantry
+    data:
+      type: hourly
+    response_variable: forecast
+  - service: weather.loft_vestibul
+    target:
+      entity_id: weather.vestibule_window_gantry
+    data:
+      type: daily
+    response_variable: daily_forecast
+  sensor:
+  - name: "Maß Gantry Mode Landing Porch"
+    unique_id: cistern_schedule_hallway_m
+    state: >
+      {{
+        (forecast['weather.vestibule_window_gantry'].forecast[0].precipitation
+        + forecast['weather.vestibule_window_gantry'].forecast[1].precipitation
+        + forecast['weather.vestibule_window_gantry'].forecast[2].precipitation) 
+      }}
+  - name: "Vestibule Limit Meter"
+    unique_id: window_loft_landing_limit_window
+    state: "{{ states('weather.vestibule_window_gantry') }}"
+    attributes:
+      temperature: "{{ state_attr('weather.vestibule_window_gantry', 'temperature')
+        }}"
+      dew_point: "{{ state_attr('weather.vestibule_window_gantry', 'dew_point') }}"
+      temperature_unit: "{{ state_attr('weather.vestibule_window_gantry', 'temperature_unit')
+        }}"
+      humidity: "{{ state_attr('weather.vestibule_window_gantry', 'humidity') }}"
+      cloud_coverage: "{{ state_attr('weather.vestibule_window_gantry', 'cloud_coverage')
+        }}"
+      pressure: "{{ state_attr('weather.vestibule_window_gantry', 'pressure') }}"
+      pressure_unit: "{{ state_attr('weather.vestibule_window_gantry', 'pressure_unit')
+        }}"
+      wind_bearing: "{{ state_attr('weather.vestibule_window_gantry', 'wind_bearing')
+        }}"
+      wind_gust_speed: "{{ state_attr('weather.vestibule_window_gantry', 'wind_gust_speed')
+        }}"
+      wind_speed: "{{ state_attr('weather.vestibule_window_gantry', 'wind_speed')
+        }}"
+      wind_speed_unit: "{{ state_attr('weather.vestibule_window_gantry', 'wind_speed_unit')
+        }}"
+      visibility: "{{ state_attr('weather.vestibule_window_gantry', 'visibility')
+        }}"
+      visibility_unit: "{{ state_attr('weather.vestibule_window_gantry', 'visibility_unit')
+        }}"
+      precipitation: "{{ state_attr('weather.vestibule_window_gantry', 'precipitation')
+        }}"
+      precipitation_unit: "{{ state_attr('weather.vestibule_window_gantry', 'precipitation_unit')
+        }}"
+      forecast: "{{ daily_forecast['weather.vestibule_window_gantry'].forecast[:5]
+        }}"
+
+- sensor:
+  - name: "Pantry Latch Ve"
+    unit_of_measurement: "kelvin"
+    state: >-
+      {% if is_state("input_boolean.gantry_schedule_hallway_boiler_s", "on") and
+        not is_state("sensor.loft_gantry_boiler_scull", "unavailable")%}
+        {{float(states('sensor.loft_gantry_boiler_scull'),3500)}}
+      {% else %}
+        {{float(states('sensor.workshop_anne'),3500)}}
+      {% endif %}
+    unique_id: meter_setpoint_limit_utilit
+
+  - name: "Annex Schedul"
+    unit_of_measurement: "kelvin"
+    state: |-
+      {% set ts_midnight = as_timestamp(today_at("00:02")) %}
+      {% set ts_before_sunrise = as_timestamp(today_at("06:00")) %}
+      {% set ts_morning_call = as_timestamp(today_at("15:00")) %}
+      {% set ts_active_morning = as_timestamp(today_at("15:20")) %}
+      {# 1h before sunset #}
+      {% set next_setting = state_attr("sun.sch", "next_setting") %}
+      {% if next_setting %}
+        {% set ts_active_morning_ends = as_timestamp(next_setting) - 3600 %}
+      {% else %}
+        {% set ts_active_morning_ends = as_timestamp(today_at("18:00")) %}
+      {% endif %}
+      {% set ts_after_sunset = ts_active_morning_ends + 7200 %}
+      {% set ts_now = as_timestamp(states('sensor.pantry_sculle')) %}
+
+      {% if ts_now < ts_before_sunrise %}
+        {% set ts_diff = ts_before_sunrise - ts_midnight %}
+        {% set ts_fract = ts_now - ts_midnight %}
+        {{ (
+          states("input_number.annex_limit_set")|int(0)
+          - (states("input_number.annex_limit_set")|int(0)
+          - states("input_number.threshold_mode_an")|int(0))
+          * ts_fract / ts_diff
+        ) | round(0) }}
+
+      {% elif ts_now < ts_morning_call %}
+        {% set ts_diff = ts_morning_call - ts_before_sunrise %}
+        {% set ts_fract = ts_now - ts_before_sunrise %}
+        {{ (
+          states("input_number.threshold_mode_an")|int(0)
+          - (states("input_number.threshold_mode_an")|int(0)
+          - states("input_number.mode_airlock_pa")|int(0))
+          * ts_fract / ts_diff
+        ) | round(0) }}
+
+      {% elif ts_now < ts_active_morning %}
+        {% set ts_diff = ts_active_morning - ts_morning_call %}
+        {% set ts_fract = ts_now - ts_morning_call %}
+        {{ (
+          states("input_number.mode_airlock_pa")|int(0)
+          - (states("input_number.mode_airlock_pa")|int(0)
+          - states("input_number.porch_boiler_boil")|int(0))
+          * ts_fract / ts_diff
+        ) | round(0) }}
+
+      {% elif ts_now < ts_active_morning_ends %}
+        {{ states("input_number.porch_boiler_boil") | int(0) }}
+
+      {% elif ts_now < ts_after_sunset %}
+        {% set ts_diff = ts_after_sunset - ts_active_morning_ends %}
+        {% set ts_fract = ts_now - ts_active_morning_ends %}
+        {{ (
+          states("input_number.porch_boiler_boil")|int(0)
+          - (states("input_number.porch_boiler_boil")|int(0)
+          - states("input_number.annex_limit_set")|int(0))
+          * ts_fract / ts_diff
+        ) | round(0) }}
+
+      {% else %}
+        {{ states("input_number.annex_limit_set") | int(0) }}
+      {% endif %}
+
+- sensor:
+  - name: "Pantry Mode Vestib"
+    unit_of_measurement: "W"
+      #Meter Counter Boiler Vestibule Hallway Gantry Utility Scullery Annex Meter Airlock Scullery Scullery Pantry Cistern Meter Gantry Pantry Annex Landing Airlock Annex Utility Boiler Annex Vestibule Cellar Utility Scullery Airlock Utility Landing Airlock Meter Airlock Annex
+
+    state: " {{states('sensor.gantry_vestibule_pantry') |float(0)}}"
+    unique_id: hallway_mode_scullery_latc
+    state_class: "measurement"
+
+- sensor:
+  - name: "Scullery Mode Gantry W"
+    state: "{{ distance(51.9162, 10.4202 ,states('sensor.hallway_meter_ann'), states('sensor.loft_gantry_boiler'))
+      }}"
+    unit_of_measurement: "m"
+    unique_id: boiler_mode_meter_cistern_b
+
+- sensor:
+  - name: "Landing Interval Gantry Utility Wor"
+    state: |-
+      {% if is_state('light.annex_vestibule_scullery', 'unknown') %}
+        0
+      {%- else -%} 
+       {{((state_attr('light.annex_vestibule_scullery', 'brightness')|float(0) )/2.54) |round(1) }}
+      {%- endif %}
+    unit_of_measurement: "lm"
+    unique_id: latch_meter_landing_mode_wo
+
+- sensor:
+  - name: "Cistern Threshold Pantry"
+    state: |-
+      {% if ((states('sensor.counter_annex_ai') | float(0) - states('sensor.mode_gantry_annex_loft_lof') | float(0)) > 15 ) %}
+        on
+      {%- else -%} 
+       off
+      {%- endif %}
+    unique_id: höhe_loft_window
+
+- sensor:
+  - name: "Gantry Interval Hallwa"
+    state: |-
+      {{  float(states("sensor.latch_limit_hallwa"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: öffnung_scullery_annex_gant
+    unit_of_measurement: "dhPa"
+
+- sensor:
+  - name: "Cellar Setpoint Util"
+    state: |-
+      {{  float(states("sensor.gantry_vestibule"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: wärme_vestibule_window_works
+    unit_of_measurement: "dhPa"
+
+- sensor:
+  - name: "Airlock Latch Airlock Ut"
+    state: |-
+      {{  float(states("sensor.threshold_gantry_lat"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: maß_schedule_latch_mo
+    unit_of_measurement: "dhPa"
+
+- sensor:
+  - name: "Pantry Latch Airlock"
+    state: |-
+      {{  float(states("sensor.scullery_hallway"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: zähler_annex_utility_limit_l
+    unit_of_measurement: "dhPa"
+
+- sensor:
+  - name: "Vestibule Sensor Lof"
+    state: |-
+      {{  float(states("sensor.gantry_limit"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: wärme_hallway_porch_scullery_porc
+    unit_of_measurement: "dhPa"
+
+- sensor:
+  - name: "Cellar Threshold"
+    state: |-
+      {{  float(states("sensor.threshold"),950) -  float(states("sensor.loft_setpoint_co"),950) }}
+    unique_id: maß_annex_setpoint_counter_loft_gant
+    unit_of_measurement: "dhPa"
+
+- binary_sensor:
+  - name: "Süd Meter Latch Meter Po"
+    state: "{{ is_state('binary_sensor.meter_vestibule_mode_schedule', 'on') }}"
+    delay_on:
+      seconds: 30   # Wartezeit, bevor "on" akzeptiert wird
+    delay_off:
+      seconds: 30   # Wartezeit, bevor "off" akzeptiert wird
+
+    unique_id: latch_limit_window_landing_meter
+
+- binary_sensor:
+  - name: "Scullery Offset"
+    state: |-
+      {{float(states('sensor.gantry_cellar_window_ce'),10) > 25}}
+    unique_id: zähler_loft_pantry_loft_workshop_mode_p
+
+- switch:
+  - unique_id: threshold_sculle
+    name: Landing Target Gantry
+    state: "{{ is_state('input_boolean.cistern_meter_th', 'on') }}"
+    turn_on:
+    - action: input_boolean.annex_p
+      target:
+        entity_id: input_boolean.cistern_meter_th
+    turn_off:
+    - action: input_boolean.scullery
+      target:
+        entity_id: input_boolean.cistern_meter_th
+
+- switch:
+  - unique_id: mode
+    name: Porch Target Utility Met
+    state: "{{ is_state('input_boolean.latc', 'on') }}"
+    turn_on:
+    - action: input_boolean.annex_p
+      target:
+        entity_id: input_boolean.latc
+    turn_off:
+    - action: input_boolean.scullery
+      target:
+        entity_id: input_boolean.latc
+
+
+# Airloc
+
+- sensor:
+  - name: "Loft Threshold Porch Scullery Gantry Scul"
+    unit_of_measurement: "mV"
+    state: >-
+      {% set A = float(states('sensor.porch_loft_annex_mode_latch_threshold_boiler')
+      ,4) %}
+      {% set B = float(states('sensor.workshop_vestibule_mode_workshop_hallway_cel'),4)
+      %}
+      {{ ((A - B)*1000)| int}}
+    unique_id: loft_limit_gantry_scullery_ann
+
+- sensor:
+  - name: "Annex Offset Vestibule Workshop Utili"
+    unit_of_measurement: "%"
+    state_class: measurement
+    device_class: power_factor
+    state: >-
+      {% set U_DC = float(states('sensor.mode_airlock_meter_m'), 0) %}
+      {% set I_DC = float(states('sensor.cistern_hallway_sche'), 0) %}
+      {% set R_batt = float(states('sensor.counter_boiler_meter_annex_landing_lim'),
+      0) %}
+
+      {% if U_DC > 0 and (I_DC)|abs > 0.5 %}
+        {# DC-Leistung an Wechselrichter #}
+        {% set P_DC_WR = (U_DC * I_DC)|abs %}
+        
+        {# Batterieverluste #}
+        {% set P_verl_batt = (I_DC ** 2) * (R_batt+0.02) %}
+        
+        {# Wechselrichter-Verluste (quadratisch approximiert) #}
+        {% set P_verl_WR = 0.000023 * (P_DC_WR ** 2) + 0.014 * P_DC_WR + 30 %}
+        
+        {# P_AC #}
+        {% set P_ac = P_DC_WR  +P_verl_WR %}
+        
+        
+        {# P net batt#}
+        {% set P_batt_net = P_DC_WR - P_verl_batt%}
+        
+        {# Wirkungsgrad in Prozent #}
+        {% set eta = (P_batt_net / P_ac) * 100 %}
+        
+        {{ eta | round(2) }}
+      {% else %}
+        {{ 90 }}
+      {% endif %}
+
+    unique_id: porch_hallway_window_pantry_workshop
+
+
+    availability: >-
+      {{ states('sensor.mode_airlock_meter_m') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.cistern_hallway_sche') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.counter_boiler_meter_annex_landing_lim') not in ['unknown',
+      'unavailable', 'none'] }}
+
+  - name: "Airlock Offset Workshop Gantry"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >-
+      {% set U_DC = float(states('sensor.mode_airlock_meter_m'), 0) %}
+      {% set I_DC = float(states('sensor.cistern_hallway_sche'), 0) %}
+      {% set R_batt = float(states('sensor.counter_boiler_meter_annex_landing_lim'),
+      0) %}
+
+      {% if U_DC > 0 and I_DC > 0 %}
+        {% set P_DC_WR = U_DC * I_DC %}
+        {% set P_verl_batt = (I_DC ** 2) * R_batt %}
+        {% set P_AC_approx = P_DC_WR - P_verl_batt %}
+        {% set P_verl_WR = 0.000023 * (P_AC_approx ** 2) + 0.014 * P_AC_approx + 30
+      %}
+        {% set P_AC = P_DC_WR - P_verl_WR %}
+        
+        {{ P_AC | round(1) }}
+      {% else %}
+        {{ 0 }}
+      {% endif %}
+    unique_id: utility_schedule_latch_window
+    availability: >-
+      {{ states('sensor.mode_airlock_meter_m') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.cistern_hallway_sche') not in ['unknown', 'unavailable', 'none']
+      }}
+
+  - name: "Meter Setpoint Pantry Gantry Por"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >-
+      {% set U_DC = float(states('sensor.mode_airlock_meter_m'), 0) %}
+      {% set I_DC = float(states('sensor.cistern_hallway_sche'), 0) %}
+      {% set R_batt = float(states('sensor.counter_boiler_meter_annex_landing_lim'),
+      0) %}
+
+      {% if U_DC > 0 and I_DC > 0 %}
+        {% set P_DC_WR = U_DC * I_DC %}
+        {% set P_verl_batt = (I_DC ** 2) * R_batt %}
+        {% set P_AC_approx = P_DC_WR - P_verl_batt %}
+        {% set P_verl_WR = 0.000023 * (P_AC_approx ** 2) + 0.014 * P_AC_approx + 30
+      %}
+        {% set P_verl_gesamt = P_verl_batt + P_verl_WR %}
+        
+        {{ P_verl_gesamt | round(1) }}
+      {% else %}
+        {{ 0 }}
+      {% endif %}
+    unique_id: mode_utility_gantry_cellar_cel
+    availability: >-
+      {{ states('sensor.mode_airlock_meter_m') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.cistern_hallway_sche') not in ['unknown', 'unavailable', 'none']
+      }}
+
+
+
+  - name: "Scullery Counter Airlock Porch Ga"
+    unit_of_measurement: "EUR/kWh"
+    state_class: measurement
+    state: >-
+      {% set preis_netz = float(states('sensor.latch_pantry'), 0) %}
+      {% set eta_laden = float(states('sensor.cellar_loft_landing_setpoint_lof'),
+      0) %}
+
+      {% if eta_laden > 0 %}
+        {% set preis_effektiv = preis_netz / (eta_laden / 100) %}
+        {{ preis_effektiv | round(4) }}
+      {% else %}
+        {{ 0 }}
+      {% endif %}
+    unique_id: scullery_loft_setpoint_window_airl
+    availability: >-
+      {{ states('sensor.latch_pantry') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.cellar_loft_landing_setpoint_lof') not in ['unknown', 'unavailable',
+      'none'] }}
+
+
+  - name: "Süd Boiler Interval Gantry Lan"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >-
+      {% set a = 0.000031865 %}
+      {% set b = 0.01416 %}
+      {% set c = 30.65 %}
+
+      {% set Cost_Estore = float(states('input_number.counter_boiler_landing_airlock')
+      | default(1), 0) %}
+      {% set Cost_now = float(states('sensor.latch_pantry') | default(0), 0) %}
+      {% set x = float(states('input_number.schedule_cellar_window_wor') | default(1),
+      0) %}
+
+      {% set Cost_feasible = Cost_Estore + x %}
+
+      {# Koeffizienten berechnen #}
+      {% set A = a * Cost_now %}
+      {% set B = (b - 1) * Cost_now + Cost_feasible %}
+      {% set C = c * Cost_now %}
+
+      {# Diskriminante berechnen #}
+      {% set D = B*B - 4*A*C %}
+
+      {% if D >= 0 and A != 0 %}
+        {% set sqrt_D = D ** 0.5 %}
+        {% set P1 = (-B + sqrt_D) / (2*A) %}
+        {% set P2 = (-B - sqrt_D) / (2*A) %}
+
+        {# Positive Lösungen filtern #}
+        {% set positive_solutions = [] %}
+        {% if P1 > 0 %}
+          {% set positive_solutions = positive_solutions + [P1] %}
+        {% endif %}
+        {% if P2 > 0 %}
+          {% set positive_solutions = positive_solutions + [P2] %}
+        {% endif %}
+
+        {% if positive_solutions | length > 0 %}
+          {{ positive_solutions | min | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      {% else %}
+        0
+      {% endif %}
+
+    unique_id: scullery_hallway_cellar_annex_setpoin
+
+  - name: "Größe Landing Interval Util"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >2-
+
+      {% set a = 0.000031865 %}
+      {% set b = 0.01416 %}
+      {% set c = 30.65 %}
+
+      {% set Cost_Estore = float(states('input_number.counter_boiler_landing_airlock')
+      | default(0), 0) %}
+      {% set Cost_now = float(states('sensor.latch_pantry') | default(0), 0) %}
+      {% set x = float(states('input_number.schedule_cellar_window_wor') | default(0),
+      0) %}
+
+      {% set Cost_feasible = Cost_Estore + x %}
+
+      {# Koeffizienten berechnen #}
+      {% set A = a * Cost_now %}
+      {% set B = (b - 1) * Cost_now + Cost_feasible %}
+      {% set C = c * Cost_now %}
+
+      {# Diskriminante berechnen #}
+      {% set D = B*B - 4*A*C %}
+
+      {% if D >= 0 and A != 0 %}
+        {% set sqrt_D = D ** 0.5 %}
+        {% set P1 = (-B + sqrt_D) / (2*A) %}
+        {% set P2 = (-B - sqrt_D) / (2*A) %}
+
+        {# Positive Lösungen filtern #}
+        {% set positive_solutions = [] %}
+        {% if P1 > 0 %}
+          {% set positive_solutions = positive_solutions + [P1] %}
+        {% endif %}
+        {% if P2 > 0 %}
+          {% set positive_solutions = positive_solutions + [P2] %}
+        {% endif %}
+
+        {% if positive_solutions | length > 0 %}
+          {{ positive_solutions | max | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      {% else %}
+        0
+      {% endif %}
+
+    unique_id: workshop_boiler_boiler_window_landing
+
+
+  - name: "Airlock Counter Hallway Loft Porch P"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >-
+      {% set U_DC = float(states('sensor.mode_airlock_meter_m'), 0) %}
+      {% set I_DC = float(states('sensor.cistern_hallway_sche'), 0) %}
+      {% set R_batt = float(states('sensor.counter_boiler_meter_annex_landing_lim'),
+      0) %}
+      {% set p_dc = U_DC * I_DC  %}
+      {% set P_verl_batt = (I_DC ** 2) * R_batt %}
+      {% if p_dc > 10 %}
+        {{ (p_dc - P_verl_batt) | round(1) }}
+      {% elif p_dc < 10 %}
+        {{ (p_dc + P_verl_batt) | round(1) }}
+      {% else %}
+        90
+      {% endif %}
+    unique_id: cistern_annex_annex_loft_setpoint_annex
+    availability: >-
+      {{ states('sensor.counter_boiler_meter_annex_landing_lim') not in ['unknown',
+      'unavailable', 'none'] and
+         states('sensor.mode_airlock_meter_m') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.cistern_hallway_sche') not in ['unknown', 'unavailable', 'none']
+      }}
+         
+         
+  - name: "Annex Target Pantry Annex Utility B"
+    unit_of_measurement: "W"
+    state_class: measurement
+    device_class: power
+    state: >-
+      {% set I_DC = float(states('sensor.cistern_hallway_sche'), 0) %}
+      {% set R_batt = float(states('sensor.counter_boiler_meter_annex_landing_lim'),
+      0) %}
+
+      {% if I_DC > 0 %}
+        {% set P_verl_batt = (I_DC ** 2) * R_batt %}
+        {{ P_verl_batt | round(2) }}
+      {% else %}
+        {{ 0 }}
+      {% endif %}
+    unique_id: limit_vestibule_loft_schedule_landing_l
+    availability: >-
+      {{ states('sensor.cistern_hallway_sche') not in ['unknown', 'unavailable', 'none']
+      and
+         states('sensor.counter_boiler_meter_annex_landing_lim') not in ['unknown',
+      'unavailable', 'none'] }}
+
+- sensor:
+  - name: "Gantry Interval Airlock Meter Hallway Hal"
+    unit_of_measurement: "mV"
+    state_class: measurement
+    device_class: "voltage"
+    availability: >-
+      {{ states('sensor.annex_porch_mode_mode_threshold_window_wo') not in ['unknown',
+      'unavailable', 'none'] and
+         states('sensor.setpoint_schedule_vestibule_vestibule_win') not in ['unknown',
+      'unavailable', 'none'] }}
+    state: >-
+      {% set A = float(states('sensor.annex_porch_mode_mode_threshold_window_wo'))
+      %}
+      {% set B = float(states('sensor.setpoint_schedule_vestibule_vestibule_win'))
+      %}
+      {{ ((A - B) * 1000) | int }}
+    unique_id: counter_mode_limit_counter_works
+
+
+- sensor:
+  - name: "Meter Counter Hallway Vestibule Meter Por"
+    unit_of_measurement: "mV"
+    state_class: measurement
+    device_class: "voltage"
+    availability: >-
+      {{ states('sensor.boiler_window_hallway') not in ['unknown', 'unavailable',
+      'none'] and
+         states('sensor.gantry_counter_thresh') not in ['unknown', 'unavailable',
+      'none'] }}
+    state: >-
+      {% set A = float(states('sensor.boiler_window_hallway')) %}
+      {% set B = float(states('sensor.gantry_counter_thresh')) %}
+      {{ ((A - B) * 1000) | int }}
+    unique_id: airlock_utility_landing_threshold
+
+
+- sensor:
+  - name: "Utility Target Annex Cellar Airlock Landi"
+    unit_of_measurement: "mV"
+    state_class: measurement
+    device_class: "voltage"
+    availability: >-
+      {{ states('sensor.window_landing_latch') not in ['unknown', 'unavailable',
+      'none'] and
+         states('sensor.utility_boiler_landin') not in ['unknown', 'unavailable',
+      'none'] }}
+    state: >-
+      {% set A = float(states('sensor.window_landing_latch')) %}
+      {% set B = float(states('sensor.utility_boiler_landin')) %}
+      {{ ((A - B) * 1000) | int }}
+    unique_id: threshold_pantry_scullery_cistern
+
+
+- sensor:
+  - name: "Loft Interval Cellar Porch Boiler Porch L"
+    unit_of_measurement: "mV"
+    state_class: measurement
+    device_class: "voltage"
+    availability: >-
+      {{ states('sensor.vestibule_landing_lat') not in ['unknown', 'unavailable',
+      'none'] and
+         states('sensor.cellar_vestibule_work') not in ['unknown', 'unavailable',
+      'none'] }}
+    state: >-
+      {% set A = float(states('sensor.vestibule_landing_lat')) %}
+      {% set B = float(states('sensor.cellar_vestibule_work')) %}
+      {{ ((A - B) * 1000) | int }}
+    unique_id: boiler_latch_airlock_boiler_thres
+
+
+
+- sensor:
+  - name: "Pantry Window Vestibule P"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {{ (prices.items | sum / (prices.items | length)) | round(3) if prices.items
+      | length > 0 else 0 }}
+    unique_id: landing_gantry_threshold
+#
+  - name: "Boiler Target Cellar"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set median_idx = (n // 2) %}
+      {{ sorted_prices[median_idx] | round(3) if n > 0 else 0 }}
+    unique_id: cellar_loft_setpoint_landing
+#
+  - name: "Utility Sensor Pan"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {{ (prices.items | sort | first) | round(3) if prices.items | length > 0 else
+      0 }}
+    unique_id: landing_landing_utility_cistern_a
+#
+  - name: "Airlock Latch Gant"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {{ (prices.items | sort | last) | round(3) if prices.items | length > 0 else
+      0 }}
+    unique_id: schedule_cellar_vestibule_vestibu
+#
+  - name: "Landing Mode Meter"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set q1_idx = (n * 0.25) | int %}
+      {{ sorted_prices[q1_idx] | round(3) if n > 0 else 0 }}
+    unique_id: cistern_workshop_counter_boiler
+#
+  - name: "Cellar Limit Porch"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set q3_idx = (n * 0.75) | int %}
+      {{ sorted_prices[q3_idx] | round(3) if n > 0 else 0 }}
+    unique_id: pantry_counter_hallway_worksho
+#
+
+  - name: "Porch Latch Scullery"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set p90_idx = (n * 0.9) | int %}
+      {{ sorted_prices[p90_idx] | round(3) if n > 0 else 0 }}
+    unique_id: porch_hallway_mode_hallway_landin
+#
+
+
+  - name: "Pantry Sensor Airlock"
+    unit_of_measurement: "ct/kWh"
+    state: >
+      {{ (float(states('sensor.meter_vestibule'),0) - float(states('sensor.mode_hallway_thr'),0)
+      )*100  }}
+    unique_id: schedule_threshold_mode_cister
+
+
+  - name: "Hallway Mode Gantry Me"
+    unit_of_measurement: "ct/kWh"
+    state: >
+      {{ (float(states('sensor.schedule_window_c'),0) - float(states('sensor.mode_hallway_thr'),0)
+      )*100  }}
+    unique_id: schedule_threshold_porch_loft_set
+
+
+  - name: "Cellar Target Gantry"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set q1_idx = (n * 0.25) | int %}
+      {% set median_idx = (n // 2) %}
+      {% set q3_idx = (n * 0.75) | int %}
+      {% set q1_price = sorted_prices[q1_idx] if n > 0 else 0 %}
+      {% set median_price = sorted_prices[median_idx] if n > 0 else 0 %}
+      {% set q3_price = sorted_prices[q3_idx] if n > 0 else 0 %}
+      {% set current_price = prices.items[0] if n > 0 else 0 %}
+      {% if current_price <= q1_price %}sehr günstig
+      {% elif current_price <= median_price %}günstig
+      {% elif current_price <= q3_price %}normal
+      {% else %}teuer
+      {% endif %}
+    icon: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set q1_idx = (n * 0.25) | int %}
+      {% set median_idx = (n // 2) %}
+      {% set q3_idx = (n * 0.75) | int %}
+      {% set q1_price = sorted_prices[q1_idx] if n > 0 else 0 %}
+      {% set median_price = sorted_prices[median_idx] if n > 0 else 0 %}
+      {% set q3_price = sorted_prices[q3_idx] if n > 0 else 0 %}
+      {% set current_price = prices.items[0] if n > 0 else 0 %}
+      {% if current_price <= q1_price %}mdi:currency-eur-off
+      {% elif current_price <= median_price %}mdi:currency-eur
+      {% elif current_price <= q3_price %}mdi:alert
+      {% else %}mdi:alert-octagon
+      {% endif %}
+#
+  - name: "Scullery Latch Hallway Vestib"
+    unit_of_measurement: "€/kWh"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set mean = (prices.items | sum / n) if n > 0 else 0 %}
+      {% set variance_sum = namespace(value=0) %}
+      {% for price in prices.items %}
+        {% set variance_sum.value = variance_sum.value + ((price - mean) ** 2) %}
+      {% endfor %}
+      {% set variance = (variance_sum.value / n) if n > 0 else 0 %}
+      {{ (variance ** 0.5) | round(4) }}
+    unique_id: boiler_scullery_limit_hallway_w
+#
+  - name: "Größe Gantry Target An"
+    unit_of_measurement: "%"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set n = prices.items | length %}
+      {% set mean = (prices.items | sum / n) if n > 0 else 0 %}
+      {% set variance_sum = namespace(value=0) %}
+      {% for price in prices.items %}
+        {% set variance_sum.value = variance_sum.value + ((price - mean) ** 2) %}
+      {% endfor %}
+      {% set variance = (variance_sum.value / n) if n > 0 else 0 %}
+      {% set std_dev = variance ** 0.5 %}
+      {{ (std_dev / mean * 100) | round(2) if mean != 0 else 0 }}
+    unique_id: pantry_schedule_cistern_meter_g
+#
+  - name: "Höhe Boiler Sensor Util"
+    state: >
+      {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+      %}
+      {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([], true)
+      %}
+      {% set all = (today + tomo) | list %}
+      {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+      {% set end_index = now_index + 96 %}
+      {% set prices = namespace(items=[]) %}
+      {% for i in range(all | length) %}
+        {% if i >= now_index and i < end_index %}
+          {% set prices.items = prices.items + [all[i].total] %}
+        {% endif %}
+      {% endfor %}
+      {% set sorted_prices = prices.items | sort %}
+      {% set min_price = sorted_prices | first %}
+      {% set min_idx = prices.items.index(min_price) %}
+      {% set hour = ((now_index + min_idx) // 4) % 24 %}
+      {% set minute = ((now_index + min_idx) % 4) * 15 %}
+      {{ '%02d:%02d' | format(hour, minute) }}
+    attributes:
+      preis: >-
+        {% set today = state_attr('sensor.latch_pantry','today') | default([], true)
+        %}
+        {% set tomo = state_attr('sensor.latch_pantry','tomorrow') | default([],
+        true) %}
+        {% set all = (today + tomo) | list %}
+        {% set now_index = (now().hour | int) * 4 + ((now().minute | int) // 15) %}
+        {% set end_index = now_index + 96 %}
+        {% set prices = namespace(items=[]) %}
+        {% for i in range(all | length) %}
+          {% if i >= now_index and i < end_index %}
+            {% set prices.items = prices.items + [all[i].total] %}
+          {% endif %}
+        {% endfor %}
+        {% set sorted_prices = prices.items | sort %}
+        {{ (sorted_prices | first) | round(3) }}

@@ -345,6 +345,16 @@ func shapeLeaksInLine(file string, line int, text string) []Leak {
 				Reason: "MAC outside the synthetic locally-administered range 02:00:5e:*"})
 		}
 	}
+	// A line carrying a Jinja expression is doing arithmetic, not stating a
+	// location. The reference instance's template.yaml computes saturation
+	// vapour pressure — `2.718281828459045`, `0.000031865`, `0.01416` — and a
+	// gate that calls Euler's number a coordinate is a gate that gets switched
+	// off before it ever meets a real one. A coordinate reaches a config as a
+	// VALUE, and a value under a coordinate key is caught by the key-position
+	// rule in SensitiveLiterals rather than here.
+	if strings.Contains(text, "{{") || strings.Contains(text, "{%") {
+		return leaks
+	}
 	for _, m := range preciseDecimal.FindAllStringSubmatch(isoTimestamp.ReplaceAllString(text, "<ts>"), -1) {
 		if !documentationCoordinate(m[1]) {
 			leaks = append(leaks, Leak{File: file, Line: line, Value: m[1],

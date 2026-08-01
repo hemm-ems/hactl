@@ -104,6 +104,34 @@ func (s *Sanitizer) Identifier(source string) string {
 	})
 }
 
+// Opaque returns the replacement for a token Home Assistant stores but never
+// parses — a `unique_id` above all.
+//
+// It exists because Identifier does not fit and using it there LOST a shape.
+// An entity's object id must be a legal slug, so Identifier flattens to
+// [a-z0-9_]; a unique_id has no such rule, and the reference instance has eight
+// of them carrying an umlaut (`u2123erppübyxcrdt`). Running those through
+// Identifier produced tidy ASCII slugs and quietly deleted the one property
+// that made them interesting — an identifier a byte-oriented matcher can cut in
+// half, which is what `ref scan`/`ref replace` walk.
+//
+// So this preserves the source's character classes rather than imposing a
+// grammar: length to the rune, and non-ASCII where the source had non-ASCII.
+// ShapeDrift is what caught the loss, which is the argument for measuring a
+// derivative instead of trusting the transformation that made it.
+func (s *Sanitizer) Opaque(source string) string {
+	if source == "" {
+		return source
+	}
+	return s.memo("opaque:"+source, func() string {
+		base := pick(idWords, "op:"+source) + "_" + pick(idWords, "op2:"+source)
+		if hasNonASCII(source) {
+			base = strings.ToLower(pick(nameNonASCII, "opuml:"+source)) + "_" + base
+		}
+		return slugPadTo(base, runeLen(source), "op:"+source)
+	})
+}
+
 // Icon passes an mdi: icon through unchanged.
 //
 // An icon name is drawn from Material Design Icons, a fixed public vocabulary,

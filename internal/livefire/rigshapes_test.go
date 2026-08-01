@@ -234,6 +234,35 @@ func TestRigFixtureTemplateFileHasASharedBlock(t *testing.T) {
 		t.Error("template.yaml has no trigger-keyed block — an entry appended to one inherits a " +
 			"trigger it never asked for, the shape that corrupted template.yaml on 2026-07-13")
 	}
+
+	// SPEC-realdata-fixture.md S2: scale is itself a shape. Everything above is
+	// satisfied by the five-block file this fixture used to hold, and five is
+	// not the question `tpl create` has to answer on a real house — 91 is. With
+	// five candidates, "append to the first block" and "append to the right
+	// block" differ by four; with ninety, a writer that picks wrong is picking
+	// wrong out of a field where being right is not luck.
+	//
+	// The bar is A2's fifty rather than the instance's ninety-one, because the
+	// derivative tracks an instance that moves and a test pinned to today's
+	// exact count would fail on the next capture for no reason.
+	blocks := len(doc.Content[0].Content)
+	if blocks < 50 {
+		t.Errorf("template.yaml holds %d top-level blocks; the reference instance has 91 and A2 "+
+			"asks for at least 50, because a placement decision among five candidates is not the "+
+			"decision the command actually faces", blocks)
+	}
+	// The domain spread matters as much as the count: 65 sensor blocks against
+	// 19 binary_sensor and 2 switch is what makes "the right block" a question
+	// with a wrong answer available in the same domain AND in a different one.
+	if len(blocksPerDomain) < 3 {
+		t.Errorf("template.yaml uses %d entity domains: %v — with one domain, every wrong block "+
+			"is at least the right KIND, and half the placement question disappears",
+			len(blocksPerDomain), blocksPerDomain)
+	}
+	if triggerKeyed < 2 {
+		t.Errorf("template.yaml has %d trigger-keyed blocks; more than one is what stops a writer "+
+			"that finds \"the\" trigger block from being right by accident", triggerKeyed)
+	}
 }
 
 // TestRigFixtureBlueprintCarriesInputTags is the other half of finding #20's

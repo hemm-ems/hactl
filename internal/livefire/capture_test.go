@@ -70,6 +70,8 @@ func TestCaptureRealDataFixture(t *testing.T) {
 		t.Logf("wrote .storage/%s", domain)
 	}
 
+	captureConfigTree(t, &s)
+
 	// The id mapping goes to a path the CAPTURER names, never into the fixture.
 	//
 	// It was written into `.storage/` first, and the leak gate caught it on the
@@ -92,6 +94,55 @@ func TestCaptureRealDataFixture(t *testing.T) {
 			t.Fatalf("writing the id mapping to %s: %v", out, err)
 		}
 		t.Logf("wrote the id mapping to %s — it carries the REAL identifiers; keep it out of the repository", out)
+	}
+}
+
+// captureConfigTree derives the fixture's hand-written YAML from the archived
+// snapshot rather than from a fresh read.
+//
+// SPEC-realdata-fixture.md §5: the config tree is already captured
+// (`_archive/livefire-2026-07-30/snapshot/`), so no live read is needed and
+// none is made. That is also what makes this half reproducible in a way the
+// live half is not — the snapshot is frozen, the instance is not.
+//
+// The generator REFUSES on shape drift instead of writing a smaller file. That
+// is S4, and it is not theoretical: the first run of this dropped eight
+// `unique_id` values carrying an umlaut, because they were being run through
+// the entity-slug sanitizer and a slug has no room for one. Nothing would have
+// reported it — the file would simply have been tidier than the house.
+func captureConfigTree(t *testing.T, s *realdata.Sanitizer) {
+	t.Helper()
+
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locating the repo root: %v", err)
+	}
+	snapshot := os.Getenv("HACTL_SNAPSHOT_DIR")
+	if snapshot == "" {
+		snapshot = filepath.Join(root, "..", "_archive", "livefire-2026-07-30", "snapshot")
+	}
+
+	for _, name := range []string{"template.yaml"} {
+		src, readErr := os.ReadFile(filepath.Clean(filepath.Join(snapshot, name)))
+		if readErr != nil {
+			t.Fatalf("reading %s from the snapshot at %s: %v", name, snapshot, readErr)
+		}
+		before := realdata.MeasureConfig(string(src))
+		out := realdata.SanitizeConfigText(string(src), s)
+		if drift := realdata.ShapeDrift(before, realdata.MeasureConfig(out)); len(drift) > 0 {
+			t.Fatalf("sanitizing %s changed its shape, so the fixture would carry less than the "+
+				"instance does: %v", name, drift)
+		}
+		dst := filepath.Join(fixtureDir(t), name)
+		//nolint:gosec // G703: `name` is a constant from the loop above and the
+		// directory is this repository's own testdata; the taint gosec follows
+		// is HACTL_SNAPSHOT_DIR, which selects what is READ, never where the
+		// result is written.
+		if writeErr := os.WriteFile(dst, []byte(out), 0o600); writeErr != nil {
+			t.Fatalf("writing %s: %v", dst, writeErr)
+		}
+		t.Logf("wrote %s — %d lines, %d top-level blocks, %d unique_ids, %d lines with non-ASCII",
+			name, before.Lines, before.TopLevelDash, before.UniqueIDs, before.NonASCII)
 	}
 }
 
