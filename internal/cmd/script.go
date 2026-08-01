@@ -905,11 +905,23 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	res := done("create script").
 		with("id", resp.ID).
 		with("reloaded", resp.Reloaded).
+		with("entity_created", resp.EntityCreated).
+		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
 		text("created script %q", resp.ID)
 	// The companion reports whether HA reloaded; saying "created" without it
 	// is the issue-#40 failure mode — a definition on disk that HA never read.
-	if !resp.Reloaded {
+	//
+	// A reload it DID do is still not proof of an entity: HA validates each
+	// script entry during the reload and skips a bad one while answering the
+	// reload service call 200, so `reloaded` alone reports success for a script
+	// that does not exist. That is finding #91's mechanism, one route over from
+	// the templates it was reported against.
+	switch {
+	case !resp.Reloaded:
 		res = res.warn("script written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
+	case !resp.EntityCreated:
+		res = res.warn("script written and HA reloaded, but no script entity appeared for %q — "+
+			"HA dropped the entry during reload; `hactl log --component config` carries its reason", resp.ID)
 	}
 	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)

@@ -288,6 +288,11 @@ var identityFieldEvidence = map[string]string{
 	"SystemLogEntry.name":                  inheritedUnprobed,
 	"TemplateCreateResponse.status":        inheritedUnprobed,
 	"TemplateCreateResponse.unique_id":     inheritedUnprobed,
+	"TemplateEntityResult.domain": "contract 2026-08-01: read out of the emitting route " +
+		"(companion routes/templates.py) — domain is a block's own domain key or the validated " +
+		"--domain parameter, both members of _ENTITY_DOMAINS, so it is never a legal empty string. " +
+		"unique_id is deliberately NOT an identity here: the route rejects a missing unique_id KEY " +
+		"but not an empty unique_id STRING",
 	"TemplateDefinition.domain":            inheritedUnprobed,
 	"TemplateResponse.unique_id":           inheritedUnprobed,
 	"TraceSummary.domain":                  inheritedUnprobed,

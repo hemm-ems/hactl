@@ -213,6 +213,27 @@ type TemplateCreateResponse struct {
 	// rewrite that reads as a surgical one is the defect this field exists to
 	// make visible.
 	Reformatted bool `json:"reformatted,omitempty"`
+	// Entities reports what became of every entity this create declared — one
+	// for a bare item, one or more for a full block.
+	//
+	// A reloaded template is not a created entity. Home Assistant validates a
+	// template entry asynchronously during the reload, logs a per-entry schema
+	// error and skips that entry, and still answers the reload service call
+	// 200 — so `Reloaded` is true and `ReloadError` empty for a create that
+	// produced nothing (finding #91). This array is the only field that can
+	// tell those apart, which is why it is per entity rather than one boolean.
+	Entities []TemplateEntityResult `json:"entities,omitempty"`
+}
+
+// TemplateEntityResult is one entity's outcome inside a template create.
+type TemplateEntityResult struct {
+	UniqueID string `json:"unique_id"`
+	Domain   string `json:"domain"`
+	// EntityID is null when no single live state matched — the entity is not
+	// live, or its name is rendered from a template rather than a literal, or
+	// two live states share that name.
+	EntityID string `json:"entity_id"`
+	Created  bool   `json:"created"`
 }
 
 // ScriptDefinition represents a script definition.
@@ -236,8 +257,15 @@ type ScriptResponse struct {
 
 // ScriptCreateResponse is the response from POST /v1/config/script.
 type ScriptCreateResponse struct {
-	Status   string `json:"status"`
-	ID       string `json:"id"`
+	Status string `json:"status"`
+	ID     string `json:"id"`
+	// EntityID is the script entity HA actually registered, and EntityCreated
+	// whether it was found live after the reload. A script entry HA rejects is
+	// logged and skipped while the reload still answers 200, so `Reloaded`
+	// alone cannot tell a created script from a dropped one — the same shape
+	// finding #91 reported against templates, one route over.
+	EntityID      string `json:"entity_id"`
+	EntityCreated bool   `json:"entity_created"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
 	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
 	// status plus a bounded excerpt of the body, or the transport error class.

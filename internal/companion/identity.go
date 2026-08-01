@@ -149,6 +149,23 @@ func (r *TemplateCreateResponse) Identity() []degeneracy.Field {
 	}
 }
 
+// Identity reports the entity's domain, and deliberately not its unique_id.
+//
+// `domain` is a member of the companion's own _ENTITY_DOMAINS — a block's
+// domain key, or the validated `--domain` parameter — so it is never a legal
+// empty string. `unique_id` looks like the stronger identity and is not one:
+// the route rejects an item with no `unique_id` KEY (`"unique_id" not in
+// item`) and a block where no item has one, but neither check rejects the
+// empty STRING, so `unique_id: ""` reaches this struct as a legitimate value.
+// Declaring it would poison a real answer, which is finding #38's mistake
+// repeated on a new struct — read out of the emitting route rather than
+// assumed, per H-14.
+func (r *TemplateEntityResult) Identity() []degeneracy.Field {
+	return []degeneracy.Field{
+		{Name: "domain", Value: &r.Domain},
+	}
+}
+
 // Identity reports the script key. Alias and mode are legitimately absent.
 func (d *ScriptDefinition) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "id", Value: &d.ID}}

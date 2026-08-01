@@ -435,6 +435,36 @@ any template entity domain (sensor, binary_sensor, number, select, button,
 weather, light, switch, cover, fan, lock, vacuum, alarm_control_panel, event,
 image, device_tracker, update).
 
+**Each domain has its own required keys, and the `state:` example below is only
+correct for `sensor` and `binary_sensor`.** Home Assistant validates a template
+entry *asynchronously*, during the reload that follows the write: an entry that
+fails its domain schema is logged and skipped while the reload itself still
+succeeds. So a write can be reported as done, be byte-clean in the file, and
+still never become an entity — `hactl log --component config` is where the
+reason appears. Give the domain what it requires:
+
+| domain | required beyond `name`/`unique_id` |
+|---|---|
+| `sensor`, `binary_sensor` | `state` |
+| `number` | `set_value` (an action block) |
+| `select` | `options` — **a Jinja template string, never a YAML list** |
+| `button` | `press` (an action block) |
+| `image` | `url` |
+| `update` | `installed_version`, `latest_version` |
+| `event` | `event_type`, `event_types` |
+| `lock` | `lock`, `unlock` (action blocks) |
+| `light`, `fan` | `turn_on`, `turn_off` (action blocks) |
+| `vacuum` | `start` (an action block) |
+| `weather` | `condition`, `humidity`, `temperature` |
+| `switch`, `cover`, `device_tracker`, `alarm_control_panel` | nothing — every key is optional |
+
+`select` is the one the example above actively misleads on: `options` is the
+only list-shaped field in the schema that is not a list. Write
+`options: "{{ ['alpha','beta'] }}"`, not `options: [alpha, beta]`.
+
+There is no Jinja syntax pre-check either — an unterminated `{{ ...` is written
+and reported the same way a valid one is.
+
 The `-f` file is either a **bare entity item** (state-based; placed into a block
 for `--domain`) or a **full block** for trigger-based / multi-domain entries. In
 HA's `template:` schema the trigger lives at the *block* level, never inside the

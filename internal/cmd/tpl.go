@@ -312,6 +312,7 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 				"(is `template: !include template.yaml` in configuration.yaml?)")
 		}
 	}
+	res = warnTemplateEntities(res, resp.Entities)
 	res = warnIfReformatted(res, resp.Reformatted)
 	return res.render(w)
 }
