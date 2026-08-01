@@ -264,8 +264,18 @@ type ScriptCreateResponse struct {
 	// logged and skipped while the reload still answers 200, so `Reloaded`
 	// alone cannot tell a created script from a dropped one — the same shape
 	// finding #91 reported against templates, one route over.
+	//
+	// EntityCreated is a POINTER because a companion older than v2026.7.10 does
+	// not send the field at all, and `false` is the zero value a missing field
+	// decodes to. Reading that as "HA dropped the script" made hactl warn about
+	// a script it had just created successfully — a caller who updates the CLI
+	// before the add-on sees it on every script create. Nil means the companion
+	// did not answer the question; only an explicit false is a negative.
+	//
+	// This is finding #38's class arriving through a different field: a zero
+	// value is not evidence, and the guard against it has to be structural.
 	EntityID      string `json:"entity_id"`
-	EntityCreated bool   `json:"entity_created"`
+	EntityCreated *bool  `json:"entity_created"`
 	Reloaded bool   `json:"reloaded"` // false when HA never loaded the new definition
 	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
 	// status plus a bounded excerpt of the body, or the transport error class.
@@ -396,11 +406,15 @@ type WiringResponse struct {
 
 // HelperCreateResponse is the response from POST /v1/config/helper.
 type HelperCreateResponse struct {
-	Status        string `json:"status"`
-	ID            string `json:"id"`
-	EntityID      string `json:"entity_id"`
-	Reloaded      bool   `json:"reloaded"`
-	EntityCreated bool   `json:"entity_created"`
+	Status   string `json:"status"`
+	ID       string `json:"id"`
+	EntityID string `json:"entity_id"`
+	Reloaded bool   `json:"reloaded"`
+	// EntityCreated is a POINTER for the reason ScriptCreateResponse's is: a
+	// companion that does not send the field decodes to false, and reading
+	// that as "HA dropped the helper" warns about a helper that exists. Nil is
+	// "not answered"; only an explicit false is a negative.
+	EntityCreated *bool `json:"entity_created"`
 	// ReloadError carries HA's own reason when Reloaded is false — its HTTP
 	// status plus a bounded excerpt of the body, or the transport error class.
 	// Absent on success. Decoded because a bare `reloaded: false` sends an

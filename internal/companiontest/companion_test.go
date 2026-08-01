@@ -426,7 +426,12 @@ func TestCreateAndGetHelper(t *testing.T) {
 	if !cr.Reloaded {
 		t.Error("reloaded = false, want true (real HA should confirm reload)")
 	}
-	if !cr.EntityCreated {
+	// Pointer, so that "the companion never said" and "the companion said no"
+	// are different answers — a companion older than v2026.7.10 omits the field
+	// entirely. Against the pinned companion it must be present AND true.
+	if cr.EntityCreated == nil {
+		t.Error("entity_created absent — the pinned companion is expected to report it")
+	} else if !*cr.EntityCreated {
 		t.Error("entity_created = false, want true (real HA should confirm the entity)")
 	}
 	if cr.EntityID != "input_boolean.e2e_test_toggle" {

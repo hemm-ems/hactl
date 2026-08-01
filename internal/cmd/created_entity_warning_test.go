@@ -170,3 +170,67 @@ func TestACreateThatProducedItsEntityStaysSilent(t *testing.T) {
 		t.Errorf("a create HA honoured was reported as dropped:\n%s", out)
 	}
 }
+
+// A companion too old to answer the question must not be read as answering
+// "no" — the failure the two-way release check caught, hours after the same
+// class was fixed in the degeneracy guard (finding #38).
+//
+// `entity_created` arrived in companion v2026.7.10. Against v2026.7.9 the field
+// is simply absent, and a plain `bool` decodes that to false, so hactl warned
+// "no script entity appeared" about a script it had just created. A user who
+// updates the CLI before the add-on sees it on every single script create.
+//
+// The stub answers exactly as the older companion does: reloaded, no
+// entity_created, no entity_id.
+func TestACompanionThatCannotAnswerIsNotReadAsSayingNo(t *testing.T) {
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, body string) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body)) //nolint:gosec // body is a literal written by this test, not caller input
+	}
+	mux.HandleFunc("/v1/config/wiring", func(w http.ResponseWriter, r *http.Request) {
+		domain := r.URL.Query().Get("domain")
+		ok(w, fmt.Sprintf(`{"status":"ok","domain":%q,"wired":true,"file":"%s.yaml"}`, domain, domain))
+	})
+	mux.HandleFunc("/v1/config/script", func(w http.ResponseWriter, _ *http.Request) {
+		ok(w, `{"status":"ok","id":"wakeup","reloaded":true}`)
+	})
+	mux.HandleFunc("/v1/config/helper", func(w http.ResponseWriter, _ *http.Request) {
+		ok(w, `{"status":"ok","id":"guest_mode","domain":"input_boolean","reloaded":true}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		name    string
+		payload string
+		args    []string
+		witness string
+	}{
+		{"script create", "wakeup:\n  alias: Wake Up\n  sequence: []\n",
+			[]string{"script", "create"}, "no script entity appeared"},
+		{"helper create", "guest_mode:\n  name: Guest Mode\n",
+			[]string{"helper", "create", "input_boolean"}, "was not found in HA's live state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env := fmt.Sprintf("HA_URL=http://127.0.0.1:19999\nHA_TOKEN=test\nCOMPANION_URL=%s\n", srv.URL)
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload := filepath.Join(dir, "payload.yaml")
+			if err := os.WriteFile(payload, []byte(tc.payload), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := append(append([]string{}, tc.args...), "--file", payload, "--confirm", "--dir", dir)
+			out, err := runCLI(t, args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, out)
+			}
+			if strings.Contains(out, tc.witness) {
+				t.Errorf("a companion that never reported on the entity was read as reporting it "+
+					"missing — the create succeeded:\n%s", out)
+			}
+		})
+	}
+}

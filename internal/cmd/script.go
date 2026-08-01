@@ -905,7 +905,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	res := done("create script").
 		with("id", resp.ID).
 		with("reloaded", resp.Reloaded).
-		with("entity_created", resp.EntityCreated).
+		withIf(resp.EntityCreated != nil, "entity_created", resp.EntityCreated).
 		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
 		text("created script %q", resp.ID)
 	// The companion reports whether HA reloaded; saying "created" without it
@@ -919,7 +919,9 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	switch {
 	case !resp.Reloaded:
 		res = res.warn("script written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
-	case !resp.EntityCreated:
+	case resp.EntityCreated != nil && !*resp.EntityCreated:
+		// Only an explicit false. A companion too old to send the field says
+		// nothing about the entity, and nothing is not a negative.
 		res = res.warn("script written and HA reloaded, but no script entity appeared for %q — "+
 			"HA dropped the entry during reload; `hactl log --component config` carries its reason", resp.ID)
 	}

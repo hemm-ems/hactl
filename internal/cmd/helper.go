@@ -456,13 +456,13 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 		with("id", resp.ID).
 		with("domain", domain).
 		with("reloaded", resp.Reloaded).
-		with("entity_created", resp.EntityCreated).
+		withIf(resp.EntityCreated != nil, "entity_created", resp.EntityCreated).
 		withIf(resp.EntityID != "", "entity_id", resp.EntityID).
 		text("created helper %q (domain=%s)", resp.ID, domain)
 	switch {
 	case !resp.Reloaded:
 		res = res.warn("helper written but HA did not confirm reload%s", reloadReasonSuffix(resp.ReloadError))
-	case !resp.EntityCreated:
+	case resp.EntityCreated != nil && !*resp.EntityCreated:
 		res = res.warn("helper reloaded but entity %q was not found in HA's live state", resp.EntityID)
 	default:
 		res = res.text("entity_id: %s", resp.EntityID)
