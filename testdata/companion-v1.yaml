@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: hactl-companion API
-  version: 2026.7.10
+  version: 2026.7.11
   description: YAML file access API for Home Assistant. Provides structured CRUD
     for templates, scripts, and automations, plus raw config file read/write 
     with !include resolution.
@@ -1137,6 +1137,13 @@ paths:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: "Reads every file Home Assistant reads for the domain, in its order:
+        the `!include` target, the domain written out inline in `configuration.yaml`,
+        each `*.yaml` under an `!include_dir_merge_named`/`!include_dir_merge_list`
+        directory (walked recursively), and any package file reached through `homeassistant:
+        packages:`. `!include_dir_named` and `!include_dir_list` are not resolved
+        — there an entry's identity comes from the file rather than from the document
+        — and the domain reads as unwired."
       parameters:
       - name: domain
         in: query
@@ -1185,7 +1192,9 @@ paths:
         a storage-backed helper (created in the Home Assistant UI) by its entity_id,
         its collection id, or `<domain>.<collection id>`. `input_button` is readable
         here although it has no YAML form. 409 if a bare id is ambiguous across storage
-        domains.'
+        domains. The YAML search covers every wiring the listing covers, including
+        a domain written out inline in `configuration.yaml` and one arriving through
+        a package.'
       parameters:
       - name: id
         in: query
@@ -1262,6 +1271,13 @@ paths:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: "Edits the entry in place, wherever the read path found it. 409
+        if that file keeps the helper under a key rather than at its root — a domain
+        written out inline in `configuration.yaml`, or one arriving through a package:
+        the entry is real and readable, and splicing a single entry is only safe at
+        a document's root. The refusal names the file; `PUT /v1/config/file` writes
+        it. 409 also for a storage-backed helper, which has no YAML definition to
+        change."
       parameters:
       - name: id
         in: query
@@ -1293,6 +1309,13 @@ paths:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: "Edits the entry in place, wherever the read path found it. 409
+        if that file keeps the helper under a key rather than at its root — a domain
+        written out inline in `configuration.yaml`, or one arriving through a package:
+        the entry is real and readable, and splicing a single entry is only safe at
+        a document's root. The refusal names the file; `PUT /v1/config/file` writes
+        it. 409 also for a storage-backed helper, which has no YAML definition to
+        change."
       parameters:
       - name: id
         in: query
