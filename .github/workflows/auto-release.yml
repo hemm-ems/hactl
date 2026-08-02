@@ -2,9 +2,15 @@ name: Auto Release
 
 on:
   schedule:
-    # 5th of each month at 10:23 UTC — after HA's monthly release.
+    # 9th of each month at 10:23 UTC. HA's monthly release is the first
+    # Wednesday, so by the 8th it has certainly happened — and the companion
+    # releases on the 8th, one day ahead of this. That order is deliberate:
+    # hactl hard-depends on routes the companion serves, so the sidecar ships
+    # first. This used to run on the 5th, which was both before HA could be
+    # relied on to have shipped and before the companion's own release.
+    #
     # Off the top of the hour: GitHub delays/drops schedules at :00 under load.
-    - cron: "23 10 5 * *"
+    - cron: "23 10 9 * *"
   workflow_dispatch:
     inputs:
       version:
@@ -85,11 +91,10 @@ jobs:
         id: calc
         run: |
           # The series comes from HA's current stable, not from today's date.
-          # This job runs on the 5th, close enough to HA's monthly release that
-          # the calendar was usually right — but "usually" made vYYYY.M.0 mean
-          # "the month it happened to be cut in" rather than "the HA series it
-          # was tested against", which is what the version is FOR. Cut the tag
-          # from the thing it describes.
+          # Running late in the month made the calendar usually right — but
+          # "usually" made vYYYY.M.0 mean "the month it happened to be cut in"
+          # rather than "the HA series it was tested against", which is what the
+          # version is FOR. Cut the tag from the thing it describes.
           if [ -n "${{ inputs.version }}" ]; then
             series="${{ inputs.version }}"
           else
@@ -101,10 +106,11 @@ jobs:
           echo "Next tag: ${next_tag} (HA stable ${{ steps.ha.outputs.stable }})"
 
       # An existing tag is not an error. The manual patch-release button rolls
-      # the series itself when a month turns over, so by the 5th the .0 this
-      # job would cut has often already been cut by hand — the normal outcome,
-      # not a fault. It used to `exit 1`, which is why the scheduled release
-      # reported a red X every month somebody shipped before the 5th.
+      # the series itself when HA turns over, so by the time this runs the .0 it
+      # would cut has often already been cut by hand — the normal outcome, not a
+      # fault. It used to `exit 1`, which is why the scheduled release reported
+      # a red X every month somebody shipped first. It did on 2026-07-05, and
+      # would have again on 2026-08-05.
       - name: Check whether the tag already exists
         id: tagcheck
         run: |
