@@ -281,35 +281,57 @@ func discoverCompanion(ctx context.Context, cfg *config.Config, checkConfig bool
 	}
 }
 
-// checkVersionCompat compares hactl and companion major versions.
-// Returns a warning string if major versions differ by more than 2, empty otherwise.
+// compatWindowMonths is how far the CLI and the companion may drift apart
+// before `hactl health` says so. The two ship in lockstep every month
+// (companion first, then hactl), so a month of skew is routine — a pair that
+// has not been completed yet. Beyond that a release was skipped outright, and
+// the CLI is likely calling routes the installed companion does not serve.
+const compatWindowMonths = 2
+
+// checkVersionCompat compares the hactl and companion versions and returns a
+// warning when they have drifted too far apart, empty otherwise.
+//
+// Both sides version as CalVer YYYY.M.PATCH, mirroring Home Assistant. That
+// makes the leading field the *year*, so comparing leading fields answers a
+// question nobody asked: hactl 2026.8 against companion 2026.1 is seven months
+// of API drift and zero years apart. The distance that matters here is months,
+// so months is what this measures.
+//
+// A version that is not CalVer goes unjudged — a `dev` build, or a companion
+// reporting some other scheme. Silence is the honest answer when the two
+// numbers are not on the same scale.
 func checkVersionCompat(hactlVersion, companionVersion string) string {
-	hMajor := parseMajor(hactlVersion)
-	cMajor := parseMajor(companionVersion)
-	if hMajor < 0 || cMajor < 0 {
+	hMonth, hOK := calverMonth(hactlVersion)
+	cMonth, cOK := calverMonth(companionVersion)
+	if !hOK || !cOK {
 		return ""
 	}
-	diff := hMajor - cMajor
+	diff := hMonth - cMonth
 	if diff < 0 {
 		diff = -diff
 	}
-	if diff > 2 {
-		return fmt.Sprintf("companion version %s may be incompatible with hactl %s (major version diff: %d)", companionVersion, hactlVersion, diff)
+	if diff > compatWindowMonths {
+		return fmt.Sprintf("companion version %s may be incompatible with hactl %s (%d months apart)", companionVersion, hactlVersion, diff)
 	}
 	return ""
 }
 
-// parseMajor extracts the major version number from a semver-like string.
-// Returns -1 if the version cannot be parsed.
-func parseMajor(v string) int {
-	v = strings.TrimPrefix(v, "v")
-	parts := strings.SplitN(v, ".", 2)
-	if len(parts) == 0 {
-		return -1
+// calverMonth converts a CalVer version to an absolute month count, so that two
+// versions can be subtracted. Reports false when v is not YYYY.M[.PATCH]: the
+// year floor and the month range together reject a semver-shaped string, which
+// would otherwise be read as year 1 and yield a distance of two thousand years.
+func calverMonth(v string) (int, bool) {
+	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+	if len(parts) < 2 {
+		return 0, false
 	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return -1
+	year, err := strconv.Atoi(parts[0])
+	if err != nil || year < 2000 {
+		return 0, false
 	}
-	return n
+	month, err := strconv.Atoi(parts[1])
+	if err != nil || month < 1 || month > 12 {
+		return 0, false
+	}
+	return year*12 + month, true
 }

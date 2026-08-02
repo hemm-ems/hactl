@@ -59,23 +59,33 @@ func TestHealthCommand_NoEnv(t *testing.T) {
 	}
 }
 
-func TestParseMajor(t *testing.T) {
+func TestCalverMonth(t *testing.T) {
 	tests := []struct {
 		version string
 		want    int
+		wantOK  bool
 	}{
-		{"1.2.3", 1},
-		{"v2.0.0", 2},
-		{"0.5.1", 0},
-		{"dev", -1},
-		{"", -1},
-		{"3", 3},
-		{"v10.1", 10},
+		{"2026.8.0", 2026*12 + 8, true},
+		{"v2026.8.0", 2026*12 + 8, true},
+		{"2026.12", 2026*12 + 12, true},
+		{"2026.07.11", 2026*12 + 7, true}, // zero-padded month
+		{"dev", 0, false},
+		{"", 0, false},
+		{"2026", 0, false},    // no month
+		{"1.2.3", 0, false},   // semver, not CalVer
+		{"5.0.0", 0, false},   // semver whose leading field is a plausible year
+		{"2026.13", 0, false}, // month out of range
+		{"2026.0.1", 0, false},
+		{"2026.x.1", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			if got := parseMajor(tt.version); got != tt.want {
-				t.Errorf("parseMajor(%q) = %d, want %d", tt.version, got, tt.want)
+			got, ok := calverMonth(tt.version)
+			if ok != tt.wantOK {
+				t.Fatalf("calverMonth(%q) ok = %v, want %v", tt.version, ok, tt.wantOK)
+			}
+			if ok && got != tt.want {
+				t.Errorf("calverMonth(%q) = %d, want %d", tt.version, got, tt.want)
 			}
 		})
 	}
@@ -88,14 +98,23 @@ func TestCheckVersionCompat(t *testing.T) {
 		companion string
 		wantEmpty bool
 	}{
-		{"same version", "1.0.0", "1.0.0", true},
-		{"minor diff", "1.0.0", "1.5.0", true},
-		{"major diff 1", "2.0.0", "1.0.0", true},
-		{"major diff 2", "3.0.0", "1.0.0", true},
-		{"major diff 3 - warn", "4.0.0", "1.0.0", false},
-		{"major diff 5 - warn", "5.0.0", "0.1.0", false},
-		{"unparseable hactl", "dev", "1.0.0", true},
-		{"unparseable companion", "1.0.0", "unknown", true},
+		// The versions this project actually ships. Before CalVer awareness
+		// every one of these compared equal on the leading field — the year —
+		// so the check was silent no matter how far the two had drifted.
+		{"same release", "2026.8.0", "2026.8.0", true},
+		{"patch skew within a month", "2026.7.15", "2026.7.11", true},
+		{"companion one month behind", "2026.8.0", "2026.7.11", true},
+		{"companion two months behind", "2026.8.0", "2026.6.4", true},
+		{"companion three months behind - warn", "2026.8.0", "2026.5.4", false},
+		{"companion seven months behind - warn", "2026.8.0", "2026.1.0", false},
+		{"hactl three months behind - warn", "2026.5.0", "2026.8.1", false},
+		{"across a year boundary", "2027.1.0", "2026.12.4", true},
+		{"across a year boundary - warn", "2027.1.0", "2026.9.4", false},
+		{"a year apart - warn", "2027.8.0", "2026.8.0", false},
+		// Not CalVer on one side: no shared scale, so no verdict.
+		{"dev build", "dev", "2026.8.0", true},
+		{"companion reports nothing useful", "2026.8.0", "unknown", true},
+		{"companion reports semver", "2026.8.0", "1.0.0", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
