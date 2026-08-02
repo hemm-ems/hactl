@@ -93,22 +93,21 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Compute previous HA version
+      # `prev` is the release before HA's current stable — asked of HA, not of
+      # the calendar. See .github/actions/ha-versions: for the first days of
+      # each month the calendar month is ahead of anything HA has published, and
+      # the old arithmetic resolved `prev` to the image `stable` already points
+      # at, so a required lane tested the same HA twice.
+      - name: Resolve HA versions
         if: matrix.ha-version == 'prev'
         id: prev
-        run: |
-          M=$(date -u +%-m)
-          YYYY=$(date -u +%Y)
-          if [ "$M" -eq 1 ]; then prev_year=$((YYYY-1)); prev_m=12
-          else prev_year=${YYYY}; prev_m=$((M-1)); fi
-          prev_month="${prev_year}.${prev_m}"
-          echo "image=ghcr.io/home-assistant/home-assistant:${prev_month}" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/ha-versions
       - name: Set HA image
         id: image
         run: |
           img="${{ matrix.image }}"
           if [ -z "$img" ]; then
-            img="${{ steps.prev.outputs.image }}"
+            img="${{ steps.prev.outputs.prev_image }}"
           fi
           echo "ha_image=${img}" >> "$GITHUB_OUTPUT"
       - name: Run integration tests

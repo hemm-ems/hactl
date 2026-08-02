@@ -416,10 +416,14 @@ The jobs run in parallel; `ci.yml` is the list of them, and each corresponds to 
 **Integration Tests** is where most of the work happens. It runs `make test-int` three times, in parallel, against three different versions of Home Assistant:
 
 - `stable` — the current stable release
-- `prev` — the previous month's release (computed dynamically at runtime as `YYYY.M`)
+- `prev` — the release before current stable, resolved at runtime from Home Assistant's own releases by [`.github/actions/ha-versions`](../.github/actions/ha-versions/action.yml)
 - `dev` — the HA development build
 
 The `stable` and `prev` runs are required: a failure in either one blocks the pull request. The `dev` run is non-blocking — if HA dev introduces a breaking API change overnight, it shows up as a warning in the CI output rather than blocking a merge. This gives us advance notice of upcoming HA changes without making every PR depend on the stability of a pre-release build.
+
+Both required lanes ask Home Assistant which versions those are, rather than deriving them from today's date. The two are not the same question: HA publishes `YYYY.M` in the first week of month M, so from the 1st until that release the calendar month names a series HA has not shipped. The old arithmetic — current month minus one — therefore resolved `prev` to the series `stable` already pointed at for the first week of every month, and the required lane tested the same image twice while the genuine previous release went untested. The tags record it: `v2026.7.15`, cut on 28 July, was tested against `2026.6.4, 2026.7.4`; `v2026.8.0`, cut on 1 August, against `2026.7.4, 2026.7.4`.
+
+hactl's own version is CalVer `vYYYY.M.PATCH`, and `YYYY.M` is a claim about the HA series the release was tested against — so the same resolver decides when a new series opens. A release cut in August while HA stable is still `2026.7` extends the current series; only HA publishing `2026.8` opens `v2026.8.x`. Series numbers move forward only: when a tag is already ahead of HA's series, the next release extends it rather than reissuing a number that is taken.
 
 **Vulnerability Check** runs `govulncheck` against the Go module graph. It checks known CVEs in the Go vulnerability database. A vulnerability finding in a direct dependency blocks merge.
 

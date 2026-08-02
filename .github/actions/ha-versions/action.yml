@@ -1,0 +1,96 @@
+name: "Resolve Home Assistant versions"
+description: >-
+  Answer "which Home Assistant is current, and which one came before it" from
+  Home Assistant's own releases rather than from the calendar.
+
+# Why this exists at all
+#
+# Three workflows used to derive the HA test matrix — and hactl's own CalVer
+# series — from `date -u +%-m` minus one. The calendar is not Home Assistant's
+# release schedule: HA ships YYYY.M in the first week of month M, so between the
+# 1st and that release the calendar month is one ahead of anything HA has
+# published. For those days `prev` resolved to the month that IS stable, and a
+# required CI lane tested the same image twice while the genuine previous
+# release went untested. It is visible in the shipped tags: v2026.7.15 (Jul 28)
+# recorded "2026.6.4, 2026.7.4"; v2026.8.0 (Aug 1) recorded "2026.7.4, 2026.7.4".
+#
+# So: ask HA. The GitHub release API excludes prereleases from `latest`, which
+# is the same "stable" the container tag means. The calendar remains only as a
+# fallback for when the API is unreachable, and says so in the log rather than
+# quietly resuming the old behaviour.
+
+inputs:
+  token:
+    description: "Token for the GitHub API call. The default runner token is enough."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  stable:
+    description: "Current HA stable, full version (e.g. 2026.7.4)"
+    value: ${{ steps.resolve.outputs.stable }}
+  stable_month:
+    description: "Current HA stable series (e.g. 2026.7)"
+    value: ${{ steps.resolve.outputs.stable_month }}
+  prev_month:
+    description: "The series before current stable (e.g. 2026.6)"
+    value: ${{ steps.resolve.outputs.prev_month }}
+  prev_image:
+    description: "Container image for prev_month"
+    value: ${{ steps.resolve.outputs.prev_image }}
+  source:
+    description: "Where the answer came from: 'api' or 'calendar'"
+    value: ${{ steps.resolve.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve HA versions
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+
+        stable=""
+        if latest=$(gh api repos/home-assistant/core/releases/latest --jq .tag_name 2>/dev/null); then
+          # HA tags releases bare (2026.7.4), but tolerate a leading v.
+          candidate="${latest#v}"
+          if printf '%s' "${candidate}" | grep -qE '^[0-9]{4}\.[0-9]{1,2}(\.[0-9]+)?$'; then
+            stable="${candidate}"
+            source="api"
+          else
+            echo "::warning::home-assistant/core latest release '${latest}' is not YYYY.M[.PATCH] — falling back to the calendar"
+          fi
+        else
+          echo "::warning::could not reach the home-assistant/core release API — falling back to the calendar"
+        fi
+
+        if [ -z "${stable}" ]; then
+          # Fallback: the previous calendar month is the newest series HA is
+          # guaranteed to have published, at any point in the current month.
+          YYYY=$(date -u +%Y); M=$(date -u +%-m)
+          if [ "$M" -eq 1 ]; then stable="$((YYYY - 1)).12"; else stable="${YYYY}.$((M - 1))"; fi
+          source="calendar"
+        fi
+
+        stable_year=$(echo "${stable}" | cut -d. -f1)
+        stable_m=$(echo "${stable}" | cut -d. -f2)
+        stable_month="${stable_year}.${stable_m}"
+
+        if [ "${stable_m}" -eq 1 ]; then
+          prev_month="$((stable_year - 1)).12"
+        else
+          prev_month="${stable_year}.$((stable_m - 1))"
+        fi
+
+        {
+          echo "stable=${stable}"
+          echo "stable_month=${stable_month}"
+          echo "prev_month=${prev_month}"
+          echo "prev_image=ghcr.io/home-assistant/home-assistant:${prev_month}"
+          echo "source=${source}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "::notice title=HA versions::stable=${stable} (series ${stable_month}), prev=${prev_month} [via ${source}]"
