@@ -39,44 +39,14 @@ jobs:
         env:
           HA_SERIES: ${{ steps.ha.outputs.stable_month }}
         run: |
-          # Find latest HA-style tag (vYYYY.M.PATCH)
-          latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$latest" ]; then
-            echo "::error::No HA-style tag found (vYYYY.M.PATCH). Run auto-release first to establish the baseline."
-            exit 1
-          fi
-          echo "Latest HA-style tag: ${latest}"
-
-          ver=$(echo "$latest" | sed 's/^v//')
-          yyyy=$(echo "$ver" | cut -d. -f1)
-          m=$(echo "$ver" | cut -d. -f2)
-          patch=$(echo "$ver" | cut -d. -f3)
-
-          # Roll the series when Home Assistant has moved on — and only then.
-          #
-          # This used to roll on the CALENDAR turning over, which opened a new
-          # series days before HA published the one it names: v2026.8.0 was cut
-          # on 2026-08-01 and tested against HA 2026.7.4, because HA 2026.8 did
-          # not exist yet. vYYYY.M is a claim about the HA series hactl was
-          # tested against, so only HA gets to advance it.
-          #
-          # Forward only. If the newest tag is somehow ahead of HA's series —
-          # as v2026.8.0 is until HA 2026.8 ships — extend it rather than
-          # reissuing a number that is already taken.
-          ha_yyyy=$(echo "$HA_SERIES" | cut -d. -f1)
-          ha_m=$(echo "$HA_SERIES" | cut -d. -f2)
-          if [ $((ha_yyyy * 12 + ha_m)) -gt $((yyyy * 12 + m)) ]; then
-            echo "HA is on ${HA_SERIES}, latest tag is ${yyyy}.${m}; rolling over to ${HA_SERIES}.0"
-            yyyy=${ha_yyyy}
-            m=${ha_m}
-            next_patch=0
-          else
-            next_patch=$((patch + 1))
-          fi
-          next_tag="v${yyyy}.${m}.${next_patch}"
-
+          # One rule, shared with auto-release and with the companion:
+          # .github/scripts/next-version.sh. It reads every tag, extends the
+          # newest, rolls only when HA is ahead of it, and refuses outright to
+          # return anything that does not outrank what already exists.
+          next_tag=$(git tag | ./.github/scripts/next-version.sh "${HA_SERIES}")
           echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
-          echo "next_version=${yyyy}.${m}.${next_patch}" >> "$GITHUB_OUTPUT"
+          echo "next_version=${next_tag#v}" >> "$GITHUB_OUTPUT"
+          echo "Next tag: ${next_tag} (HA stable ${{ steps.ha.outputs.stable }})"
 
       - name: Check tag does not exist
         run: |
