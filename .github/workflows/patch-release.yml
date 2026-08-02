@@ -24,14 +24,20 @@ jobs:
     outputs:
       next-tag: ${{ steps.calc.outputs.next_tag }}
       next-version: ${{ steps.calc.outputs.next_version }}
-      prev-ha-image: ${{ steps.calc.outputs.prev_ha_image }}
+      prev-ha-image: ${{ steps.ha.outputs.prev_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      - name: Resolve HA versions
+        id: ha
+        uses: ./.github/actions/ha-versions
+
       - name: Calculate next patch version
         id: calc
+        env:
+          HA_SERIES: ${{ steps.ha.outputs.stable_month }}
         run: |
           # Find latest HA-style tag (vYYYY.M.PATCH)
           latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+$' | head -1)
@@ -41,19 +47,28 @@ jobs:
           fi
           echo "Latest HA-style tag: ${latest}"
 
-          # Parse vYYYY.M.PATCH and increment patch — unless the latest tag is
-          # from an earlier month: CalVer means a June patch after a May series
-          # starts the June series (vYYYY.M.0), it doesn't extend May's.
           ver=$(echo "$latest" | sed 's/^v//')
           yyyy=$(echo "$ver" | cut -d. -f1)
           m=$(echo "$ver" | cut -d. -f2)
           patch=$(echo "$ver" | cut -d. -f3)
-          now_yyyy=$(date -u +%Y)
-          now_m=$(date -u +%-m)
-          if [ "$yyyy" != "$now_yyyy" ] || [ "$m" != "$now_m" ]; then
-            echo "Latest tag ${latest} is from ${yyyy}.${m}; rolling over to ${now_yyyy}.${now_m}.0"
-            yyyy=${now_yyyy}
-            m=${now_m}
+
+          # Roll the series when Home Assistant has moved on — and only then.
+          #
+          # This used to roll on the CALENDAR turning over, which opened a new
+          # series days before HA published the one it names: v2026.8.0 was cut
+          # on 2026-08-01 and tested against HA 2026.7.4, because HA 2026.8 did
+          # not exist yet. vYYYY.M is a claim about the HA series hactl was
+          # tested against, so only HA gets to advance it.
+          #
+          # Forward only. If the newest tag is somehow ahead of HA's series —
+          # as v2026.8.0 is until HA 2026.8 ships — extend it rather than
+          # reissuing a number that is already taken.
+          ha_yyyy=$(echo "$HA_SERIES" | cut -d. -f1)
+          ha_m=$(echo "$HA_SERIES" | cut -d. -f2)
+          if [ $((ha_yyyy * 12 + ha_m)) -gt $((yyyy * 12 + m)) ]; then
+            echo "HA is on ${HA_SERIES}, latest tag is ${yyyy}.${m}; rolling over to ${HA_SERIES}.0"
+            yyyy=${ha_yyyy}
+            m=${ha_m}
             next_patch=0
           else
             next_patch=$((patch + 1))
@@ -62,16 +77,6 @@ jobs:
 
           echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
           echo "next_version=${yyyy}.${m}.${next_patch}" >> "$GITHUB_OUTPUT"
-
-          # Previous month HA version for the test matrix (handles January rollover)
-          if [ "$m" -eq 1 ]; then
-            prev_year=$((yyyy - 1))
-            prev_m=12
-          else
-            prev_year=${yyyy}
-            prev_m=$((m - 1))
-          fi
-          echo "prev_ha_image=ghcr.io/home-assistant/home-assistant:${prev_year}.${prev_m}" >> "$GITHUB_OUTPUT"
 
       - name: Check tag does not exist
         run: |

@@ -2,13 +2,19 @@ name: Auto Release
 
 on:
   schedule:
-    # 5th of each month at 10:23 UTC — after HA's monthly release.
+    # 9th of each month at 10:23 UTC. HA's monthly release is the first
+    # Wednesday, so by the 8th it has certainly happened — and the companion
+    # releases on the 8th, one day ahead of this. That order is deliberate:
+    # hactl hard-depends on routes the companion serves, so the sidecar ships
+    # first. This used to run on the 5th, which was both before HA could be
+    # relied on to have shipped and before the companion's own release.
+    #
     # Off the top of the hour: GitHub delays/drops schedules at :00 under load.
-    - cron: "23 10 5 * *"
+    - cron: "23 10 9 * *"
   workflow_dispatch:
     inputs:
       version:
-        description: "Override version (e.g. 2026.5). Leave empty for auto YYYY.M"
+        description: "Override series (e.g. 2026.5). Empty = the series of HA's current stable."
         required: false
         default: ""
 
@@ -23,8 +29,16 @@ permissions:
 
 jobs:
   # ---------- Job 0: merge approved dependabot PRs ----------
+  #
+  # Runs AFTER `versions`, not before it. This job merges other people's pull
+  # requests into main; doing that first meant a run that was going to abort at
+  # the tag check anyway had already changed main by the time it aborted —
+  # dependencies landed, no release followed. Nothing here may run until the
+  # run knows it has a release to make.
   merge-deps:
     name: Merge Dependabot PRs
+    needs: versions
+    if: needs.versions.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,58 +71,63 @@ jobs:
   # ---------- Job 1: compute versions ----------
   versions:
     name: Compute Versions
-    needs: merge-deps
     runs-on: ubuntu-latest
     outputs:
-      prev-ha: ${{ steps.calc.outputs.prev_ha }}
-      prev-ha-image: ${{ steps.calc.outputs.prev_ha_image }}
+      prev-ha: ${{ steps.ha.outputs.prev_month }}
+      prev-ha-image: ${{ steps.ha.outputs.prev_image }}
       next-tag: ${{ steps.calc.outputs.next_tag }}
       next-version: ${{ steps.calc.outputs.next_version }}
+      skip: ${{ steps.tagcheck.outputs.skip }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      - name: Resolve HA versions
+        id: ha
+        uses: ./.github/actions/ha-versions
+
       - name: Calculate versions
         id: calc
         run: |
-          # Determine YYYY.M — from input override or current UTC date
+          # The series comes from HA's current stable, not from today's date.
+          # Running late in the month made the calendar usually right — but
+          # "usually" made vYYYY.M.0 mean "the month it happened to be cut in"
+          # rather than "the HA series it was tested against", which is what the
+          # version is FOR. Cut the tag from the thing it describes.
           if [ -n "${{ inputs.version }}" ]; then
-            YYYY=$(echo "${{ inputs.version }}" | cut -d. -f1)
-            M=$(echo "${{ inputs.version }}" | cut -d. -f2)
+            series="${{ inputs.version }}"
           else
-            YYYY=$(date -u +%Y)
-            M=$(date -u +%-m)
+            series="${{ steps.ha.outputs.stable_month }}"
           fi
-          next_tag="v${YYYY}.${M}.0"
+          next_tag="v${series}.0"
           echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
-          echo "next_version=${YYYY}.${M}.0" >> "$GITHUB_OUTPUT"
+          echo "next_version=${series}.0" >> "$GITHUB_OUTPUT"
+          echo "Next tag: ${next_tag} (HA stable ${{ steps.ha.outputs.stable }})"
 
-          # Previous month HA version (handles January rollover)
-          if [ "$M" -eq 1 ]; then
-            prev_year=$((YYYY - 1))
-            prev_m=12
-          else
-            prev_year=${YYYY}
-            prev_m=$((M - 1))
-          fi
-          prev_ha="${prev_year}.${prev_m}"
-          echo "prev_ha=${prev_ha}" >> "$GITHUB_OUTPUT"
-          echo "prev_ha_image=ghcr.io/home-assistant/home-assistant:${prev_ha}" >> "$GITHUB_OUTPUT"
-
-      - name: Check tag does not exist
+      # An existing tag is not an error. The manual patch-release button rolls
+      # the series itself when HA turns over, so by the time this runs the .0 it
+      # would cut has often already been cut by hand — the normal outcome, not a
+      # fault. It used to `exit 1`, which is why the scheduled release reported
+      # a red X every month somebody shipped first. It did on 2026-07-05, and
+      # would have again on 2026-08-05.
+      - name: Check whether the tag already exists
+        id: tagcheck
         run: |
           tag="${{ steps.calc.outputs.next_tag }}"
           if git rev-parse "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "::error::Tag ${tag} already exists — skipping auto-release"
-            exit 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag ${tag} already exists — nothing to release, ending green"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${tag} is available"
           fi
-          echo "Tag ${tag} is available"
 
   # ---------- Job 2: test matrix ----------
   test:
     name: Test (HA ${{ matrix.ha-version }})
-    needs: versions
+    needs: [versions, merge-deps]
+    if: needs.versions.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -181,6 +200,7 @@ jobs:
   release:
     name: Release
     needs: [versions, test]
+    if: needs.versions.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
