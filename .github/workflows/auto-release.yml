@@ -89,28 +89,27 @@ jobs:
 
       - name: Calculate versions
         id: calc
+        env:
+          HA_SERIES: ${{ steps.ha.outputs.stable_month }}
+          OVERRIDE: ${{ inputs.version }}
         run: |
-          # The series comes from HA's current stable, not from today's date.
-          # Running late in the month made the calendar usually right — but
-          # "usually" made vYYYY.M.0 mean "the month it happened to be cut in"
-          # rather than "the HA series it was tested against", which is what the
-          # version is FOR. Cut the tag from the thing it describes.
-          if [ -n "${{ inputs.version }}" ]; then
-            series="${{ inputs.version }}"
-          else
-            series="${{ steps.ha.outputs.stable_month }}"
-          fi
-          next_tag="v${series}.0"
+          # One rule, shared with patch-release and with the companion:
+          # .github/scripts/next-version.sh. This job used to compute
+          # v{series}.0 from the series alone, without ever reading the existing
+          # tags — so when the newest tag was ahead of HA's series it proposed a
+          # version BELOW the current release, and only an accidental
+          # "that tag already exists" saved it. Two rules is one rule too many.
+          series="${OVERRIDE:-$HA_SERIES}"
+          next_tag=$(git tag | ./.github/scripts/next-version.sh "${series}")
           echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
-          echo "next_version=${series}.0" >> "$GITHUB_OUTPUT"
+          echo "next_version=${next_tag#v}" >> "$GITHUB_OUTPUT"
           echo "Next tag: ${next_tag} (HA stable ${{ steps.ha.outputs.stable }})"
 
-      # An existing tag is not an error. The manual patch-release button rolls
-      # the series itself when HA turns over, so by the time this runs the .0 it
-      # would cut has often already been cut by hand — the normal outcome, not a
-      # fault. It used to `exit 1`, which is why the scheduled release reported
-      # a red X every month somebody shipped first. It did on 2026-07-05, and
-      # would have again on 2026-08-05.
+      # The script guarantees the tag outranks every existing one, so it cannot
+      # already exist. This stays as a belt-and-braces check against a race with
+      # a manual release cut between the two steps, and ends the run green
+      # rather than red — the scheduled release used to `exit 1` here, which is
+      # why it reported a red X on 2026-07-05.
       - name: Check whether the tag already exists
         id: tagcheck
         run: |

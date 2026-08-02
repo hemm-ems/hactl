@@ -33,6 +33,16 @@ jobs:
         run: make tools
       - run: make lint
 
+  # The release scheme owes callers exactly one thing: a new version outranks
+  # every old one. That was once decided in two places that disagreed, so it is
+  # now decided in one and asserted here on every push.
+  version-order:
+    name: Version Ordering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./.github/scripts/next-version.test.sh
+
   # Reachability from the binary, which coverage cannot measure:
   # `findAutomationRelations` was 86.4% covered and reachable only from its own
   # tests, so the suite certified a capability the product had already lost.
@@ -306,6 +316,7 @@ jobs:
     if: always()
     needs:
       - lint
+      - version-order
       - deadcode
       - test-unit
       - test-integration
@@ -317,6 +328,7 @@ jobs:
         run: |
           declare -A results=(
             [lint]="${{ needs.lint.result }}"
+            [version-order]="${{ needs.version-order.result }}"
             [deadcode]="${{ needs.deadcode.result }}"
             [test-unit]="${{ needs.test-unit.result }}"
             [test-integration]="${{ needs.test-integration.result }}"
