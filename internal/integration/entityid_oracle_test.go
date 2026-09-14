@@ -128,8 +128,15 @@ var helperIDCorpus = []string{
 // there is the only difference this test permits — a second one appearing is
 // the signal that HA's rule has moved.
 func TestOracleHelperIDRule(t *testing.T) {
-	script := "import sys\nimport voluptuous as vol\n" +
-		"import homeassistant.helpers.config_validation as cv\n" +
+	// homeassistant.helpers.config_validation must be imported before
+	// voluptuous: importing homeassistant installs a voluptuous shim
+	// (currently "probatio"), and an `import voluptuous` that runs first
+	// binds to the pre-shim module — so cv.slug's exception and this
+	// script's `vol.Invalid` are then two different classes and the except
+	// clause below stops catching, killing the probe with an uncaught
+	// exception instead of reporting a per-line answer.
+	script := "import sys\nimport homeassistant.helpers.config_validation as cv\n" +
+		"import voluptuous as vol\n" +
 		"for line in sys.stdin.read().split('\\n'):\n" +
 		"    try:\n        cv.slug(line)\n        print(1)\n" +
 		"    except vol.Invalid:\n        print(0)\n"
