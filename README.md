@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/hemm-ems/hactl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hemm-ems/hactl/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hemm-ems/hactl)](https://github.com/hemm-ems/hactl/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hemm-ems/hactl)](https://goreportcard.com/report/github.com/hemm-ems/hactl)
 [![CodeQL](https://github.com/hemm-ems/hactl/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/hemm-ems/hactl/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/github/license/hemm-ems/hactl)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/hemm-ems/hactl)](go.mod)
