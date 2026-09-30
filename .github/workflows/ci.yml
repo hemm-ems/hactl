@@ -14,6 +14,16 @@ permissions:
   contents: read
 
 jobs:
+  # A workflow file GitHub cannot parse is not rejected; it just never runs.
+  # That hid a broken monthly-release.yml for two months. See `make
+  # lint-workflows` for the full story.
+  actionlint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make lint-workflows
+
   # Lint runs `make lint`, not golangci-lint directly, so CI and a developer's
   # machine cannot lint different things. That mattered: the action ran
   # golangci-lint with no build tags, which means it never read a single file
@@ -315,6 +325,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - actionlint
       - lint
       - version-order
       - deadcode
@@ -327,6 +338,7 @@ jobs:
       - name: Verify every gate succeeded
         run: |
           declare -A results=(
+            [actionlint]="${{ needs.actionlint.result }}"
             [lint]="${{ needs.lint.result }}"
             [version-order]="${{ needs.version-order.result }}"
             [deadcode]="${{ needs.deadcode.result }}"
