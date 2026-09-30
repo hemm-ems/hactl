@@ -12,7 +12,7 @@ COMPANION_DIR  ?= ../hactl-companion
 COMPANION_SPEC := $(COMPANION_DIR)/openapi/companion-v1.yaml
 VENDORED_SPEC  := testdata/companion-v1.yaml
 
-.PHONY: build lint check-markers deadcode tools test test-assert-floor test-surface surfaces \
+.PHONY: build lint lint-workflows check-markers deadcode tools test test-assert-floor test-surface surfaces \
         test-int test-companion test-int-discovery test-livefire test-livefire-live test-matrix gates require-docker \
         testcount hooks hooks-check clean sync-spec check-spec-drift
 
@@ -66,6 +66,18 @@ check-markers:
 	  echo "ERROR: unresolved [NEEDS ORACLE] markers — probe a live HA, then remove them."; \
 	  exit 1; \
 	fi
+
+# lint-workflows — GitHub does not reject an invalid workflow file at push
+# time; it records a zero-job "workflow file issue" run and never executes it.
+# monthly-release.yml sat in that state from 2026-08-02 to 2026-09-29 and two
+# monthly releases silently never happened. actionlint parses every workflow
+# the way GitHub does (plus shellcheck on each `run:` block, warnings and up),
+# so a broken workflow fails CI instead. Same pinned image locally and in CI.
+ACTIONLINT_IMAGE := rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+
+lint-workflows:
+	docker run --rm -e SHELLCHECK_OPTS=--severity=warning \
+	  -v "$(CURDIR):/repo" -w /repo $(ACTIONLINT_IMAGE) -color
 
 lint: check-markers
 	@test -x "$(GOLANGCI)" || { \
