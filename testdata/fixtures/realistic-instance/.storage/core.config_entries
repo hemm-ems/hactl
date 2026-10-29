@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "One config entry, and it exists only so the two seeded devices survive Home Assistant's load.",
+    "",
+    "Since HA 2026.8 a device belongs to exactly one config entry (core PR #175785, 'Restrict",
+    "device registry entries to single config entry and subentry'). The device registry storage",
+    "went from 1.12 to 3.x, and the migration from 1.x silently DROPS every device whose",
+    "config_entries is empty (helpers/device_registry.py, DeviceRegistryStore._async_migrate_func:",
+    "'Drop devices that have no config entry / subentry pairs'). The seeded devices had none, so",
+    "on 2026.8+ they were gone before anything could ask for them — issue #156. An entity anchor",
+    "no longer helps, and once loaded, async_cleanup strips a config_entry_id that is not in this",
+    "file, which in the single-entry model removes the device as well.",
+    "",
+    "So the entry has to exist here, and it must be one HA keeps without setting anything up.",
+    "`acme` is an integration that is not installed: the shape a real house has after a custom",
+    "integration is removed from custom_components while its entry, devices and entities stay",
+    "behind. Probed on 2026.10.4: the entry loads as `not_loaded`, nothing is set up, nothing",
+    "is logged, no repair is raised, and both devices survive the migration and the cleanup.",
+    "A DISABLED entry for a real integration (e.g. `demo`) also keeps the devices, but is not a",
+    "shape HA produces — disabling an entry cascades disabled_by onto its devices and entities —",
+    "and an enabled `demo` entry would set up demo's own fleet of entities and devices.",
+    "",
+    "Synthetic, written by hand: the reference instance's core.config_entries is never captured",
+    "(SPEC-realdata-fixture.md §5). Key set and minor_version taken from the loader in the image",
+    "(config_entries.py, ConfigEntries.async_initialize), which indexes these keys directly."
+  ],
+  "version": 1,
+  "minor_version": 5,
+  "key": "core.config_entries",
+  "data": {
+    "entries": [
+      {
+        "created_at": "2026-01-01T00:00:00.000000+00:00",
+        "data": {},
+        "disabled_by": null,
+        "discovery_keys": {},
+        "domain": "acme",
+        "entry_id": "01JACME00000000000000ENTRY",
+        "minor_version": 1,
+        "modified_at": "2026-01-01T00:00:00.000000+00:00",
+        "options": {},
+        "pref_disable_new_entities": false,
+        "pref_disable_polling": false,
+        "source": "user",
+        "subentries": [],
+        "title": "Acme Widgets",
+        "unique_id": null,
+        "version": 1
+      }
+    ]
+  }
+}
