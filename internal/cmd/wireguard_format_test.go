@@ -160,3 +160,41 @@ func TestWriteCompanionLogs_Empty(t *testing.T) {
 		t.Errorf("the row renderer wrote something for zero rows: %q", buf.String())
 	}
 }
+
+// TestWriteWireguardStatus_HAForward pins the line the vendored spec's
+// `ha_forward` field reaches: decoding a documented field and printing nothing
+// would be the D45 shape one step later (decoded, consumed by no answer).
+func TestWriteWireguardStatus_HAForward(t *testing.T) {
+	refused := "connection refused"
+	for _, tc := range []struct {
+		name  string
+		fwd   *companion.WireGuardForward
+		wants []string
+		never string
+	}{
+		{name: "absent_prints_nothing", never: "ha forward"},
+		{name: "not_running", fwd: &companion.WireGuardForward{}, wants: []string{"ha forward  not running"}},
+		{
+			name: "running",
+			fwd: &companion.WireGuardForward{
+				Running: true, Listening: []string{"10.0.0.1:8123"}, Target: "homeassistant:8123",
+				ConnectionsActive: 1, ConnectionsTotal: 7, LastError: &refused,
+			},
+			wants: []string{"ha forward  10.0.0.1:8123 → homeassistant:8123  (active 1, total 7)", "last error  connection refused"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			writeWireguardStatus(&buf, &companion.WireGuardStatusResponse{Tunnel: "wg0", State: "active", HAForward: tc.fwd})
+			out := buf.String()
+			for _, want := range tc.wants {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q\n%s", want, out)
+				}
+			}
+			if tc.never != "" && strings.Contains(out, tc.never) {
+				t.Errorf("output must not mention %q\n%s", tc.never, out)
+			}
+		})
+	}
+}

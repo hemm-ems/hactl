@@ -34,6 +34,7 @@ var Endpoints = []Endpoint{
 	{"GET", "/v1/config/wiring", &WiringResponse{}},
 	{"GET", "/v1/related/entity", &RelatedEntityResponse{}},
 	{"GET", "/v1/ref/scan", &RefScanResponse{}},
+	{"GET", "/v1/ref/grep", &RefGrepResponse{}},
 	{"GET", "/v1/ref/entities", &RefEntitiesResponse{}},
 	{"POST", "/v1/ref/replace", &RefReplaceResponse{}},
 	{"GET", "/v1/config/templates", &TemplatesResponse{}},

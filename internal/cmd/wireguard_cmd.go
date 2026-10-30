@@ -114,6 +114,24 @@ func writeWireguardStatus(w io.Writer, st *companion.WireGuardStatusResponse) {
 		_, _ = fmt.Fprintf(w, "  peer   %s  hs=%s  rx=%s tx=%s\n", p.Endpoint, hs, p.TransferRx, p.TransferTx)
 	}
 	writeWireguardMonitor(w, st.Monitor)
+	writeWireguardForward(w, st.HAForward)
+}
+
+// writeWireguardForward reports Home Assistant's port carried into the tunnel.
+// A companion that predates the field sends nothing, and nothing is printed.
+func writeWireguardForward(w io.Writer, f *companion.WireGuardForward) {
+	if f == nil {
+		return
+	}
+	if !f.Running {
+		_, _ = fmt.Fprintln(w, "  ha forward  not running")
+	} else {
+		_, _ = fmt.Fprintf(w, "  ha forward  %s → %s  (active %d, total %d)\n",
+			strings.Join(f.Listening, " "), f.Target, f.ConnectionsActive, f.ConnectionsTotal)
+	}
+	if f.LastError != nil && *f.LastError != "" {
+		_, _ = fmt.Fprintf(w, "    last error  %s\n", *f.LastError)
+	}
 }
 
 func writeWireguardMonitor(w io.Writer, m *companion.WireGuardMonitor) {

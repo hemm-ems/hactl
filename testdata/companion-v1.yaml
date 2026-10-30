@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: hactl-companion API
-  version: 2026.7.11
+  version: 2026.10.1
   description: YAML file access API for Home Assistant. Provides structured CRUD
     for templates, scripts, and automations, plus raw config file read/write 
     with !include resolution.
@@ -363,6 +363,181 @@ paths:
         required: true
         schema:
           type: string
+  /v1/ref/grep:
+    get:
+      summary: Search every config file for a substring or pattern (read-only)
+      tags:
+      - ref
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - term
+                - regex
+                - case_sensitive
+                - hits
+                - total
+                - truncated
+                - sources
+                properties:
+                  term:
+                    type: string
+                    description: The term exactly as received.
+                  regex:
+                    type: boolean
+                    description: Whether `term` was matched as a regular 
+                      expression.
+                  case_sensitive:
+                    type: boolean
+                    description: Whether matching was case-sensitive.
+                  hits:
+                    type: array
+                    description: At most 1000 hits, ordered by `location`, then 
+                      `path`, then `kind` (`key` before `value`). When there are
+                      more, `truncated` is true and the rest are not sent; 
+                      `total` and `sources` still count every hit.
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - path
+                      - key
+                      - kind
+                      - matched_value
+                      properties:
+                        location:
+                          type: string
+                          description: Config-relative file, e.g. 
+                            `automations.yaml`.
+                        path:
+                          type: string
+                          description: Path within that file in the `ref scan` 
+                            form, e.g. `[3].action[0].data.message`. For a `key`
+                            hit it ends at the matching key.
+                        key:
+                          type: string
+                          description: The last mapping key on `path` (`alias`, 
+                            `value_template`, `entity_id`, ...), so a caller can
+                            tell prose from ids from template bodies. Empty for 
+                            a value that sits only under list indices.
+                        kind:
+                          type: string
+                          enum:
+                          - key
+                          - value
+                          description: '`value`: a string leaf contains the term.
+                            `key`: a mapping key contains it. Keys are where scripts
+                            and YAML helpers are defined (`licht_an:` under `script:`),
+                            which no leaf holds.'
+                        matched_value:
+                          type: string
+                          description: "The whole string that matched: the leaf's
+                            value, or the key."
+                  total:
+                    type: integer
+                    description: Every hit, including any beyond the cap.
+                  truncated:
+                    type: boolean
+                    description: True when `hits` holds fewer than `total`.
+                  sources:
+                    type: array
+                    description: One row per file with at least one hit, counted
+                      before the cap, ordered by `location`.
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - key_hits
+                      - value_hits
+                      properties:
+                        location:
+                          type: string
+                        key_hits:
+                          type: integer
+                        value_hits:
+                          type: integer
+                  skipped:
+                    type: array
+                    description: 'Config files this walk did not read, so the result
+                      covers less than the config does: a renamed or deleted `!include`
+                      target, a file the path guard refuses (`secrets.yaml`, anything
+                      under `.storage`), an `!include_dir_*` naming a directory that
+                      is not there, an include that leaves the config directory. Present
+                      only when at least one file was skipped; absent — not empty,
+                      not null — otherwise. A client that certifies something about
+                      the whole config (no dangling references, a completed rename)
+                      must treat any entry here as "cannot certify": what is missing
+                      from the result may only be missing because it was never opened.
+                      Note a YAML syntax error is not in this list — it fails the
+                      request outright rather than being skipped.'
+                    items:
+                      type: object
+                      required:
+                      - location
+                      - reason
+                      properties:
+                        location:
+                          type: string
+                          description: Config-relative path of the file or 
+                            directory, e.g. `packages/energy.yaml` — the same 
+                            form as `location` elsewhere in this API, never an 
+                            absolute path.
+                        reason:
+                          type: string
+                          description: 'Why the file was not read: `missing` (not
+                            there), `unreadable` (refused by the path guard, by the
+                            OS, or for lying outside the config directory), `unparseable`
+                            (could not be turned into a tree), `circular` (include
+                            cycle).'
+        4XX:
+          $ref: '#/components/responses/Error'
+        5XX:
+          $ref: '#/components/responses/Error'
+      description: "Read-only search for a term across the config file graph: `configuration.yaml`
+        and every file it `!include`s, the same walk as `/v1/ref/scan`. Unlike `ref
+        scan` this is substring, not whole token, and it searches mapping keys as
+        well as string leaves. There is no write counterpart; a rename is `/v1/ref/replace`,
+        on an exact id. Default: `term` is a literal substring, compared after lowercasing
+        both sides one code point at a time by the simple Unicode mapping, the one
+        Go's `strings.ToLower` applies (not case folding: `Küche` matches `KÜCHE`,
+        `straße` does not match `STRASSE`; not full `str.lower()`: `istanbul` matches
+        `İstanbul` and `οδοσ` matches `ΟΔΟΣ`). `case_sensitive=true` compares as written.
+        `regex=true` reads `term` as a Python `re` pattern searched anywhere in the
+        string, case-insensitive (`re.IGNORECASE`) unless `case_sensitive=true`. The
+        leaf is matched as parsed, so a block scalar keeps its trailing newline and
+        a bare `$` also matches before it. Refused with 400: a missing, empty or whitespace-only
+        `term`; a literal `term` shorter than 2 characters (counted in code points:
+        a 1-character term matches most of any real config); a pattern that does not
+        compile, or that Python warns will change meaning (`[[:alpha:]]`), with the
+        parser's message; a pattern that does not finish within the evaluation deadline
+        (catastrophic backtracking). Non-string scalars (numbers, booleans) and tagged
+        values (`!secret`, `!input`) are not searched."
+      parameters:
+      - name: term
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Substring, or a pattern with `regex=true`. A literal needs 
+          at least 2 characters.
+      - name: regex
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Read `term` as a Python `re` pattern.
+      - name: case_sensitive
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Compare as written instead of after lowercasing.
   /v1/ref/entities:
     get:
       summary: Enumerate every entity_id-shaped reference across config files
@@ -1627,6 +1802,31 @@ paths:
                       next_retry_secs:
                         type: integer
                         nullable: true
+                      last_error:
+                        type: string
+                        nullable: true
+                  ha_forward:
+                    type: object
+                    description: "Home Assistant's port carried into the tunnel: a
+                      tunnel peer reaches HA at an address in `listening`. `{\"running\"\
+                      : false}` alone when no forward was started (option `vpn.forward_ha`
+                      off, or the tunnel was not brought up by this add-on)."
+                    properties:
+                      running:
+                        type: boolean
+                      listening:
+                        type: array
+                        items:
+                          type: string
+                        description: '`<tunnel-address>:<HA port>` per tunnel address
+                          being listened on.'
+                      target:
+                        type: string
+                        description: 'Where connections go: HA core, `homeassistant:<port>`.'
+                      connections_total:
+                        type: integer
+                      connections_active:
+                        type: integer
                       last_error:
                         type: string
                         nullable: true

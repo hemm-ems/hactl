@@ -101,6 +101,27 @@ func (h *RefScanHit) Identity() []degeneracy.Field {
 	}
 }
 
+// Identity reports what the grep was for. The companion refuses an empty term,
+// so an empty one here means the payload, not the search, is empty.
+func (r *RefGrepResponse) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "term", Value: &r.Term}}
+}
+
+// Identity reports where a grep hit was found, what kind it is and what
+// matched. matched_value always contains the (non-empty) term.
+func (h *RefGrepHit) Identity() []degeneracy.Field {
+	return []degeneracy.Field{
+		{Name: "location", Value: &h.Location},
+		{Name: "kind", Value: &h.Kind},
+		{Name: "matched_value", Value: &h.MatchedValue},
+	}
+}
+
+// Identity reports which file a per-source count belongs to.
+func (s *RefGrepSource) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "location", Value: &s.Location}}
+}
+
 // Identity reports where an entity-shaped value was found and what it was. Key
 // is deliberately not part of it: a value at a bare list position has none.
 func (e *RefEntity) Identity() []degeneracy.Field {
