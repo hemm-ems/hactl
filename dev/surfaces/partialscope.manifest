@@ -21,10 +21,12 @@
 #ceiling 0
 
 internal/cmd/dash.go:scanDashboards = exempt: returns the scope to its caller and prints nothing; it is the producer, so the question it answers is asked at every call site instead
+internal/cmd/dash.go:matchDashboards = exempt: returns the scope to its caller and prints nothing; scanDashboards and grep are the call sites that answer for it
 internal/cmd/ref.go:collectDashboardEntityRefs = exempt: returns the scope to its caller and prints nothing; ref validate decides what to do with it
 internal/cmd/ref.go:planDashboardReplacements = exempt: returns the scope to its caller and prints nothing; ref replace refuses on it before any write
 
 internal/cmd/dash.go:runDashGrep = proven: TestRunDashGrep_PartialIsStatedAndRefusesUnderJSON
+internal/cmd/grep.go:runGrep = proven: TestGrepPartialIsStatedAndRefusesUnderJSON
 internal/cmd/ref.go:runRefScan = proven: TestRunRefScan_PartialRefusesUnderJSONUnlessAllowPartial
 internal/cmd/ref.go:runRefValidate = proven: TestRunRefValidate_SkippedConfigFilesTakeTheGate
 internal/cmd/ref.go:refReplaceWithOptions = proven: TestRefReplaceRefusesWhenTheCompanionSkippedAFile
