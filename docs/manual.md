@@ -271,6 +271,9 @@ hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
 hactl ent hist sensor.wp_vl --resample 5m # override bucket size
 hactl ent hist sensor.wp_vl --attr brightness  # track attribute instead of state
+hactl ent hist sensor.wp_vl --since 90d --stats                 # long-term statistics (kept forever): mean/min/max per period
+hactl ent hist sensor.meter --since 365d --stats --period month  # sum statistics: consumption (change) + meter reading per period
+hactl ent hist tibber:energy_consumption_x --since 30d --stats   # external statistic ids (as printed by `energy show`)
 hactl ent anomalies sensor.wp_vl          # gaps (>1h), stuck (>2h/24h), spikes (z>3)
 hactl ent related sensor.wp_vl            # related automations, device siblings, every entity in the same area
 hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + counts summary
@@ -297,6 +300,45 @@ id, because HA refuses a cross-domain rename (`switch.x` for an
 gives them first.
 
 `ent hist` auto-resamples to ~50 points. For binary/non-numeric entities the timeline shows time/state/duration, one row per **state run** — consecutive records reporting the same state are one row lasting until the state actually changes, and an `unavailable` gap splits the run rather than being spanned. Anomaly detection runs client-side on cached history.
+
+`ent hist` reads the recorder's **raw state history**, which Home Assistant
+purges after `purge_keep_days` (default 10 days). When the history does not
+reach back to the start of `--since` and long-term statistics do, the output
+ends with a `note:` naming where the history starts, whether the statistics
+cover the whole window or where inside it they start, and the `--stats` command
+to run (under `--json` the note goes to
+stderr; the JSON document is unchanged). No note means the history covers the
+window, or no statistics reach further.
+
+`--stats` reads Home Assistant's **long-term statistics** instead: hourly
+aggregates kept forever, for entities with a `state_class` (and for external
+statistics such as `tibber:…`, which are not entities). Without `--period` the
+finest of `hour`/`day`/`week`/`month` giving at most ~50 rows over `--since` is
+used; `--period 5minute` (short-term statistics, kept like the raw history) and
+`--period year` must be asked for. A **mean** statistic (temperature, power)
+renders `mean`/`min`/`max`; a **sum** statistic (energy/gas/water meters)
+renders `change` — the consumption within that period — and `state`, the meter
+reading at the period's end. The header names the period and unit. Periods
+are Home Assistant's calendar buckets (days, Monday weeks, months in HA's time
+zone), and `--since` cuts the first one: a `week` row starting before the
+window aggregates only the part of that week inside it, so its `change` is not
+a whole week's consumption. Under
+`--json` each row carries `start`, `end` and every field Home Assistant
+returned (`null` where it has none). `--stats` cannot be combined with `--attr`
+or `--resample`; `--period` requires `--stats`. Ids are matched lowercase, as
+Home Assistant writes them. A missing statistic is an error that says which
+case it is — no such entity; an entity without a `state_class` (HA compiles
+statistics only for those — run `ent hist` without `--stats`); or an entity
+WITH one that still has none (the recorder holds no rows for it, or it is
+under an hour old) — and names statistics under a neighbouring id
+(`sensor.x` ↔ `sensor.x_2`), where a renamed entity's old rows live. An empty
+window on a statistic that exists is an empty list followed by a `note:` with
+the newest row's time and a `--since` that reaches it (stderr under `--json`).
+Statistics outlive their entity: `ent hist` on a deleted entity, and an
+`ent hist` whose history request fails (a long window over a busy sensor can
+exceed `--timeout`), end with the `--stats` command that answers instead.
+`ent show` says whether an entity has long-term statistics (`statistics: mean
+°C`, `sum kWh`, or `none`).
 
 `ent show` closes with `attributes: N total; use --full to see all`. `N` is the
 entity's **whole** attribute count, not the number withheld — the four it always

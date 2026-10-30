@@ -99,15 +99,29 @@ func Short(ts string) string {
 // the convenience for the common case — a listing of things that just happened —
 // and never mixes the two. Unparseable values pass through verbatim, as
 // everywhere else in this package.
+//
+// The same rule reaches one level further: the year is dropped only when every
+// value falls in the reader's current year. A monthly long-term statistics
+// table over two years (`ent hist --stats`, D-47) printed `01-01 00:00` twice,
+// for two different Januaries — the same undatable row #71 was, one unit up.
 func ShortColumn(ts []string) []string {
 	out := make([]string, len(ts))
 	layout := "15:04"
 	for _, s := range ts {
 		t, ok := Parse(s)
-		if ok && !isToday(t) {
-			layout = "01-02 15:04"
+		if !ok {
+			continue
+		}
+		if !isThisYear(t) {
+			layout = "2006-01-02 15:04"
 			break
 		}
+		if !isToday(t) {
+			layout = "01-02 15:04"
+		}
+	}
+	if renderCollides(ts, layout) {
+		layout += " MST"
 	}
 	for i, s := range ts {
 		t, ok := Parse(s)
@@ -118,6 +132,29 @@ func ShortColumn(ts []string) []string {
 		out[i] = t.Format(layout)
 	}
 	return out
+}
+
+// renderCollides reports whether two different instants in the column render
+// as the same text under layout. It happens once a year in a zone with
+// daylight saving time: the hour the clocks go back is lived twice, and an
+// hourly column showed `10-25 02:00` on two rows a reader could not tell
+// apart (live run 2026-10-29, `ent hist --stats --period hour`). The zone
+// abbreviation (CEST/CET) is what tells them apart, so the column carries it —
+// on every row, because the shape is a property of the column (D-38).
+func renderCollides(ts []string, layout string) bool {
+	seen := make(map[string]time.Time, len(ts))
+	for _, s := range ts {
+		t, ok := Parse(s)
+		if !ok {
+			continue
+		}
+		text := t.Format(layout)
+		if prev, dup := seen[text]; dup && !prev.Equal(t) {
+			return true
+		}
+		seen[text] = t
+	}
+	return false
 }
 
 // ShortSeconds is Short with seconds, for views where two events inside the
@@ -154,6 +191,18 @@ func ISO(ts string) string {
 	return t.Format(time.RFC3339Nano)
 }
 
+// Long renders a timestamp with its full date, "2006-01-02 15:04", in the
+// reader's zone — for a scalar that may lie in another year, where Short's
+// "01-02 15:04" cannot be dated (the start of a recorder history or of
+// long-term statistics, D-47).
+func Long(ts string) string {
+	t, ok := Parse(ts)
+	if !ok {
+		return ts
+	}
+	return t.Format("2006-01-02 15:04")
+}
+
 // format applies the today/not-today choice.
 //
 // Both sides of the comparison are in the reader's zone. They were not: the
@@ -165,6 +214,11 @@ func format(t time.Time, today, other string) string {
 		return t.Format(today)
 	}
 	return t.Format(other)
+}
+
+// isThisYear reports whether t falls in the reader's current calendar year.
+func isThisYear(t time.Time) bool {
+	return t.Year() == time.Now().Year()
 }
 
 // isToday reports whether t falls on the reader's current calendar day.

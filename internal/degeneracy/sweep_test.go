@@ -84,6 +84,7 @@ var unidentifiedWireStructs = map[string]string{
 		"it as an empty id (routes/automations.py)",
 
 	"energySourceRow": "hactl's own --json output shape for `energy show`",
+	"statisticRowJSON": "hactl's own --json output shape for `ent hist --stats`",
 	"EnergyPreferences": "a configured-but-empty energy dashboard is a real answer (both lists " +
 		"legitimately empty); the source/flow/device elements carry the identity, and the " +
 		"unconfigured case never reaches the decode — HA answers a WS error (\"No prefs\", " +
@@ -227,6 +228,12 @@ const unprobedIdentityFieldBaseline = 81
 // checked. Fabricating a plausible-sounding justification here would be the
 // exact failure the map exists to prevent, one layer up.
 var identityFieldEvidence = map[string]string{
+	"StatisticMetadata.statistic_id": "oracle 2026-10-29 (HA 2026.10.4, TestOracleStatisticsMetadataNamesOnlyKnownIds): " +
+		"recorder/get_statistics_metadata answers one element per KNOWN id, each carrying the id it describes; " +
+		"an unknown id is absent from the list, never present with a blank id",
+	"StatisticRow.start": "oracle 2026-10-29 (HA 2026.10.4, TestOracleStatisticsRowsMatchHA): every " +
+		"recorder/statistics_during_period row carries start as epoch milliseconds — it is the period the " +
+		"row aggregates, so a row without one is not a row; an empty window is an absent key, not a blank row",
 	"AreaEntry.area_id":                    inheritedUnprobed,
 	"AutomationCreateResponse.id":          inheritedUnprobed,
 	"AutomationCreateResponse.status":      inheritedUnprobed,

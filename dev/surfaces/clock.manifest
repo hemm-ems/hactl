@@ -21,3 +21,4 @@ internal/cmd/log.go:systemLogToEntries = exempt: builds its value with time.Unix
 internal/cmd/companion_logs_cmd.go:writeCompanionLogs = exempt: same shape, time.Unix over the companion's epoch seconds is already local
 
 internal/clock/render.go:ShortColumn = proven: TestShortColumnIsUniformDownTheColumn
+internal/clock/render.go:Long = proven: TestLongNamesTheYearInTheReaderZone

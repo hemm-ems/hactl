@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -1296,7 +1297,7 @@ func TestRunEntHist_JSON_NoHeaderLine(t *testing.T) {
 	defer func() { flagSince, flagJSON = oldSince, oldJSON }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "sensor.temp"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "sensor.temp"); err != nil {
 		t.Fatalf("runEntHist --json: %v", err)
 	}
 	out := buf.String()

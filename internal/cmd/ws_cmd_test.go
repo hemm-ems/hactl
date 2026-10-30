@@ -1484,7 +1484,7 @@ func TestRunEntHistAttr_WithData(t *testing.T) { //nolint:dupl
 
 	var buf bytes.Buffer
 	// Call runEntHist which branches to runEntHistAttr when flagEntAttr is set
-	if err := runEntHist(context.Background(), &buf, "light.kitchen"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "light.kitchen"); err != nil {
 		t.Fatalf("runEntHist with attr failed: %v", err)
 	}
 	out := buf.String()
@@ -2969,7 +2969,7 @@ func TestRunEntHist_NumericWithResample(t *testing.T) {
 	defer func() { flagEntResample = oldResample }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "sensor.power"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "sensor.power"); err != nil {
 		t.Fatalf("runEntHist with resample failed: %v", err)
 	}
 	// Three hourly samples over a 2h span, bucketed at 1h, collapse to two
@@ -4768,7 +4768,7 @@ func TestRunEntHist_NumericData(t *testing.T) {
 	defer func() { flagEntResample = oldResample }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "sensor.temp"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "sensor.temp"); err != nil {
 		t.Fatalf("runEntHist numeric failed: %v", err)
 	}
 	out := buf.String()
@@ -4804,7 +4804,7 @@ func TestRunEntHist_BinarySensor(t *testing.T) {
 	defer func() { flagEntResample = oldResample }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "binary_sensor.door"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "binary_sensor.door"); err != nil {
 		t.Fatalf("runEntHist binary failed: %v", err)
 	}
 	out := buf.String()
@@ -4839,7 +4839,7 @@ func TestRunEntHist_NoData(t *testing.T) {
 	defer func() { flagEntResample = oldResample }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "sensor.x"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "sensor.x"); err != nil {
 		t.Fatalf("runEntHist no data failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no history") {
@@ -5503,7 +5503,7 @@ func TestRunEntHistAttr_Resample(t *testing.T) {
 	defer func() { flagEntResample = oldResample }()
 
 	var buf bytes.Buffer
-	if err := runEntHist(context.Background(), &buf, "light.kitchen"); err != nil {
+	if err := runEntHist(context.Background(), &buf, io.Discard, "light.kitchen"); err != nil {
 		t.Fatalf("runEntHist with resample failed: %v", err)
 	}
 	// Same bucketing as TestRunEntHist_NumericWithResample, but the series is
@@ -5873,7 +5873,9 @@ func TestEntCommands_UnknownEntityIsAnError(t *testing.T) {
 	defer func() { flagEntAttr = oldAttr }()
 
 	for name, run := range map[string]func(context.Context, io.Writer, string) error{
-		"hist":      runEntHist,
+		"hist": func(ctx context.Context, w io.Writer, id string) error {
+			return runEntHist(ctx, w, io.Discard, id)
+		},
 		"anomalies": runEntAnomalies,
 		"who":       runEntWho,
 	} {

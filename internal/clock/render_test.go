@@ -1,6 +1,7 @@
 package clock_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -91,7 +92,13 @@ func TestShortColumnIsUniformDownTheColumn(t *testing.T) {
 	inBerlin(t)
 	morning := todayAt(9, 15)
 	afternoon := todayAt(13, 45)
+	// Another day of THIS year: on 1 January "yesterday" is last year, which
+	// is the year tier's case (TestShortColumnNamesTheYearAcrossYears), not
+	// this one.
 	yesterday := morning.AddDate(0, 0, -1)
+	if yesterday.Year() != morning.Year() {
+		yesterday = morning.AddDate(0, 0, 1)
+	}
 
 	mixed := clock.ShortColumn([]string{
 		yesterday.Format(time.RFC3339),
@@ -136,5 +143,68 @@ func TestShortColumnPassesThroughWhatItCannotParse(t *testing.T) {
 	}
 	if len(got[2]) != len("15:04") {
 		t.Errorf("an all-today column rendered %q beside unparseable neighbours", got[2])
+	}
+}
+
+// TestShortColumnNamesTheYearAcrossYears is the D-38 rule one unit up: a column
+// drops the year only when every value falls in the reader's current year. A
+// monthly long-term statistics table over two years (D-47) rendered two rows
+// `01-01 00:00` for two different Januaries.
+func TestShortColumnNamesTheYearAcrossYears(t *testing.T) {
+	inBerlin(t)
+	now := time.Now()
+	//nolint:gosmopolitan // the reader's zone is what this package renders in
+	lastYear := time.Date(now.Year()-1, time.January, 1, 0, 0, 0, 0, time.Local)
+	//nolint:gosmopolitan // as above
+	thisYear := time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, time.Local)
+
+	got := clock.ShortColumn([]string{lastYear.Format(time.RFC3339), thisYear.Format(time.RFC3339)})
+	want := []string{lastYear.Format("2006-01-02 15:04"), thisYear.Format("2006-01-02 15:04")}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("row %d renders %q, want %q — a column spanning two years must name the year on every row", i, got[i], want[i])
+		}
+	}
+}
+
+// TestLongNamesTheYearInTheReaderZone pins Long: the full date, converted from
+// the wire's UTC into the reader's zone (the start of a recorder history or of
+// long-term statistics may lie in another year).
+func TestLongNamesTheYearInTheReaderZone(t *testing.T) {
+	inBerlin(t)
+	if got := clock.Long("2025-03-01T23:30:00+00:00"); got != "2025-03-02 00:30" {
+		t.Errorf("Long(2025-03-01T23:30Z) = %q, want 2025-03-02 00:30 (Berlin, UTC+1)", got)
+	}
+	if got := clock.Long("not a timestamp"); got != "not a timestamp" {
+		t.Errorf("Long rewrote an unparseable value: %q", got)
+	}
+}
+
+// TestShortColumnTellsTheRepeatedHourApart: when the clocks go back, 02:00
+// happens twice. Both rows rendered `10-25 02:00`; the column now carries the
+// zone abbreviation on every row so the two hours are distinguishable.
+func TestShortColumnTellsTheRepeatedHourApart(t *testing.T) {
+	inBerlin(t)
+	got := clock.ShortColumn([]string{
+		"2026-10-25T00:00:00+00:00", // 02:00 CEST
+		"2026-10-25T01:00:00+00:00", // 02:00 CET
+		"2026-10-25T02:00:00+00:00", // 03:00 CET
+	})
+	want := []string{"2026-10-25 02:00 CEST", "2026-10-25 02:00 CET", "2026-10-25 03:00 CET"}
+	if time.Now().Year() == 2026 {
+		want = []string{"10-25 02:00 CEST", "10-25 02:00 CET", "10-25 03:00 CET"}
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// No collision, no zone: the abbreviation is not noise added everywhere.
+	plain := clock.ShortColumn([]string{"2026-10-25T02:00:00+00:00", "2026-10-25T03:00:00+00:00"})
+	for _, p := range plain {
+		if strings.Contains(p, "CET") {
+			t.Errorf("a column without a repeated hour carries the zone: %q", p)
+		}
 	}
 }

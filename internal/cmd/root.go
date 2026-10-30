@@ -539,6 +539,8 @@ func resetSubcommandFlags() {
 	flagEntDomain = ""
 	flagEntResample = ""
 	flagEntAttr = ""
+	flagEntStats = false
+	flagEntPeriod = ""
 	flagEntArea = ""
 	flagEntLabel = ""
 	flagEntConfirm = false

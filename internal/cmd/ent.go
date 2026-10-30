@@ -68,10 +68,12 @@ var entShowCmd = &cobra.Command{
 var entHistCmd = &cobra.Command{
 	Use:   "hist <entity_id>",
 	Short: "Show entity history",
-	Long:  "Display entity time series, auto-resampled to ~50 points by default.",
-	Args:  takes(1),
+	Long: "Display entity time series, auto-resampled to ~50 points by default. " +
+		"--stats reads Home Assistant's long-term statistics instead (hourly aggregates kept after the " +
+		"raw history is purged; also external statistic ids such as tibber:…).",
+	Args: takes(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEntHist(cmd.Context(), cmd.OutOrStdout(), args[0])
+		return runEntHist(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
 	},
 }
 
@@ -338,6 +340,7 @@ func writeEntShowJSON(
 	ent entityState,
 	rc *registryContext,
 	ans actorAnswer,
+	stats entStatistics,
 ) error {
 	result := map[string]any{
 		"entity_id":         ent.EntityID,
@@ -356,6 +359,7 @@ func writeEntShowJSON(
 	if unit, ok := ent.Attributes["unit_of_measurement"]; ok {
 		result["unit"] = unit
 	}
+	stats.addJSON(result)
 	if rc != nil {
 		if areaName := rc.areaName(entityID); areaName != "" {
 			result["area"] = areaName
@@ -469,10 +473,15 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	// Fetch registry for area/labels, and users for changed_by attribution.
 	var rc *registryContext
 	var users map[string]haapi.UserEntry
+	stats := entStatistics{err: errors.New("websocket unavailable")}
 	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
 	if wsErr := ws.Connect(ctx); wsErr == nil {
 		rc, _ = fetchRegistryContext(ctx, ws)
 		users = loadUsers(ctx, ws)
+		stats.meta, stats.err = statisticMetadata(ctx, ws, entityID)
+		if errors.Is(stats.err, errNoStatisticMetadata) {
+			stats.err = nil
+		}
 		_ = ws.Close()
 	}
 
@@ -482,7 +491,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	ans := resolveActor(changedByLogbookEntries(ctx, client, ent), ent, users)
 
 	if flagJSON {
-		return writeEntShowJSON(w, entityID, ent, rc, ans)
+		return writeEntShowJSON(w, entityID, ent, rc, ans, stats)
 	}
 
 	_, _ = fmt.Fprintf(w, "entity:       %s\n", ent.EntityID)
@@ -505,6 +514,7 @@ func runEntShow(ctx context.Context, w io.Writer, entityID string) error {
 	if dc, ok := ent.Attributes["device_class"]; ok {
 		_, _ = fmt.Fprintf(w, "device_class: %v\n", dc)
 	}
+	_, _ = fmt.Fprintf(w, "statistics:   %s\n", stats.label())
 	writeEntShowRegistryLines(w, rc, entityID)
 
 	if flagFull {
@@ -605,7 +615,11 @@ func lastIDSegment(entityID string) string {
 	return entityID
 }
 
-func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
+func runEntHist(ctx context.Context, w, errW io.Writer, entityID string) error {
+	if err := checkEntHistFlags(entityID); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
@@ -629,6 +643,10 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 	now := time.Now()
 	startTime := now.Add(-sinceDur)
 
+	if flagEntStats {
+		return runEntHistStats(ctx, w, errW, cfg, entityID, startTime, now, sinceDur)
+	}
+
 	client := haapi.New(cfg.URL, cfg.Token)
 
 	// If --attr is set, fetch attribute history instead of state history
@@ -636,30 +654,53 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 		return runEntHistAttr(ctx, w, client, entityID, startTime, now)
 	}
 
-	points, err := fetchHistoryPoints(ctx, client, entityID, startTime, now)
+	data, err := client.GetHistory(ctx, entityID,
+		startTime.Format(time.RFC3339),
+		now.Format(time.RFC3339))
+	if err != nil {
+		// D-47: a long window over a busy sensor is exactly where the raw
+		// history gives out (live run: a 60d window answered 504 three times
+		// in 272s) and where hourly statistics answer in a tenth of a second.
+		return fmt.Errorf("fetching history: %w%s", err,
+			statisticsFallbackHint(ctx, cfg, entityID, startTime, now))
+	}
+	points, err := parseHistoryResponse(data)
 	if err != nil {
 		return err
+	}
+	historyStart, err := firstHistoryTime(data)
+	if err != nil {
+		return err
+	}
+	// D-47: once the answer is rendered, say whether long-term statistics
+	// reach further back than the history it was built from.
+	note := func() {
+		writeStatisticsCoverageNote(ctx, w, errW, cfg, entityID, startTime, historyStart, now)
 	}
 
 	if len(points) == 0 {
 		// Try state timeline for non-numeric entities (binary sensors, input_booleans, etc.)
-		data, histErr := client.GetHistory(ctx, entityID,
-			startTime.Format(time.RFC3339),
-			now.Format(time.RFC3339))
-		if histErr != nil {
-			return fmt.Errorf("fetching history: %w", histErr)
-		}
 		changes, parseErr := parseStateTimeline(data, now)
 		if parseErr != nil {
 			return parseErr
 		}
 		if len(changes) == 0 {
 			if err := errUnknownEntity(ctx, client, entityID); err != nil {
+				// A deleted entity keeps its statistics; say so rather than
+				// letting "no live state, no history" read as "nothing exists".
+				return fmt.Errorf("%w%s", err, statisticsFallbackHint(ctx, cfg, entityID, startTime, now))
+			}
+			if err := emitEmptyList(w, "no history data"); err != nil {
 				return err
 			}
-			return emitEmptyList(w, "no history data")
+			note()
+			return nil
 		}
-		return renderStateTimeline(w, entityID, changes)
+		if err := renderStateTimeline(w, entityID, changes); err != nil {
+			return err
+		}
+		note()
+		return nil
 	}
 
 	// Cache the fetched points
@@ -676,7 +717,34 @@ func runEntHist(ctx context.Context, w io.Writer, entityID string) error {
 		points = analyze.Resample(points, defaultResampleTarget)
 	}
 
-	return renderHistoryPoints(w, entityID, points)
+	if err := renderHistoryPoints(w, entityID, points); err != nil {
+		return err
+	}
+	note()
+	return nil
+}
+
+// firstHistoryTime returns the time of the first row /api/history/period
+// answered, or zero when it answered none. HA clamps that row to the window
+// start when the window starts inside the recorded range, so a first row
+// AFTER the window start means the history does not reach back that far
+// (TestOracleHistoryFirstRowMarksCoverage).
+func firstHistoryTime(data []byte) (time.Time, error) {
+	var outer [][]historyEntry
+	if err := json.Unmarshal(data, &outer); err != nil {
+		return time.Time{}, fmt.Errorf("parsing history response: %w", err)
+	}
+	if err := degeneracy.Check("/api/history/period", &outer); err != nil {
+		return time.Time{}, err
+	}
+	if len(outer) == 0 || len(outer[0]) == 0 {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, outer[0][0].LastChanged)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing history start %q: %w", outer[0][0].LastChanged, err)
+	}
+	return t, nil
 }
 
 // runEntHistAttr fetches history and extracts a specific attribute as numeric timeline.
