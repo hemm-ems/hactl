@@ -656,6 +656,7 @@ hactl config files                                # list configuration.yaml and 
 hactl config file automations.yaml                # print a config file as YAML, !include's resolved
 hactl config file configuration.yaml --raw        # leave !include directives unresolved
 hactl config block automations.yaml climate_schedule  # one keyed block from a file
+hactl config block template.yaml '[3]'            # the fourth block of a list-rooted file, by position
 ```
 
 `files`/`file`/`block` read the config directory **through the companion** and
@@ -665,9 +666,18 @@ as the inlined list); `--raw` returns the file's own bytes. `block` matches
 `id:` or `alias:` on the direct items of a top-level list (automations.yaml),
 or a top-level mapping key (scripts.yaml), and prints that block verbatim, so
 its output may carry a trailing comment line that sits before the next key.
-`template.yaml` blocks carry neither — read those with `tpl cat <unique_id>`;
-`block` says so when the id you gave is a template unique_id, so a wrong guess
-costs one command rather than a search. All three are YAML-only — `--json` is
+A list-rooted file is also addressable **by position**: a zero-based index,
+bracketed (`'[3]'` — quote it, the shell treats brackets as a glob) or bare
+(`3`). The bracketed form is exactly the prefix `ref scan` prints in its `path`
+column, so a hit pastes back: `ref scan` shows `template.yaml  [3].sensor[0].state`
+→ `config block template.yaml '[3]'` prints that whole block. An `id:`/`alias:`
+match wins over a bare number (HA's UI mints purely numeric automation ids, and
+a printed id must keep resolving), so use the bracketed form when you mean the
+position; it never collides. An index past the end is an error naming the valid
+range. `template.yaml` blocks carry no `id:`/`alias:`, so position is how
+`block` reads them; to read one template entity by its `unique_id`, use
+`tpl cat <unique_id>` — `block` says so when the id you gave is a template
+unique_id, so a wrong guess costs one command rather than a search. All three are YAML-only — `--json` is
 accepted but does not change the output. A missing file or block is an error
 with a non-zero exit, not an empty result. `file` without `--raw` re-renders the
 document, and HA's own tags survive that rendering as tags (`!input`, `!secret`,

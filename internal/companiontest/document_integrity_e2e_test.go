@@ -4,6 +4,7 @@ package companiontest
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -154,6 +155,73 @@ func TestE2EConfigBlockRoutesATemplateUniqueIDCLI(t *testing.T) {
 		t.Errorf("an id that resolves nowhere was sent to tpl cat anyway:\n%s", typo)
 	}
 }
+
+// TestE2EConfigBlockReadsARefScanPathBackCLI is hactl#116: `ref scan` prints a
+// positional path (`[3].sensor[0].state`) and, before the companion accepted a
+// list index, no `config block` input could read that block back — for
+// template.yaml no valid input existed at all. The property is the paste-back:
+// the prefix the scan printed is the address the block read takes.
+func TestE2EConfigBlockReadsARefScanPathBackCLI(t *testing.T) {
+	const (
+		uniqueID = "e2e_block_index_probe"
+		target   = "sensor.e2e_block_index_target"
+	)
+
+	original := readConfigFileE2E(t, "template.yaml")
+	t.Cleanup(func() { writeConfigFileE2E(t, "template.yaml", original) })
+
+	writeConfigFileE2E(t, "template.yaml", original+
+		"\n- sensor:\n"+
+		"    - name: E2E Block Index Probe\n"+
+		"      unique_id: "+uniqueID+"\n"+
+		"      state: \"{{ states('"+target+"') }}\"\n")
+
+	scan, err := runHactlE2E(t, "ref", "scan", target)
+	if err != nil {
+		t.Fatalf("ref scan %s: %v\n%s", target, err, scan)
+	}
+	var index string
+	for line := range strings.SplitSeq(scan, "\n") {
+		if !strings.Contains(line, "template.yaml") {
+			continue
+		}
+		if m := leadingIndexRE.FindStringSubmatch(line); m != nil {
+			index = m[1]
+			break
+		}
+	}
+	if index == "" {
+		t.Fatalf("ref scan printed no positional template.yaml path to paste back:\n%s", scan)
+	}
+
+	block, err := runHactlE2E(t, "config", "block", "template.yaml", index)
+	if err != nil {
+		t.Fatalf("`config block template.yaml %s` — the prefix ref scan printed — failed: %v\n%s", index, err, block)
+	}
+	if !strings.Contains(block, uniqueID) {
+		t.Errorf("`config block template.yaml %s` read a different block than the scan hit:\n%s", index, block)
+	}
+
+	// The bare form addresses the same block (template.yaml carries no id or
+	// alias for a number to collide with).
+	bare := strings.Trim(index, "[]")
+	if bareOut, bareErr := runHactlE2E(t, "config", "block", "template.yaml", bare); bareErr != nil || bareOut != block {
+		t.Errorf("bare index %s did not read the same block as %s (err %v):\n%s", bare, index, bareErr, bareOut)
+	}
+
+	// Past the end is an error that names the valid range, not an empty block.
+	out, err := runHactlE2E(t, "config", "block", "template.yaml", "[9999]")
+	if err == nil {
+		t.Fatalf("an out-of-range index succeeded:\n%s", out)
+	}
+	if !strings.Contains(out, "index out of range") {
+		t.Errorf("the out-of-range failure does not say so:\n%s", out)
+	}
+}
+
+// leadingIndexRE finds the list-index prefix of a ref scan path: the first
+// `[N]` that starts a whitespace-separated field.
+var leadingIndexRE = regexp.MustCompile(`(?:^|\s)(\[\d+\])[.\[]`)
 
 // TestE2ECompanionErrorNamesTheRouteCLI is finding #23 against a real
 // companion: the failure names the route it failed on and nothing about how
