@@ -746,6 +746,11 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
 	maxAttempts := len(backoffs) + 1
 
+	// The retries share the caller's --timeout with the first attempt (#155):
+	// each one starts only if its backoff leaves budget, and gets what remains.
+	budget := httpretry.NewBudget(c.httpClient.Timeout)
+	var lastErr error
+
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -753,27 +758,44 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		// Reset headers each attempt so retries don't accumulate stale cookies.
 		req.Header = originalHeader.Clone()
 		req.Header.Set("Authorization", "Bearer "+c.token)
+		attemptReq, cancel := req, context.CancelFunc(func() {})
+		if attempt > 0 {
+			attemptReq, cancel = budget.Bind(req)
+		}
 		// On retry after a 401, force a fresh session token — the previous
 		// one may have expired or been invalidated server-side.
 		forceRefresh := attempt > 0
-		if err := c.applyIngressAuth(req, forceRefresh); err != nil {
+		if err := c.applyIngressAuth(attemptReq, forceRefresh); err != nil {
+			cancel()
 			return nil, err
 		}
 
-		respBody, status, err := c.doOnce(req)
+		respBody, status, err := c.doOnce(attemptReq)
+		cancel()
+		if err != nil && lastErr != nil && budget.Cut(req.Context(), err) {
+			return nil, budget.Stopped(lastErr)
+		}
+		var answer error
+		switch {
+		case err != nil:
+			answer = fmt.Errorf("%s %s: %w", req.Method, c.route(req.URL.Path), err)
+		case status < 200 || status >= 300:
+			// Typed, not fmt.Errorf: the text is the same, but a caller can now
+			// ask haapi.HTTPStatus whether this was a 404 instead of matching
+			// on a message that embeds the companion's response body.
+			answer = haapi.NewHTTPStatusError(req.Method, c.route(req.URL.Path), status, respBody)
+		}
 		if shouldRetry(err, status, hasIngressAuth, req.Method) && attempt < len(backoffs) {
+			if !budget.Fits(backoffs[attempt]) {
+				return nil, budget.Stopped(answer)
+			}
+			lastErr = answer
 			slog.Warn("retrying companion request", "method", req.Method, "status", status, "attempt", attempt+1, "error", err) //nolint:gosec // method is a Go HTTP constant
 			time.Sleep(backoffs[attempt])
 			continue
 		}
-		if err != nil {
-			return nil, fmt.Errorf("%s %s: %w", req.Method, c.route(req.URL.Path), err)
-		}
-		if status < 200 || status >= 300 {
-			// Typed, not fmt.Errorf: the text is the same, but a caller can now
-			// ask haapi.HTTPStatus whether this was a 404 instead of matching
-			// on a message that embeds the companion's response body.
-			return nil, haapi.NewHTTPStatusError(req.Method, c.route(req.URL.Path), status, respBody)
+		if answer != nil {
+			return nil, answer
 		}
 		return respBody, nil
 	}

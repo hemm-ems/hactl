@@ -96,6 +96,25 @@ func redirectingOrigin(t *testing.T, to string) string {
 	return srv.URL
 }
 
+// slowGateway answers every request with 504 Gateway Timeout, but only after
+// delay — a reverse proxy that gave up waiting for Home Assistant. Unlike the
+// hanging host, each attempt ENDS inside --timeout with a 5xx, which is exactly
+// what a GET retries on (#155).
+func slowGateway(t *testing.T, delay time.Duration) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte("<html>504 Gateway Time-out</html>"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 // withHostileHA is withStubCompanion's counterpart: the .env is copied and its
 // HA_URL replaced, so the case drives hactl at a transport it owns.
 //
@@ -160,6 +179,44 @@ func TestSweepEveryTransportHonoursTheCallerTimeout(t *testing.T) {
 				if elapsed > ceiling {
 					t.Errorf("%v took %v with --timeout %s — the caller's bound never reached the transport",
 						args, elapsed, asked)
+				}
+			})
+		}
+	})
+}
+
+// TestSweepRetriesStayInsideTheCallerTimeout — #155.
+//
+// The bound above held for one attempt, and a 5xx GET retries. Each retry got
+// the whole --timeout again, so against openresty answering 504 after ~90s,
+// `ent hist --since 60d --timeout 180s` took 272s; here `--timeout 2s` and
+// `--timeout 4s` both took 6.1s, the #73 signature of a flag that is not the
+// bound. The 504 must still be what the caller is told.
+func TestSweepRetriesStayInsideTheCallerTimeout(t *testing.T) {
+	eachProfile(t, func(t *testing.T, tgt Target) {
+		t.Helper()
+		hostile := withHostileHA(t, tgt, slowGateway(t, 1500*time.Millisecond))
+
+		// 1.5s per answer, so one attempt fits in 2s and three cannot; the
+		// ceiling sits between the fixed ~1.6s and the defect's ~6s.
+		const asked, ceiling = "2s", 4 * time.Second
+		for _, args := range [][]string{
+			{"health", "--timeout", asked},
+			{"ent", "ls", "--timeout", asked},
+		} {
+			t.Run(strings.Join(args[:len(args)-2], "_"), func(t *testing.T) {
+				start := time.Now()
+				stderr, err := hostile.ReadDiagnostic(t, args...)
+				elapsed := time.Since(start)
+
+				if err == nil {
+					t.Errorf("%v against a gateway that answers 504 reported success", args)
+				}
+				if elapsed > ceiling {
+					t.Errorf("%v took %v with --timeout %s — the retries ran outside the caller's bound", args, elapsed, asked)
+				}
+				if !strings.Contains(stderr, "504 Gateway Timeout") {
+					t.Errorf("the gateway's 504 is not what the caller was told:\n%s", truncate(stderr))
 				}
 			})
 		}
