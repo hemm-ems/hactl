@@ -1745,7 +1745,16 @@ whole budget — is a ceiling on the wait, never a floor under it.
 The rule covers the WHOLE of establishing a connection, including a retry the
 caller did not ask for. `WSClient.Connect` retries once, and two attempts do not
 entitle a command to twice the time the caller allowed: the retry runs inside
-the budget and is skipped when the budget is gone.
+the budget and is skipped when the budget is gone. The REST transports obey the
+same rule for the 5xx retry `httpretry.ShouldRetry` grants a GET: the logical
+request — every attempt and every backoff — shares one `httpretry.Budget`, a
+retry starts only if its backoff leaves budget, and it is given only what
+remains. They did not until #155: each attempt carried the full `--timeout`, so
+a reverse proxy answering 504 after ~90s made `ent hist --since 60d --timeout
+180s` take 272s, while `--timeout 30s` stopped at 30.02s because a client-side
+timeout is not retried. When the budget ends the retries, the caller is told
+the server's last answer — the 504, still typed — marked as final, not a
+client-side timeout.
 
 Three transports, three files, three changes, and the flag reached two of them.
 The WebSocket dialled with a 5-second constant, twice, behind a 10-second
@@ -1776,7 +1785,14 @@ tidying its own URL space, and Ingress is served under a path prefix.
   asked for is "come back within a second", and every way of not doing that is
   the same defect; `TestRESTRefusesARedirectThatMovesTheOrigin`,
   `TestWSConnectReportsARedirectAsTheSchemeProblemItIs`, and the boundary
-  `TestRESTFollowsARedirectWithinTheSameOrigin`).
+  `TestRESTFollowsARedirectWithinTheSameOrigin`);
+  `internal/haapi/retry_budget_test.go` and
+  `internal/companion/client_retry_budget_test.go`
+  (`TestRetryStaysInsideTheCallerTimeout`, against a gateway that answers 504
+  after a delay, plus the control `TestRetryInsideTheBudgetIsUnchanged`);
+  `internal/httpretry/budget_test.go`; sweep cases
+  `TestSweepEveryTransportHonoursTheCallerTimeout` and
+  `TestSweepRetriesStayInsideTheCallerTimeout` (both profiles).
 - Quantified by: `internal/surfaceaudit` (`TestTransportSurfaceIsClosed`,
   `make test-surface`) over `dev/surfaces/transport.manifest` — the set is every
   composite literal of `http.Client`, `http.Transport`, `net.Dialer` or

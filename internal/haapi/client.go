@@ -402,25 +402,38 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		return 500 * time.Millisecond << attempt // 500ms, 1s
 	}
 
+	// The retries share the caller's --timeout with the first attempt (#155).
+	budget := httpretry.NewBudget(c.httpClient.Timeout)
+	var lastErr error
+
 	for attempt := range maxAttempts {
 		if bodyBytes != nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
+		attemptReq, cancel := req, context.CancelFunc(func() {})
+		if attempt > 0 {
+			attemptReq, cancel = budget.Bind(req)
+		}
 
 		start := time.Now()
-		resp, err := c.httpClient.Do(req) //nolint:gosec // URL is constructed from user-provided baseURL by design
+		resp, err := c.httpClient.Do(attemptReq) //nolint:gosec // URL is constructed from user-provided baseURL by design
 		duration := time.Since(start)
 
 		if err != nil {
+			cancel()
 			// Transport errors (refused, DNS failure, timeout) are not
 			// retried: an unreachable HA doesn't heal in 500ms, and
 			// retrying compounds the stall. Only 5xx responses retry.
 			slog.Debug("HTTP request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // structured log
+			if lastErr != nil && budget.Cut(req.Context(), err) {
+				return nil, budget.Stopped(lastErr)
+			}
 			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
 		}
 
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		cancel()
 
 		slog.Debug("HTTP request", "method", req.Method, "status", resp.StatusCode, "duration", duration) //nolint:gosec // structured log
 
@@ -432,6 +445,10 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		// config entries. The companion client had the rule and this one did
 		// not, which is why the predicate now lives in one shared package.
 		if resp.StatusCode >= 500 && attempt < maxAttempts-1 && httpretry.IsIdempotent(req.Method) {
+			lastErr = httpStatusError(req.Method, req.URL.Path, resp.StatusCode, respBody)
+			if !budget.Fits(backoff(attempt)) {
+				return nil, budget.Stopped(lastErr)
+			}
 			slog.Debug("retrying request due to server error", "method", req.Method, "status", resp.StatusCode, "attempt", attempt+1) //nolint:gosec // structured log
 			time.Sleep(backoff(attempt))
 			continue
