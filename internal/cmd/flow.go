@@ -148,11 +148,16 @@ var configFileCmd = &cobra.Command{
 }
 
 var configBlockCmd = &cobra.Command{
-	Use:   "block <path> <id>",
-	Short: "Print a single keyed config block as YAML",
+	Use:   "block <path> <id|[index]>",
+	Short: "Print a single config block as YAML, by id, alias, key or position",
 	Long: "Print a single block from a config file: matched by 'id:' or 'alias:' on the direct items " +
-		"of a top-level list (automations.yaml), or by top-level key (scripts.yaml). template.yaml " +
-		"blocks carry neither — read those with 'tpl cat <unique_id>'.",
+		"of a top-level list (automations.yaml), or by top-level key (scripts.yaml).\n\n" +
+		"A list-rooted file is also addressable by zero-based position, bracketed ('[3]') or bare (3) — " +
+		"the bracketed form is the prefix 'ref scan' prints in its path column, so a hit at " +
+		"'[3].sensor[0].state' reads back with 'config block template.yaml \"[3]\"'. An id or alias " +
+		"match wins over a bare number; the bracketed form never collides with one.\n\n" +
+		"template.yaml blocks carry no id or alias, so read them by position; to read one template " +
+		"entity by unique_id, use 'tpl cat <unique_id>'.",
 	Args:  takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigBlock(cmd.Context(), cmd.OutOrStdout(), args[0], args[1])
@@ -857,8 +862,8 @@ func runConfigBlock(ctx context.Context, w io.Writer, path, id string) error {
 // templateRedirect turns a block-not-found into the referral `config block`'s
 // own --help already promises, or returns nil when there is nothing to refer to.
 //
-// The help says: "template.yaml blocks carry neither [id: nor alias:] — read
-// those with 'tpl cat <unique_id>'". Nothing implemented that sentence, so
+// The help says template.yaml blocks carry no id or alias and that one template
+// entity is read by unique_id with 'tpl cat'. Nothing implemented that, so
 // `config block template.yaml posclock_jan` — a real unique_id in a real file —
 // answered `Block not found: posclock_jan`, word for word what a typo gets
 // (finding #24). The command that knows the id is addressable said nothing

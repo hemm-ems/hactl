@@ -379,3 +379,59 @@ func TestConfigBlockDoesNotRedirectOnANonNotFound(t *testing.T) {
 		t.Errorf("the template route was probed %d time(s) for a failure that says nothing about the id", templateProbes)
 	}
 }
+
+// TestConfigBlockForwardsAPositionalAddressVerbatim is hactl#116: the companion
+// resolves a list index, bare or bracketed, so the CLI's whole job is to hand
+// the address over untouched — a client that stripped the brackets would turn
+// the collision-free form into the one an all-digit automation id wins.
+func TestConfigBlockForwardsAPositionalAddressVerbatim(t *testing.T) {
+	const content = "- sensor:\n    - name: Clock\n"
+	for _, addr := range []string{"[3]", "3"} {
+		t.Run(addr, func(t *testing.T) {
+			var gotID string
+			companionEnv(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/config/block" {
+					gotID = r.URL.Query().Get("id")
+					jsonResp(w, map[string]string{"path": "template.yaml", "id": gotID, "content": content})
+				}
+			})
+			var buf bytes.Buffer
+			if err := runConfigBlock(context.Background(), &buf, "template.yaml", addr); err != nil {
+				t.Fatalf("runConfigBlock: %v", err)
+			}
+			if gotID != addr {
+				t.Errorf("address not forwarded verbatim: sent %q, companion saw %q", addr, gotID)
+			}
+			if buf.String() != content {
+				t.Errorf("content mismatch: %q", buf.String())
+			}
+		})
+	}
+}
+
+// TestConfigBlockOutOfRangeIndexKeepsTheCompanionsRange: the companion's 404
+// for an index past the end names the valid range, and that is the answer the
+// caller needs — not a referral to tpl cat, which no position can satisfy.
+func TestConfigBlockOutOfRangeIndexKeepsTheCompanionsRange(t *testing.T) {
+	const rangeMsg = "index out of range; template.yaml has 2 blocks, 0..1"
+	companionEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/config/block":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error": {"code": 404, "message": "Block not found (`+rangeMsg+`)"}}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	})
+	var buf bytes.Buffer
+	err := runConfigBlock(context.Background(), &buf, "template.yaml", "[9]")
+	if err == nil {
+		t.Fatal("expected an out-of-range index to fail the command")
+	}
+	if !strings.Contains(err.Error(), rangeMsg) {
+		t.Errorf("the companion's valid range did not reach the caller:\n%s", err.Error())
+	}
+	if strings.Contains(err.Error(), "tpl cat") {
+		t.Errorf("an out-of-range position was referred to tpl cat:\n%s", err.Error())
+	}
+}
