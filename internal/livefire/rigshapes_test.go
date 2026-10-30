@@ -808,20 +808,27 @@ func TestRigFixtureCarriesEnergyPreferences(t *testing.T) {
 var energySourceTypes = []string{"grid", "solar", "battery", "gas", "water"}
 
 // TestRigFixtureSeededDevicesAreAnchored is rig capability R1's other half,
-// and it exists because the shape it protects was being deleted at runtime by
-// Home Assistant itself.
+// and it exists because the shape it protects has twice been deleted by Home
+// Assistant itself.
 //
-// helpers/device_registry.async_cleanup removes every device referenced by
-// neither a live config entry nor an entity registry entry. The seeded devices
-// have no config entry — nothing in a YAML fixture can give them one — so they
-// were orphans, and the debounced cleanup (CLEANUP_DELAY = 10s, and again on
-// every restart) deleted them. The rename case passed or failed depending on
-// how far the tier had got by then, which is worse than failing outright: it
-// went green while the shape it tests was being removed underneath it, and it
-// only surfaced at all because the recorder backfill added a restart.
+// First at runtime: helpers/device_registry.async_cleanup removes every device
+// referenced by neither a live config entry nor an entity registry entry, and
+// the debounced cleanup (CLEANUP_DELAY = 10s, and again on every restart)
+// deleted the entry-less seeded devices mid-tier. The rename case passed or
+// failed by the clock. An entity row per device was the fix then.
 //
-// A seeded device therefore needs an anchor, and "remember to add an anchor"
-// is not a mechanism.
+// Then at load (issue #156): from HA 2026.8 a device belongs to exactly one
+// config entry (core PR #175785), and the device registry's 1.x -> 3 storage
+// migration drops every device whose config_entries is empty — before any
+// cleanup, so no entity anchor can save it. A device with several entries is
+// split into one NEW device id per entry, so the seeded id would not survive
+// either. And once loaded, async_cleanup strips a config_entry_id that is not
+// a known entry, which in the single-entry model removes the device.
+//
+// So the rule a seeded device must meet is: exactly one config entry, and that
+// entry is seeded in core.config_entries. "Remember to give it an entry" is not
+// a mechanism. This is the static half; TestSweepRenamedDeviceIsFoundAndShownByBothNames
+// is the served half, asking the booted rig for the device by both names.
 func TestRigFixtureSeededDevicesAreAnchored(t *testing.T) {
 	var devices struct {
 		Data struct {
@@ -843,37 +850,39 @@ func TestRigFixtureSeededDevicesAreAnchored(t *testing.T) {
 		t.Fatal("the seeded device registry is empty")
 	}
 
-	var entities struct {
+	var entries struct {
 		Data struct {
-			Entities []struct {
-				EntityID string `json:"entity_id"`
-				DeviceID string `json:"device_id"`
-				Platform string `json:"platform"`
-			} `json:"entities"`
+			Entries []struct {
+				EntryID string `json:"entry_id"`
+			} `json:"entries"`
 		} `json:"data"`
 	}
-	raw, err = os.ReadFile(filepath.Join(fixtureDir(t), ".storage", "core.entity_registry"))
+	raw, err = os.ReadFile(filepath.Join(fixtureDir(t), ".storage", "core.config_entries"))
 	if err != nil {
-		t.Fatalf("the fixture seeds no entity registry, so no seeded device can be anchored: %v", err)
+		t.Fatalf("the fixture seeds no config entries, so no seeded device can survive Home "+
+			"Assistant's device registry load: %v", err)
 	}
-	if jsonErr := json.Unmarshal(raw, &entities); jsonErr != nil {
-		t.Fatalf("parsing .storage/core.entity_registry: %v", jsonErr)
+	if jsonErr := json.Unmarshal(raw, &entries); jsonErr != nil {
+		t.Fatalf("parsing .storage/core.config_entries: %v", jsonErr)
+	}
+	seeded := map[string]bool{}
+	for _, e := range entries.Data.Entries {
+		seeded[e.EntryID] = true
 	}
 
-	anchoredBy := map[string]string{}
-	for _, e := range entities.Data.Entities {
-		if e.DeviceID != "" {
-			anchoredBy[e.DeviceID] = e.EntityID
-		}
-	}
 	for _, d := range devices.Data.Devices {
-		if len(d.ConfigEntries) > 0 {
-			continue
-		}
-		if _, ok := anchoredBy[d.ID]; !ok {
-			t.Errorf("device %q (%s) has no config entry and no entity registry row pointing at "+
-				"it — Home Assistant's own cleanup will delete it mid-run, and whichever case "+
-				"depends on it will fail by the clock", d.Name, d.ID)
+		switch {
+		case len(d.ConfigEntries) == 0:
+			t.Errorf("device %q (%s) has no config entry — Home Assistant 2026.8+ drops it when it "+
+				"migrates the device registry, before any case can ask for it", d.Name, d.ID)
+		case len(d.ConfigEntries) > 1:
+			t.Errorf("device %q (%s) has %d config entries — Home Assistant 2026.8+ splits it into "+
+				"one device per entry under NEW ids, so the seeded id does not survive",
+				d.Name, d.ID, len(d.ConfigEntries))
+		case !seeded[d.ConfigEntries[0]]:
+			t.Errorf("device %q (%s) names config entry %s, which core.config_entries does not "+
+				"seed — Home Assistant's cleanup strips an unknown entry and the device with it",
+				d.Name, d.ID, d.ConfigEntries[0])
 		}
 	}
 }
