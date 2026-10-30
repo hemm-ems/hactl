@@ -126,7 +126,10 @@ func runGrep(ctx context.Context, w io.Writer, term string) error {
 	}
 	defer src.close()
 
-	ans := grepAnswer{Term: term, Regex: flagGrepRegex, CaseSensitive: flagGrepCaseSensitive}
+	// Empty lists, not nil: a miss is a search's commonest answer, and the manual
+	// documents sources and hits as lists a consumer can range over.
+	ans := grepAnswer{Term: term, Regex: flagGrepRegex, CaseSensitive: flagGrepCaseSensitive,
+		Sources: []grepSource{}, Hits: []grepRow{}}
 	var scope sweepScope
 
 	// Config half (companion). A 400 is the companion refusing the term or
@@ -156,7 +159,8 @@ func runGrep(ctx context.Context, w io.Writer, term string) error {
 
 	// D-31: a search answers over what it could read and says so in the body;
 	// under --json it refuses unless the caller acknowledged a partial answer.
-	if gateErr := searchScopeGateError(scope, flagGrepAllowPartial); gateErr != nil {
+	if gateErr := searchScopeGateError(scope, flagGrepAllowPartial,
+		"a --json consumer can take its hits for the whole answer without reading `partial`"); gateErr != nil {
 		return gateErr
 	}
 	ans.Partial = scope.partial()

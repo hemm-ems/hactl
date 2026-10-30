@@ -645,6 +645,14 @@ paths:
                           type: string
                         after:
                           type: string
+                        reformatted:
+                          type: boolean
+                          description: True when the file this change lives in 
+                            was re-serialized whole instead of having only the 
+                            matching scalars rewritten in place, so formatting 
+                            elsewhere in that file may have changed. In a dry 
+                            run, says whether applying would do so. Absent 
+                            otherwise.
                   skipped:
                     type: array
                     description: 'Config files this walk did not read, so the result
@@ -682,6 +690,13 @@ paths:
           $ref: '#/components/responses/Error'
         5XX:
           $ref: '#/components/responses/Error'
+      description: 'Every whole-token occurrence of `old` is rewritten to `new` in
+        the file it lives in, across the `!include` graph. Only the bytes of each
+        matching scalar change: its quotes, block style, escapes and every other line
+        of the file stay exactly as they were. The rewritten file is re-parsed and
+        compared against the intended result before it is written; where they disagree
+        the file is re-serialized whole instead, and each of its changes carries `reformatted:
+        true`.'
       requestBody:
         content:
           application/json:

@@ -843,7 +843,7 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 	// fixing `ref scan` alone would have been the half-fix dev/surfaces exists
 	// to catch.
 	scope := sweepScope{dash: dashScope}
-	if gateErr := searchScopeGateError(scope, flagDashAllowPartial); gateErr != nil {
+	if gateErr := searchScopeGateError(scope, flagDashAllowPartial, bareArrayJSON); gateErr != nil {
 		return gateErr
 	}
 	reportSweepScope(w, scope)
@@ -858,8 +858,8 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 				"(see the partial-sweep note above — the rest was not searched)")
 		}
 		return emitEmptyList(w, target+": not referenced as a whole value in any dashboard "+
-			"(grep matches complete string values, never substrings — for term discovery: "+
-			"hactl ent ls --pattern '*"+target+"*')")
+			"(dash grep matches complete string values, never substrings — for a term or fragment "+
+			"across dashboards and config files: hactl grep "+target+")")
 	}
 
 	tbl := &format.Table{

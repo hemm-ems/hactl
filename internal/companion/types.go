@@ -209,6 +209,11 @@ type RefChange struct {
 	Path     string `json:"path"`
 	Before   string `json:"before"`
 	After    string `json:"after"`
+	// Reformatted: the companion could not verify an in-place splice of this
+	// file and re-serialized it whole (hactl-companion#88). Absent — false — when
+	// only the matching scalars' bytes changed. In a dry run, says whether
+	// applying would.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // TemplateDefinition represents a template sensor definition.

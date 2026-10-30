@@ -938,6 +938,14 @@ them). Display names are fine (`Wozi TV`, `Küche`); pasted syntax is not
 (`'sensor.x'`, `.turn_on`, `{{`). For term discovery use `grep`, which takes
 any substring of 2+ characters.
 
+`replace` changes only the bytes of each matching value in a config file — its
+quotes, block style and every other line stay as they were. When the companion
+cannot verify that in-place edit for a file, it rewrites that file whole
+instead (content correct, formatting elsewhere in it normalized): the row's
+status then reads `applied (file re-serialized whole)` — `pending (would
+re-serialize the file whole)` in a dry run — and a `note:` line after the table
+names the file, so a config kept in git is not surprised by an unrelated diff.
+
 To rename a **live** entity and its references in one step, use `ent rename`
 (registry rename + this replace pass); `ref replace` alone is the tool when
 only the references must move — e.g. onto an already-existing entity.

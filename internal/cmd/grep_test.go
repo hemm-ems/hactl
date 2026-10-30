@@ -201,6 +201,50 @@ func TestGrepGroupsBySourceWithExactCounts(t *testing.T) {
 	}
 }
 
+// TestGrepZeroHitsIsEmptyListsNotNull: the manual documents `sources` and
+// `hits` as lists, and a miss is the commonest answer a search gives — a
+// consumer that ranges over `hits` must not meet `null` there.
+func TestGrepZeroHitsIsEmptyListsNotNull(t *testing.T) {
+	cc := startGrepCompanion(t, 0, grepEmptyConfig)
+	grepFixture(t, cc, []any{}, map[string]any{"views": []any{}})
+	withRefFlag(t, &flagJSON)
+
+	var buf bytes.Buffer
+	if err := runGrep(context.Background(), &buf, "balkony"); err != nil {
+		t.Fatalf("grep --json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("grep --json does not parse: %v\n%s", err, buf.String())
+	}
+	for _, field := range []string{"sources", "hits", "unread"} {
+		if _, isList := doc[field].([]any); !isList {
+			t.Errorf("%q = %#v on a zero-hit answer, want an empty list", field, doc[field])
+		}
+	}
+}
+
+// TestGrepPartialRefusalGivesGrepsOwnReason: the D-31 refusal is shared with
+// ref scan and dash grep, whose --json is a bare array with nowhere to carry
+// the scope. grep's document has `partial`, so that reason would be false of
+// it — the refusal must give the one that is true of grep's output.
+func TestGrepPartialRefusalGivesGrepsOwnReason(t *testing.T) {
+	cc := startGrepCompanion(t, http.StatusUnauthorized, "")
+	grepFixture(t, cc, []any{}, balkonyDashboard())
+	withRefFlag(t, &flagJSON)
+
+	err := runGrep(context.Background(), &bytes.Buffer{}, "balkony")
+	if err == nil {
+		t.Fatal("a partial sweep must refuse under --json")
+	}
+	if strings.Contains(err.Error(), "bare array") {
+		t.Errorf("the refusal states ref scan's medium, not grep's:\n%s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "partial") {
+		t.Errorf("the refusal does not name the field a consumer can read past:\n%s", err.Error())
+	}
+}
+
 func withTop(t *testing.T, n int) {
 	t.Helper()
 	old := flagTop
