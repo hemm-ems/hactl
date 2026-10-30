@@ -1,6 +1,6 @@
 module github.com/hemm-ems/hactl
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/getkin/kin-openapi v0.149.0
