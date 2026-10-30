@@ -38,11 +38,16 @@ const (
 //   - `grep_e2e_tail` closing a value that ends in a newline on both halves —
 //     a block scalar in config, a markdown body in the dashboard: `$` is read
 //     the same way by both engines.
+//   - `ıstanbul` (dotless ı, config) and `İSTANBUL` (dotted İ, dashboard): the
+//     characters Python's re.IGNORECASE folds wider than Go's (?i), so a
+//     case-insensitive --regex asks both engines Python's question.
 const grepE2EAutomation = `id: grep_e2e_probe
 alias: Grep E2E Küche Probe
 description: |
   Straße notes grep_e2e_tail
 mode: single
+variables:
+  grep_e2e_city: ıstanbul grep_e2e_turkic
 trigger:
   - platform: state
     entity_id: sensor.balkony_p_ac
@@ -52,7 +57,8 @@ action:
 
 const grepE2EDashboardConfig = `{"views":[{"title":"KÜCHE grep view","path":"grep",
  "cards":[{"type":"entity","entity":"sensor.balkony_p_ac"},
-          {"type":"markdown","content":"STRASSE notes grep_e2e_tail\n"}]}]}`
+          {"type":"markdown","content":"STRASSE notes grep_e2e_tail\n"},
+          {"type":"markdown","content":"İSTANBUL grep_e2e_turkic"}]}]}`
 
 // grepE2EDoc is the part of `grep --json` the assertions read.
 type grepE2EDoc struct {
@@ -221,6 +227,22 @@ func TestE2EGrepNonASCIITermThroughBothHalves(t *testing.T) {
 	}
 	if ss.has("config", "automations.yaml", "Straße notes grep_e2e_tail\n") {
 		t.Errorf("strasse found Straße on the config half: that is case folding, which D-49 rules out")
+	}
+
+	// --regex folds case as Python's re.IGNORECASE does, on BOTH halves: I, i,
+	// İ and ı are one letter there, while Go's (?i) alone keeps İ and ı apart
+	// from i — which made the dashboard half miss what the config half found.
+	for _, pattern := range []string{`istanbul grep_e2e_turkic`, `^[a-z]stanbul grep_e2e_turkic$`} {
+		folded := grepE2E(t, "--regex", pattern)
+		if !folded.has("config", "automations.yaml", "ıstanbul grep_e2e_turkic") {
+			t.Errorf("--regex %q: config half (Python) missed ıstanbul: %+v", pattern, folded.Hits)
+		}
+		if !folded.has("dashboard", grepE2EDashboard, "İSTANBUL grep_e2e_turkic") {
+			t.Errorf("--regex %q: dashboard half (Go) missed İSTANBUL, which Python's IGNORECASE matches: %+v", pattern, folded.Hits)
+		}
+	}
+	if exact := grepE2E(t, "--regex", "istanbul grep_e2e_turkic", "--case-sensitive"); exact.Total != 0 {
+		t.Errorf("--case-sensitive --regex istanbul must find neither spelling: %+v", exact.Hits)
 	}
 
 	// --case-sensitive: compares as written on both halves.

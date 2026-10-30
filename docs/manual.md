@@ -848,19 +848,27 @@ accepted, and hactl refuses everything else before contacting anything:
 - accepted: literals and escaped punctuation (`sensor\.wp`), classes with
   explicit members (`[a-z_]`, `[^0-9]`, `[äöüß]`), `|`, groups `(…)`, `(?:…)`,
   `(?P<name>…)`, `* + ? {n} {n,} {n,m}` (n, m ≤ 1000) and their lazy forms, `.`,
-  `^`, `$`, `\A`, leading flags `(?i)` `(?m)` `(?s)`, scoped `(?i:…)` `(?-i:…)`,
+  `^`, `$`, `\A`, leading flags `(?i)` `(?m)` `(?s)`, scoped `(?m:…)` `(?s:…)`
+  and `(?i:…)` inside an already case-insensitive pattern,
   `\t \n \r \f \v \a`, `\xHH`;
 - refused because the engines read them differently: `\w \W \d \D \s \S \b \B`
   (write `[A-Za-z0-9_]`, `[0-9]`, `[ \t\n]` instead), digit escapes such as
   `\12` (write `\x0a`), `{,n}` (write `{0,n}`), POSIX classes `[[:alpha:]]` and
-  any `[`, `--`, `&&`, `~~` or `||` inside a class;
+  any `[`, `--`, `&&`, `~~` or `||` inside a class, and a group that switches
+  case-sensitivity for part of the pattern — `(?-i:…)` in the default
+  case-insensitive search, `(?i:…)` under `--case-sensitive` (spell the case
+  variants out instead: `[Kk]üche`);
 - refused because only one engine has them: lookahead/lookbehind,
   backreferences, possessive and atomic groups, `\Z`, `\z`, `\p{…}`, `\Q…\E`,
   `\x{…}`, `\u…`, `(?<name>…)`, `(?U)`, a flag group that is not at the start
   (`a(?i)b`) or that negates (`(?-i)`), repeat counts above 1000.
 
 `$` means what it means in Python on both halves: the end of the value, or just
-before one final newline (block scalars keep theirs). A pattern is not
+before one final newline (block scalars keep theirs). Case-insensitive matching
+is Python's `re.IGNORECASE` on both halves too, which treats a few characters as
+cases of each other where Go alone would not — `I`, `i`, `İ` and `ı` are one
+letter, as are `ΐ`/`ΐ`, `ΰ`/`ΰ` and `ﬅ`/`ﬆ` — so `--regex istanbul` finds
+`İstanbul` and `ISTANBUL` in config files and dashboards alike. A pattern is not
 length-limited; a pattern the companion cannot finish within its deadline
 (catastrophic backtracking) is refused with its message.
 

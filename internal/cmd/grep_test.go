@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 )
 
 // --- fixtures ---
@@ -334,6 +337,88 @@ func TestGrepPartialIsStatedAndRefusesUnderJSON(t *testing.T) {
 			t.Errorf("the partial miss must say what it covered:\n%s", out)
 		}
 	})
+	// Every case above makes the config half the unread one; the same posture
+	// for an unread dashboard is its own set of cases.
+	t.Run("an_unread_dashboard", grepPartialDashboardHalf)
+}
+
+// grepConfigBalkonyHit is a complete config half holding one hit.
+const grepConfigBalkonyHit = `{"term":"balkony","regex":false,"case_sensitive":false,
+	"hits":[{"location":"automations.yaml","path":"[0].triggers[0].entity_id","key":"entity_id","kind":"value",
+		"matched_value":"sensor.balkony_p_ac"}],
+	"total":1,"truncated":false,
+	"sources":[{"location":"automations.yaml","key_hits":0,"value_hits":1}]}`
+
+// unreadableDashboard is HA failing the dashboard fetch — not the
+// auto-generated default's config_not_found, which is a complete zero.
+var unreadableDashboard = wsErrorResponse{Code: "home_assistant_error", Message: "boom"}
+
+// grepPartialDashboardHalf is AC-4's dashboard source, run as a subtest of
+// TestGrepPartialIsStatedAndRefusesUnderJSON (the test partialscope.manifest
+// names for runGrep): the config half is complete and the dashboard walk is the
+// one that fell short. H-10 records search commands that shipped "one source short" —
+// a dashboard that went unread must reach the body, the --json refusal, the
+// `unread` rows and the miss wording exactly as an unread config half does.
+func grepPartialDashboardHalf(t *testing.T) {
+	t.Run("plain_states_the_unread_dashboard", func(t *testing.T) {
+		cc := startGrepCompanion(t, 0, grepConfigBalkonyHit)
+		grepFixture(t, cc, []any{}, unreadableDashboard)
+		var buf bytes.Buffer
+		if err := runGrep(context.Background(), &buf, "balkony"); err != nil {
+			t.Fatalf("plain text still answers: %v", err)
+		}
+		for _, want := range []string{"partial sweep: 0 of 1 dashboard(s) scanned", "(default)", "boom", "sensor.balkony_p_ac"} {
+			if !strings.Contains(buf.String(), want) {
+				t.Errorf("output missing %q\n%s", want, buf.String())
+			}
+		}
+	})
+	t.Run("json_refuses", func(t *testing.T) {
+		cc := startGrepCompanion(t, 0, grepConfigBalkonyHit)
+		grepFixture(t, cc, []any{}, unreadableDashboard)
+		withRefFlag(t, &flagJSON)
+		var buf bytes.Buffer
+		err := runGrep(context.Background(), &buf, "balkony")
+		if err == nil || !strings.Contains(err.Error(), "--allow-partial") || !strings.Contains(err.Error(), "dashboard") {
+			t.Fatalf("an unread dashboard must refuse under --json and name the dashboard half, got err=%v\n%s", err, buf.String())
+		}
+		if buf.Len() != 0 {
+			t.Errorf("a refusal writes no document, got:\n%s", buf.String())
+		}
+	})
+	t.Run("json_allow_partial_names_the_dashboard", func(t *testing.T) {
+		cc := startGrepCompanion(t, 0, grepConfigBalkonyHit)
+		grepFixture(t, cc, []any{}, unreadableDashboard)
+		withRefFlag(t, &flagJSON)
+		withRefFlag(t, &flagGrepAllowPartial)
+		var buf bytes.Buffer
+		if err := runGrep(context.Background(), &buf, "balkony"); err != nil {
+			t.Fatalf("--allow-partial must answer: %v", err)
+		}
+		ans := decodeGrepAnswer(t, buf.String())
+		if !ans.Partial || len(ans.Unread) != 1 || ans.Unread[0].Source != "dashboard" ||
+			ans.Unread[0].Location != "(default)" || !strings.Contains(ans.Unread[0].Reason, "boom") {
+			t.Errorf("the document must carry the dashboard scope: partial=%v unread=%+v", ans.Partial, ans.Unread)
+		}
+		if len(ans.Hits) != 1 || ans.Hits[0].Source != "config" {
+			t.Errorf("the config half is still answered: %+v", ans.Hits)
+		}
+	})
+	t.Run("a_partial_miss_never_claims_the_negative", func(t *testing.T) {
+		cc := startGrepCompanion(t, 0, grepEmptyConfig)
+		grepFixture(t, cc, []any{}, unreadableDashboard)
+		var buf bytes.Buffer
+		if err := runGrep(context.Background(), &buf, "balkony"); err != nil {
+			t.Fatalf("plain text answers: %v", err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "in any config file or dashboard") {
+			t.Errorf("a sweep that did not read a dashboard may not claim a verified negative:\n%s", out)
+		}
+		if !strings.Contains(out, "in what could be searched") {
+			t.Errorf("the partial miss must say what it covered:\n%s", out)
+		}
+	})
 }
 
 // TestGrepCompanionRefusalEndsTheCommand: a 400 is the companion refusing the
@@ -522,9 +607,9 @@ func TestGrepLowercaseRuleIsTheCompanions(t *testing.T) {
 func TestGrepRegexContract(t *testing.T) {
 	accepted := []string{
 		`[a-z_]+\.[a-z0-9_]+`, `[^a-z ]+`, `wp_(vl|rl)`, `a{2,3}`, `a{2}`, `a{2,}`, `<.+?>`,
-		`(?i)balkony`, `(?i)küche`, `a(?i:b)c`, `(?i)a(?-i:b)`, `(?m)^b$`, `(?s)a.b`, `(?i)(?s)a.b`,
+		`(?i)balkony`, `(?i)küche`, `a(?i:b)c`, `(?m)^b$`, `(?s)a.b`, `(?i)(?s)a.b`,
 		`\Afoo`, `(?P<dom>[a-z]+)\.`, `a|ab`, `(|a)b`, `[äöüß]+`, `sensor\.wp`, `\{\{`, `a{`, `x{2`,
-		`[]a]`, `[^]a]`, `\x41`, `\t\n`, `}}$`, `[a-]`, `[0-9]{4}`,
+		"[\u0130\u0131]", "[\u00e0-\u00ff]+", "[\u0132-\u017e]", `[]a]`, `[^]a]`, `\x41`, `\t\n`, `}}$`, `[a-]`, `[0-9]{4}`,
 	}
 	for _, p := range accepted {
 		if _, err := validateGrepRegex(p, false); err != nil {
@@ -546,6 +631,10 @@ func TestGrepRegexContract(t *testing.T) {
 		`a(?i)b`:     "at the start",
 		`(?i)a(?i)b`: "at the start",
 		`(?-i)a`:     "turns a flag off",
+		// Part of the pattern in the other case mode: the dashboard half's
+		// Python-fold mapping is only right for a pattern in one mode.
+		`(?i)a(?-i:b)`: "case-insensitive pattern case-sensitive",
+		`a(?s-i:b)`:    "case-insensitive pattern case-sensitive",
 		// RE2 cannot compile these; Python can. Refused by the parser itself.
 		`wp_(?=vl)`: "invalid --regex", `wp_(?!rl)`: "invalid --regex", `(?<=sensor\.)wp`: "invalid --regex",
 		`(a)\1`: "invalid --regex", `(?P<c>a)(?P=c)`: "invalid --regex", `a++b`: "invalid --regex",
@@ -560,6 +649,140 @@ func TestGrepRegexContract(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%q refused as %q, want it to say %q", p, err, want)
+		}
+	}
+}
+
+// TestGrepRegexCaseModeIsOneModeUnderCaseSensitive: --case-sensitive turns the
+// same scoped-mode rule around — a pattern that opens with (?i) is
+// case-insensitive as a whole and folds like the default, and a scoped (?i:…)
+// is refused.
+func TestGrepRegexCaseModeIsOneModeUnderCaseSensitive(t *testing.T) {
+	for _, p := range []string{`(?i)istanbul`, `(?is)a.b`, "[\u0125-\u0137]", `abc`} {
+		if _, err := validateGrepRegex(p, true); err != nil {
+			t.Errorf("--case-sensitive %q must compile: %v", p, err)
+		}
+	}
+	for _, p := range []string{`a(?i:b)c`, `(?s)a(?i:b)`} {
+		_, err := validateGrepRegex(p, true)
+		if err == nil || !strings.Contains(err.Error(), "--case-sensitive pattern case-insensitive") {
+			t.Errorf("--case-sensitive %q must be refused for switching mode in part, got %v", p, err)
+		}
+	}
+}
+
+// TestGrepRegexFoldsAsPythonDoes pins the dashboard half's case-insensitive
+// --regex to Python's re.IGNORECASE, which the config half runs. Go's (?i) alone
+// folds İ, ı, ΐ/ΐ, ΰ/ΰ and ﬅ/ﬆ narrower than Python, so `--regex istanbul`
+// found İstanbul in config and missed it in a dashboard (grepPythonFold).
+//
+// want is Python's answer, recorded with re.search(pattern, value, flags) on
+// Python 3.12.13 (flags re.IGNORECASE unless case-sensitive); the
+// both-halves version of the same question is the E2E
+// TestE2EGrepNonASCIITermThroughBothHalves.
+func TestGrepRegexFoldsAsPythonDoes(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, value string
+		caseSensitive  bool
+		want           bool
+	}{
+		{"istanbul", "\u0130stanbul", false, true},
+		{"ISTANBUL", "\u0130stanbul", false, true},
+		{"\u0130stanbul", "istanbul", false, true},
+		{"\u0131stanbul", "ISTANBUL", false, true},
+		{"ISTANBUL", "\u0131stanbul", false, true},
+		{"\u0131", "\u0130", false, true},
+		{"^[a-z]+$", "\u0130\u0131", false, true},
+		{"^[a-z]+$", "\u0131i", false, true},
+		{"^[^a-z]$", "\u0131", false, false},
+		{"^[^a-z]$", "\u0130", false, false},
+		{"^[\u0131]$", "I", false, true},
+		{"^[\u0130]$", "i", false, true},
+		{"^.stanbul$", "\u0130stanbul", false, true},
+		{"\u0390", "\u1fd3", false, true},
+		{"\u1fd3", "\u0390", false, true},
+		{"\u03b0", "\u1fe3", false, true},
+		{"\ufb06", "\ufb05", false, true},
+		{"\ufb05", "\ufb06", false, true},
+		{"^[\u03b1-\u03c9]$", "\u1fd3", false, false},
+		{"^[\u0390-\u03ac]$", "\u1fd3", false, true},
+		{"küche", "KÜCHE", false, true},
+		{"straße", "STRASSE", false, false},
+		{"straße", "STRA\u1e9eE", false, true},
+		{"k", "\u212a", false, true},
+		{"s", "\u017f", false, true},
+		{"istanbul", "\u0130stanbul", true, false},
+		{"\u0131", "i", true, false},
+		{"(?i)istanbul", "\u0130stanbul", true, true},
+		{"(?i)^[a-z]+$", "\u0130\u0131", true, true},
+		{"\u0130stanbul", "\u0130stanbul", true, true},
+		// A class range keeps its endpoints and holds what Python's does.
+		{"^[\u0125-\u0137]$", "i", false, true}, // spans İ and ı, so holds i and I
+		{"^[\u0125-\u0137]$", "I", false, true},
+		{"^[^\u0125-\u0137]$", "i", false, false}, // and its negation leaves them out
+		{"^[^\u0125-\u0137]$", "a", false, true},
+		{"^[\\x41-\ufb06]+$", "\u0131\ufb05\u1fd3", false, true}, // an escape endpoint
+		{"^[\u0391-\u03a9]$", "\u1fd3", false, false},
+		{"^[\u1fd0-\u1fd5]$", "\u0390", false, true},
+		{"^[\\]-\u0131]$", "I", false, true},
+		{"^[\u0125-\u0137]$", "i", true, false},
+		{"(?i)^[\u0125-\u0137]$", "I", true, true},
+	} {
+		g, err := validateGrepRegex(tc.pattern, tc.caseSensitive)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.pattern, err)
+		}
+		if got := regexGrepMatch(g)(tc.value); got != tc.want {
+			t.Errorf("%+q on %+q (case-sensitive=%v) = %v, Python says %v", tc.pattern, tc.value, tc.caseSensitive, got, tc.want)
+		}
+	}
+}
+
+// TestGrepPythonFoldClosesEveryOrbit is the exhaustive half of the same pin,
+// over every cased code point: with grepPythonFold, a one-character
+// case-insensitive pattern matches exactly the characters Python's
+// re.IGNORECASE does. Python's relation was measured over every code point
+// (Python 3.12, Unicode 15.0): it is Go's unicode.SimpleFold orbit, widened
+// only for the four classes below. A Go whose Unicode tables change those
+// orbits fails here rather than silently reading a pattern differently.
+func TestGrepPythonFoldClosesEveryOrbit(t *testing.T) {
+	pythonWide := [][]rune{{'I', 'i', 0x130, 0x131}, {0x390, 0x1fd3}, {0x3b0, 0x1fe3}, {0xfb05, 0xfb06}}
+	classOf := map[rune][]rune{}
+	for _, c := range pythonWide {
+		for _, r := range c {
+			classOf[r] = c
+		}
+	}
+	orbit := func(r rune) []rune {
+		out := []rune{r}
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			out = append(out, f)
+		}
+		return out
+	}
+	pythonMatches := func(c, o rune) bool {
+		if slices.Contains(orbit(c), o) {
+			return true
+		}
+		return classOf[c] != nil && slices.Contains(classOf[c], o)
+	}
+	for c := rune(0); c <= unicode.MaxRune; c++ {
+		if unicode.SimpleFold(c) == c && classOf[c] == nil {
+			continue
+		}
+		neighbourhood := orbit(c)
+		for _, m := range classOf[c] {
+			neighbourhood = append(neighbourhood, orbit(m)...)
+		}
+		g, err := validateGrepRegex("^"+regexp.QuoteMeta(string(c))+"$", false)
+		if err != nil {
+			t.Fatalf("U+%04X: %v", c, err)
+		}
+		match := regexGrepMatch(g)
+		for _, o := range neighbourhood {
+			if got, want := match(string(o)), pythonMatches(c, o); got != want {
+				t.Errorf("pattern U+%04X on U+%04X = %v, Python's IGNORECASE says %v", c, o, got, want)
+			}
 		}
 	}
 }
