@@ -13,6 +13,7 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Which automation failed?" | `auto ls --failing`; if empty `log --errors --warnings --unique` | `trace show` only when a failure appears |
 | "Is <sensor> behaving normally?" | `ent anomalies <id>` | `ent hist <id>` if anomalies found |
 | "Why did X turn on?" / "What controls <entity>?" | `ent who <id>`, `ref scan <id>` | `who` = actor history; `scan` = config/dashboard references — inspect hits with `auto show` |
+| "Where is <word> used?" | `grep <term>` | substring, config + dashboards |
 | "Which entities belong to <concept>?" | `ent ls --pattern '*<term>*'` (ids), `device ls --name <term>`, or the name search under "Filtering & discovery" | `--pattern` matches ids, never display names |
 | "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
@@ -27,7 +28,7 @@ Full command set (family → subcommands):
 - `dash ls|show|save|create|delete|resources|grep|replace`
 - `device ls|show` · `label|area|floor ls|create|delete`
 - `config entries|show|options|delete|files|file|block|flow-start|flow-step|flow-inspect`
-- `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
+- `grep` · `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
 
 No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
 
@@ -787,7 +788,9 @@ verified negative only for the exact value asked about, and only when every
 dashboard could be read: a dashboard whose config does not fetch puts a `partial
 sweep: …` line above the answer, makes the miss read "in the dashboards that
 could be read", and makes `--json` refuse until you pass `--allow-partial` (see
-References, below).
+References, below). To find a term *inside* values — `balkony` in
+`sensor.balkony_p_ac`, a word in a markdown card — use `hactl grep`, which
+substring-searches every dashboard and the config files in one call.
 
 `dash replace` takes one dashboard (omit `url_path` for the default dashboard),
 is dry-run until `--confirm`, and rewrites every matching value at once. A
@@ -803,6 +806,102 @@ Home Assistant migrates a stored default into the dashboard list under url_path
 dashboards in a single pass, use `ref replace`.
 
 > **Skill:** For LLM agents designing dashboards, load the `lovelace-design` skill (`.github/skills/lovelace-design/SKILL.md`). It covers card types, grid sizing, layout patterns, and common pitfalls.
+
+### Term search (`grep`)
+
+```bash
+hactl grep balkony                          # every config-file key/value and dashboard value containing it
+hactl grep küche                            # case-insensitive: finds Küche and KÜCHE (not "kueche")
+hactl grep Licht --case-sensitive           # exact case only
+hactl grep --regex 'wp_(vl|rl)'             # a pattern instead of a substring
+hactl grep balkony --json                   # one document: per-source counts + every hit row
+hactl grep balkony --allow-partial --json   # answer from what could be read when a source is unavailable
+```
+
+Requires hactl-companion — it reads the config half. `grep` answers "where does
+this **term** appear?" in one read-only call: every string value and every
+mapping key in the YAML config files (following `!include`, the same files `ref
+scan` reads) and every string value in every dashboard. It has no `--confirm`
+and never writes; to rename an id everywhere use `ref replace`, on the exact id.
+
+**What it searches.** Config files: string values and mapping keys (a key hit is
+where a script or YAML helper is *defined* — `licht_an:` under `script:` — which
+no value holds), reported with `kind` `key` or `value`. Dashboards: string
+values only (dashboard keys are card schema, never your words). Not searched:
+numbers and booleans, `!secret`/`!input` values, files nothing includes
+(esphome, blueprints, custom_components), and entity display names, registry
+data or states — for display names use the name search under "Filtering &
+discovery".
+
+**Matching.** A substring, case-insensitive by default, by the simple Unicode
+lowercase on both halves: `küche` finds `Küche` and `KÜCHE`, `istanbul` finds
+`İstanbul`, `straße` does **not** find `STRASSE`, and nothing is transliterated.
+`--case-sensitive` compares as written. A term must be at least 2 characters
+(`ü` is one); an empty or whitespace-only term is refused. Both refusals happen
+before anything is contacted.
+
+**`--regex`** reads the term as a pattern, searched anywhere in each string,
+case-insensitive unless `--case-sensitive`. The two halves run in two regex
+engines (Python on the companion, Go here), so only their common subset is
+accepted, and hactl refuses everything else before contacting anything:
+
+- accepted: literals and escaped punctuation (`sensor\.wp`), classes with
+  explicit members (`[a-z_]`, `[^0-9]`, `[äöüß]`), `|`, groups `(…)`, `(?:…)`,
+  `(?P<name>…)`, `* + ? {n} {n,} {n,m}` (n, m ≤ 1000) and their lazy forms, `.`,
+  `^`, `$`, `\A`, leading flags `(?i)` `(?m)` `(?s)`, scoped `(?m:…)` `(?s:…)`
+  and `(?i:…)` inside an already case-insensitive pattern,
+  `\t \n \r \f \v \a`, `\xHH`;
+- refused because the engines read them differently: `\w \W \d \D \s \S \b \B`
+  (write `[A-Za-z0-9_]`, `[0-9]`, `[ \t\n]` instead), digit escapes such as
+  `\12` (write `\x0a`), `{,n}` (write `{0,n}`), POSIX classes `[[:alpha:]]` and
+  any `[`, `--`, `&&`, `~~` or `||` inside a class, and a group that switches
+  case-sensitivity for part of the pattern — `(?-i:…)` in the default
+  case-insensitive search, `(?i:…)` under `--case-sensitive` (spell the case
+  variants out instead: `[Kk]üche`);
+- refused because only one engine has them: lookahead/lookbehind,
+  backreferences, possessive and atomic groups, `\Z`, `\z`, `\p{…}`, `\Q…\E`,
+  `\x{…}`, `\u…`, `(?<name>…)`, `(?U)`, a flag group that is not at the start
+  (`a(?i)b`) or that negates (`(?-i)`), repeat counts above 1000.
+
+`$` means what it means in Python on both halves: the end of the value, or just
+before one final newline (block scalars keep theirs). Case-insensitive matching
+is Python's `re.IGNORECASE` on both halves too, which treats a few characters as
+cases of each other where Go alone would not — `I`, `i`, `İ` and `ı` are one
+letter, as are `ΐ`/`ΐ`, `ΰ`/`ΰ` and `ﬅ`/`ﬆ` — so `--regex istanbul` finds
+`İstanbul` and `ISTANBUL` in config files and dashboards alike. A pattern is not
+length-limited; a pattern the companion cannot finish within its deadline
+(catastrophic backtracking) is refused with its message.
+
+**Output.** The answer opens with one line naming the term, the mode and the
+counts, then a summary with one row per source (`config` file or `dashboard`)
+and its exact `keys`/`values` hit counts — always complete, so you can see where
+the hits are before reading any. The hit rows follow (`source`, `location`,
+`path`, `key` = the enclosing mapping key such as `alias`, `entity` or
+`value_template`, `value`), capped by `--top` with `…+N more`; long values are
+shortened in the table and whole under `--json`/`--full`. Narrow a noisy term
+rather than raising the caps: the per-source counts say where to look next. Each
+half returns at most **1,000** hit rows; beyond that the answer says
+`truncated` and gives that half's exact total — never a silently short list.
+`--json` is one object: `term`, `regex`, `case_sensitive`, `total`,
+`truncated`, `config` and `dashboards` (each `{total, truncated}`), `sources`
+(`{source, location, key_hits, value_hits}`), `hits` (`{source, location, path,
+key, kind, value}`), `partial` and `unread`.
+
+**A miss** reads `no hit for "<term>" in any config file or dashboard` — a
+verified negative for that substring (or pattern) over both halves. After a
+partial sweep it reads `… in what could be searched` instead.
+
+**Partial sweeps** follow the `ref scan` rule (see References): an unread config
+file or dashboard is named in a `partial sweep: …` line above the answer;
+`--json` refuses until you pass `--allow-partial`, and then carries `"partial":
+true` and the `unread` list. A missing companion is not a partial sweep —
+`grep` aborts, as every `ref` command does.
+
+**How it differs from its neighbours.** `ref scan <entity_id>` and `dash grep
+<value>` match an *exact* id or a *whole* value and exist to feed `ref replace`
+/ `dash replace`; `grep` finds a *term inside* anything, for discovery. `ent ls
+--pattern` matches entity identifiers in the registry, which `grep` does not
+read.
 
 ### References (find and rename entity_ids)
 
@@ -820,8 +919,9 @@ hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even 
 Requires hactl-companion — it is what reads the config directory. `ref` is the
 whole-instance version of `dash grep`/`dash replace`: YAML config files
 (following `!include`) **and** every dashboard in one pass. `scan` finds
-references to an exact id, not free-text terms (term/name discovery is the
-name search under "Filtering & discovery") — but its two halves do not match
+references to an exact id, not free-text terms (a term inside values is
+`grep`, above; display names are the name search under "Filtering &
+discovery") — but its two halves do not match
 identically: dashboards match whole string values (exactly like `dash grep`),
 config files match the id as a word-bounded token, so `scan` **does** find an
 id inside a config-file template string (`{{ states('sensor.wp_vl') }}`) while
@@ -835,8 +935,16 @@ end. `scan`/`replace` refuse anything else before contacting Home Assistant —
 `.` would otherwise match the dot inside every entity_id and every service name
 (2747 hits on a real instance, and `ref replace . X` a plan to rewrite all of
 them). Display names are fine (`Wozi TV`, `Küche`); pasted syntax is not
-(`'sensor.x'`, `.turn_on`, `{{`). For term discovery use the name search under
-"Filtering & discovery".
+(`'sensor.x'`, `.turn_on`, `{{`). For term discovery use `grep`, which takes
+any substring of 2+ characters.
+
+`replace` changes only the bytes of each matching value in a config file — its
+quotes, block style and every other line stay as they were. When the companion
+cannot verify that in-place edit for a file, it rewrites that file whole
+instead (content correct, formatting elsewhere in it normalized): the row's
+status then reads `applied (file re-serialized whole)` — `pending (would
+re-serialize the file whole)` in a dry run — and a `note:` line after the table
+names the file, so a config kept in git is not surprised by an unrelated diff.
 
 To rename a **live** entity and its references in one step, use `ent rename`
 (registry rename + this replace pass); `ref replace` alone is the tool when

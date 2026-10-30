@@ -81,11 +81,19 @@ func walk(path Path, node any, visit func(Path, any)) {
 	}
 }
 
-// FindString calls visit with the path of every string leaf equal to target.
-func FindString(root any, target string, visit func(path Path)) {
+// FindMatching calls visit with the path and value of every string leaf for
+// which match reports true. Map keys are never offered to match — only values,
+// the same rule Replace applies — so a caller cannot mistake card schema for
+// content.
+//
+// It is the one leaf search: the exact-value commands (`dash grep`, `ref scan`'s
+// dashboard half) pass string equality and `grep` passes its substring or
+// pattern predicate, so they walk the same leaves in the same order and differ
+// only in the question asked of each.
+func FindMatching(root any, match func(value string) bool, visit func(path Path, value string)) {
 	Walk(root, func(p Path, v any) {
-		if s, ok := v.(string); ok && s == target {
-			visit(p)
+		if s, ok := v.(string); ok && match(s) {
+			visit(p, s)
 		}
 	})
 }

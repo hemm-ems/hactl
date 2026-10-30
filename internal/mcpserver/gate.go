@@ -73,6 +73,7 @@ var readCommands = map[string]bool{
 	"hactl ent show":       true,
 	"hactl ent who":        true,
 	"hactl floor ls":       true,
+	"hactl grep":           true,
 	"hactl health":         true,
 	"hactl helper cat":     true,
 	"hactl helper ls":      true,

@@ -218,6 +218,32 @@ func (c *Client) RefScan(ctx context.Context, target string) (*RefScanResponse, 
 	return &r, decodeResponse("/v1/ref/scan", data, &r)
 }
 
+// RefGrep calls GET /v1/ref/grep and returns every mapping key and string leaf
+// across the config file !include graph that contains term (or matches it as a
+// pattern when regex is set). It is the read-only half of `hactl grep` and has
+// no write counterpart by design (D-48): no substring is ever one parameter
+// away from a rewrite.
+//
+// The term is sent as given. Refusing a degenerate term or a pattern outside the
+// two engines' common subset is the command's job (validateGrepTerm), done
+// before anything is contacted; the companion refuses the same inputs with a
+// 400 on its own, which reaches the caller as an *haapi.HTTPStatusError.
+func (c *Client) RefGrep(ctx context.Context, term string, regex, caseSensitive bool) (*RefGrepResponse, error) {
+	q := url.Values{"term": {term}}
+	if regex {
+		q.Set("regex", "true")
+	}
+	if caseSensitive {
+		q.Set("case_sensitive", "true")
+	}
+	data, err := c.doGet(ctx, "/v1/ref/grep", q)
+	if err != nil {
+		return nil, err
+	}
+	var r RefGrepResponse
+	return &r, decodeResponse("/v1/ref/grep", data, &r)
+}
+
 // RefEntities calls GET /v1/ref/entities and returns every entity_id-shaped
 // value across the config file !include graph, each tagged with its enclosing
 // key. Unfiltered by design — the caller decides which keys are real entities.

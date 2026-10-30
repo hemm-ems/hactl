@@ -207,7 +207,7 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 	// read — but it says so where the answer goes (D-7 as amended): in the body
 	// for a person, and by refusing under --json, where the document is a bare
 	// array with nowhere to put the caveat (H-10).
-	if gateErr := searchScopeGateError(scope, flagRefAllowPartial); gateErr != nil {
+	if gateErr := searchScopeGateError(scope, flagRefAllowPartial, bareArrayJSON); gateErr != nil {
 		return gateErr
 	}
 	reportSweepScope(w, scope)
@@ -223,8 +223,8 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 				"(see the partial-sweep note above — the rest was not searched)")
 		}
 		return emitEmptyList(w, target+": not referenced as an id in any config file or dashboard "+
-			"(scan matches ids, not free text — for term discovery: "+
-			"hactl ent ls --pattern '*"+target+"*')")
+			"(scan matches ids, not free text — for a term or fragment across config files and "+
+			"dashboards: hactl grep "+target+")")
 	}
 
 	tbl := &format.Table{
@@ -345,6 +345,9 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 
 	if err := renderReplaceReport(w, rows, oldVal, newVal, total, confirm); err != nil {
 		return err
+	}
+	if !flagJSON {
+		noteReformattedFiles(w, cfgResp.Changes, confirm)
 	}
 
 	// The preview fails exactly where the confirmed run would (H-2): yaml-mode
@@ -475,7 +478,11 @@ func buildReplaceRows(ctx context.Context, ws *haapi.WSClient, configChanges []c
 		configStatus = "applied" // the companion already wrote the files
 	}
 	for _, c := range configChanges {
-		rows = append(rows, []string{"config", c.Location, c.Path, configStatus})
+		status := configStatus
+		if c.Reformatted {
+			status += reformattedStatus(confirm)
+		}
+		rows = append(rows, []string{"config", c.Location, c.Path, status})
 	}
 	for _, p := range plans {
 		status := dashboardStatus(ctx, ws, p, confirm)
@@ -487,6 +494,36 @@ func buildReplaceRows(ctx context.Context, ws *haapi.WSClient, configChanges []c
 		}
 	}
 	return rows, saveErrs
+}
+
+// reformattedStatus is the suffix a config row's status carries when the
+// companion re-serialized (or, in a dry run, would re-serialize) its file whole.
+func reformattedStatus(confirm bool) string {
+	if confirm {
+		return " (file re-serialized whole)"
+	}
+	return " (would re-serialize the file whole)"
+}
+
+// noteReformattedFiles names, after the table, every file the companion
+// re-serialized whole rather than splicing (hactl-companion#88) — the replace
+// counterpart of warnIfReformatted. The row says it per change; the note says
+// what it costs, once per file, where a reader of a long table will see it.
+func noteReformattedFiles(w io.Writer, changes []companion.RefChange, confirm bool) {
+	seen := map[string]bool{}
+	for _, c := range changes {
+		if !c.Reformatted || seen[c.Location] {
+			continue
+		}
+		seen[c.Location] = true
+		if confirm {
+			_, _ = fmt.Fprintf(w, "note: %s was re-serialized whole, not just the replaced values — "+
+				"formatting elsewhere in %s may have changed\n", c.Location, c.Location)
+		} else {
+			_, _ = fmt.Fprintf(w, "note: applying would re-serialize %s whole, not just the replaced values — "+
+				"formatting elsewhere in %s may change\n", c.Location, c.Location)
+		}
+	}
 }
 
 // dashboardStatus applies a single dashboard's rewrite when confirmed and
@@ -720,15 +757,24 @@ func (s sweepScope) unreadSources() []string {
 // So when the medium cannot carry the caveat, the answer refuses and prints
 // nothing, exactly as `ref validate` does — and --allow-partial is the
 // acknowledgement, in the same words, on the same flag.
-func searchScopeGateError(scope sweepScope, allowPartial bool) error {
+//
+// why names what makes the medium unsafe for the caveat, and it differs by
+// command: ref scan and dash grep emit a bare array with no field to carry the
+// scope, while grep's document has one (`partial`) that a consumer can still
+// read past — the refusal must give the reason that is true of its own output.
+func searchScopeGateError(scope sweepScope, allowPartial bool, why string) error {
 	if !scope.partial() || allowPartial || !flagJSON {
 		return nil
 	}
-	return fmt.Errorf("this answer would be incomplete — %s could not be read — and --json is a bare array "+
-		"of rows with nowhere to say so, so nothing was printed. Re-run with --allow-partial to search "+
-		"what could be read, or without --json to see the scope beside the hits",
-		strings.Join(scope.unreadSources(), " and "))
+	return fmt.Errorf("this answer would be incomplete — %s could not be read — and %s, so nothing was "+
+		"printed. Re-run with --allow-partial to search what could be read, or without --json to see the "+
+		"scope beside the hits",
+		strings.Join(scope.unreadSources(), " and "), why)
 }
+
+// bareArrayJSON is searchScopeGateError's reason for a command whose --json is
+// a list of rows.
+const bareArrayJSON = "--json is a bare array of rows with nowhere to say so"
 
 // reportSweepScope states a partial sweep where the caller will actually see
 // it: in the report body. A skip that only reaches slog is invisible in the

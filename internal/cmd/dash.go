@@ -759,14 +759,42 @@ func walkDashboardConfigs(ctx context.Context, ws *haapi.WSClient, targets []das
 // scanDashboards walks each target dashboard for exact string leaves equal to
 // target, returning every hit plus the scope the walk covered. Shared by
 // `dash grep` and `ref scan`.
+//
+// It is matchDashboards with string equality: the exact-id commands and `grep`
+// read the same dashboards through the same walk and differ only in the
+// predicate, which is what keeps `dash grep`/`ref scan` byte-identical while
+// `grep` widens the match (D-48).
 func scanDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget, target string) ([]dashHit, dashboardScanScope) {
-	var hits []dashHit
+	matches, scope := matchDashboards(ctx, ws, targets, func(s string) bool { return s == target })
+	hits := make([]dashHit, 0, len(matches))
+	for _, m := range matches {
+		hits = append(hits, dashHit{m.dashboard, m.path})
+	}
+	return hits, scope
+}
+
+// dashMatch is one dashboard string value a predicate accepted: where it sits,
+// the mapping key it sits under, and the value itself.
+type dashMatch struct {
+	dashboard string
+	path      string
+	key       string
+	value     string
+}
+
+// matchDashboards walks each target dashboard for string values that match
+// accepts, in walk order (targets in order, keys sorted within each), and
+// returns them with the scope the walk covered. Dashboard keys are never
+// offered to match (jsonwalk.FindMatching).
+func matchDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScanTarget,
+	match func(string) bool) ([]dashMatch, dashboardScanScope) {
+	var matches []dashMatch
 	scope := walkDashboardConfigs(ctx, ws, targets, func(t dashScanTarget, root any) {
-		jsonwalk.FindString(root, target, func(p jsonwalk.Path) {
-			hits = append(hits, dashHit{t.label, p.String()})
+		jsonwalk.FindMatching(root, match, func(p jsonwalk.Path, v string) {
+			matches = append(matches, dashMatch{dashboard: t.label, path: p.String(), key: p.TerminalKey(), value: v})
 		})
 	})
-	return hits, scope
+	return matches, scope
 }
 
 // dashReplaceOne fetches one dashboard's raw config and returns a deep copy with
@@ -815,7 +843,7 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 	// fixing `ref scan` alone would have been the half-fix dev/surfaces exists
 	// to catch.
 	scope := sweepScope{dash: dashScope}
-	if gateErr := searchScopeGateError(scope, flagDashAllowPartial); gateErr != nil {
+	if gateErr := searchScopeGateError(scope, flagDashAllowPartial, bareArrayJSON); gateErr != nil {
 		return gateErr
 	}
 	reportSweepScope(w, scope)
@@ -830,8 +858,8 @@ func runDashGrep(ctx context.Context, w io.Writer, target string) error {
 				"(see the partial-sweep note above — the rest was not searched)")
 		}
 		return emitEmptyList(w, target+": not referenced as a whole value in any dashboard "+
-			"(grep matches complete string values, never substrings — for term discovery: "+
-			"hactl ent ls --pattern '*"+target+"*')")
+			"(dash grep matches complete string values, never substrings — for a term or fragment "+
+			"across dashboards and config files: hactl grep "+target+")")
 	}
 
 	tbl := &format.Table{

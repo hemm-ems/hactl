@@ -28,3 +28,4 @@
 #ceiling 0
 
 internal/cmd/helper.go:helperRow.Source = exempt: GET /v1/config/helpers reads YAML files and nothing else (companion routes/helpers.py get_helpers -> _load_helpers -> wired_target_or_default), so "yaml" is what that route answered rather than what hactl concluded from no other read having claimed the row; the /api/states branch beside it derives its value from `editable` via helperSourceOf and is the finding this surface was minted for
+internal/cmd/grep.go:grepRow.Source = exempt: names which half of the sweep produced the row, which the read fixes — "config" rows are decoded from GET /v1/ref/grep, which walks the config include graph and nothing else (companion refgrep.py over iter_config_trees), and "dashboard" rows from the lovelace/config walk; neither is a claim about the matched object, whose location and path are read from the same answers

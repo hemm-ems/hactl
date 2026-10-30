@@ -96,7 +96,7 @@ func TestRunRefScan_NoReferences(t *testing.T) {
 	// term discovery, claim only what the query tested.
 	for _, want := range []string{
 		"not referenced as an id",
-		"hactl ent ls --pattern '*sensor.absent*'",
+		"hactl grep sensor.absent",
 	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("miss output missing %q, got: %q", want, buf.String())
@@ -128,6 +128,53 @@ func refReplaceServer(t *testing.T, status string, gotDryRun *any) *httptest.Ser
 // says nothing about the default dashboard's state. The previous fixtures fed
 // the fake a `mode` field HA never emits, so the unit tier certified a check
 // that was vacuous against every real instance (D71).
+
+// TestRunRefReplace_ReformattedFileIsNamed is hactl-companion#88's hactl half:
+// the companion now rewrites only the matching scalars' bytes, and re-serializes
+// a file whole only when it cannot verify the splice — saying so per change
+// with `reformatted: true`. A replace that cost a whole-file rewrite must say
+// which file, on the row and after the table, as the single-entry writes do
+// (warnIfReformatted); a spliced file must not be flagged.
+func TestRunRefReplace_ReformattedFileIsNamed(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		t.Run(fmt.Sprintf("confirm=%v", confirm), func(t *testing.T) {
+			companionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"status":"applied","changes":[
+					{"location":"automations.yaml","path":"[0].trigger[0].entity_id","before":"sensor.old","after":"sensor.new"},
+					{"location":"scripts.yaml","path":"s.sequence[0].target.entity_id","before":"sensor.old","after":"sensor.new","reformatted":true}]}`)
+			}))
+			defer companionSrv.Close()
+			ts := startCmdServer(t, map[string]any{"lovelace/dashboards/list": []any{}, "lovelace/config": map[string]any{"views": []any{}}}, nil)
+			writeRefEnv(t, ts.dir, ts.srv.URL, companionSrv.URL)
+			withFlagDir(t, ts.dir)
+			withRefConfirm(t, confirm)
+
+			var buf bytes.Buffer
+			if err := refReplaceWithOptions(context.Background(), &buf, "sensor.old", "sensor.new", flagRefConfirm, flagRefAllowPartial); err != nil {
+				t.Fatalf("ref replace: %v", err)
+			}
+			var flagged, spliced string
+			for line := range strings.SplitSeq(buf.String(), "\n") {
+				switch {
+				case strings.Contains(line, "scripts.yaml") && strings.Contains(line, "s.sequence"):
+					flagged = line
+				case strings.Contains(line, "automations.yaml"):
+					spliced = line
+				}
+			}
+			if !strings.Contains(flagged, "re-serialize") {
+				t.Errorf("the reformatted file's row does not say so: %q\n%s", flagged, buf.String())
+			}
+			if strings.Contains(spliced, "re-serialize") {
+				t.Errorf("a spliced file was flagged as reformatted: %q", spliced)
+			}
+			if !strings.Contains(buf.String(), "formatting elsewhere in scripts.yaml may") {
+				t.Errorf("no note names the re-serialized file after the table\n%s", buf.String())
+			}
+		})
+	}
+}
 
 func TestRunRefReplace_DryRunReportsAndDoesNotWrite(t *testing.T) {
 	var gotDryRun any = "unset"

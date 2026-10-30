@@ -3510,7 +3510,7 @@ func TestRunDashGrep_NoReferences(t *testing.T) {
 	// intents the whole-value walk never tested.
 	for _, want := range []string{
 		"not referenced as a whole value",
-		"hactl ent ls --pattern '*light.gone*'",
+		"hactl grep light.gone",
 	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("miss output missing %q, got: %q", want, buf.String())

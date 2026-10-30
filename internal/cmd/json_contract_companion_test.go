@@ -183,6 +183,25 @@ func startContractCompanion(t *testing.T) *contractCompanion {
 		})
 	})
 
+	// GET /v1/ref/grep?term= — grep. A value hit and a key hit in two files,
+	// so the merged document has config rows of both kinds beside the
+	// fixture dashboard's `light.kitchen`.
+	mux.HandleFunc("/v1/ref/grep", func(w http.ResponseWriter, r *http.Request) {
+		term := r.URL.Query().Get("term")
+		contractJSON(w, map[string]any{
+			"term": term, "regex": false, "case_sensitive": false,
+			"hits": []map[string]any{
+				{"location": "automations.yaml", "path": "[0].alias", "key": "alias", "kind": "value", "matched_value": "Morning " + term},
+				{"location": "scripts.yaml", "path": "wakeup_" + term, "key": "wakeup_" + term, "kind": "key", "matched_value": "wakeup_" + term},
+			},
+			"total": 2, "truncated": false,
+			"sources": []map[string]any{
+				{"location": "automations.yaml", "key_hits": 0, "value_hits": 1},
+				{"location": "scripts.yaml", "key_hits": 1, "value_hits": 0},
+			},
+		})
+	})
+
 	// GET /v1/ref/entities — ref validate. Two entity_id-keyed values that are
 	// absent from the fixture's live set (so two dangling rows are reported),
 	// one that is live (so the live-set union is exercised), and one under a

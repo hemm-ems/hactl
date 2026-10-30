@@ -479,6 +479,7 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"helper show":                {"guest_mode"},
 		"config files":               nil,
 		"ref scan":                   {"light.kitchen"},
+		"grep":                       {"kitchen"},
 		"ref validate":               nil,
 		"companion status":           nil,
 		"companion logs":             nil,

@@ -459,7 +459,7 @@ is not optional — and takes `validateScanGateError` unless it is unusable in k
 the way live states are, in which case it refuses where it is read and says why
 there.**
 
-Search commands (`ref scan`, `dash grep`) answer "where is X?" rather than "is
+Search commands (`ref scan`, `dash grep`, `grep`) answer "where is X?" rather than "is
 the tree clean?", so they still answer over what they could read — but **where**
 they say so is decided by the medium, not by the command's job (D-31). This
 clause used to end "they warn and still answer, and their `--json` shape does not
@@ -480,8 +480,8 @@ The config half is a SOURCE, not a transport, and it can be short without
 failing: the companion answers 200 and names in `skipped` every file its walk
 could not read (a renamed `!include` target, a file the path guard refuses).
 D-7 recorded that as a known limit "until hactl consumes the array"; it is
-consumed now, on every consumer of the three routes that report it — `ref scan`,
-`ref validate`, `ref replace` and `ent rename`'s reference count — because a 200
+consumed now, on every consumer of the routes that report it — `ref scan`,
+`grep`, `ref validate`, `ref replace` and `ent rename`'s reference count — because a 200
 that skipped a file is the partial answer that looks complete.
 
 Fix shape: `format.Table.visibleRows` now returns every row whenever

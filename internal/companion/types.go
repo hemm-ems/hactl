@@ -135,6 +135,48 @@ type RefScanHit struct {
 	MatchedValue string `json:"matched_value"`
 }
 
+// RefGrepResponse is the response from GET /v1/ref/grep: where a term appears
+// in the config file !include graph.
+//
+// Hits is capped by the companion (1,000 rows); Total and Sources count every
+// hit before the cap, so a truncated answer still says how much there was and
+// where. Truncated is the companion's own statement of that, decoded rather
+// than inferred from len(Hits) < Total so the two cannot be confused.
+type RefGrepResponse struct {
+	Term          string          `json:"term"`
+	Regex         bool            `json:"regex"`
+	CaseSensitive bool            `json:"case_sensitive"`
+	Hits          []RefGrepHit    `json:"hits"`
+	Total         int             `json:"total"`
+	Truncated     bool            `json:"truncated"`
+	Sources       []RefGrepSource `json:"sources"`
+	Skipped       []SkippedFile   `json:"skipped,omitempty"`
+}
+
+// The two kinds of grep hit.
+const (
+	// GrepKindKey — a mapping key contains the term (a definition site).
+	GrepKindKey = "key"
+	// GrepKindValue — a string leaf contains the term.
+	GrepKindValue = "value"
+)
+
+// RefGrepHit is one config-file key or string leaf containing the term.
+type RefGrepHit struct {
+	Location     string `json:"location"`      // config-relative file
+	Path         string `json:"path"`          // ref scan form; a key hit ends at the key
+	Key          string `json:"key"`           // nearest enclosing mapping key ("" under list indices only)
+	Kind         string `json:"kind"`          // GrepKindKey | GrepKindValue
+	MatchedValue string `json:"matched_value"` // the whole string that matched
+}
+
+// RefGrepSource is one config file's hit counts, before the cap.
+type RefGrepSource struct {
+	Location  string `json:"location"`
+	KeyHits   int    `json:"key_hits"`
+	ValueHits int    `json:"value_hits"`
+}
+
 // RefEntitiesResponse is the response from GET /v1/ref/entities: every
 // entity_id-shaped leaf across the config !include graph, unfiltered.
 type RefEntitiesResponse struct {
@@ -167,6 +209,11 @@ type RefChange struct {
 	Path     string `json:"path"`
 	Before   string `json:"before"`
 	After    string `json:"after"`
+	// Reformatted: the companion could not verify an in-place splice of this
+	// file and re-serialized it whole (hactl-companion#88). Absent — false — when
+	// only the matching scalars' bytes changed. In a dry run, says whether
+	// applying would.
+	Reformatted bool `json:"reformatted,omitempty"`
 }
 
 // TemplateDefinition represents a template sensor definition.
@@ -440,6 +487,19 @@ type WireGuardStatusResponse struct {
 	Interface *WireGuardIface   `json:"interface,omitempty"`
 	Peers     []WireGuardPeer   `json:"peers,omitempty"`
 	Monitor   *WireGuardMonitor `json:"monitor,omitempty"`
+	HAForward *WireGuardForward `json:"ha_forward,omitempty"`
+}
+
+// WireGuardForward is Home Assistant's port carried into the tunnel, so a
+// tunnel peer reaches HA at an address in Listening. Only Running is present
+// when no forward was started.
+type WireGuardForward struct {
+	Running           bool     `json:"running"`
+	Listening         []string `json:"listening,omitempty"`
+	Target            string   `json:"target,omitempty"`
+	ConnectionsTotal  int      `json:"connections_total,omitempty"`
+	ConnectionsActive int      `json:"connections_active,omitempty"`
+	LastError         *string  `json:"last_error,omitempty"`
 }
 
 // WireGuardIface holds the local interface details of an active tunnel.
