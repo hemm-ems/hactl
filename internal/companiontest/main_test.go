@@ -611,6 +611,18 @@ func restartHA() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	// A restart only counts once HA is RUNNING. Requested while HA is still
+	// starting (state NOT_RUNNING — right after onboarding, the moment this tier
+	// restarts), homeassistant.restart answers 200 and is silently dropped
+	// (measured 2026-10-30: no downtime, the old process carries on). The waits
+	// below cannot tell: the not-RUNNING one returns at once on the start-up
+	// state, the RUNNING one on the end of that same start-up — so the tier
+	// logged "HA restarted" for a restart that never happened, HA never re-read
+	// the configuration.yaml just written, and template.reload never appeared.
+	if err := waitForCoreRunning(ctx, haURL, haToken); err != nil {
+		return fmt.Errorf("HA not RUNNING before the restart: %w", err)
+	}
+
 	// HA validates the config before restarting and refuses an invalid one, so
 	// a 4xx here means the config we just wrote is bad — worth reporting as
 	// such rather than as a timeout three minutes later.
