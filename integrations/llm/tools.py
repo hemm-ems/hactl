@@ -103,6 +103,7 @@ _GROUP_SECTIONS = {
     "energy": ["### Energy"],
     "companion": ["### WireGuard (companion lifeline)"],
     "ref": [],  # no manual section yet; the tool docstrings carry it
+    "grep": ["### Term search (`grep`)"],
 }
 _GROUP_ALIASES = {"trace": "auto", "cc": "log", "issues": "health",
                   "changes": "health", "setup": "health", "area": "label",
@@ -355,9 +356,22 @@ def hactl_ref_validate() -> str:
 
 
 def hactl_ref_scan(term: str) -> str:
-    """Find every reference to an entity id or value across automations, scripts, helpers,
-    and dashboards."""
+    """Find every reference to an exact entity id across automations, scripts, helpers,
+    and dashboards. For a word or fragment inside values use hactl_grep."""
     return _run("ref", "scan", term)
+
+
+def hactl_grep(term: str, regex: bool = False, case_sensitive: bool = False) -> str:
+    """Find where a term appears: every config-file key/value and dashboard value
+    containing it (substring, case-insensitive; at least 2 characters). regex=True reads
+    term as a pattern (common Python/Go subset only; \\w \\d \\s \\b are refused).
+    Read-only."""
+    extra = []
+    if regex:
+        extra.append("--regex")
+    if case_sensitive:
+        extra.append("--case-sensitive")
+    return _run("grep", *extra, "--", term)
 
 
 def hactl_helper_ls() -> str:

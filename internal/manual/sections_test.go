@@ -66,10 +66,19 @@ func TestFamiliesListMatchesMap(t *testing.T) {
 // the alternative to raising it was deleting tuned prose to make room —
 // dev/tuning measured that prose, and trading it for this would be a change
 // nobody had measured.
+//
+// And 9216 to 9472 for `grep` (#115, D-48), by two lines: its quick-routing row
+// and its name in the full command set. Both have to be in the core: the field
+// report behind #115 was an agent that never learned a term search existed —
+// it ran `dash grep balkony`, got "not referenced", and stopped, as the core's
+// own stop-at-the-first-miss rule tells it to — and the command set ends "No
+// other commands exist — never invent one", so a command missing from it is a
+// command an agent is told not to run. The core sat 27 bytes under the old
+// bound; everything else about `grep` lives in its family section.
 func TestCoreTextSize(t *testing.T) {
 	n := len(CoreText())
-	if n < 4096 || n > 9216 {
-		t.Errorf("CoreText() is %d bytes, want 4096..9216 (~1-2k tokens)", n)
+	if n < 4096 || n > 9472 {
+		t.Errorf("CoreText() is %d bytes, want 4096..9472 (~1-2k tokens)", n)
 	}
 }
 
