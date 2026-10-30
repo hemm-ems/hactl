@@ -54,7 +54,7 @@ func TestPathTerminalKey(t *testing.T) {
 	}
 }
 
-func TestFindString(t *testing.T) {
+func TestFindMatchingEqualityFindsEveryWholeValue(t *testing.T) {
 	root := decode(t, `{
 		"views": [
 			{"cards": [{"entity": "light.kitchen"}, {"entity": "light.hall"}]},
@@ -64,7 +64,7 @@ func TestFindString(t *testing.T) {
 	}`)
 
 	var found []string
-	FindString(root, "light.kitchen", func(p Path) {
+	FindMatching(root, equals("light.kitchen"), func(p Path, _ string) {
 		found = append(found, p.String())
 	})
 	sort.Strings(found)
@@ -75,14 +75,14 @@ func TestFindString(t *testing.T) {
 		"views[1].badges[0]",
 	}
 	if !reflect.DeepEqual(found, want) {
-		t.Errorf("FindString paths = %v, want %v", found, want)
+		t.Errorf("FindMatching(equals) paths = %v, want %v", found, want)
 	}
 }
 
-func TestFindString_NoMatch(t *testing.T) {
+func TestFindMatchingEquality_NoMatch(t *testing.T) {
 	root := decode(t, `{"a": "x", "b": ["y", "z"]}`)
 	var n int
-	FindString(root, "missing", func(Path) { n++ })
+	FindMatching(root, equals("missing"), func(Path, string) { n++ })
 	if n != 0 {
 		t.Errorf("expected 0 matches, got %d", n)
 	}
@@ -153,5 +153,45 @@ func TestWalk_VisitsEveryNode(t *testing.T) {
 	want := []string{"", "a", "b", "b[0]", "b[1]", "b[1].c"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Errorf("Walk paths = %v, want %v", paths, want)
+	}
+}
+
+// TestFindMatchingOffersValuesNeverKeys pins the predicate walk `grep` threads
+// through: every string leaf is offered once, in walk order, with its value;
+// map keys and non-string leaves never are.
+func TestFindMatchingOffersValuesNeverKeys(t *testing.T) {
+	root := decode(t, `{"views":[{"title":"Küche","cards":[{"entity":"sensor.balkony_p_ac","show_state":true,"n":3}]}],
+		"balkony_key":"x"}`)
+	var offered []string
+	var hits []string
+	FindMatching(root, func(v string) bool {
+		offered = append(offered, v)
+		return v != "x"
+	}, func(p Path, v string) {
+		hits = append(hits, p.String()+"="+v)
+	})
+	if want := []string{"x", "sensor.balkony_p_ac", "Küche"}; !reflect.DeepEqual(offered, want) {
+		t.Errorf("offered %v, want every string leaf in walk order and no key: %v", offered, want)
+	}
+	want := []string{"views[0].cards[0].entity=sensor.balkony_p_ac", "views[0].title=Küche"}
+	if !reflect.DeepEqual(hits, want) {
+		t.Errorf("hits %v, want %v", hits, want)
+	}
+}
+
+// equals is the predicate the exact-value commands pass (scanDashboards).
+func equals(target string) func(string) bool {
+	return func(s string) bool { return s == target }
+}
+
+// TestFindMatchingWithEqualityIsWholeValue: the exact search is the predicate
+// walk with string equality, so a fragment, a case variant and a key are not
+// hits (D-48, AC-7).
+func TestFindMatchingWithEqualityIsWholeValue(t *testing.T) {
+	root := decode(t, `{"a":"sensor.x","b":["sensor.x","sensor.x_2","SENSOR.X"],"sensor.x":"key"}`)
+	var got []string
+	FindMatching(root, equals("sensor.x"), func(p Path, _ string) { got = append(got, p.String()) })
+	if want := []string{"a", "b[0]"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("FindMatching(equals) = %v, want %v", got, want)
 	}
 }

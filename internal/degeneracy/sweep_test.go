@@ -80,11 +80,18 @@ var unidentifiedWireStructs = map[string]string{
 	"ServiceField":     "a leaf field carries no nested fields; that emptiness is what separates it from a section",
 	"WireGuardIface":   "every field is optional; nothing there separates absent from not-decoded",
 	"WireGuardMonitor": "every field is optional, and the booleans are honestly false when idle",
+	"WireGuardForward": "every field is optional: `{\"running\": false}` alone is the documented answer " +
+		"when no forward was started, and the counters are honestly zero before the first connection",
 	"AutomationDefinition": "an automation with no `id:` is legal HA and the companion reports " +
 		"it as an empty id (routes/automations.py)",
 
 	"energySourceRow": "hactl's own --json output shape for `energy show`",
 	"statisticRowJSON": "hactl's own --json output shape for `ent hist --stats`",
+	"grepAnswer":       "hactl's own --json output shape for `grep`",
+	"grepHalf":         "hactl's own --json output shape for `grep`",
+	"grepRow":          "hactl's own --json output shape for `grep`",
+	"grepSource":       "hactl's own --json output shape for `grep`",
+	"grepUnread":       "hactl's own --json output shape for `grep`",
 	"EnergyPreferences": "a configured-but-empty energy dashboard is a real answer (both lists " +
 		"legitimately empty); the source/flow/device elements carry the identity, and the " +
 		"unconfigured case never reaches the decode — HA answers a WS error (\"No prefs\", " +
@@ -234,6 +241,19 @@ var identityFieldEvidence = map[string]string{
 	"StatisticRow.start": "oracle 2026-10-29 (HA 2026.10.4, TestOracleStatisticsRowsMatchHA): every " +
 		"recorder/statistics_during_period row carries start as epoch milliseconds — it is the period the " +
 		"row aggregates, so a row without one is not a row; an empty window is an absent key, not a blank row",
+	"RefGrepResponse.term": "source-read (companion src/companion/refgrep.py validate_term, hactl-companion " +
+		"#142) and observed end to end by TestE2EGrepFindsATermInBothHalves: the route answers 400 for a " +
+		"missing, empty or whitespace-only term, so a 200 always echoes a non-empty one",
+	"RefGrepHit.location": "source-read (refgrep.py collect_candidates over iter_config_trees, hactl-companion " +
+		"#142): every hit is reported against the config-relative file the walk read it from, which is " +
+		"never empty — the same walk RefScanHit.location rests on",
+	"RefGrepHit.kind": "source-read (refgrep.py KIND_KEY/KIND_VALUE, hactl-companion #142) and documented as an " +
+		"enum of exactly `key` and `value` in the vendored spec: every hit is one or the other",
+	"RefGrepHit.matched_value": "source-read (refgrep.py, hactl-companion #142): a hit is a string that " +
+		"contains the term — a literal of at least 2 characters, or a pattern hactl refuses before the call " +
+		"when it matches the empty string (validateGrepRegex) — so a matched value is never empty",
+	"RefGrepSource.location": "source-read (refgrep.py summarise, hactl-companion #142): one row per file " +
+		"with at least one hit, keyed by the same config-relative location as its hits",
 	"AreaEntry.area_id":                    inheritedUnprobed,
 	"AutomationCreateResponse.id":          inheritedUnprobed,
 	"AutomationCreateResponse.status":      inheritedUnprobed,
