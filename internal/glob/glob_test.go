@@ -19,6 +19,19 @@ func TestMatch(t *testing.T) {
 		{"x", "", false},
 		{"abc", "a**c", true},
 		{"packages/x", "*", true}, // Match itself knows nothing of segments
+		// `?` is one character (one code point), never one byte.
+		{"küche.yaml", "k?che.yaml", true},
+		{"Küche", "K?che", true},
+		{"KÜCHE", "k?che", true},
+		{"küche", "k??che", false},
+		{"kche", "k?che", false},
+		{"küche", "k*che", true},
+		{"küche", "*ü*", true},
+		{"küche", "*?che", true},
+		{"ßü", "??", true},
+		{"ßü", "?", false},
+		{"ü", "*?", true},
+		{"ü", "*??", false},
 	}
 	for _, c := range cases {
 		if got := Match(c.s, c.pattern); got != c.want {

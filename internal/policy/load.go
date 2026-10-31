@@ -23,11 +23,11 @@ func load(instanceDir string) (*Policy, error) {
 	path := filepath.Join(instanceDir, FileName)
 	ymlPath := filepath.Join(instanceDir, wrongName)
 
-	ymlExists, err := regularFileExists(ymlPath)
+	ymlExists, err := policyFileExists(ymlPath)
 	if err != nil {
 		return nil, err
 	}
-	yamlExists, err := regularFileExists(path)
+	yamlExists, err := policyFileExists(path)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func load(instanceDir string) (*Policy, error) {
 
 	data, err := os.ReadFile(path) //nolint:gosec // the instance's own policy file, by design
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
+		return nil, unreadable(path, err)
 	}
 	pol, problems := parse(data)
 	if ymlExists {
@@ -61,20 +61,61 @@ func load(instanceDir string) (*Policy, error) {
 	return pol, nil
 }
 
-// regularFileExists: (false, nil) for a missing path, an error for a path that
-// exists but is not a regular file or cannot be inspected.
-func regularFileExists(path string) (bool, error) {
+// policyFileExists: (false, nil) only when nothing at all is at path — not
+// even a symlink. Anything else that is there but is not a readable regular
+// file — a dangling or looping symlink, a directory, a path it may not
+// inspect — is a *LoadError naming the path (D-60): the owner put something
+// there, and it must never silently read as "no policy file", allow-all.
+func policyFileExists(path string) (bool, error) {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, unreadable(path, err)
+	}
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		target, _ := os.Readlink(path)
+		return false, &LoadError{File: path, Problems: []Problem{{
+			Message: fmt.Sprintf("a symlink to %q, which does not exist: hactl cannot read the policy, "+
+				"and a policy it cannot read is never \"no policy file\" (D-60)", target),
+		}}}
 	}
 	if err != nil {
-		return false, fmt.Errorf("inspecting %s: %w", path, err)
+		return false, unreadable(path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s exists but is not a regular file", path)
+		return false, &LoadError{File: path, Problems: []Problem{{
+			Message: "exists but is not a regular file (" + describeMode(info.Mode()) + "): hactl cannot read it as a policy (D-60)",
+		}}}
 	}
 	return true, nil
+}
+
+// unreadable is the *LoadError of a policy path hactl cannot inspect or read.
+func unreadable(path string, err error) *LoadError {
+	msg := err.Error()
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		msg = pe.Op + ": " + pe.Err.Error()
+	}
+	return &LoadError{File: path, Problems: []Problem{{
+		Message: "exists but cannot be read (" + msg + "): a policy hactl cannot read is never \"no policy file\" (D-60)",
+	}}}
+}
+
+func describeMode(m fs.FileMode) string {
+	switch {
+	case m.IsDir():
+		return "a directory"
+	case m&fs.ModeNamedPipe != 0:
+		return "a named pipe"
+	case m&fs.ModeSocket != 0:
+		return "a socket"
+	case m&fs.ModeDevice != 0:
+		return "a device"
+	default:
+		return "mode " + m.String()
+	}
 }
 
 func sortProblems(ps []Problem) {
@@ -362,10 +403,7 @@ func (w *walker) profile(name string, line int, n *yaml.Node) *profile {
 		if a.Effect != b.Effect {
 			return a.Effect == Deny
 		}
-		if a.Line != b.Line {
-			return a.Line < b.Line
-		}
-		return a.Pattern < b.Pattern
+		return a.before(b)
 	})
 	return pr
 }
@@ -394,7 +432,8 @@ func (w *walker) rules(eff Effect, what string, n *yaml.Node) []Rule {
 			w.addf(kv.val.Line, "verbs for %q: %v", pat, err)
 			continue
 		}
-		out = append(out, Rule{Effect: eff, Pattern: pat, Written: written, Verbs: verbs, Line: kv.key.Line, addr: addr})
+		out = append(out, Rule{Effect: eff, Pattern: pat, Written: written, Verbs: verbs,
+			Line: kv.key.Line, Column: kv.key.Column, addr: addr})
 	}
 	return out
 }

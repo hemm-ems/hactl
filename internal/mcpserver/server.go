@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -140,7 +141,8 @@ func toolDescription(opts Options) string {
 			"The server must be restarted with 'hactl mcp --allow-writes' to enable writes.")
 	}
 	if opts.Dir != "" {
-		fmt.Fprintf(&b, "\n\nThis server is pinned to the instance at %s.", opts.Dir)
+		fmt.Fprintf(&b, "\n\nThis server is pinned to the instance at %s and answers from it only: "+
+			"a --dir naming another directory is refused.", opts.Dir)
 	}
 	return b.String()
 }
@@ -161,10 +163,21 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 		if len(tokens) == 0 {
 			return nil, nil, errors.New("empty command; pass hactl CLI args, e.g. 'ent ls'")
 		}
-		// Re-inject the pinned --dir on every call: the runner resets all
-		// global flags (including --dir) after each invocation.
-		if opts.Dir != "" && !hasDirFlag(tokens) {
-			tokens = append([]string{"--dir", opts.Dir}, tokens...)
+		// A pinned server answers from its own instance only (D-64, part of
+		// D-62): choosing the instance directory per call would choose the
+		// policy file, so a --dir naming another directory is refused and
+		// nothing runs. Otherwise re-inject the pinned --dir on every call —
+		// the runner resets all global flags (including --dir) after each
+		// invocation — which also keeps HACTL_DIR from re-pointing it.
+		if opts.Dir != "" {
+			if other, found := foreignDir(tokens, opts.Dir); found {
+				return nil, nil, fmt.Errorf("this server is pinned to the instance at %s and answers from it only: "+
+					"--dir %s names another instance, and with it another policy (D-64). "+
+					"Drop --dir; to use another instance, start a server pinned to it", opts.Dir, other)
+			}
+			if !hasDirFlag(tokens) {
+				tokens = append([]string{"--dir", opts.Dir}, tokens...)
+			}
 		}
 
 		path, err := opts.ResolvePath(tokens)
@@ -209,10 +222,54 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 }
 
 func hasDirFlag(tokens []string) bool {
-	for _, t := range tokens {
-		if t == "--dir" || strings.HasPrefix(t, "--dir=") {
-			return true
+	return len(dirFlagValues(tokens)) > 0
+}
+
+// dirFlagValues returns the value of every --dir the command line passes as a
+// flag (`--dir X`, `--dir=X`), stopping at `--`, after which nothing is a
+// flag. A trailing `--dir` without a value yields "", which the runner then
+// refuses itself.
+func dirFlagValues(tokens []string) []string {
+	var out []string
+	for i := 0; i < len(tokens); i++ {
+		t := tokens[i]
+		switch {
+		case t == "--":
+			return out
+		case t == "--dir":
+			v := ""
+			if i+1 < len(tokens) {
+				v = tokens[i+1]
+				i++
+			}
+			out = append(out, v)
+		case strings.HasPrefix(t, "--dir="):
+			out = append(out, strings.TrimPrefix(t, "--dir="))
 		}
 	}
-	return false
+	return out
+}
+
+// foreignDir returns the first --dir on the command line that does not name
+// the pinned directory itself.
+func foreignDir(tokens []string, pinned string) (string, bool) {
+	for _, v := range dirFlagValues(tokens) {
+		if !sameDir(v, pinned) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// sameDir reports whether a and b name one directory: equal once made
+// absolute and clean. Symlinks are not followed (manual, "MCP server"): a
+// link to the pinned directory is another spelling, and refusing it costs a
+// caller nothing but the --dir it did not need.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && absA == absB
 }
