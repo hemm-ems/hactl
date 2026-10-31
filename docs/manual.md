@@ -1176,6 +1176,8 @@ profiles:
 
 `--as <profile>` is a read-only what-if: it evaluates another declared profile and never changes the effective one. Its output says `what-if` (`"what_if": true`). It names a declared profile; any other name, and any name when there is no file, is refused (exit 1).
 
+Nor does the caller choose the instance, and with it the policy file, per call over MCP (D-64): an `hactl mcp --dir <instance>` server refuses a call whose `--dir` names another directory (see "MCP server"). On the CLI, `--dir` picks the instance as always — another instance directory is another instance, with its own `policy.yaml`.
+
 **A broken file fails closed** (D-60). A file hactl cannot read as a policy is refused, never read leniently, because a typo must never silently become allow-all. Broken means any of:
 
 - not valid YAML, the top level is not a mapping, or more than one YAML document (a second `---` would be ignored);
@@ -1186,12 +1188,13 @@ profiles:
 - `version` missing or not `1`;
 - `active` present but empty (`active:`, `active: ~`, `active: ""`) or not a string, or naming a profile the file does not declare;
 - `default` other than `allow` or `deny`;
-- a pattern that breaks the grammar below — unknown kind, wrong number of id segments, unknown sub-resource, a wildcard where the grammar wants a literal, a `system` id that names (or, as a glob, matches) none of its set;
+- a pattern that breaks the grammar below — unknown kind, wrong number of id segments, unknown sub-resource, a wildcard where the grammar wants a literal, a `system` id that names (or, as a glob, matches) none of its set, a character outside the id's charset, a `.`/`..` or ambiguous `block` segment in a `file` id, or an `entity`/`service` id with neither a `.` nor a wildcard (it can never match: `entity:front_door` — write `entity:*.front_door`; D-63);
 - a verb list that is empty, not a list, or holds an unknown verb (`wirte`);
 - a `where` key that is not an `allow` pattern of the same profile, a `where` on a kind other than `entity` and `device` (or on `*`), an empty selector, or an empty selector value;
-- a `policy.yml` in the instance directory — hactl reads only `policy.yaml`, and a policy saved under the wrong name must not silently be no policy.
+- a `policy.yml` in the instance directory — hactl reads only `policy.yaml`, and a policy saved under the wrong name must not silently be no policy;
+- a `policy.yaml` (or `policy.yml`) that exists but cannot be read — a dangling symlink, a directory, no permission: the error names the path, and it is never `no policy file`.
 
-Every problem is named as `<file>:<line>: <message>`. `policy show` and `policy lint` report the problems (exit 1); `policy check` refuses (exit 1, empty stdout). Once enforcement lands, every command except `policy show` and `policy lint` refuses the same way.
+Every problem is named as `<file>:<line>: <message>`, in the prose of `policy show`, `policy lint` and the refusal alike. `policy show` and `policy lint` report the problems (exit 1); `policy check` refuses (exit 1, empty stdout). Once enforcement lands, every command except `policy show` and `policy lint` refuses the same way.
 
 #### Resources
 
@@ -1220,8 +1223,10 @@ The id is Home Assistant's own identifier, written exactly as hactl prints it (a
 
 - A sub-resource path may stop early: `entity:x/attr` is every attribute of `x`, `entity:x/registry` every registry field.
 - Sub-resource words (`attr`, `registry`, `views`, `block`, …) and the registry field names are literal: a misspelling is a broken file, not a rule that matches nothing.
-- For `file`, a trailing `/block/<id>` is always the block sub-resource; everything before it is the path.
-- A `policy check` resource is concrete: it holds no `*` or `?`.
+- For `file`, a trailing `/block/<id>` is always the block sub-resource; everything before it is the path. A segment named `block` (in any case) anywhere else — `file:a/block`, `file:a/block/b/c.yaml`, `file:block/x` with no path before it — is refused as ambiguous with the block sub-resource (D-67).
+- A `file` path never holds a `.` or `..` segment (`file:./secrets.yaml`, `file:packages/../secrets.yaml`): refused, never canonicalised (D-67).
+- **Id charset** (D-68). `entity` and `service` ids: ASCII letters, digits, `_` and `.`; `helper`: ASCII letters, digits and `_` in each of its two segments; `area`, `floor`, `label`: ASCII letters, digits and `_` — Home Assistant's own charset, letters in any case (D-2). Every other kind's id may hold any character except white space and control characters, which no id of any kind may hold (a trailing space, a tab, a no-break space). Patterns may add `*` and `?`. Free sub-resource segments (`attr/<name>`, `views/<path>`, `block/<id>`, `reload/<domain>`) are not restricted by this rule.
+- A `policy check` resource is concrete: it holds no `*` or `?`. A resource that breaks any rule of this section is refused (exit 1, nothing on stdout); a pattern that breaks one is a broken file.
 - Kinds, sub-resource words and verbs are lowercase, exactly as written here.
 
 #### Verbs
@@ -1239,8 +1244,8 @@ The id is Home Assistant's own identifier, written exactly as hactl prints it (a
 #### Matching
 
 - The pattern `*` matches every resource of every kind.
-- Otherwise the kind must be equal, and the id is matched **segment by segment** with the same glob as `--pattern`: case-insensitive (D-2), `*` any run of characters and `?` exactly one, but neither crosses a `/`. A segment that is exactly `**` matches zero or more whole segments, and only in a `file` id (`file:packages/**`).
-- An `entity` or `service` id is also matched at the part after the domain (D-28): `entity:kitchen*` matches `light.kitchen_lamp`, and `entity:sensor.*` does not match `binary_sensor.x`.
+- Otherwise the kind must be equal, and the id is matched **segment by segment** with the same glob engine as `--pattern`: case-insensitive (D-2), `*` any run of characters and `?` exactly one character (one Unicode code point, not one byte — `file:k?che.yaml` matches `küche.yaml`), but neither crosses a `/`. A segment that is exactly `**` matches zero or more whole segments, and only in a `file` id (`file:packages/**`).
+- **The full id only** (D-63). Unlike `--pattern`, a policy pattern has no second anchor after the domain (D-28 is for filters): `entity:kitchen*` matches no entity, because every entity id starts with its domain, and `entity:sensor.*` does not match `binary_sensor.x`. Across domains write the domain as a wildcard: `entity:*.front_door` matches `lock.front_door` and `cover.front_door`. An `entity` or `service` pattern with neither a `.` nor a wildcard (`entity:front_door`, `service:turn_on`) can never match and is a broken file.
 - **Unlike `--pattern`, a pattern without a wildcard is exact, never a substring.** `entity:light.kitchen` matches `light.kitchen` (any case) and not `light.kitchen_2`: a filter may err towards more rows, an allow may not err towards more rights.
 - A pattern without a sub-resource covers the resource and everything below it. A pattern with one covers that sub-resource and everything below it, and not the resource itself (each sub segment glob-matched the same way).
 
@@ -1251,16 +1256,21 @@ For one resource and one verb, in the effective profile (D-52):
 1. **A deny that matches decides: denied.**
 2. Otherwise, **an allow that matches decides: allowed** — if it has a `where:`, only when the selector holds.
 3. Otherwise, **the profile default decides:** `default: deny` denies, anything else allows.
+4. **Partial** (D-66). If steps 2–3 allowed the resource but a deny of the same profile, for the same verb, covers a strict descendant of it, the verdict is partial. A strict descendant is the same kind and id with one or more further sub-resource segments: `deny "entity:*/registry/entity_id" [edit]` covers a descendant of `entity:light.x` and of `entity:light.x/registry`, and a deny on `entity:device_tracker.*/attr/latitude` one of `entity:device_tracker.jan`. A `file` path is not a descendant of another path — a deny on `file:packages/x.yaml` leaves `file:packages` whole; `file:packages/x.yaml/block/b` is a descendant of `file:packages/x.yaml`.
+   - For a write verb (`control`, `edit`, `create`, `delete`) **partial is denied**: the rule named is the first of those descendant denies.
+   - For `read` **partial is allowed**: the rule named is still the one that allowed it, and the descendant denies are listed — the parts a phase-3 read will mask (D-54).
 
-Rule order in the file means nothing; deny always overrides allow, so there are no exceptions to exceptions — narrow the allow instead. A parent covers its children: `read` on `entity:light.kitchen` covers `entity:light.kitchen/attr/brightness`. A deny on a child cuts out only the child. An allow on a child alone grants only the child (`entity:*/registry/labels` [edit] allows editing labels and nothing else of the entity). When several rules of the deciding kind match, the one named is the first in the file (lowest line).
+   A deny that matches the resource itself, or an ancestor of it, is step 1, never partial. A verdict with no profile in effect (`no policy file`, implicit allow-all) is never partial.
 
-**Selectors** (`where:`, D-55) narrow an allow on an `entity` or `device` pattern and are evaluated live on every check — a relabel takes effect at once. `area` holds when the resource's area matches by id or name: for an entity its effective area, its own or else its device's (H-8); for a device its own. `label` holds when one of the resource's own labels matches by id or name (an entity does not inherit its device's labels). Values glob like patterns; several values of one key are alternatives; `area` and `label` together must both hold. If a selector cannot be evaluated — Home Assistant unreachable — the narrowed allow does **not** match, and the verdict says so in a note.
+Rule order in the file means nothing; deny always overrides allow, so there are no exceptions to exceptions — narrow the allow instead. A parent covers its children: `read` on `entity:light.kitchen` covers `entity:light.kitchen/attr/brightness`. A deny on a child cuts out only the child — and makes a check on the parent partial (step 4). An allow on a child alone grants only the child (`entity:*/registry/labels` [edit] allows editing labels and nothing else of the entity). When several rules of the deciding kind match, the one named is the first in the file: the lowest line, then the leftmost column (two rules can share a line in a flow mapping, `deny: {"entity:lock.*": [write], "entity:*": [control]}`).
+
+**Selectors** (`where:`, D-55) narrow an allow on an `entity` or `device` pattern and are evaluated live on every check — a relabel takes effect at once. `area` holds when the resource's area matches by id or name: for an entity its effective area, its own or else its device's (H-8); for a device its own. `label` holds when one of the resource's own labels matches by id or name (an entity does not inherit its device's labels). Values glob like patterns; several values of one key are alternatives; `area` and `label` together must both hold. A selector is evaluated only while it can still change the verdict or the rule it names: never when a deny matches the resource (step 1), and the narrowed allows that match are tried in file order (line, then column) — none after an allow that already grants, and none placed after a matching allow without `where:`. If a tried selector cannot be evaluated — Home Assistant unreachable — that narrowed allow does **not** match, the next one is tried, and the verdict says so in a note. A selector never tried is not evaluated and not noted.
 
 Every verdict names what decided it, as `deny "entity:lock.*" [read write]`, `allow "entity:light.*" [control] where area=wohnzimmer`, `default: deny`, `default: allow`, `no policy file`, or `implicit allow-all: no active: and no default profile`. A rule is shown with its verbs as written.
 
 #### `policy show`
 
-Prints the file path (or `no policy file`), the level-A sentence above verbatim, the effective profile and how it was selected, the profile default, its rules — deny rules first, then allow rules, each in file order with its line — the declared profiles, and `not enforced yet`. With no `active:` and no `default` profile it says `ALLOW-ALL` and why. `--as <p>` shows profile `<p>` and marks the output `what-if`. Exit 0, or 1 for a broken file (the problems are the report).
+Prints the file path (or `no policy file`), the level-A sentence above verbatim, the effective profile and how it was selected, the profile default, its rules — deny rules first, then allow rules, each in file order (line, then column) with its line — the declared profiles, and `not enforced yet`. With no `active:` and no `default` profile it says `ALLOW-ALL` and why. `--as <p>` shows profile `<p>` and marks the output `what-if`. Exit 0, or 1 for a broken file (the problems are the report).
 
 ```json
 {"file": "/home/u/ha/home/policy.yaml", "exists": true, "valid": true, "problems": [],
@@ -1277,15 +1287,16 @@ Prints the file path (or `no policy file`), the level-A sentence above verbatim,
 
 #### `policy check <resource> <verb>`
 
-Answers one question and **its exit code is the verdict: 0 allowed, 1 denied.** The text answer is `allowed: <resource> <verb>` or `denied: <resource> <verb>`, then the deciding rule and its line, then the profile and how it was selected; a what-if starts with a `what-if: --as <p>` line. It contacts Home Assistant only when a `where:` selector has to be evaluated.
+Answers one question and **its exit code is the verdict: 0 allowed, 1 denied** — a partial verdict exits by what it resolved to (1 for a write verb, 0 for `read`). The text answer is `allowed: <resource> <verb>` or `denied: <resource> <verb>`, then the deciding rule and its line (`rule: <rule> (line <n>)`), then — for a partial verdict only — one `partial: <rule> (line <n>)` line per descendant deny, then the profile and how it was selected; a what-if starts with a `what-if: --as <p>` line. It contacts Home Assistant only when a `where:` selector can still change the verdict (see Selectors): a check a deny or an earlier plain allow decides never contacts it.
 
 ```json
 {"resource": "entity:lock.front_door", "verb": "control", "allowed": false,
  "rule": "deny \"entity:lock.*\" [read write]", "line": 16, "profile": "agent",
- "selected_by": "active", "what_if": false, "level": "A", "enforced": false, "notes": []}
+ "selected_by": "active", "what_if": false, "level": "A", "enforced": false, "notes": [],
+ "partial": false, "partial_denies": []}
 ```
 
-`line` is 0 when no rule decided. `notes` lists every matching allow whose `where:` could not be evaluated. An invalid resource or verb, an unknown `--as` profile, or a broken file is refused: exit 1, the reason on stderr, nothing on stdout — so a denial is exit 1 **with** a verdict on stdout, and a refusal is exit 1 without one.
+`line` is 0 when no rule decided. `notes` lists every narrowed allow whose `where:` was tried and could not be evaluated. A partial verdict has `"partial": true` and lists every descendant deny of step 4 in `partial_denies`, in file order (line, then column), each as `{"rule": "deny \"entity:device_tracker.*/attr/latitude\" [read]", "line": 17}`; for a write verb `allowed` is false and `rule`/`line` are those of its first entry, for `read` `allowed` is true and `rule`/`line` name what allowed it. Otherwise `partial` is false and `partial_denies` is `[]`. An invalid resource or verb, an unknown `--as` profile, or a broken file is refused: exit 1, the reason on stderr, nothing on stdout — so a denial is exit 1 **with** a verdict on stdout, and a refusal is exit 1 without one.
 
 #### `policy lint`
 
@@ -1296,21 +1307,27 @@ Validates the file, then checks every rule of **every** profile, not only the ef
 | `broken` | a broken-file problem, as above; no live checks run |
 | `implicit-allow-all` | profiles are declared, but no `active:` and no `default` profile puts any of them in effect |
 | `redundant-allow` | an allow in a profile without `default: deny` — that profile already allows what no deny matches, so the allow and its `where:` decide nothing |
-| `no-match` | the pattern's id matches nothing of its kind on the live instance — a typo in a deny is a silent hole otherwise |
+| `no-match` | the pattern's id matches nothing of its kind on the live instance, or its `attr/<name>` matches no attribute of any entity the id matches — a typo in a deny is a silent hole otherwise |
 | `unreachable` | for one of its verbs, every live match of the allow is denied by a deny of the same profile, so it can never decide |
 
-Live checks compare the id part only (never sub-resources) against: `entity` — the entity_ids in states and the entity registry; `device`, `area`, `floor`, `label` — their registries; `automation` — the config ids (D-1; not the entity object id `auto ls` prints, which differs for every UI-authored automation); `script` — the ids `script ls` prints; `dashboard` — the url_paths `dash ls` prints plus the default; `service` — the services Home Assistant reports; `system` — its fixed set. `template`, `helper`, `config_entry` and `file` are not enumerated in this version and are listed as **unchecked**, as is every kind Home Assistant could not be read for — an unchecked kind is never reported clean.
+Live checks compare the id against: `entity` — the entity_ids in states and the entity registry; `device`, `area`, `floor`, `label` — their registries; `automation` — the config ids (D-1; not the entity object id `auto ls` prints, which differs for every UI-authored automation); `script` — the ids `script ls` prints; `dashboard` — the url_paths `dash ls` prints plus the default; `service` — the services Home Assistant reports; `system` — its fixed set. `template`, `helper`, `config_entry` and `file` are not enumerated in this version and are listed as **unchecked**, as is every kind Home Assistant could not be read for — an unchecked kind is never reported clean. After the first transport failure (refused, timed out) lint stops asking: every Home Assistant-backed kind not yet read is listed unchecked with that same error as its reason, so a stalled host costs one `--timeout`, not one per kind.
 
-Exit 0 when there is no file, or the file is valid, nothing was found and nothing was unchecked; exit 1 otherwise. `--allow-partial` accepts unchecked kinds (they are still listed) — it never hides a finding.
+Below the id (D-65), closed sub-resource words and registry field names need no live check (a misspelling is a broken file). Of the free segments, `attr/<name>` is checked against the attribute names in the live state of every entity the pattern's id matches — glob and case as in Matching; a pattern that stops at `attr` has nothing to check, and an id that matches no entity is one `no-match`, not two. Every other free segment — `views/<path>`, `block/<id>`, `reload/<domain>` — cannot be checked: each rule holding one is listed in `unchecked` with reason `sub-resource not checked`, whether or not its kind is enumerated, so lint is never clean without `--allow-partial` while such a rule exists.
+
+Exit 0 when there is no file, or the file is valid, nothing was found and nothing was unchecked; exit 1 otherwise. `--allow-partial` accepts unchecked entries (they are still listed) — it never hides a finding.
+
+For `unreachable`, an allow's sub-resource path is a set, not a literal: the allow is unreachable for a verb only when, for each live match, one deny of the same profile covers its whole sub path — the deny's sub path is no longer than the allow's, each literal allow segment matches the deny's segment, and each wildcard allow segment faces exactly `*` in the deny (or the deny stops above it). A deny on `entity:lock.*/attr/?` leaves `attr/battery` to an allow on `entity:lock.*/attr/*`, so that allow is reachable.
 
 ```json
 {"file": "/home/u/ha/home/policy.yaml", "exists": true, "valid": true, "level": "A",
  "findings": [{"code": "no-match", "profile": "agent", "rule": "deny \"entity:lokc.*\" [read write]",
                "line": 16, "message": "matches no entity on this instance"}],
- "unchecked": [{"kind": "file", "reason": "not enumerated"}]}
+ "unchecked": [{"kind": "dashboard", "reason": "sub-resource not checked", "profile": "agent",
+                "rule": "deny \"dashboard:main/views/secret\" [read]", "line": 19},
+               {"kind": "file", "reason": "not enumerated", "profile": "", "rule": "", "line": 0}]}
 ```
 
-Findings are ordered by line, then code, profile and rule; `unchecked` follows the order of the kinds table. Both are `[]` when empty.
+Findings are ordered by line, then code, profile and rule. `unchecked` follows the order of the kinds table; within a kind the kind's own entry (`profile`/`rule` "", `line` 0) comes first, then one entry per rule in file order (line, then column). Both are `[]` when empty. In prose, a broken file's findings are its problems as `<file>:<line>: <message>`.
 
 ---
 
@@ -1448,6 +1465,6 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 ```
 
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
-- One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
+- One instance per server process. A `--dir` given at server start pins every call to that instance — and with it to that instance's `policy.yaml` (D-64). A call whose command line carries `--dir` (or `--dir=`) naming another directory is refused with an error and runs nothing; naming the pinned directory itself is accepted. Directories are compared as absolute, cleaned paths, symlinks not followed. `HACTL_DIR` in the server's environment never moves a pinned server either. A server started without `--dir` is not pinned: each call finds its instance as the CLI does.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
 - A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.
