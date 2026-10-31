@@ -68,6 +68,17 @@ func TestPinnedServerRefusesACallTimeDir(t *testing.T) {
 		"ent ls --dir " + other,
 		"ent ls --dir=" + other,
 		"--dir " + other + " ent ls",
+		// An empty --dir is not the pinned directory: with no --dir the
+		// runner would fall back to HACTL_DIR or the working directory.
+		"ent ls --dir=",
+		"ent ls --dir ''",
+		// A string flag takes `--` as its value (pflag), so `--` is no
+		// terminator here and the --dir after it is parsed as a flag.
+		"ent ls --pattern -- --dir " + other,
+		"policy check --as -- --dir " + other + " entity:lock.x read",
+		// After a real `--` the token is positional, but refusing it costs
+		// the caller nothing: the line carries --dir.
+		"ent ls -- --dir " + other,
 	} {
 		rr := &recordingRunner{}
 		res := callPinned(t, mcpserver.Options{Runner: rr.run, ResolvePath: resolveEntLs, Dir: pinned, NoManualInject: true}, command)
@@ -93,6 +104,21 @@ func TestPinnedServerRefusesACallTimeDir(t *testing.T) {
 		}
 		if strings.Contains(strings.Join(rr.calls[0], " "), other) {
 			t.Errorf("%q ran with %v", command, rr.calls[0])
+		}
+	}
+
+	// A --dir naming the pinned directory that a string flag swallows as its
+	// value (`--pattern --dir <pinned>`) leaves no --dir for the runner, so
+	// the pinned --dir is put first on every call, not only when the line
+	// seems to lack one.
+	{
+		rr := &recordingRunner{}
+		res := callPinned(t, mcpserver.Options{Runner: rr.run, ResolvePath: resolveEntLs, Dir: pinned, NoManualInject: true}, "ent ls --pattern --dir "+pinned)
+		if res.IsError || len(rr.calls) != 1 {
+			t.Fatalf("swallowed --dir: IsError=%v calls=%v, want one run", res.IsError, rr.calls)
+		}
+		if got := rr.calls[0]; len(got) < 3 || got[1] != "--dir" || got[2] != pinned {
+			t.Errorf("runner args %v, want them to start with hactl --dir %s", got, pinned)
 		}
 	}
 

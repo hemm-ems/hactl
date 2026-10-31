@@ -155,6 +155,7 @@ func parse(data []byte) (*Policy, []Problem) {
 		w.addf(0, "the file is empty: version missing (want version: 1)")
 		return nil, w.problems
 	}
+	w.anchors(doc.Content[0])
 	pol := w.top(doc.Content[0])
 	return pol, w.problems
 }
@@ -188,6 +189,20 @@ func (w *walker) usable(n *yaml.Node, what string) bool {
 		return false
 	}
 	return true
+}
+
+// anchors reports every anchor (`&name`) in the tree as a problem at its line,
+// whether or not an alias refers to it (D-60, confirmed as built: aliases,
+// anchors and merge keys are broken). The walk over the policy's own keys
+// would never see an anchor on a value it reads as written, so this is a
+// separate pass over every node, keys included.
+func (w *walker) anchors(n *yaml.Node) {
+	if n.Anchor != "" {
+		w.addf(n.Line, "YAML anchor &%s: anchors, aliases and merge keys are not part of the policy format — write every value out", n.Anchor)
+	}
+	for _, c := range n.Content {
+		w.anchors(c)
+	}
 }
 
 // mapping returns n's entries in file order, or ok=false with a problem when

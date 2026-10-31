@@ -63,3 +63,26 @@ func TestPolicyAndFilterShareOneEngineButNotTheAnchor(t *testing.T) {
 		}
 	}
 }
+
+// TestStarSplitsOnlyAtRuneBoundaries — the manual's "`?` exactly one character
+// (one Unicode code point, not one byte)" must survive a `*` before the `?`:
+// a star that split s mid-rune would leave continuation bytes that each count
+// as one `?`.
+func TestStarSplitsOnlyAtRuneBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		s, pattern string
+		want       bool
+	}{
+		{"x€", "x*??", false}, // € is three bytes, one code point
+		{"x€", "x*?", true},
+		{"€.yaml", "*??.yaml", false},
+		{"€.yaml", "*?.yaml", true},
+		{"küche", "k*?che", true},
+		{"küche", "k*??che", false},
+		{"xü", "x*??", false}, // ü is two bytes
+	} {
+		if got := glob.Match(tc.s, tc.pattern); got != tc.want {
+			t.Errorf("Match(%q, %q) = %v, want %v (`*` splits at rune boundaries only)", tc.s, tc.pattern, got, tc.want)
+		}
+	}
+}

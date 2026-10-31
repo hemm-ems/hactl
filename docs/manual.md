@@ -1181,7 +1181,7 @@ Nor does the caller choose the instance, and with it the policy file, per call o
 **A broken file fails closed** (D-60). A file hactl cannot read as a policy is refused, never read leniently, because a typo must never silently become allow-all. Broken means any of:
 
 - not valid YAML, the top level is not a mapping, or more than one YAML document (a second `---` would be ignored);
-- a YAML alias, anchor reference or merge key (`*d`, `<<:`) anywhere — write every value out;
+- a YAML anchor, alias or merge key (`&d`, `*d`, `<<:`) anywhere, an anchor nothing refers to included — write every value out;
 - any mapping key twice at any level (top level, a profile name, a profile's keys, an `allow`/`deny` pattern, a `where` pattern, a selector key) — both lines are named;
 - a key this section does not define, at any level (`profile:` for `profiles:`, `allows:`, a selector key other than `area`/`label`);
 - a value of the wrong shape: `profiles`, a profile, `allow`, `deny`, `where` or a selector that is not a mapping — an empty `agent:` included (write `agent: {}`);
@@ -1465,6 +1465,6 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 ```
 
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
-- One instance per server process. A `--dir` given at server start pins every call to that instance — and with it to that instance's `policy.yaml` (D-64). A call whose command line carries `--dir` (or `--dir=`) naming another directory is refused with an error and runs nothing; naming the pinned directory itself is accepted. Directories are compared as absolute, cleaned paths, symlinks not followed. `HACTL_DIR` in the server's environment never moves a pinned server either. A server started without `--dir` is not pinned: each call finds its instance as the CLI does.
+- One instance per server process. A `--dir` given at server start pins every call to that instance — and with it to that instance's `policy.yaml` (D-64). A call whose command line carries `--dir` (or `--dir=`) naming another directory — anywhere on the line, after a `--` too, and an empty `--dir=` included — is refused with an error and runs nothing; naming the pinned directory itself is accepted. Directories are compared as absolute, cleaned paths, symlinks not followed. `HACTL_DIR` in the server's environment never moves a pinned server either. A server started without `--dir` is not pinned: each call finds its instance as the CLI does.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
 - A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.

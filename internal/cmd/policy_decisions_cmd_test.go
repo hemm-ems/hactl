@@ -41,6 +41,9 @@ import (
 //   - lock.front_door: attributes battery_level, x.
 //   - automation.morning: config id 1700000000000 (D-1).
 //   - switch.disabled_one: in the entity registry only (disabled, no state).
+//   - sensor.yaml_only: in /api/states only (a YAML entity without a
+//     unique_id, so no registry entry).
+//   - script.kino: a script, object id kino as `script ls` prints it.
 //   - dashboards: the default ("") and url_path main; services light.turn_on,
 //     lock.unlock; floor ground.
 func policyRig(t *testing.T, body string) *cmdTestServer {
@@ -51,6 +54,8 @@ func policyRig(t *testing.T, body string) *cmdTestServer {
 		{"entity_id": "device_tracker.jan", "state": "home", "attributes": map[string]any{"latitude": 52.5, "longitude": 13.4, "lx": 1}},
 		{"entity_id": "lock.front_door", "state": "locked", "attributes": map[string]any{"battery_level": 90, "x": 1}},
 		{"entity_id": "automation.morning", "state": "on", "attributes": map[string]any{"id": "1700000000000", "friendly_name": "Morning"}},
+		{"entity_id": "sensor.yaml_only", "state": "1", "attributes": map[string]any{"friendly_name": "YAML only"}},
+		{"entity_id": "script.kino", "state": "off", "attributes": map[string]any{"friendly_name": "Kino"}},
 	}
 	for _, s := range states {
 		s["last_changed"] = "2026-10-31T08:00:00+00:00"
@@ -852,6 +857,10 @@ func TestPinnedMCPServerRefusesAnotherInstanceDir(t *testing.T) {
 		"policy check entity:lock.x control --dir " + other,
 		"policy check entity:lock.x control --dir=" + other,
 		"--dir " + other + " policy check entity:lock.x control",
+		"policy check entity:lock.x control --dir=",
+		"policy check entity:lock.x control --dir ''",
+		"policy check --as -- --dir " + other + " entity:lock.x control",
+		"policy show --as -- --dir " + other,
 	} {
 		before := calls.Load()
 		text, isErr := call(cmdline)
@@ -861,8 +870,8 @@ func TestPinnedMCPServerRefusesAnotherInstanceDir(t *testing.T) {
 		if calls.Load() != before {
 			t.Errorf("%q: the runner was called; a refused call runs nothing", cmdline)
 		}
-		if strings.Contains(text, "allowed:") {
-			t.Errorf("%q: answered from the other instance:\n%s", cmdline, text)
+		if strings.Contains(text, "allowed:") || !strings.Contains(text, "pinned") {
+			t.Errorf("%q: not refused as pinned (D-64), or answered from the other instance:\n%s", cmdline, text)
 		}
 	}
 

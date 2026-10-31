@@ -249,6 +249,12 @@ func TestAliasesAndMergeKeysAreBroken(t *testing.T) {
 		{"aliased deny mapping", "version: 1\nprofiles:\n  base:\n    deny: &d {\"entity:lock.*\": [write]}\n  agent:\n    default: deny\n    deny: *d\n", 7},
 		{"aliased verb list", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": &v [write]\n      \"entity:alarm.*\": *v\n", 6},
 		{"merge key", "version: 1\nprofiles:\n  a:\n    deny:\n      <<: {\"entity:lock.*\": [write]}\n", 5},
+		// D-60 (confirmed as built): an anchor is broken even when nothing
+		// refers to it — on a scalar, a mapping, a key and a sequence.
+		{"unused anchor on a scalar", "version: 1\nactive: &p a\nprofiles:\n  a:\n    default: deny\n", 2},
+		{"unused anchor on a mapping", "version: 1\nprofiles:\n  a:\n    default: deny\n    deny: &d\n      \"entity:lock.*\": [write]\n", 5},
+		{"unused anchor on a key", "version: 1\nprofiles:\n  a:\n    default: deny\n    deny:\n      &k \"entity:lock.*\": [write]\n", 6},
+		{"unused anchor on a verb list", "version: 1\nprofiles:\n  a:\n    default: deny\n    deny:\n      \"entity:lock.*\": &v [write]\n", 6},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

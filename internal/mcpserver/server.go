@@ -166,18 +166,21 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 		// A pinned server answers from its own instance only (D-64, part of
 		// D-62): choosing the instance directory per call would choose the
 		// policy file, so a --dir naming another directory is refused and
-		// nothing runs. Otherwise re-inject the pinned --dir on every call —
+		// nothing runs. Otherwise the pinned --dir goes first on every call —
 		// the runner resets all global flags (including --dir) after each
-		// invocation — which also keeps HACTL_DIR from re-pointing it.
+		// invocation — which also keeps HACTL_DIR from re-pointing it. It is
+		// put there even when the line carries a --dir naming the pinned
+		// directory: a string flag may swallow that --dir as its value
+		// (`--pattern --dir <pinned>`), leaving the command without one. Every
+		// --dir the caller does pass names the pinned directory, so whichever
+		// the flag parser keeps, it is the pinned instance.
 		if opts.Dir != "" {
 			if other, found := foreignDir(tokens, opts.Dir); found {
 				return nil, nil, fmt.Errorf("this server is pinned to the instance at %s and answers from it only: "+
 					"--dir %s names another instance, and with it another policy (D-64). "+
 					"Drop --dir; to use another instance, start a server pinned to it", opts.Dir, other)
 			}
-			if !hasDirFlag(tokens) {
-				tokens = append([]string{"--dir", opts.Dir}, tokens...)
-			}
+			tokens = append([]string{"--dir", opts.Dir}, tokens...)
 		}
 
 		path, err := opts.ResolvePath(tokens)
@@ -221,21 +224,18 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 	}
 }
 
-func hasDirFlag(tokens []string) bool {
-	return len(dirFlagValues(tokens)) > 0
-}
-
-// dirFlagValues returns the value of every --dir the command line passes as a
-// flag (`--dir X`, `--dir=X`), stopping at `--`, after which nothing is a
-// flag. A trailing `--dir` without a value yields "", which the runner then
-// refuses itself.
+// dirFlagValues returns the value of every `--dir X` and `--dir=X` anywhere
+// on the command line. It does not stop at `--`: a string flag takes `--` as
+// its value (`--pattern -- --dir X` sets pattern to "--" and parses --dir X as
+// a flag), and only the command's own flag set could tell that apart from a
+// terminator. Reading a positional literally named --dir as a flag costs the
+// caller nothing but a refusal. A trailing `--dir` without a value yields "",
+// which is not the pinned directory.
 func dirFlagValues(tokens []string) []string {
 	var out []string
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		switch {
-		case t == "--":
-			return out
 		case t == "--dir":
 			v := ""
 			if i+1 < len(tokens) {
