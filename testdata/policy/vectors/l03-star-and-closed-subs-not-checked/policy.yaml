@@ -6,5 +6,6 @@ profiles:
     allow:
       "*": [read]
     deny:
-      "entity:light.kitchen/attr/nonexistent": [read]
       "entity:lock.*": [write]
+      "entity:light.kitchen/registry/labels": [edit]
+      "entity:light.kitchen/state": [read]

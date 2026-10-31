@@ -1,4 +1,4 @@
-clause: "D-63: a policy pattern matches the full id only (D-28's second anchor is for filters); across domains the domain is a wildcard (`entity:*.hallway`); a pattern without a wildcard is exact, never a substring; `?` is exactly one character"
+clause: "D-63: a policy pattern matches the FULL id only — D-28's second anchor (the part after the domain) is for filters; across domains the domain is written as a wildcard; a pattern without a wildcard is exact; `?` is exactly one character; other ids match only at the id"
 cases:
   - {resource: "entity:light.kitchen_lamp", verb: read, allowed: false, rule: "default: deny", line: 0}
   - {resource: "entity:light.my_kitchen", verb: read, allowed: false, rule: "default: deny", line: 0}
@@ -11,7 +11,9 @@ cases:
   - {resource: "entity:cover.hallway", verb: delete, allowed: true, rule: 'allow "entity:*.hallway" [delete]', line: 10}
   - {resource: "entity:light.hallway_2", verb: delete, allowed: false, rule: "default: deny", line: 0}
   - {resource: "service:light.turn_on", verb: control, allowed: true, rule: 'allow "service:*.turn_on" [control]', line: 11}
+  - {resource: "service:homeassistant.turn_on", verb: control, allowed: true, rule: 'allow "service:*.turn_on" [control]', line: 11}
   - {resource: "service:light.turn_off", verb: control, allowed: false, rule: "default: deny", line: 0}
   - {resource: "automation:heating", verb: read, allowed: true, rule: 'allow "automation:heating" [read]', line: 12}
   - {resource: "automation:heating_2", verb: read, allowed: false, rule: "default: deny", line: 0}
   - {resource: "automation:pg.heating", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen_lamp", verb: create, allowed: true, rule: 'allow "entity:*kitchen*" [create]', line: 13}

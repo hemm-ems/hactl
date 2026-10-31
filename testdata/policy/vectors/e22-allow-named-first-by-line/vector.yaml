@@ -1,0 +1,4 @@
+clause: "Manual evaluation: when several ALLOWS match, the one named is the first in the file (lowest line) — not the last one seen"
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: true, rule: 'allow "entity:light.*" [read]', line: 7}
+  - {resource: "entity:sensor.t", verb: read, allowed: true, rule: 'allow "entity:*" [read]', line: 8}

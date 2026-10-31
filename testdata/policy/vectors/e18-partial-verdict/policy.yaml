@@ -1,0 +1,15 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read, edit, control]
+      "file:**": [read, edit]
+    deny:
+      "entity:*/registry/entity_id": [edit]
+      "entity:device_tracker.*/attr/latitude": [read]
+      "entity:device_tracker.*/attr/longitude": [read, control]
+      "file:pkgs/x.yaml": [edit]
+      "file:pkgs/y.yaml/block/b": [edit]
+      "entity:lock.*/registry": [edit]

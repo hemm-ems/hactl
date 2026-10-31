@@ -173,7 +173,7 @@ var showKeys = []string{"file", "exists", "valid", "problems", "level", "disclai
 	"profile", "selected_by", "what_if", "allow_all", "default", "profiles", "rules"}
 
 var checkKeys = []string{"resource", "verb", "allowed", "rule", "line", "profile",
-	"selected_by", "what_if", "level", "enforced", "notes"}
+	"selected_by", "what_if", "level", "enforced", "notes", "partial", "partial_denies"}
 
 var lintKeys = []string{"file", "exists", "valid", "level", "findings", "unchecked"}
 
@@ -544,6 +544,9 @@ func TestPolicyCheckJSON(t *testing.T) {
 			wantField(t, what, m, "level", "A")
 			wantField(t, what, m, "enforced", false)
 			wantField(t, what, m, "notes", []any{})
+			// D-66: none of these has a descendant deny for its verb.
+			wantField(t, what, m, "partial", false)
+			wantField(t, what, m, "partial_denies", []any{})
 		})
 	}
 }
@@ -678,6 +681,32 @@ func TestPolicyCheckContactsHomeAssistantOnlyForASelector(t *testing.T) {
 	}
 	if n := hits.Load(); n != 0 {
 		t.Errorf("policy check without a selector to evaluate sent %d request(s) to Home Assistant, want 0", n)
+	}
+
+	// D-55 (confirmed 2026-10-31): a selector an earlier plain allow makes
+	// moot can no longer change the verdict, so it is not evaluated either —
+	// and neither is one a matching deny makes moot.
+	moot := policyInstance(t, url, `version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [control]
+      "entity:light.*": [control]
+    deny:
+      "entity:light.locked_*": [control]
+    where:
+      "entity:light.*": { area: wohnzimmer }
+`)
+	for _, res := range []string{"entity:light.sofa", "entity:light.locked_one"} {
+		out, err := runPolicyCLI(t, moot, "policy", "check", res, "control")
+		if out == "" {
+			t.Errorf("policy check %s control printed no verdict (err %v)", res, err)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("policy check whose selector cannot change the verdict sent %d request(s) to Home Assistant, want 0", n)
 	}
 }
 

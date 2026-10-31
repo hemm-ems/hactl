@@ -10,3 +10,4 @@ profiles:
       "entity:*.hallway": [delete]
       "service:*.turn_on": [control]
       "automation:heating": [read]
+      "entity:*kitchen*": [create]

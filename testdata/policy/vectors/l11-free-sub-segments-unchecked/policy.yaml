@@ -1,0 +1,13 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    deny:
+      "dashboard:main/views/secrte": [read]
+      "system:reload/automaton": [control]
+      "file:x.yaml/block/clmate": [edit]
+      "dashboard:main/resources": [edit]
+  other:
+    deny:
+      "dashboard:/views/home": [edit]

@@ -1,0 +1,5 @@
+clause: "D-60 (confirmed 2026-10-31): a YAML anchor/alias is broken — write every value out"
+load_error:
+  file_is_policy_yaml: true
+  problems:
+    - {line_in: [7, 8]}

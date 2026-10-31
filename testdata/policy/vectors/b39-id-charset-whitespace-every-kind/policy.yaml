@@ -1,0 +1,16 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "device:abc def": [read]
+      "automation:pg_heating\u00a0": [read]
+      "script:morning\x01": [read]
+      "template:uid\t1": [read]
+      "dashboard:main view": [read]
+      "config_entry:01JABC\x7f": [read]
+      "file:packages/my file.yaml": [read]
+      "dashboard:energy-main": [read]
+      "automation:Pg-Heizung_\u00fc": [read]
+      "file:packages/k\u00fcche.yaml": [read]
