@@ -79,6 +79,9 @@ func TestPinnedServerRefusesACallTimeDir(t *testing.T) {
 		// After a real `--` the token is positional, but refusing it costs
 		// the caller nothing: the line carries --dir.
 		"ent ls -- --dir " + other,
+		// D-64 as confirmed 2026-10-31 (Jan): the `=` spelling after `--`
+		// too.
+		"ent ls -- --dir=" + other,
 	} {
 		rr := &recordingRunner{}
 		res := callPinned(t, mcpserver.Options{Runner: rr.run, ResolvePath: resolveEntLs, Dir: pinned, NoManualInject: true}, command)

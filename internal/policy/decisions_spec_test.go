@@ -449,12 +449,15 @@ type charsetCase struct {
 }
 
 // TestIDCharset — D-68 (finding 6, refined 2026-10-31): each restricted kind
-// × a space, a tab, a `-` and a non-ASCII letter; every kind × a control
-// character and a format character (zero-width space) anywhere and a space
-// or no-break space at either end; device and config_entry × interior white
-// space too; resources refused, patterns broken with their line. Then the
-// characters that stay legal, interior white space in the ids a user names
-// among them.
+// × a space, a tab, a `-`, a non-ASCII letter and a no-break space inside
+// the id; every kind × a control character, NUL and a format character (Cf:
+// zero width space, BOM, a bidi override) anywhere, and a space or no-break
+// space at either end; device and config_entry × interior white space too
+// (an implementation choice: Jan's list of places HA allows interior spaces
+// does not name them); resources refused, patterns broken with their line.
+// Then the characters that stay legal, interior white space in the ids a user
+// names among them (TestInteriorSpaces holds the sites Jan named). The free
+// sub segments are id_edges_spec_test.go.
 func TestIDCharset(t *testing.T) {
 	restricted := []charsetCase{
 		{"entity", "light.kit%schen"},
@@ -494,7 +497,7 @@ func TestIDCharset(t *testing.T) {
 		}
 	}
 	for _, c := range restricted {
-		for _, bad := range []string{" ", "\t", "-", "ü"} {
+		for _, bad := range []string{" ", "\t", "-", "ü", "\u00a0", "\x01"} {
 			check(c, bad)
 		}
 	}

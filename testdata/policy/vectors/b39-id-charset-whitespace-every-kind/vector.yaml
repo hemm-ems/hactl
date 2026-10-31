@@ -1,4 +1,4 @@
-clause: "D-68 (refined 2026-10-31): control characters and invisible format characters (Cf: a zero-width space) are refused in the id of every kind, and so is white space at either end (a trailing no-break space, a leading space); device and config_entry ids refuse white space anywhere — a broken file, each named with its line. The kinds HA does not restrict keep every other character (`-`, non-ASCII letters), and automation, script, template, dashboard and file ids keep interior white space (a space, a no-break space)"
+clause: "D-68 (refined 2026-10-31): leading or trailing white space (a space, a no-break space), control characters (a tab, U+0001, DEL) and format characters (a zero width space) are refused in the id of every kind — a broken file, each named with its line; interior spaces are allowed where HA allows them (automation and script config ids, file paths, dashboard ids), and the kinds HA does not restrict keep every other character (`-`, non-ASCII letters)"
 load_error:
   file_is_policy_yaml: true
   count: 7
