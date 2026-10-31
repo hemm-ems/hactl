@@ -2155,7 +2155,7 @@ above asks: the set is derived, the sites are dispositioned in
 watched to fail. Until then the manifest is a contract nothing loads, and this
 law is debt in `dev/surfaces/invariant.manifest`.
 
-A policy (D-51 to D-69) is a guardrail against mistakes, so it is only as good
+A policy (D-51 to D-82) is a guardrail against mistakes, so it is only as good
 as its coverage: a request the policy never sees is a request it allows. hactl
 has no single choke point. It sends Home Assistant websocket commands through
 `sendCommand` and through five direct `conn.WriteJSON` calls, REST through
@@ -2165,63 +2165,107 @@ Ingress, rides the very same HTTP transport as HA REST, as
 requests the write commands send" would be the enumeration this file keeps
 finding one site short (`dev/surfaces/README.md`'s four defects).
 
-The rule has two halves, one per layer.
+The rule has two halves, one per layer, and both hold **while a profile is in
+effect** (D-74). With no `policy.yaml`, or a file that puts no profile in
+effect, nothing is checked, nothing extra is sent and nothing is logged —
+byte-identical to hactl without a policy (D-58).
 
 **Request layer (the guarantee).** Every request hactl sends is mapped to the
 `(resource, verb)` pairs it touches before it leaves the process, from what the
 request carries — path, query, body, websocket params — and from what the same
-process already read (a dashboard's stored config, a dashboard's id-to-url_path
-map, an automation's verified config id). One verdict per logical request:
-never per retry attempt, never skipped because a retry rebuilt the request; a
-redirect hop is mapped again. A request the mapping does not know is refused if
-it can change anything: every websocket type and every HTTP method other than
-GET counts as mutating unless a row says otherwise (E-9). A request whose ids do
-not parse under the policy grammar (D-67, D-68, D-69) is unmappable, and an
-unmappable write is refused — never canonicalised.
+command invocation already read under the same loaded policy (a dashboard's
+stored config, a dashboard's id-to-url_path map, an automation's verified
+config id, a checked `ref/replace` dry run). Nothing verified is trusted
+beyond that invocation and that policy's content hash — under `hactl mcp`, one
+process serves many invocations (D-72). One verdict per logical request: never
+per retry attempt, never skipped because a retry rebuilt the request; a
+redirect hop is mapped again, and a hop that maps differently is refused.
+Companion requests are checked once, in `companion.Client` by logical route,
+and marked so the shared HTTP transport's hook skips them — on the direct URL
+and under Ingress alike (D-74). Before any row is matched, the whole path is
+checked: no `.` or `..` segment and no `%2F`/`%5C` anywhere, each `{name}`
+placeholder exactly one segment; a request whose path or ids break that or
+the policy grammar (D-67, D-68, D-69) is unmappable, and an unmappable write
+is refused — never canonicalised. A request the mapping does not know is
+refused if it can change anything: every websocket type and every HTTP method
+other than GET counts as mutating unless a row says otherwise (E-9); an
+unmapped GET is allowed until phase 3 (the gate makes it a build failure
+first).
 
 **Command layer (preview parity).** A write command computes its whole plan —
 every resource every request of the confirmed run will touch, follow-up writes
 included (the orphan registry remove after a delete, `script apply`'s
-`script.reload`, `ent rename`'s reference rewrite) — and checks it **in the
+`script.reload`, `ent rename`'s reference rewrite, a delete's registry
+cascade enumerated as a deliberate superset, D-76) — and checks it **in the
 preview**, before rendering, and again under `--confirm` before the first
 write. A denied write is denied in the dry run and in the confirmed run, with
-the same rule named (H-2's pole, applied to the policy). Any denial in the plan
-refuses the whole command (E-7). The request layer then never refuses a
-confirmed write that the command layer allowed; when it does, the command
-layer's plan was wrong, and the refusal is an error that names what was already
-written — never a log line.
+the same rule named (H-2's pole, applied to the policy). A denied dry run
+records no confirm witness, so a `--confirm` that follows it is refused by the
+confirm guard first, as today (D-80); parity is asserted with a witness
+present. A passing preview promises only that the same policy, registry and
+reach allow the confirmed run: `where:` is live, the reach is recomputed and
+the file re-read, so `--confirm` may still be refused, and its refusal says
+the preview had passed (D-80). Any denial in the plan refuses the whole
+command (E-7). The request layer then never refuses a confirmed write that the
+command layer allowed; when it does, the command layer's plan was wrong, and
+the refusal is an error that names what was already written — never a log
+line. The write commands are derived, never hand-listed: every `--confirm`
+command, and every entrypoint that reaches a mapped write request or a
+`system:cache` write without one (D-80).
 
-**The pole.** Fail closed: unmapped is denied, unparseable is denied, an
-unanswerable question (Home Assistant unreachable while computing a service
-call's reach) is denied. Over-deny is allowed, under-deny is not (D-59).
+**The pole.** Fail closed, while a profile is in effect: an unmapped mutating
+request is denied (an unmapped GET is allowed until phase 3), unparseable is
+denied, an unanswerable question (Home Assistant unreachable, or answering
+with an error, while computing a service call's reach) is denied. Over-deny is
+allowed, under-deny is not (D-59).
 
 **What this law does not claim.** It does not make reads enforced: phase 2 maps
 every read with verb `read` and enforces none (D-54, phase 3). It does not
-model what Home Assistant does server-side after a request it was allowed to
-send — a deleted label stripped from its holders, the companion's implicit
-domain reload, a running script doing what it does (`SPEC-permissions.md` §8).
-And it holds against mistakes, not intent: the token in `.env` can do
-everything (D-51).
+model what Home Assistant does server-side beyond what hactl can enumerate
+from the registries (D-76) — the companion's implicit domain reload, a running
+script doing what it does (`SPEC-permissions.md` §8). It does not close the
+window between `ref replace`'s checked dry run and its confirmed write: a file
+that starts matching in between — a file change between preview and confirm,
+two accidents — is written unchecked and reported after the fact, exit 1,
+listed in `written` (D-77). It does not cross-check typed writes against the
+file they land in, nor file writes against typed entries the change path
+cannot name (D-77, phase 4). And it holds against mistakes, not intent: the
+token in `.env` can do everything (D-51).
 
 **Planned enforcement (draft names, to be watched to fail before they are
 cited below):**
 
 - `TestPolicySurfaceIsClosed` over `dev/surfaces/policy.manifest`: the request
   set derived from the source (every `sendCommand` type and direct
-  `WriteJSON`; every `haapi.Client` path; every operation of the vendored
-  companion spec, plus a scan that no `companion.Client` method builds a path
-  outside it) and the command set derived from the live cobra tree (every
-  `--confirm` command plus the listed writers without one). Unclassified,
-  stale and phantom rows fail as on every surface.
+  `WriteJSON`; every `haapi.Client` path; every companion operation
+  `companion.Client` sends (`companion.Endpoints`), plus a scan that no
+  `companion.Client` method builds a path outside them) and the command set
+  derived from the live cobra tree (every `--confirm` command, plus every
+  entrypoint that reaches a mapped write request or a `system:cache` write
+  without one — derived, never listed). Unclassified, stale and phantom rows
+  fail as on every surface.
 - `TestEveryWriteRequestHasAMapping`: table-driven, one case per mapped write
-  row — the request in, the `(resource, verb)` set out.
-- `TestUnmappedMutatingRequestIsRefused`: a websocket type and a POST no row
-  names are refused at the hook, with nothing sent.
+  row — the request in, the `(resource, verb)` set out; plus the whole-path
+  vectors (a dot segment, `%2F`, a placeholder absorbing two segments →
+  refused).
+- `TestUnmappedMutatingRequestIsRefused`: under a named profile, a websocket
+  type and a POST no row names are refused at the hook, with nothing sent;
+  with no profile the same requests are sent unchanged (D-58).
 - `TestPreviewRefusesWhatConfirmRefuses`: walks the cobra tree's `--confirm`
-  commands under a deny-everything-written profile; each preview exits 1 naming
-  the rule, each `--confirm` exits 1 with the same rule and nothing written.
-- `TestBrokenPolicyRefusesEveryCommand`: walks the cobra tree with a broken
-  `policy.yaml`; every command except the exempt list refuses (D-60).
+  commands under a deny-everything-written profile, with a confirm witness
+  present; each preview exits 1 naming the rule, each `--confirm` exits 1 with
+  the same rule and nothing written.
+- `TestEveryConfirmedRequestIsInThePlan`: each `--confirm` command under an
+  allow-all profile against a recording transport; the request layer's
+  `(resource, verb)` verdicts are a subset of the command's plan — the test
+  that catches a plan one resource short, which a deny-everything profile
+  cannot.
+- `TestCompanionRequestGetsOneVerdictOnEveryTransport`: a companion write on
+  the direct URL and under Ingress yields exactly one verdict and one audit
+  line each.
+- `TestBrokenPolicyRefusesEveryCommand`: walks the cobra tree and the MCP tool
+  list with a broken `policy.yaml`; every command except D-60's exempt list
+  (one table, CLI and MCP alike) refuses.
 - Docker tier (`make test-int`): one test per verb, plus E-1 fan-out
   (area/label/group targets against `extract_from_target`) and E-7 bulk
   (`ref replace` with one denied file writes nothing).
@@ -2230,7 +2274,9 @@ cited below):**
 websocket command type to `haapi` without a mapping row — the gate must go red
 as unclassified, and at runtime the request must be refused; delete one
 command's plan check — `TestPreviewRefusesWhatConfirmRefuses` must go red on
-exactly that command.
+exactly that command; drop one resource from one command's plan (the orphan
+registry remove, `script.reload`) — `TestEveryConfirmedRequestIsInThePlan`
+must go red on exactly that command.
 
 - Enforced by: nothing yet — DRAFT. Phase 2 builds the hook, the mapping, the
   gate and the tests named above, and lists here only those that were watched

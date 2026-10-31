@@ -224,39 +224,72 @@ policy_denied: would replace references — refused by policy, nothing was writt
   profile: agent (selected by active)
 ```
 
-The exit code is `1`. With `--json` you get the same as one object, with an
-`"error": "policy_denied"` and a `denied` list. If one of 40 files is denied,
-none of the 40 is written.
+The exit code is `1`. With `--json` you get the same as one object: the usual
+preview object with `"ok": false`, `"error": "policy_denied"`, and the denied
+list under `details.policy.denied`. If one of 40 files is denied, none of the
+40 is written. (One narrow gap: a file that starts containing the old name in
+the instant between `ref replace`'s own check and its write is written
+unchecked; hactl then exits 1 and names that file.)
+
+A preview that passed is not a promise forever. `--confirm` checks again, with
+the policy file as it is then, the areas and labels as they are then, and the
+entities a service call reaches then. If you edited the policy, moved a lamp
+or relabelled something in between, `--confirm` can still be refused — and it
+says the preview had passed.
 
 A few things worth knowing:
 
 - **Service calls are checked by what they reach.** `svc call light.turn_on`
   with an area, a label or a group as target needs `control` on every light it
-  would actually switch; hactl asks Home Assistant for that set. The service
-  itself always needs `control` too (`"service:light.*": [control]`), also for
-  services without any target such as `homeassistant.restart`. If Home
+  would actually switch; hactl asks Home Assistant for that set. Services that
+  are not one domain's own — `homeassistant.turn_on`, or an integration's
+  service that acts on, say, your locks — are checked against *everything* the
+  target names, in every domain, and `entity_id: all` then means every entity
+  you have. `homeassistant.turn_on` also needs each domain's own service
+  (`light.turn_on`, `script.turn_on`, …), and anything that starts a script
+  needs that script's `run`. Entity ids anywhere in `--data` count too, so
+  `scene.apply` with a lock in it needs `control` on the lock. If Home
   Assistant cannot tell hactl what a call would reach, the call is refused.
+- **The service itself is always checked**, also for services without any
+  target such as `homeassistant.restart` — even when every entity is allowed.
+  With `default: deny`, allow the services you want
+  (`"service:light.*": [control]`); without it, a service no deny matches is
+  allowed.
 - **Commands that do more than one thing need every part.** `script apply`
   also reloads scripts (`service:script.reload`). `script run` needs
   `script:<id>/run` and the service `script.turn_on`. Deleting an automation,
   script, helper or template also removes its entity from the registry, so it
-  needs `delete` on that entity as well.
+  needs `delete` on that entity as well. Deleting a label, an area or a floor
+  changes everything that holds it, so it needs `edit` on each holder's label
+  or area field (or on the areas of a floor); deleting an integration's config
+  entry needs `delete` on every device and entity registered to it. hactl
+  lists these from the registries, and may check a little more than Home
+  Assistant actually changes — never less.
 - **Renaming needs both names.** `ent rename a b` needs `edit` on `a`'s
-  `registry/entity_id` and `create` on `b`, plus every file and dashboard the
-  rename rewrites. `auto apply` with a file whose `id:` differs from the target
-  renames the automation, so it needs `create` on the new id.
+  `registry/entity_id` and `create` on `b`, plus every file, automation,
+  script, template and dashboard the rename rewrites. `auto apply` with a file
+  whose `id:` differs from the target renames the automation, so it needs
+  `create` on the new id; a file with no `id:` at all is refused. `ref replace`
+  that rewrites an automation's `id:` is a rename too.
 - **Partly denied means denied.** If an entity is allowed but its
   `registry/entity_id` is denied, a command that would change the whole entity
   is refused. hactl writes at the finest level it can — `ent set-label` checks
-  only `registry/labels`, `dash save` checks each changed view — so this only
-  bites when a command really touches the denied part.
+  only `registry/labels`, `dash save` checks each changed view. But a change
+  hactl can only address as a whole is refused by any denied part, even one it
+  does not touch: with one view of a dashboard denied, changing the
+  dashboard's title is refused, and with one block of a file denied,
+  `ref replace` cannot edit that file at all.
+- **Looking at a config flow counts as stepping it.** Asking Home Assistant
+  for a flow's current state runs its current step, which can finish the flow,
+  so `config flow-inspect` is checked like `config flow-step`.
 - **New areas, floors, labels and integrations.** Home Assistant picks their id
   itself, so hactl cannot know it in advance. It checks `create` on *every* id
   of that kind: allow `"area:*": [create]`, and a deny on any one area's
-  `create` blocks creating areas at all.
+  `create` blocks creating areas at all. The refusal names `area:*`.
 - **Some side effects are not checked**, because they happen inside Home
-  Assistant after an allowed write: deleting a label also removes it from every
-  entity, and running a script lets that script do whatever it does.
+  Assistant after an allowed write and hactl cannot list them in advance:
+  the companion reloads what it wrote, and running a script lets that script
+  do whatever it does.
 
 **Over MCP**, `hactl mcp` without `--allow-writes` still refuses every write
 first; with `--allow-writes`, the policy decides each one as on the command
@@ -265,7 +298,8 @@ line.
 **The audit log.** While a policy is in effect, every write check — allowed or
 denied, preview or real — is appended to `cache/policy-audit.log` in your
 instance directory, one JSON line each, with the rule that decided it. Without
-a policy there is no log.
+a policy there is no log. If hactl cannot write the log, it refuses the write
+rather than act unrecorded.
 
 ## A broken file is refused
 
@@ -282,10 +316,10 @@ policy file is broken — hactl refuses to answer from it (D-60):
 ```
 
 `policy show` and `policy lint` still run and list every problem. **Every
-other command refuses until the file is fixed**, reads included, except
-`version`, `help`, `completion` and `rtfm`, which read no instance. An MCP
-server keeps running and refuses each call the same way; it reads the file
-again on every call, so fixing it is enough.
+other command refuses until the file is fixed**, reads and `setup` included,
+except `version`, `help`, `completion` and `rtfm`, which read no instance. An
+MCP server keeps running and refuses each call the same way, with the same
+exceptions; it reads the file again on every call, so fixing it is enough.
 
 The same goes for invisible characters anywhere in an id, a sub-resource or a
 `where:` value: any kind of space other than the plain ASCII space (a no-break
@@ -300,4 +334,4 @@ hactl never writes `policy.yaml`. There is no command for it. The file is yours.
 
 For the exact rules, every `--json` field and edge cases, see the
 [manual](manual.md#policy-permission-guardrail). For why each choice was made,
-see `docs/decisions.md`, rows D-51 to D-69.
+see `docs/decisions.md`, rows D-51 to D-82.
