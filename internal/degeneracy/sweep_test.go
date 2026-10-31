@@ -98,6 +98,7 @@ var unidentifiedWireStructs = map[string]string{
 	"policyShowWhere":     "hactl's own --json output shape for `policy show`",
 	"policyProblem":       "hactl's own --json output shape for `policy show`",
 	"policyCheckDoc":      "hactl's own --json output shape for `policy check`",
+	"policyPartialDeny":   "hactl's own --json output shape for `policy check`",
 	"policyLintDoc":       "hactl's own --json output shape for `policy lint`",
 	"policyLintFinding":   "hactl's own --json output shape for `policy lint`",
 	"policyLintUnchecked": "hactl's own --json output shape for `policy lint`",

@@ -30,7 +30,6 @@ func codes(rep LintReport) []string {
 	return out
 }
 
-
 var liveFixture = fakeInventory{ids: map[Kind][]string{
 	KindEntity:     {"lock.front_door", "light.sofa", "device_tracker.jan", "sensor.t"},
 	KindAutomation: {"pg_heating", "1700000000000"},
@@ -127,8 +126,8 @@ func TestLintUnchecked(t *testing.T) {
 // The order of findings is (line, code, profile, rule) — never map order.
 func TestLintOrderIsTotal(t *testing.T) {
 	content := "version: 1\nactive: z\nprofiles:\n" +
-		"  z:\n    deny:\n      \"entity:nope1\": [read]\n" +
-		"  a:\n    deny:\n      \"entity:nope2\": [read]\n"
+		"  z:\n    deny:\n      \"entity:x.nope1\": [read]\n" +
+		"  a:\n    deny:\n      \"entity:x.nope2\": [read]\n"
 	p := mustLoad(t, content)
 	for range 20 {
 		if got := codes(Lint(p, liveFixture)); !reflect.DeepEqual(got, []string{"no-match@z:6", "no-match@a:9"}) {

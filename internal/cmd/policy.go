@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -55,7 +59,9 @@ var policyCheckCmd = &cobra.Command{
 	Long: "Evaluate one resource and one verb (read, control, edit, create, delete) under the effective " +
 		"profile and name the rule that decided. The exit code is the verdict: 0 allowed, 1 denied (with the " +
 		"verdict on stdout). An invalid resource or verb, an unknown --as profile or a broken file is refused: " +
-		"exit 1, nothing on stdout. Contacts Home Assistant only to evaluate a where: selector.",
+		"exit 1, nothing on stdout. A partial verdict (a deny covers a part of the resource) denies a write verb " +
+		"and allows read, listing the denied parts. Contacts Home Assistant only when a where: selector can " +
+		"still change the verdict.",
 	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runPolicyCheck(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], flagPolicyAs, cmd.Flags().Changed("as"))
@@ -276,6 +282,15 @@ type policyCheckDoc struct {
 	Level      string   `json:"level"`
 	Enforced   bool     `json:"enforced"`
 	Notes      []string `json:"notes"`
+	// Partial and PartialDenies are D-66's partial verdict: the resource is
+	// allowed but a deny covers a strict descendant of it.
+	Partial       bool                `json:"partial"`
+	PartialDenies []policyPartialDeny `json:"partial_denies"`
+}
+
+type policyPartialDeny struct {
+	Rule string `json:"rule"`
+	Line int    `json:"line"`
 }
 
 // policyDeniedError carries a denial's exit code. The verdict is already on
@@ -318,6 +333,10 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
 		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
 		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: false, Notes: verdict.Notes,
+		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{},
+	}
+	for _, d := range verdict.PartialDenies {
+		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
 	}
 	if flagJSON {
 		markStructuredOutput()
@@ -337,6 +356,9 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 			_, _ = fmt.Fprintf(w, "rule: %s (line %d)\n", doc.Rule, doc.Line)
 		} else {
 			_, _ = fmt.Fprintf(w, "rule: %s\n", doc.Rule)
+		}
+		for _, d := range doc.PartialDenies {
+			_, _ = fmt.Fprintf(w, "partial: %s (line %d)\n", d.Rule, d.Line)
 		}
 		profile := doc.Profile
 		if profile == "" {
@@ -492,8 +514,11 @@ type policyLintFinding struct {
 }
 
 type policyLintUnchecked struct {
-	Kind   string `json:"kind"`
-	Reason string `json:"reason"`
+	Kind    string `json:"kind"`
+	Reason  string `json:"reason"`
+	Profile string `json:"profile"`
+	Rule    string `json:"rule"`
+	Line    int    `json:"line"`
 }
 
 type policyLintDoc struct {
@@ -510,7 +535,7 @@ type policyLintDoc struct {
 type policyLintError struct{ findings, unchecked int }
 
 func (e *policyLintError) Error() string {
-	return fmt.Sprintf("policy lint: %d finding(s), %d unchecked kind(s)", e.findings, e.unchecked)
+	return fmt.Sprintf("policy lint: %d finding(s), %d unchecked", e.findings, e.unchecked)
 }
 
 func (e *policyLintError) ExitCode() int { return 1 }
@@ -544,7 +569,9 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 			doc.Findings = append(doc.Findings, policyLintFinding{Code: f.Code, Profile: f.Profile, Rule: f.Rule, Line: f.Line, Message: f.Message})
 		}
 		for _, u := range rep.Unchecked {
-			doc.Unchecked = append(doc.Unchecked, policyLintUnchecked{Kind: string(u.Kind), Reason: u.Reason})
+			doc.Unchecked = append(doc.Unchecked, policyLintUnchecked{
+				Kind: string(u.Kind), Reason: u.Reason, Profile: u.Profile, Rule: u.Rule, Line: u.Line,
+			})
 		}
 	}
 
@@ -568,6 +595,20 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, allowPartial bool) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "file: %s\n", doc.File)
+	if !doc.Valid {
+		// A broken file's findings are its problems, each named as
+		// `<file>:<line>: <message>` exactly as policy show and the refusal
+		// name them (D-60).
+		_, _ = fmt.Fprintln(w, "BROKEN: hactl refuses to read this file as a policy (D-60); no live checks ran. Fix every problem below:")
+		for _, f := range doc.Findings {
+			loc := doc.File
+			if f.Line > 0 {
+				loc += ":" + strconv.Itoa(f.Line)
+			}
+			_, _ = fmt.Fprintf(w, "  %s  %s: %s\n", f.Code, loc, f.Message)
+		}
+		return
+	}
 	if len(doc.Findings) == 0 {
 		_, _ = fmt.Fprintln(w, "findings: none")
 	} else {
@@ -588,30 +629,55 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, allowPartial bool) {
 		if allowPartial {
 			suffix = " — accepted by --allow-partial"
 		}
-		_, _ = fmt.Fprintf(w, "unchecked: %d kind(s)%s\n", len(doc.Unchecked), suffix)
+		_, _ = fmt.Fprintf(w, "unchecked: %d%s\n", len(doc.Unchecked), suffix)
 		for _, u := range doc.Unchecked {
-			_, _ = fmt.Fprintf(w, "  %s: %s\n", u.Kind, u.Reason)
+			if u.Rule == "" {
+				_, _ = fmt.Fprintf(w, "  %s: %s\n", u.Kind, u.Reason)
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "  %s: %s — line %d profile %s %s\n", u.Kind, u.Reason, u.Line, u.Profile, u.Rule)
 		}
 	}
-	if doc.Valid && len(doc.Findings) == 0 && len(doc.Unchecked) == 0 {
+	if len(doc.Findings) == 0 && len(doc.Unchecked) == 0 {
 		_, _ = fmt.Fprintln(w, "clean")
 	}
 }
 
-// haInventory lists live ids for lint (manual "policy lint"): each kind is
-// fetched at most once, on demand, and a failure makes only that kind
+// haInventory lists live ids for lint (manual "policy lint"). Every
+// Home Assistant source is fetched at most once, on demand: the states once
+// (entity ids, automation config ids, script ids and attributes all come from
+// it), the WebSocket connection once. After the first transport failure —
+// refused, timed out — it stops asking: every later Home Assistant-backed
+// question answers with that same error, so a stalled host costs one
+// --timeout, not one per kind. Any other failure makes only its own kind
 // unchecked.
 type haInventory struct {
-	ctx    context.Context
-	cfg    *config.Config
+	ctx context.Context
+	cfg *config.Config
+
+	// down is the first transport failure; once set, nothing asks HA again.
+	down error
+
+	statesDone bool
+	states     []statesEnvelope
+	statesErr  error
+
 	ws     *haapi.WSClient
+	wsDone bool
 	wsErr  error
-	wsOnce sync.Once
 }
+
+var _ policy.AttributeInventory = (*haInventory)(nil)
 
 // IDs implements policy.Inventory.
 func (h *haInventory) IDs(kind policy.Kind) ([]string, error) {
 	switch kind {
+	case policy.KindSystem:
+		for _, s := range policy.KindSpecs() {
+			if s.Kind == policy.KindSystem {
+				return s.IDs, nil
+			}
+		}
 	case policy.KindEntity:
 		return h.entityIDs()
 	case policy.KindDevice, policy.KindArea, policy.KindFloor, policy.KindLabel, policy.KindDashboard:
@@ -619,53 +685,126 @@ func (h *haInventory) IDs(kind policy.Kind) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		return registryIDs(h.ctx, ws, kind)
+		ids, err := registryIDs(h.ctx, ws, kind)
+		return ids, h.note(err)
 	case policy.KindAutomation:
-		// The policy's automation id is the config id (D-1, the kinds table),
-		// so that is what a pattern is checked against — not the entity
-		// object id `auto ls` prints, which differs for every UI-authored
-		// automation. An automation without a config id cannot be addressed.
-		autos, err := fetchAutomations(h.ctx, h.client())
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(autos))
-		for _, a := range autos {
-			if a.Attributes.ID != "" {
-				ids = append(ids, a.Attributes.ID)
-			}
-		}
-		return ids, nil
+		return h.automationIDs()
 	case policy.KindScript:
-		states, err := fetchDomainStates(h.ctx, h.client(), "script.")
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(states))
-		for _, s := range states {
-			ids = append(ids, strings.TrimPrefix(s.EntityID, "script."))
-		}
-		return ids, nil
+		return h.scriptIDs()
 	case policy.KindService:
-		domains, err := h.client().ServiceList(h.ctx)
-		if err != nil {
-			return nil, err
-		}
-		var ids []string
-		for _, d := range domains {
-			for _, name := range sortedKeys(d.Services) {
-				ids = append(ids, d.Domain+"."+name)
-			}
-		}
-		return ids, nil
-	case policy.KindSystem:
-		for _, s := range policy.KindSpecs() {
-			if s.Kind == policy.KindSystem {
-				return s.IDs, nil
-			}
-		}
+		return h.serviceIDs()
 	}
 	return nil, policy.ErrNotEnumerated
+}
+
+// Attributes implements policy.AttributeInventory from the one states fetch.
+func (h *haInventory) Attributes() (map[string][]string, error) {
+	states, err := h.allStates()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string, len(states))
+	for _, s := range states {
+		var attrs map[string]json.RawMessage
+		if decErr := decodeStateAttributes(s, &attrs); decErr != nil {
+			return nil, fmt.Errorf("parsing states: %w", decErr)
+		}
+		out[s.EntityID] = sortedKeys(attrs)
+	}
+	return out, nil
+}
+
+// automationIDs are the config ids: the policy's automation id is the config
+// id (D-1, the kinds table), so that is what a pattern is checked against —
+// not the entity object id `auto ls` prints, which differs for every
+// UI-authored automation. An automation without a config id cannot be
+// addressed.
+func (h *haInventory) automationIDs() ([]string, error) {
+	states, err := h.allStates()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, s := range states {
+		if !strings.HasPrefix(s.EntityID, "automation.") {
+			continue
+		}
+		var attrs struct {
+			ID string `json:"id"`
+		}
+		if decErr := decodeStateAttributes(s, &attrs); decErr != nil {
+			return nil, fmt.Errorf("parsing states: %w", decErr)
+		}
+		if attrs.ID != "" {
+			ids = append(ids, attrs.ID)
+		}
+	}
+	return ids, nil
+}
+
+// scriptIDs are the object ids `script ls` prints.
+func (h *haInventory) scriptIDs() ([]string, error) {
+	states, err := h.allStates()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, s := range states {
+		if id, ok := strings.CutPrefix(s.EntityID, "script."); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// serviceIDs are the `<domain>.<service>` pairs Home Assistant reports.
+func (h *haInventory) serviceIDs() ([]string, error) {
+	if h.down != nil {
+		return nil, h.down
+	}
+	domains, err := h.client().ServiceList(h.ctx)
+	if err != nil {
+		return nil, h.note(err)
+	}
+	var ids []string
+	for _, d := range domains {
+		for _, name := range sortedKeys(d.Services) {
+			ids = append(ids, d.Domain+"."+name)
+		}
+	}
+	return ids, nil
+}
+
+// note records err as the inventory's transport failure when it is one, and
+// returns it unchanged.
+func (h *haInventory) note(err error) error {
+	if err != nil && h.down == nil && isTransportFailure(err) {
+		h.down = err
+	}
+	return err
+}
+
+// isTransportFailure reports whether err means Home Assistant could not be
+// reached at all — refused, timed out, reset — rather than that it answered
+// with an error for one request.
+func isTransportFailure(err error) bool {
+	var netErr net.Error
+	var urlErr *url.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.As(err, &netErr) || errors.As(err, &urlErr)
+}
+
+// allStates fetches /api/states once.
+func (h *haInventory) allStates() ([]statesEnvelope, error) {
+	if !h.statesDone {
+		if h.down != nil {
+			return nil, h.down
+		}
+		h.statesDone = true
+		h.states, h.statesErr = fetchDomainStates(h.ctx, h.client(), "")
+		h.statesErr = h.note(h.statesErr)
+	}
+	return h.states, h.statesErr
 }
 
 // client builds a REST client per call rather than holding one: a
@@ -678,14 +817,18 @@ func (h *haInventory) client() *haapi.Client {
 }
 
 func (h *haInventory) wsClient() (*haapi.WSClient, error) {
-	h.wsOnce.Do(func() {
+	if !h.wsDone {
+		if h.down != nil {
+			return nil, h.down
+		}
+		h.wsDone = true
 		ws := haapi.NewWSClient(h.cfg.URL, h.cfg.Token)
 		if err := ws.Connect(h.ctx); err != nil {
-			h.wsErr = fmt.Errorf("connecting to HA: %w", err)
-			return
+			h.wsErr = h.note(fmt.Errorf("connecting to HA: %w", err))
+		} else {
+			h.ws = ws
 		}
-		h.ws = ws
-	})
+	}
 	return h.ws, h.wsErr
 }
 
@@ -696,7 +839,7 @@ func (h *haInventory) close() {
 }
 
 func (h *haInventory) entityIDs() ([]string, error) {
-	states, err := fetchDomainStates(h.ctx, h.client(), "")
+	states, err := h.allStates()
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +849,7 @@ func (h *haInventory) entityIDs() ([]string, error) {
 	}
 	reg, err := ws.EntityRegistryList(h.ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching entity registry: %w", err)
+		return nil, h.note(fmt.Errorf("fetching entity registry: %w", err))
 	}
 	ids := make([]string, 0, len(states)+len(reg))
 	for _, s := range states {

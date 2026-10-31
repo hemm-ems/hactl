@@ -4,7 +4,8 @@
 // `light.*` means is a policy that lies about what it grants.
 //
 // The engine is deliberately small: `*` is any run of characters (including
-// none), `?` exactly one byte, every other byte is literal. There is no
+// none), `?` exactly one character — one Unicode code point, never one byte,
+// so `k?che` matches `küche` — and every other character is literal. There is no
 // character class, no escape and no brace expansion. Case is ignored (D-2).
 //
 // Two entry points share the engine:
@@ -19,7 +20,10 @@
 // policy allow must never err towards more rights.
 package glob
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Match reports whether s matches pattern, case-insensitively, anchored at both
 // ends.
@@ -45,7 +49,10 @@ func MatchQualified(s, pattern string) bool {
 // HasWildcard reports whether pattern contains a glob metacharacter.
 func HasWildcard(pattern string) bool { return strings.ContainsAny(pattern, "*?") }
 
-// match is the engine. Both arguments are already case-folded.
+// match is the engine. Both arguments are already case-folded. It steps
+// through s one rune at a time: `?` consumes one code point and `*` only ever
+// splits s at a rune boundary, so a multi-byte character is never half
+// matched. Invalid UTF-8 decodes as one-byte runes and still steps forward.
 func match(s, pattern string) bool {
 	for len(pattern) > 0 {
 		switch pattern[0] {
@@ -57,24 +64,27 @@ func match(s, pattern string) bool {
 			if len(pattern) == 0 {
 				return true
 			}
-			for i := range len(s) + 1 {
+			for i := range s { // i walks rune starts
 				if match(s[i:], pattern) {
 					return true
 				}
 			}
-			return false
+			return match("", pattern)
 		case '?':
 			if len(s) == 0 {
 				return false
 			}
-			s = s[1:]
+			_, n := utf8.DecodeRuneInString(s)
+			s = s[n:]
 			pattern = pattern[1:]
 		default:
-			if len(s) == 0 || s[0] != pattern[0] {
+			pr, pn := utf8.DecodeRuneInString(pattern)
+			sr, sn := utf8.DecodeRuneInString(s)
+			if len(s) == 0 || sr != pr || sn != pn {
 				return false
 			}
-			s = s[1:]
-			pattern = pattern[1:]
+			s = s[sn:]
+			pattern = pattern[pn:]
 		}
 	}
 	return len(s) == 0

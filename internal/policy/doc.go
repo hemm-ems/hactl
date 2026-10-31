@@ -24,7 +24,10 @@
 // the verbs, evaluation, matching, profile selection, the broken-file and
 // no-file behaviour, and the output of the three commands. Decisions:
 // D-51..D-58, D-60 (a broken file fails closed), D-61 (profile without
-// `active:`), D-62 (only the file selects the profile; `--as` is a what-if).
+// `active:`), D-62 (only the file selects the profile; `--as` is a what-if),
+// D-63 (the full id only), D-64 (a pinned MCP server keeps its instance),
+// D-65 (lint below the id), D-66 (the partial verdict), D-67 (file ids),
+// D-68 (the id charset).
 //
 // # The shared glob (D-2, D-28)
 //
@@ -34,27 +37,21 @@
 // package, with two entry points over one engine:
 //
 //   - glob.Match(s, pattern) — case-insensitive (D-2), anchored at both ends,
-//     `*` any run of characters, `?` exactly one character, every other byte
-//     literal. A pattern without a wildcard is an exact (case-insensitive)
-//     comparison.
+//     `*` any run of characters, `?` exactly one character (one code point,
+//     never one byte), every other character literal. A pattern without a
+//     wildcard is an exact (case-insensitive) comparison.
 //   - glob.MatchQualified(s, pattern) — Match at s, or at the part of s after
 //     its first dot (D-28's second anchor, for qualified `<domain>.<name>`
-//     identifiers).
+//     identifiers). For filters only.
 //
-// internal/cmd's `matchPattern` keeps its filter-only convenience on top — a
-// pattern without a wildcard is a substring test — and calls MatchQualified for
-// the glob case. The policy evaluator never uses the substring form: an allow
-// on `entity:light.kitchen` must not grant `light.kitchen_2`, and the
-// permissive direction D-28 accepts for a filter is the dangerous direction for
-// an allow. The policy uses MatchQualified for the id of the two kinds whose ids
-// are qualified (`entity`, `service`) and Match for every other id and every
-// sub-resource segment, segment by segment (see the manual, "Matching").
-//
-// Undecided, and recorded here rather than assumed: MatchQualified applies to
-// a wildcard-free entity or service pattern too, so a domain-less literal
-// (`entity:front_door`) matches that name in every domain (`lock.front_door`,
-// `cover.front_door`). Whether such a literal should match only the full id,
-// or be a broken file, is an open decision; the behaviour is pinned by
-// TestUnqualifiedLiteralMatchesTheNameInEveryDomainPendingDecision so the
-// decision visibly changes it.
+// internal/cmd's `matchPattern` keeps its filter-only conveniences on top — a
+// pattern without a wildcard is a substring test, and the glob case calls
+// MatchQualified. The policy evaluator uses neither: it calls glob.Match for
+// every id and every sub-resource segment, segment by segment (see the
+// manual, "Matching"). A filter may err towards more rows; an allow may not
+// err towards more rights. So `entity:kitchen*` matches no entity (every
+// entity id starts with its domain), the cross-domain form is
+// `entity:*.front_door`, and an entity or service pattern id with neither a
+// `.` nor a wildcard (`entity:front_door`) can never match and is a broken
+// file (D-63).
 package policy

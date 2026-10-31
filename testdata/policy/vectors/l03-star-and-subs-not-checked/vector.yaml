@@ -1,5 +1,5 @@
 {
-  "clause": "Lint: the bare `*` is never no-match; sub-resource segments are not checked live (only the id part)",
+  "clause": "Lint: the bare `*` is never no-match; an `attr/<name>` rule is checked against live attributes (D-65), so an inventory that cannot list attributes leaves that rule unchecked (`attributes not enumerated`), never clean",
   "lint": {
     "inventory": {
       "entity": [
@@ -27,6 +27,11 @@
         "line": 10
       }
     ],
-    "unchecked": []
+    "unchecked": [
+      {
+        "kind": "entity",
+        "reason": "attributes not enumerated"
+      }
+    ]
   }
 }

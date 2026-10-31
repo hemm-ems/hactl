@@ -81,7 +81,8 @@ type profile struct {
 	name  string
 	line  int
 	deflt Effect
-	// rules: deny rules first, then allow rules, each by (Line, Pattern).
+	// rules: deny rules first, then allow rules, each in file order (Line,
+	// then Column).
 	rules []Rule
 }
 
@@ -93,7 +94,9 @@ type profile struct {
 //   - A `policy.yml` (wrong extension) beside or instead of policy.yaml: a
 //     *LoadError — a policy written under the wrong name must not silently be
 //     no policy.
-//   - A path that exists but is not a readable regular file: an error.
+//   - A policy.yaml or policy.yml that exists but is not a readable regular
+//     file — a dangling symlink, a directory, no permission: a *LoadError
+//     naming the path, never "no policy file" (D-60).
 //   - A file that is not a valid policy (manual "Policy file format"): a
 //     *LoadError listing every problem found, each with its 1-based line
 //     (D-60). A YAML syntax error is reported as the one problem it is.
@@ -201,8 +204,8 @@ func (p *Policy) Default() Effect {
 }
 
 // Rules returns the rules of the profile this view evaluates, deny rules
-// first, then allow rules, each group ordered by Line, then Pattern. Empty for
-// an AllowAll view.
+// first, then allow rules, each group in file order (Line, then Column).
+// Empty for an AllowAll view.
 func (p *Policy) Rules() []Rule {
 	if p.view == nil {
 		return []Rule{}
@@ -255,10 +258,13 @@ type Rule struct {
 	Where *Where
 	// Line is the 1-based line of the pattern key in the file.
 	Line int
+	// Column is the 1-based column of the pattern key. Two rules share a line
+	// only in a flow mapping (`deny: {"entity:lock.*": [write], "entity:*":
+	// [control]}`); the leftmost is first in the file (D-52).
+	Column int
 
 	addr address
 }
-
 
 // Text renders the rule as a Verdict names it and `policy show` lists it:
 //
@@ -274,6 +280,15 @@ func (r Rule) Text() string {
 		s += " where " + r.Where.Text()
 	}
 	return s
+}
+
+// before is file order: line, then column — a total order over one file's
+// rules, so no answer depends on map order (H-16).
+func (r Rule) before(o Rule) bool {
+	if r.Line != o.Line {
+		return r.Line < o.Line
+	}
+	return r.Column < o.Column
 }
 
 // covers reports whether the rule applies to verb v on resource r, before
@@ -347,13 +362,29 @@ type Verdict struct {
 	Level string
 	// WhatIf is set when the verdict came from an As view.
 	WhatIf bool
-	// Notes record, in a fixed order, every narrowed allow that matched the
-	// resource and verb but whose `where:` could not be evaluated — no Live,
-	// or a Live error — and therefore did NOT grant (fail closed):
+	// Notes record every narrowed allow whose `where:` was tried and could
+	// not be evaluated — no Live, or a Live error — and therefore did NOT
+	// grant (fail closed):
 	// `where not evaluated for allow "entity:light.*" [control]: <reason>`.
-	// Ordered by the rule's Line, then Pattern. Empty, never nil-vs-empty
-	// significant.
+	// In the order tried, which is file order (Line, then Column). A selector
+	// that was never tried — a deny decided, or an earlier allow already
+	// granted — is not evaluated and not noted. Empty, never nil.
 	Notes []string
+	// Partial is set when the resource itself is allowed but a deny of the
+	// same profile, for the same verb, covers a strict descendant of it
+	// (D-66). For a write verb the verdict is then denied and Rule/Line name
+	// the first descendant deny; for Read it stays allowed, Rule/Line name
+	// what allowed it, and PartialDenies are the parts a read must mask.
+	Partial bool
+	// PartialDenies are the descendant denies of a Partial verdict, in file
+	// order (Line, then Column). Empty, never nil.
+	PartialDenies []RuleRef
+}
+
+// RuleRef names one rule: its Text() and its line.
+type RuleRef struct {
+	Rule string
+	Line int
 }
 
 // Ref is a registry object a `where:` selector compares against: its id and
@@ -385,25 +416,32 @@ type Live interface {
 }
 
 // Decide answers whether verb v on resource r is allowed under this view's
-// profile, by D-52:
+// profile, by D-52 and D-66:
 //
-//  1. AllowAll view: allowed, Rule RuleNoFile or RuleImplicit.
+//  1. AllowAll view: allowed, Rule RuleNoFile or RuleImplicit, never partial.
 //  2. A deny rule matching r for v: denied, that rule decides.
-//  3. Else an allow rule matching r for v whose `where:` (if any) holds:
-//     allowed, that rule decides.
+//  3. Else the allow rules matching r for v, tried in file order: the first
+//     without a `where:`, or the first whose `where:` holds, grants and
+//     decides. A selector is evaluated only while it can still change the
+//     verdict or the rule named — none after an allow that already grants.
 //  4. Else the profile default: RuleDefaultDeny or RuleDefaultAllow.
+//  5. If 3 or 4 allowed r but a deny for v covers a strict descendant of r
+//     (same kind and id, one or more further sub-resource segments), the
+//     verdict is Partial: a write verb is denied, naming the first such deny;
+//     Read stays allowed and lists them.
 //
-// Rule order in the file carries no meaning. When several rules of the
-// deciding effect match, the one named is the first by (Line, Pattern) — a
-// total order, so the answer never depends on map order (H-16). Matching is
-// the manual's "Matching" section: kind equal (or the pattern `*`), id by the
-// shared glob, a pattern's sub path a segment-wise prefix of r's (a parent
-// covers its children; an allow on a child grants only the child).
+// Rule order in the file carries no meaning for the verdict. When several
+// rules of the deciding effect match, the one named is the first in the file
+// (Line, then Column) — a total order, so the answer never depends on map
+// order (H-16). Matching is the manual's "Matching" section: kind equal (or
+// the pattern `*`), the full id by the shared glob (D-63), a pattern's sub
+// path a segment-wise prefix of r's (a parent covers its children; an allow
+// on a child grants only the child).
 //
 // Decide never errors and never panics: r is assumed valid (ParseResource's
 // output), and a live failure is a non-match recorded in Notes.
 func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
-	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}}
+	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
 	switch p.selection {
 	case SelectedByNoFile:
 		out.Allowed, out.Rule = true, RuleNoFile
@@ -415,8 +453,8 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 	pr := p.view
 	out.Profile = pr.name
 
-	// Rules are held deny-first, each group by (Line, Pattern): the first
-	// match of the deciding effect is the one named (H-16).
+	// Rules are held deny-first, each group in file order: the first match of
+	// the deciding effect is the one named (H-16).
 	for i := range pr.rules {
 		rule := &pr.rules[i]
 		if rule.Effect == Deny && rule.covers(r, v) {
@@ -440,19 +478,32 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 				continue
 			}
 		}
-		if granted == nil {
-			granted = rule
-		}
+		granted = rule
+		break
 	}
-	if granted != nil {
+	switch {
+	case granted != nil:
 		out.Allowed, out.Rule, out.Line = true, granted.Text(), granted.Line
-		return out
-	}
-	if pr.deflt == Deny {
+	case pr.deflt == Deny:
 		out.Rule = RuleDefaultDeny
 		return out
+	default:
+		out.Allowed, out.Rule = true, RuleDefaultAllow
 	}
-	out.Allowed, out.Rule = true, RuleDefaultAllow
+
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
+		}
+	}
+	if len(out.PartialDenies) > 0 {
+		out.Partial = true
+		if v != Read {
+			first := out.PartialDenies[0]
+			out.Allowed, out.Rule, out.Line = false, first.Rule, first.Line
+		}
+	}
 	return out
 }
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/hemm-ems/hactl/internal/mcpserver"
 	"github.com/hemm-ems/hactl/internal/policy"
 )
 
@@ -141,6 +144,12 @@ func TestPolicyBrokenFile(t *testing.T) {
 	if code != 1 || lint.Valid || len(lint.Findings) != 1 || lint.Findings[0].Code != policy.CodeBroken || lint.Findings[0].Line != 5 {
 		t.Errorf("lint broken: code=%d %+v", code, lint)
 	}
+
+	// Lint's prose names each problem exactly as show does (D-60).
+	out, code, _ = runPolicy(t, dir, "lint")
+	if code != 1 || !strings.Contains(out, file+`:5: verbs for "entity:lock.*": unknown verb "wirte"`) {
+		t.Errorf("lint prose: code=%d, want the problem as <file>:<line>: <message>\n%s", code, out)
+	}
 }
 
 // The exit code is the verdict: 0 allowed, 1 denied with a verdict on stdout;
@@ -246,8 +255,9 @@ func TestPolicyAsIsTheSameWhatIfOnShowAndCheck(t *testing.T) {
 }
 
 // D-62: the agent cannot choose its own profile at call time. No command in
-// the tree declares a --profile flag (hactl mcp included), and the
-// environment does not move the profile.
+// the tree declares a --profile flag (hactl mcp included), the environment
+// does not move the profile, and a pinned MCP server cannot be re-pointed at
+// another instance's policy per call (D-64).
 func TestPolicyHasNoCallTimeProfileSelector(t *testing.T) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
@@ -269,6 +279,64 @@ func TestPolicyHasNoCallTimeProfileSelector(t *testing.T) {
 	out, code, _ := runPolicy(t, dir, "check", "entity:lock.x", "read", "--json")
 	if code != 1 || !strings.Contains(out, `"profile": "agent"`) {
 		t.Errorf("HACTL_PROFILE moved the profile: code=%d\n%s", code, out)
+	}
+
+	// D-64: nor can a call choose the instance, and with it the policy file,
+	// on an MCP server pinned with --dir. Another instance here has no policy
+	// at all, so re-pointing would answer "allowed: no policy file".
+	other := policyFixtureInstance(t, "")
+	call := pinnedMCP(t, dir)
+	for _, cmd := range []string{
+		"policy check entity:lock.x control --json --dir " + other,
+		"policy check entity:lock.x control --json --dir=" + other,
+	} {
+		res, text := call(cmd)
+		if !res.IsError || strings.Contains(text, "no policy file") || !strings.Contains(text, "pinned") {
+			t.Errorf("pinned server answered %q from another instance:\n%s", cmd, text)
+		}
+	}
+	res, text := call("policy check entity:lock.x control --json --dir " + dir)
+	if !strings.Contains(text, `"profile": "agent"`) || !res.IsError {
+		t.Errorf("--dir naming the pinned instance itself must run (denied, exit 1):\n%s", text)
+	}
+	t.Setenv("HACTL_DIR", other)
+	if _, text := call("policy check entity:lock.x control --json"); !strings.Contains(text, `"profile": "agent"`) {
+		t.Errorf("HACTL_DIR re-pointed a pinned server:\n%s", text)
+	}
+}
+
+// pinnedMCP serves `hactl mcp --dir dir` in process and returns a tool caller
+// with the result and its text.
+func pinnedMCP(t *testing.T, dir string) func(command string) (*mcp.CallToolResult, string) {
+	t.Helper()
+	ctx := context.Background()
+	serverT, clientT := mcp.NewInMemoryTransports()
+	srv := mcpserver.NewServer(mcpserver.Options{
+		Runner: RunWithOutputContext, ResolvePath: FindCommandPath, NoManualInject: true, Dir: dir,
+	})
+	srvSession, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srvSession.Wait() })
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return func(command string) (*mcp.CallToolResult, string) {
+		t.Helper()
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "hactl", Arguments: map[string]any{"command": command}})
+		if err != nil {
+			t.Fatalf("CallTool(%q): %v", command, err)
+		}
+		var sb strings.Builder
+		for _, c := range res.Content {
+			if tc, ok := c.(*mcp.TextContent); ok {
+				sb.WriteString(tc.Text)
+			}
+		}
+		return res, sb.String()
 	}
 }
 
@@ -323,7 +391,7 @@ profiles:
 
 	// --allow-partial accepts unchecked kinds, never findings.
 	clean := policyFixtureInstance(t, "version: 1\nprofiles:\n  default:\n    deny:\n      \"file:**\": [write]\n      \"entity:light.*\": [delete]\n")
-	if out, code, _ := runPolicy(t, clean, "lint"); code != 1 || !strings.Contains(out, "unchecked: 1 kind(s)") {
+	if out, code, _ := runPolicy(t, clean, "lint"); code != 1 || !strings.Contains(out, "unchecked: 1 ") {
 		t.Errorf("unchecked without --allow-partial: code=%d\n%s", code, out)
 	}
 	if out, code, _ := runPolicy(t, clean, "lint", "--allow-partial"); code != 0 || !strings.Contains(out, "file: not enumerated") {

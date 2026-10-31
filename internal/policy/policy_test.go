@@ -49,6 +49,12 @@ func hasProblem(ps []Problem, line int, substr string) bool {
 	return false
 }
 
+// loadErr loads content and returns Load's result as is.
+func loadErr(t *testing.T, content string) (*Policy, error) {
+	t.Helper()
+	return Load(writePolicy(t, content))
+}
+
 func mustResource(t *testing.T, s string) Resource {
 	t.Helper()
 	r, err := ParseResource(s)
@@ -188,6 +194,17 @@ func TestBrokenFileProblemsNameTheirLine(t *testing.T) {
 		{"where empty selector", "version: 1\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n    where:\n      \"entity:*\": {}\n", 7, "is empty"},
 		{"where unknown selector key", "version: 1\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n    where:\n      \"entity:*\": {floor: k}\n", 7, `unknown key "floor"`},
 		{"where empty list", "version: 1\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n    where:\n      \"entity:*\": {area: []}\n", 7, "empty list"},
+		// D-63: a dot-less, wildcard-free entity/service id can never match.
+		{"entity without domain", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:hallway\": [read]\n", 5, "D-63"},
+		{"service without domain", "version: 1\nprofiles:\n  a:\n    allow:\n      \"service:turn_on\": [control]\n", 5, "D-63"},
+		// D-67: file ids.
+		{"file dot segment", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:./secrets.yaml\": [read]\n", 5, `"." segment`},
+		{"file dotdot segment", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:packages/../secrets.yaml\": [read]\n", 5, `".." segment`},
+		{"file ambiguous block", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:a/block/b/c.yaml\": [read]\n", 5, "ambiguous with the block sub-resource"},
+		// D-68: the id charset.
+		{"entity trailing space", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:lock.* \": [read]\n", 5, "D-68"},
+		{"label dash", "version: 1\nprofiles:\n  a:\n    deny:\n      \"label:agent-ok\": [read]\n", 5, "D-68"},
+		{"file tab", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:a\\tb.yaml\": [read]\n", 5, "D-68"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -382,9 +399,13 @@ func TestMatching(t *testing.T) {
 		{"*", "system:logs", true},
 		{"*", "file:a/b/c.yaml", true},
 		{"entity:light.kitchen", "entity:light.kitchen", true},
-		{"entity:light.kitchen", "entity:LIGHT.Kitchen", true},   // D-2
+		{"entity:light.kitchen", "entity:LIGHT.Kitchen", true},    // D-2
 		{"entity:light.kitchen", "entity:light.kitchen_2", false}, // exact, never substring
-		{"entity:kitchen*", "entity:light.kitchen_lamp", true},    // D-28 second anchor
+		{"entity:kitchen*", "entity:light.kitchen_lamp", false},   // D-63: the full id only, no second anchor
+		{"entity:*.kitchen*", "entity:light.kitchen_lamp", true},  // across domains: the domain as a wildcard
+		{"entity:*.front_door", "entity:lock.front_door", true},
+		{"service:*.turn_on", "service:light.turn_on", true},
+		{"file:k?che.yaml", "file:küche.yaml", true}, // ? is one character, not one byte
 		{"entity:sensor.*", "entity:binary_sensor.x", false},
 		{"entity:light.kitchen", "entity:light.kitchen/attr/brightness", true}, // parent covers child
 		{"entity:light.kitchen/attr", "entity:light.kitchen", false},           // child does not cover parent
@@ -419,14 +440,25 @@ func TestMatching(t *testing.T) {
 	}
 }
 
-// Recorded, not endorsed: D-28's second anchor is applied to entity and
-// service ids as the contract (doc.go) states it, so a domain-less literal
-// matches the name in every domain. Whether an unqualified literal should
-// match only at the full id, or be a broken file, is an open decision; this
-// test pins the current behaviour so the decision visibly changes it.
-func TestUnqualifiedLiteralMatchesTheNameInEveryDomainPendingDecision(t *testing.T) {
-	if !decideIn(t, "      \"entity:front_door\": [control]\n", "entity:lock.front_door", Control).Allowed {
-		t.Error("contract as written: MatchQualified applies to a wildcard-free entity pattern too")
+// D-63: a policy pattern matches the full id only. A wildcard-free entity or
+// service id without a `.` can never match a real id, so it is a broken file
+// (D-60) rather than a rule granting that name in every domain. This replaces
+// the pending-decision test that pinned the old D-28 second anchor.
+func TestUnqualifiedLiteralIsABrokenFile(t *testing.T) {
+	for _, pat := range []string{"entity:front_door", "service:turn_on", "entity:Front_Door"} {
+		_, err := loadErr(t, "version: 1\nactive: p\nprofiles:\n  p:\n    allow:\n      \""+pat+"\": [control]\n")
+		if err == nil || !strings.Contains(err.Error(), ":6: ") || !strings.Contains(err.Error(), "D-63") {
+			t.Errorf("%s: err = %v, want a broken file naming line 6 and D-63", pat, err)
+		}
+	}
+	// With a wildcard or a dot it loads; the wildcard form is the cross-domain one.
+	for _, pat := range []string{"entity:front*", "entity:*.front_door", "service:light.turn_on", "entity:front_doo?"} {
+		if _, err := loadErr(t, "version: 1\nactive: p\nprofiles:\n  p:\n    allow:\n      \""+pat+"\": [control]\n"); err != nil {
+			t.Errorf("%s: %v, want a valid file", pat, err)
+		}
+	}
+	if decideIn(t, "      \"entity:front*\": [control]\n", "entity:lock.front_door", Control).Allowed {
+		t.Error("entity:front* granted lock.front_door: a policy pattern has no second anchor (D-63)")
 	}
 }
 
@@ -475,6 +507,12 @@ func TestDecidingRuleIsTheFirstByLine(t *testing.T) {
 	v := p.Decide(mustResource(t, "entity:lock.front_door"), Control, nil)
 	if v.Line != 5 || v.Rule != `deny "entity:lock.front*" [write]` {
 		t.Errorf("verdict = %+v, want the line-5 deny", v)
+	}
+	// Two rules on one line (a flow mapping): the leftmost is the first in
+	// the file, whatever its pattern text sorts as (D-52).
+	q := mustLoad(t, "version: 1\nprofiles:\n  default:\n    deny: {\"entity:lock.*\": [write], \"entity:*\": [control]}\n")
+	if v := q.Decide(mustResource(t, "entity:lock.front_door"), Control, nil); v.Rule != `deny "entity:lock.*" [write]` {
+		t.Errorf("same-line verdict = %+v, want the leftmost rule", v)
 	}
 }
 
@@ -562,9 +600,9 @@ func TestEmptySlicesAreNotNil(t *testing.T) {
 
 func TestParseResource(t *testing.T) {
 	good := map[string]Resource{
-		"entity:light.kitchen":                  {Kind: KindEntity, ID: "light.kitchen"},
-		"entity:light.kitchen/attr/brightness":  {Kind: KindEntity, ID: "light.kitchen", Sub: "attr/brightness"},
-		"helper:input_boolean/guest_mode":       {Kind: KindHelper, ID: "input_boolean/guest_mode"},
+		"entity:light.kitchen":                   {Kind: KindEntity, ID: "light.kitchen"},
+		"entity:light.kitchen/attr/brightness":   {Kind: KindEntity, ID: "light.kitchen", Sub: "attr/brightness"},
+		"helper:input_boolean/guest_mode":        {Kind: KindHelper, ID: "input_boolean/guest_mode"},
 		"helper:input_boolean/guest_mode/config": {Kind: KindHelper, ID: "input_boolean/guest_mode", Sub: "config"},
 		"file:packages/heating.yaml/block/clim":  {Kind: KindFile, ID: "packages/heating.yaml", Sub: "block/clim"},
 		"file:configuration.yaml":                {Kind: KindFile, ID: "configuration.yaml"},
@@ -636,4 +674,49 @@ func TestParseVerb(t *testing.T) {
 	if Verb(9).String() != "verb(9)" {
 		t.Errorf("out-of-range verb renders %q", Verb(9).String())
 	}
+}
+
+// D-60: a policy.yaml (or policy.yml) that is there but cannot be read — a
+// dangling symlink, a directory, no permission — is a *LoadError naming the
+// path, never "no policy file" (allow-all).
+func TestUnreadablePolicyPathIsALoadError(t *testing.T) {
+	for _, name := range []string{FileName, "policy.yml"} {
+		t.Run("dangling symlink "+name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Symlink(filepath.Join(dir, "moved-away.yaml"), filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			p, err := Load(dir)
+			var le *LoadError
+			if !errors.As(err, &le) {
+				t.Fatalf("Load = (%v, %v), want a *LoadError", p, err)
+			}
+			if le.File != filepath.Join(dir, name) || !strings.Contains(le.Error(), "moved-away.yaml") {
+				t.Errorf("LoadError %q does not name the path and its target", le.Error())
+			}
+		})
+		t.Run("directory "+name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, name), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			var le *LoadError
+			if _, err := Load(dir); !errors.As(err, &le) || !strings.Contains(le.Error(), "a directory") {
+				t.Fatalf("Load = %v, want a *LoadError saying it is a directory", err)
+			}
+		})
+	}
+	t.Run("no permission", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a 0000 file")
+		}
+		dir := writePolicy(t, "version: 1\n")
+		if err := os.Chmod(filepath.Join(dir, FileName), 0); err != nil {
+			t.Fatal(err)
+		}
+		var le *LoadError
+		if _, err := Load(dir); !errors.As(err, &le) || !strings.Contains(le.Error(), "cannot be read") {
+			t.Fatalf("Load = %v, want a *LoadError saying it cannot be read", err)
+		}
+	})
 }

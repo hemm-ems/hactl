@@ -60,9 +60,11 @@ type KindSpec struct {
 	IDs []string
 
 	// Qualified is true for the kinds whose ids are `<domain>.<name>` (entity,
-	// service): their id is matched with glob.MatchQualified (D-28's second
-	// anchor). Every other id, and every sub-resource segment, is matched with
-	// glob.Match.
+	// service). Like every other id it is matched with glob.Match, against the
+	// full id only: D-28's second anchor (the part after the domain) is for
+	// filters, never for policy patterns (D-63). A wildcard-free pattern id of
+	// a Qualified kind without a `.` can never match a real id, so it is a
+	// D-60 problem, not a dead rule.
 	Qualified bool
 
 	// Subs are the sub-resources below an id. A sub is one fixed word,
@@ -146,8 +148,9 @@ type Resource struct {
 // for every r ParseResource returns. A Resource built by hand is not
 // necessarily one of those: a file path whose second-to-last segment is
 // `block` (`packages/block/x.yaml`) renders to an address ParseResource reads
-// as the block sub-resource of `packages`, because the grammar says a trailing
-// `/block/<id>` always is one.
+// as the block `x.yaml` of `packages`, because a trailing `/block/<id>` always
+// is one; a path with `block` anywhere else renders to one it refuses as
+// ambiguous with the block sub-resource (D-67).
 func (r Resource) String() string {
 	s := string(r.Kind) + ":" + r.ID
 	if r.Sub != "" {
@@ -168,10 +171,16 @@ func (r Resource) String() string {
 //   - a system id outside the kind's closed set;
 //   - a sub-resource word the kind does not have, a closed param value it does
 //     not list (`registry/lables`), or more sub segments than the grammar
-//     allows.
+//     allows;
+//   - a character outside the id's charset (D-68): entity and service ids are
+//     ASCII letters, digits, `_` and `.`; helper, area, floor and label ids
+//     ASCII letters, digits and `_`; no id of any kind holds white space or a
+//     control character;
+//   - a file path with a `.` or `..` segment, or a segment named `block` (in
+//     any case) anywhere but before a trailing block id (D-67).
 //
-// For file, a trailing `/block/<id>` is always read as the block sub-resource;
-// everything before it is the path.
+// For file, a trailing `/block/<id>` after at least one path segment is
+// always read as the block sub-resource; everything before it is the path.
 func ParseResource(s string) (Resource, error) {
 	if s == "*" || strings.ContainsAny(s, "*?") {
 		return Resource{}, fmt.Errorf("resource %q holds a wildcard: a resource names one thing (patterns belong in rules)", s)
