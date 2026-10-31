@@ -448,10 +448,13 @@ type charsetCase struct {
 	kind, tmpl string
 }
 
-// TestIDCharset — D-68 (finding 6): each restricted kind × a space, a tab,
-// a `-` and a non-ASCII letter; each other kind × a space, a no-break space
-// and a control character; resources refused, patterns broken with their
-// line. Then the characters that stay legal. Red today: none of it is refused.
+// TestIDCharset — D-68 (finding 6, refined 2026-10-31): each restricted kind
+// × a space, a tab, a `-` and a non-ASCII letter; every kind × a control
+// character and a format character (zero-width space) anywhere and a space
+// or no-break space at either end; device and config_entry × interior white
+// space too; resources refused, patterns broken with their line. Then the
+// characters that stay legal, interior white space in the ids a user names
+// among them.
 func TestIDCharset(t *testing.T) {
 	restricted := []charsetCase{
 		{"entity", "light.kit%schen"},
@@ -461,13 +464,15 @@ func TestIDCharset(t *testing.T) {
 		{"floor", "erd%sgeschoss"},
 		{"label", "agent%sok"},
 	}
-	other := []charsetCase{
+	generated := []charsetCase{
 		{"device", "abc%sdef"},
+		{"config_entry", "01J%sABC"},
+	}
+	named := []charsetCase{
 		{"automation", "pg%sheating"},
 		{"script", "mor%sning"},
 		{"template", "uid%s1"},
 		{"dashboard", "main%sview"},
-		{"config_entry", "01J%sABC"},
 		{"file", "packages/my%sfile.yaml"},
 	}
 	check := func(c charsetCase, bad string) {
@@ -493,9 +498,30 @@ func TestIDCharset(t *testing.T) {
 			check(c, bad)
 		}
 	}
-	for _, c := range append(slices.Clone(restricted), other...) {
-		for _, bad := range []string{" ", " ", "\x01"} {
+	every := append(append(slices.Clone(restricted), generated...), named...)
+	for _, c := range every {
+		for _, bad := range []string{"\x01", "\x00", "\u200b", "\ufeff", "\u202e"} {
 			check(c, bad)
+		}
+		// White space at either end of the id.
+		for _, ws := range []string{" ", "\u00a0"} {
+			for _, tmpl := range []string{ws + c.tmpl, c.tmpl + ws} {
+				check(charsetCase{c.kind, tmpl}, "_")
+			}
+		}
+	}
+	for _, c := range append(slices.Clone(restricted), generated...) {
+		for _, bad := range []string{" ", "\u00a0"} {
+			check(c, bad)
+		}
+	}
+	// The ids a user names keep interior white space (D-68 refined).
+	for _, c := range named {
+		for _, ws := range []string{" ", "\u00a0"} {
+			res := c.kind + ":" + fmt.Sprintf(c.tmpl, ws)
+			if _, err := policy.ParseResource(res); err != nil {
+				t.Errorf("ParseResource(%q) = %v, want it accepted (interior white space, D-68 refined)", res, err)
+			}
 		}
 	}
 	// A trailing space on a concrete resource slips past an exact deny today.

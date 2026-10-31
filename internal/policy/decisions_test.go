@@ -77,18 +77,42 @@ func TestIDCharsetPerKind(t *testing.T) {
 	if _, err := ParseResource("entity:Lock.Front_Door"); err != nil {
 		t.Errorf("upper case refused: %v", err)
 	}
-	// Every other kind: only white space and control characters are refused.
-	for _, ok := range []string{"automation:pg-heating.v2", "dashboard:dashboard-main", "file:packages/küche.yaml", "template:ä-1", "config_entry:01J-X"} {
+	// Every other kind: white space at either end of a segment, control and
+	// format characters are refused; automation, script, template, dashboard
+	// and file ids keep interior white space; device and config_entry ids
+	// refuse white space anywhere (D-68 refined 2026-10-31).
+	for _, ok := range []string{
+		"automation:pg-heating.v2", "dashboard:dashboard-main", "file:packages/küche.yaml", "template:ä-1", "config_entry:01J-X",
+		"automation:pg heating", "script:wake\u00a0up", "template:my sensor", "dashboard:main view", "file:packages/my file.yaml",
+		"file:my dir/a b.yaml/block/my block",
+	} {
 		if _, err := ParseResource(ok); err != nil {
 			t.Errorf("ParseResource(%q) = %v, want valid", ok, err)
 		}
 	}
-	for _, addr := range []string{"automation:pg heating", "file:a /b.yaml", "dashboard:x\u00a0", "template:a\x01", "script:a\u2028"} {
-		if _, err := ParseResource(addr); err == nil || !strings.Contains(err.Error(), "D-68") {
-			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal", addr, err)
+	for addr, named := range map[string]string{
+		"file:a /b.yaml":          "ends with the character U+0020",
+		"file:a/ b.yaml":          "starts with the character U+0020",
+		"dashboard:x\u00a0":       "ends with the character U+00A0",
+		" automation:x":           "unknown kind",
+		"automation: x":           "starts with the character U+0020",
+		"template:a\x01":          "U+0001, a control character",
+		"script:a\x00b":           "U+0000, a control character",
+		"script:a\u2028":          "ends with the character U+2028",
+		"automation:a\u200bb":     "U+200B, an invisible format character",
+		"automation:\ufeffa":      "U+FEFF, an invisible format character",
+		"file:a\u00adb.yaml":      "U+00AD, an invisible format character",
+		"dashboard:a\u202eb":      "U+202E, an invisible format character",
+		"device:abc def":          "never holds white space",
+		"config_entry:01J\u00a0X": "never holds white space",
+		"device:abc\u2060def":     "U+2060, an invisible format character",
+	} {
+		_, err := ParseResource(addr)
+		if err == nil || !strings.Contains(err.Error(), named) || (named != "unknown kind" && !strings.Contains(err.Error(), "D-68")) {
+			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q", addr, err, named)
 		}
 	}
-	// Free sub segments are not restricted by the charset.
+	// Free sub segments take no charset, only the same text rule.
 	if _, err := ParseResource("entity:light.x/attr/friendly-name"); err != nil {
 		t.Errorf("a free attr segment was charset-checked: %v", err)
 	}
@@ -101,6 +125,105 @@ func TestIDCharsetPerKind(t *testing.T) {
 	}
 	if hasProblem(ps, 10, "") {
 		t.Errorf("a wildcard in a restricted id was refused: %+v", ps)
+	}
+}
+
+// TestFreeSubSegmentText — D-68 refined: every free sub segment
+// (attr/<name>, views/<path>, block/<id>, reload/<domain>) refuses white
+// space at either end and control and format characters anywhere, and keeps
+// interior white space; resources are refused, patterns broken at their line.
+func TestFreeSubSegmentText(t *testing.T) {
+	for _, ok := range []string{
+		"entity:weather.home/attr/Hourly forecast",
+		"dashboard:main/views/living room",
+		"file:a.yaml/block/my block",
+		"system:reload/automation",
+	} {
+		if _, err := ParseResource(ok); err != nil {
+			t.Errorf("ParseResource(%q) = %v, want valid", ok, err)
+		}
+	}
+	bad := map[string]string{
+		"entity:light.x/attr/brightness ":      "ends with the character U+0020",
+		"entity:light.x/attr/\u00a0brightness": "starts with the character U+00A0",
+		"entity:light.x/attr/bright\u200bness": "U+200B",
+		"dashboard:main/views/home\t":          "U+0009",
+		"dashboard:/views/ home":               "starts with the character U+0020",
+		"file:a.yaml/block/clim\u00adate":      "U+00AD",
+		"file:a.yaml/block/climate\x00":        "U+0000",
+		"system:reload/automation ":            "ends with the character U+0020",
+		"system:reload/auto\u2060mation":       "U+2060",
+	}
+	for addr, named := range bad {
+		_, err := ParseResource(addr)
+		if err == nil || !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "D-68") {
+			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q", addr, err, named)
+		}
+	}
+	// Closed values are refused by their vocabulary first, never accepted.
+	for _, addr := range []string{"entity:light.x/registry/name ", "entity:light.x/attr /x"} {
+		if _, err := ParseResource(addr); err == nil {
+			t.Errorf("ParseResource(%q) accepted", addr)
+		}
+	}
+	ps := loadProblems(t, profileHead+"    deny:\n"+
+		"      \"entity:*/attr/latitude \": [read]\n"+ // 7
+		"      \"dashboard:*/views/\\u200bsecret\": [read]\n"+ // 8
+		"      \"file:**/block/ *\": [edit]\n"+ // 9
+		"      \"system:reload/*\\x01\": [control]\n"+ // 10
+		"      \"dashboard:*/views/living room\": [read]\n") // 11: fine
+	for line, sub := range map[int]string{7: "U+0020", 8: "U+200B", 9: "U+0020", 10: "U+0001"} {
+		if !hasProblem(ps, line, sub) {
+			t.Errorf("no problem at line %d naming %s: %+v", line, sub, ps)
+		}
+	}
+	if hasProblem(ps, 11, "") {
+		t.Errorf("interior white space in a views path was refused: %+v", ps)
+	}
+}
+
+// TestLintCountsAllWildcardFreeSegmentsAsChecked — D-65 refined: a free sub
+// segment of only `*` (`*`, `**`) names nothing that could be misspelt, so it
+// is not listed unchecked and an attr segment of only `*` is not looked up;
+// a segment with any literal character (a `?` included) stays unchecked.
+func TestLintCountsAllWildcardFreeSegmentsAsChecked(t *testing.T) {
+	inv := fakeInventory{ids: map[Kind][]string{
+		KindEntity:    {"light.sofa"},
+		KindDashboard: {"", "main"},
+		KindSystem:    {"logs", "wireguard", "reload", "check_config", "cache"},
+	}}
+	p := mustLoad(t, profileHead+
+		"    deny:\n"+
+		"      \"dashboard:main/views/*\": [read]\n"+ // 7: checked
+		"      \"dashboard:*/views/**\": [edit]\n"+ // 8: checked
+		"      \"system:reload/*\": [control]\n"+ // 9: checked
+		"      \"system:*/**\": [read]\n"+ // 10: checked
+		"      \"file:x.yaml/block/*\": [edit]\n"+ // 11: checked (file itself not enumerated)
+		"      \"entity:light.*/attr/*\": [read]\n"+ // 12: checked, no attribute lookup
+		"      \"entity:light.*/attr/**\": [edit]\n"+ // 13: checked
+		"      \"dashboard:main/views/?\": [create]\n"+ // 14: a ? is not only *
+		"      \"system:reload/auto*\": [edit]\n"+ // 15: a literal
+		"      \"file:y.yaml/block/*x*\": [read]\n") // 16: a literal
+	rep := Lint(p, inv) // a plain Inventory: attributes cannot be listed
+	want := []Unchecked{
+		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:main/views/?" [create]`, Line: 14},
+		{Kind: KindFile, Reason: ReasonNotEnumerated},
+		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:y.yaml/block/*x*" [read]`, Line: 16},
+		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/auto*" [edit]`, Line: 15},
+	}
+	if !reflect.DeepEqual(rep.Unchecked, want) {
+		t.Errorf("unchecked =\n%+v\nwant\n%+v", rep.Unchecked, want)
+	}
+	if len(rep.Findings) != 0 {
+		t.Errorf("findings = %+v, want none", rep.Findings)
+	}
+
+	// attr/* is not looked up even where attributes can be read and the
+	// matched entity has none: it names every attribute, not a misspelling.
+	ai := attrInventory{fakeInventory: inv, attrs: map[string][]string{}}
+	rep = Lint(mustLoad(t, profileHead+"    deny:\n      \"entity:light.*/attr/*\": [read]\n"), ai)
+	if len(rep.Findings) != 0 || len(rep.Unchecked) != 0 {
+		t.Errorf("attr/*: findings %+v unchecked %+v, want neither", rep.Findings, rep.Unchecked)
 	}
 }
 

@@ -58,7 +58,8 @@ const (
 	ReasonNoLive = "no live instance"
 	// ReasonSubNotChecked: the rule holds a free sub-resource segment lint
 	// cannot check against the instance — `views/<path>`, `block/<id>`,
-	// `reload/<domain>` (D-65).
+	// `reload/<domain>` holding a literal character; one of only `*` names
+	// nothing that could be misspelt and counts as checked (D-65).
 	ReasonSubNotChecked = "sub-resource not checked"
 	// ReasonAttrsNotEnumerated: the rule names `attr/<name>` and the inventory
 	// cannot list attributes (it is not an AttributeInventory).
@@ -128,8 +129,9 @@ type AttributeInventory interface {
 //   - CodeNoMatch for every rule (allow or deny) whose kind inv enumerates
 //     and whose pattern's id part matches none of the live ids — or, for an
 //     `entity:<id>/attr/<name>` rule whose id matches, whose name matches no
-//     attribute in the live state of any entity the id matches (D-65). The
-//     bare `*` pattern is never CodeNoMatch.
+//     attribute in the live state of any entity the id matches (D-65). A
+//     name of only `*` is not looked up: it names every attribute. The bare
+//     `*` pattern is never CodeNoMatch.
 //   - CodeUnreachable for every (allow rule, verb) whose kind inv enumerates,
 //     whose id part matches at least one live id, and where for every matched
 //     id one deny of the same profile for that verb covers the allow's whole
@@ -139,8 +141,9 @@ type AttributeInventory interface {
 //     segment of only `*`. `where:` is ignored here: a deny wins regardless.
 //   - Unchecked for every kind that some rule names and inv cannot list
 //     (inv nil: every such kind, ReasonNoLive), and for every rule holding a
-//     free sub-resource segment other than `attr/<name>`
-//     (ReasonSubNotChecked), whether or not its kind is enumerated (D-65).
+//     free sub-resource segment other than `attr/<name>` that holds a literal
+//     character (ReasonSubNotChecked), whether or not its kind is enumerated;
+//     a segment of only `*` (`*`, `**`) counts as checked (D-65).
 //
 // A Policy with no file reports nothing. Lint never errors: an inventory
 // failure is an Unchecked entry, not a failed lint.
@@ -258,7 +261,7 @@ func (l *linter) profile(pr *profile) {
 			finding(CodeNoMatch, "matches no "+string(r.addr.kind)+" on this instance")
 			continue
 		}
-		if name, ok := r.addr.attrName(); ok {
+		if name, ok := r.addr.attrName(); ok && !onlyWildcards(name) {
 			has, reason := l.anyAttr(matched, name)
 			switch {
 			case reason != "":
