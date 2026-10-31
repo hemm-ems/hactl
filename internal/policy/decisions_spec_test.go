@@ -448,10 +448,13 @@ type charsetCase struct {
 	kind, tmpl string
 }
 
-// TestIDCharset — D-68 (finding 6): each restricted kind × a space, a tab,
-// a `-` and a non-ASCII letter; each other kind × a space, a no-break space
-// and a control character; resources refused, patterns broken with their
-// line. Then the characters that stay legal. Red today: none of it is refused.
+// TestIDCharset — D-68 (finding 6, refined 2026-10-31): each restricted kind
+// × a space, a tab, a `-`, a non-ASCII letter, a no-break space and a control
+// character inside the id; each other kind × a control character and a
+// format character (Cf) inside the id — an interior space is no longer
+// refused there (TestInteriorSpaces); resources refused, patterns broken with
+// their line. Then the characters that stay legal. The edges (leading and
+// trailing white space) and the free sub segments are id_edges_spec_test.go.
 func TestIDCharset(t *testing.T) {
 	restricted := []charsetCase{
 		{"entity", "light.kit%schen"},
@@ -489,12 +492,12 @@ func TestIDCharset(t *testing.T) {
 		}
 	}
 	for _, c := range restricted {
-		for _, bad := range []string{" ", "\t", "-", "ü"} {
+		for _, bad := range []string{" ", "\t", "-", "ü", "\u00a0", "\x01"} {
 			check(c, bad)
 		}
 	}
-	for _, c := range append(slices.Clone(restricted), other...) {
-		for _, bad := range []string{" ", " ", "\x01"} {
+	for _, c := range other {
+		for _, bad := range []string{"\x01", "\x00", "\u200b", "\u202e"} {
 			check(c, bad)
 		}
 	}

@@ -1,0 +1,16 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    deny:
+      "entity:*/attr/latitude ": [read]
+      "entity:*/attr/​latitude": [read]
+      "dashboard:main/views/ home": [read]
+      "dashboard:main/views/ho\x1bme": [read]
+      "file:x.yaml/block/climate⁠": [edit]
+      "system:reload/automation\t": [control]
+      "system:reload/‮automation": [control]
+      "entity:*/attr/last seen": [read]
+      "dashboard:main/views/living room": [read]
+      "entity:*/attr/lat­itude": [read]
