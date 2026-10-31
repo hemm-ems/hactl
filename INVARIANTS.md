@@ -2145,3 +2145,93 @@ distinction the manifest's one `exempt` line has to make.
   as literals there: `Source: "yaml"` → `Source: helperSourceYAML` is the first
   tidy-up anyone makes, and a rule matching only string literals would go to
   zero sites and stay there while the invented value survived.
+
+## H-29 — Every request hactl sends carries a policy verdict, and a write command checks its whole plan before its first write
+
+**DRAFT (phase 2 of the permission policy, `SPEC-permissions.md` §4).** This
+entry states the law and its gate before either is built, as the checklist
+above asks: the set is derived, the sites are dispositioned in
+`dev/surfaces/policy.manifest`, and the enforcing test is named once it has been
+watched to fail. Until then the manifest is a contract nothing loads, and this
+law is debt in `dev/surfaces/invariant.manifest`.
+
+A policy (D-51 to D-69) is a guardrail against mistakes, so it is only as good
+as its coverage: a request the policy never sees is a request it allows. hactl
+has no single choke point. It sends Home Assistant websocket commands through
+`sendCommand` and through five direct `conn.WriteJSON` calls, REST through
+`haapi.Client`, and companion calls through `companion.Client` — which, under
+Ingress, rides the very same HTTP transport as HA REST, as
+`/api/hassio_ingress/<token>/v1/…`. A mapping written by hand from "the
+requests the write commands send" would be the enumeration this file keeps
+finding one site short (`dev/surfaces/README.md`'s four defects).
+
+The rule has two halves, one per layer.
+
+**Request layer (the guarantee).** Every request hactl sends is mapped to the
+`(resource, verb)` pairs it touches before it leaves the process, from what the
+request carries — path, query, body, websocket params — and from what the same
+process already read (a dashboard's stored config, a dashboard's id-to-url_path
+map, an automation's verified config id). One verdict per logical request:
+never per retry attempt, never skipped because a retry rebuilt the request; a
+redirect hop is mapped again. A request the mapping does not know is refused if
+it can change anything: every websocket type and every HTTP method other than
+GET counts as mutating unless a row says otherwise (E-9). A request whose ids do
+not parse under the policy grammar (D-67, D-68, D-69) is unmappable, and an
+unmappable write is refused — never canonicalised.
+
+**Command layer (preview parity).** A write command computes its whole plan —
+every resource every request of the confirmed run will touch, follow-up writes
+included (the orphan registry remove after a delete, `script apply`'s
+`script.reload`, `ent rename`'s reference rewrite) — and checks it **in the
+preview**, before rendering, and again under `--confirm` before the first
+write. A denied write is denied in the dry run and in the confirmed run, with
+the same rule named (H-2's pole, applied to the policy). Any denial in the plan
+refuses the whole command (E-7). The request layer then never refuses a
+confirmed write that the command layer allowed; when it does, the command
+layer's plan was wrong, and the refusal is an error that names what was already
+written — never a log line.
+
+**The pole.** Fail closed: unmapped is denied, unparseable is denied, an
+unanswerable question (Home Assistant unreachable while computing a service
+call's reach) is denied. Over-deny is allowed, under-deny is not (D-59).
+
+**What this law does not claim.** It does not make reads enforced: phase 2 maps
+every read with verb `read` and enforces none (D-54, phase 3). It does not
+model what Home Assistant does server-side after a request it was allowed to
+send — a deleted label stripped from its holders, the companion's implicit
+domain reload, a running script doing what it does (`SPEC-permissions.md` §8).
+And it holds against mistakes, not intent: the token in `.env` can do
+everything (D-51).
+
+**Planned enforcement (draft names, to be watched to fail before they are
+cited below):**
+
+- `TestPolicySurfaceIsClosed` over `dev/surfaces/policy.manifest`: the request
+  set derived from the source (every `sendCommand` type and direct
+  `WriteJSON`; every `haapi.Client` path; every operation of the vendored
+  companion spec, plus a scan that no `companion.Client` method builds a path
+  outside it) and the command set derived from the live cobra tree (every
+  `--confirm` command plus the listed writers without one). Unclassified,
+  stale and phantom rows fail as on every surface.
+- `TestEveryWriteRequestHasAMapping`: table-driven, one case per mapped write
+  row — the request in, the `(resource, verb)` set out.
+- `TestUnmappedMutatingRequestIsRefused`: a websocket type and a POST no row
+  names are refused at the hook, with nothing sent.
+- `TestPreviewRefusesWhatConfirmRefuses`: walks the cobra tree's `--confirm`
+  commands under a deny-everything-written profile; each preview exits 1 naming
+  the rule, each `--confirm` exits 1 with the same rule and nothing written.
+- `TestBrokenPolicyRefusesEveryCommand`: walks the cobra tree with a broken
+  `policy.yaml`; every command except the exempt list refuses (D-60).
+- Docker tier (`make test-int`): one test per verb, plus E-1 fan-out
+  (area/label/group targets against `extract_from_target`) and E-7 bulk
+  (`ref replace` with one denied file writes nothing).
+
+**Watched to fail** (the step this law owes before it leaves draft): add a
+websocket command type to `haapi` without a mapping row — the gate must go red
+as unclassified, and at runtime the request must be refused; delete one
+command's plan check — `TestPreviewRefusesWhatConfirmRefuses` must go red on
+exactly that command.
+
+- Enforced by: nothing yet — DRAFT. Phase 2 builds the hook, the mapping, the
+  gate and the tests named above, and lists here only those that were watched
+  to fail.
