@@ -19,7 +19,7 @@ import (
 
 // D-66: policy check shows a partial verdict in prose and --json; its exit
 // code is what it resolved to.
-func TestPolicyCheckPartialVerdict(t *testing.T) {
+func TestPolicyCheckPartialVerdictImpl(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), `version: 1
 active: p
 profiles:
@@ -97,8 +97,8 @@ func TestPolicyDanglingSymlinkIsBroken(t *testing.T) {
 	}
 }
 
-// stalledHA accepts connections and never answers.
-func stalledHA(t *testing.T) string {
+// stalledHAImpl accepts connections and never answers.
+func stalledHAImpl(t *testing.T) string {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -131,8 +131,8 @@ func stalledHA(t *testing.T) string {
 // Manual "policy lint": after the first transport failure lint stops asking;
 // every Home Assistant-backed kind not yet read is unchecked with that same
 // error, so a stalled host costs one --timeout, not one per kind.
-func TestPolicyLintStopsAskingAfterTheFirstTransportFailure(t *testing.T) {
-	dir := policyInstance(t, stalledHA(t), `version: 1
+func TestPolicyLintStopsAskingAfterTheFirstTransportFailureImpl(t *testing.T) {
+	dir := policyInstance(t, stalledHAImpl(t), `version: 1
 active: p
 profiles:
   p:
@@ -208,7 +208,7 @@ profiles:
 
 // D-68 / D-67 / D-63 on the CLI: an invalid resource is refused (exit 1,
 // nothing on stdout); a pattern breaking them is a broken file.
-func TestPolicyCheckRefusesIDsTheGrammarRefuses(t *testing.T) {
+func TestPolicyCheckRefusesIDsTheGrammarRefusesImpl(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), "version: 1\n")
 	for _, res := range []string{"entity:lock.front_door ", "file:./secrets.yaml", "file:pkgs/block/a/x.yaml", "file:a.yaml/block", "area:wohn zimmer"} {
 		out, err := runPolicyCLI(t, dir, "policy", "check", res, "read")

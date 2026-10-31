@@ -149,7 +149,7 @@ func (c *countingLive) DeviceLabels(string) ([]Ref, error) {
 	return nil, errors.New("unreachable")
 }
 
-func TestSelectorIsTriedOnlyWhileItCanChangeTheVerdict(t *testing.T) {
+func TestSelectorIsTriedOnlyWhileItCanChangeTheVerdictImpl(t *testing.T) {
 	p := mustLoad(t, profileHead+
 		"    allow:\n"+
 		"      \"entity:*\": [control]\n"+ // line 7, plain

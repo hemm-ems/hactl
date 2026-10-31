@@ -77,7 +77,7 @@ func policyFileExists(path string) (bool, error) {
 		target, _ := os.Readlink(path)
 		return false, &LoadError{File: path, Problems: []Problem{{
 			Message: fmt.Sprintf("a symlink to %q, which does not exist: hactl cannot read the policy, "+
-				"and a policy it cannot read is never \"no policy file\" (D-60)", target),
+				"and an unreadable policy never counts as an absent one (D-60)", target),
 		}}}
 	}
 	if err != nil {
@@ -99,7 +99,7 @@ func unreadable(path string, err error) *LoadError {
 		msg = pe.Op + ": " + pe.Err.Error()
 	}
 	return &LoadError{File: path, Problems: []Problem{{
-		Message: "exists but cannot be read (" + msg + "): a policy hactl cannot read is never \"no policy file\" (D-60)",
+		Message: "exists but cannot be read (" + msg + "): an unreadable policy never counts as an absent one (D-60)",
 	}}}
 }
 
