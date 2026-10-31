@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: a selector key other than area/label",
+  "load_error": {
+    "problems": [
+      {
+        "line": 9,
+        "contains": [
+          "room"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

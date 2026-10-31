@@ -1,0 +1,14 @@
+clause: "D-55 fail closed: a nil Live never makes the narrowed allow decide — the profile default does (here allow), and the note records it"
+live:
+  entities:
+    light.wz: {area: {id: wohnzimmer, name: Wohnzimmer}}
+cases:
+  - {resource: "entity:light.wz", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer', line: 6, notes: 0}
+  - resource: "entity:light.wz"
+    verb: control
+    live: {mode: nil}
+    allowed: true
+    rule: "default: allow"
+    line: 0
+    notes: 1
+    notes_contains: [["where not evaluated", '"entity:light.*"']]

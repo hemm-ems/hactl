@@ -1,0 +1,14 @@
+{
+  "clause": "D-60 / manual: verbs are lowercase exactly as written; `Read` is unknown",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "Read"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

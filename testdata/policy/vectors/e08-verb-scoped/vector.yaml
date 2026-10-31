@@ -1,0 +1,7 @@
+clause: "D-52/D-53: a rule matches only for the verbs it lists; a deny for one verb leaves the others to the allow"
+cases:
+  - {resource: "automation:pg_heating", verb: read, allowed: true, rule: 'allow "automation:*" [read edit delete]', line: 7, profile: agent}
+  - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:*" [read edit delete]', line: 7, profile: agent}
+  - {resource: "automation:pg_heating", verb: delete, allowed: false, rule: 'deny "automation:*" [delete]', line: 9, profile: agent}
+  - {resource: "automation:pg_heating", verb: create, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "automation:pg_heating", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}

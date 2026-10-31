@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: `default` other than allow/deny",
+  "load_error": {
+    "problems": [
+      {
+        "line": 5,
+        "contains": [
+          "maybe"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

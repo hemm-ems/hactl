@@ -1,0 +1,5 @@
+clause: "D-61 / manual format: `profiles` is optional; a file declaring none is implicit allow-all, and lint's implicit-allow-all needs at least one declared profile"
+view: {exists: true, selected_by: implicit-allow-all, active: "", allow_all: true, default: allow, profiles: []}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: true, rule: "implicit allow-all: no active: and no default profile", line: 0, profile: ""}
+lint: {nil_inventory: true, findings: [], unchecked: []}

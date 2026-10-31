@@ -1,0 +1,9 @@
+clause: "D-2: ids and sub-resource segments match case-insensitively in both directions; the rule is named with its pattern as written"
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: true, rule: 'allow "entity:Light.Kitchen" [read]', line: 7}
+  - {resource: "entity:LIGHT.KITCHEN", verb: read, allowed: true, rule: 'allow "entity:Light.Kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen_2", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:PG_*" [edit]', line: 8}
+  - {resource: "area:wohnzimmer", verb: read, allowed: true, rule: 'allow "area:Wohn*" [read]', line: 9}
+  - {resource: "entity:light.kitchen/attr/latitude", verb: read, allowed: false, rule: 'deny "entity:*/attr/Latitude" [read]', line: 11}
+  - {resource: "entity:light.kitchen/attr/LATITUDE", verb: read, allowed: false, rule: 'deny "entity:*/attr/Latitude" [read]', line: 11}

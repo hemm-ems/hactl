@@ -1,0 +1,12 @@
+clause: "D-55 / manual selectors: `area` holds when the area matches by id OR by name; values glob case-insensitively"
+live:
+  entities:
+    light.a: {area: {id: living_room, name: Living Room}}
+    light.b: {area: {id: Living Room, name: Salon}}
+    light.c: {area: {id: lr, name: LIVING ROOM}}
+    light.d: {area: {id: living_room_2, name: Living Room 2}}
+cases:
+  - {resource: "entity:light.a", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=Living Room', line: 7}
+  - {resource: "entity:light.b", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=Living Room', line: 7}
+  - {resource: "entity:light.c", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=Living Room', line: 7}
+  - {resource: "entity:light.d", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}

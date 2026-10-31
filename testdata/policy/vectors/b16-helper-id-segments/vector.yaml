@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: wrong number of id segments (helper needs <domain>/<id>)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7
+      },
+      {
+        "line": 8
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

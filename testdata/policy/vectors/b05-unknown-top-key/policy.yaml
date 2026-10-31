@@ -1,0 +1,5 @@
+version: 1
+active: agent
+profile:
+  agent:
+    default: deny

@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "*": [read]
+    deny:
+      "entity:light.kitchen/attr/nonexistent": [read]
+      "entity:lock.*": [write]

@@ -1,0 +1,14 @@
+clause: "D-53: `write` is control+edit+create+delete and never read; a rule is named with its verbs as written"
+cases:
+  - {resource: "automation:pg_heating", verb: control, allowed: true, rule: 'allow "automation:pg_*" [write]', line: 7}
+  - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:pg_*" [write]', line: 7}
+  - {resource: "automation:pg_heating", verb: create, allowed: true, rule: 'allow "automation:pg_*" [write]', line: 7}
+  - {resource: "automation:pg_heating", verb: delete, allowed: true, rule: 'allow "automation:pg_*" [write]', line: 7}
+  - {resource: "automation:pg_heating", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "script:morning", verb: read, allowed: true, rule: 'allow "script:*" [write read]', line: 8}
+  - {resource: "script:morning/run", verb: control, allowed: true, rule: 'allow "script:*" [write read]', line: 8}
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 10}
+  - {resource: "entity:lock.front_door", verb: edit, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 10}
+  - {resource: "entity:lock.front_door", verb: create, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 10}
+  - {resource: "entity:lock.front_door", verb: delete, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 10}
+  - {resource: "entity:lock.front_door", verb: read, allowed: false, rule: 'deny "entity:*" [read]', line: 11}

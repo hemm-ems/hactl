@@ -1,0 +1,12 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:kitchen*": [read]
+      "entity:sensor.*": [control]
+      "entity:light.lamp?": [edit]
+      "entity:hallway": [delete]
+      "service:turn_on": [control]
+      "automation:heating": [read]

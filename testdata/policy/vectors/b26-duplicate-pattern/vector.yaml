@@ -1,0 +1,17 @@
+{
+  "clause": "D-60: the same pattern twice in one allow or deny",
+  "load_error": {
+    "problems": [
+      {
+        "line_in": [
+          7,
+          8
+        ],
+        "contains": [
+          "entity:lock.*"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

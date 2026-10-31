@@ -1,0 +1,16 @@
+clause: "D-28 as the manual states it for policies: entity/service ids anchor at the id and at the part after the domain; other ids only at the id; a pattern without a wildcard is exact, never a substring; `?` is exactly one character"
+cases:
+  - {resource: "entity:light.kitchen_lamp", verb: read, allowed: true, rule: 'allow "entity:kitchen*" [read]', line: 7}
+  - {resource: "entity:light.my_kitchen", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:sensor.temperature", verb: control, allowed: true, rule: 'allow "entity:sensor.*" [control]', line: 8}
+  - {resource: "entity:binary_sensor.door", verb: control, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.lamp1", verb: edit, allowed: true, rule: 'allow "entity:light.lamp?" [edit]', line: 9}
+  - {resource: "entity:light.lamp12", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.lamp", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.hallway", verb: delete, allowed: true, rule: 'allow "entity:hallway" [delete]', line: 10}
+  - {resource: "entity:light.hallway_2", verb: delete, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "service:light.turn_on", verb: control, allowed: true, rule: 'allow "service:turn_on" [control]', line: 11}
+  - {resource: "service:light.turn_off", verb: control, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "automation:heating", verb: read, allowed: true, rule: 'allow "automation:heating" [read]', line: 12}
+  - {resource: "automation:heating_2", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "automation:pg.heating", verb: read, allowed: false, rule: "default: deny", line: 0}
