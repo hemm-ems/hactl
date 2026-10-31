@@ -1,0 +1,34 @@
+clause: "SPEC-permissions §1 stories 1-3 (and 4's read half) with the §2.3 profile: read all but locks/alarm panels, lights in the living room only, no config edits; pg_* automations editable not deletable; labels editable, area/name not"
+live:
+  entities:
+    light.wohnzimmer_decke: {area: {id: wohnzimmer, name: Wohnzimmer}}
+    light.kueche: {area: {id: kueche, name: Küche}}
+cases:
+  # story 1
+  - {resource: "entity:sensor.temperature", verb: read, allowed: true, rule: 'allow "entity:*" [read]', line: 9, profile: agent}
+  - {resource: "entity:lock.front_door", verb: read, allowed: false, rule: 'deny "entity:lock.*" [read write]', line: 14, profile: agent}
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [read write]', line: 14, profile: agent}
+  - {resource: "entity:lock.front_door/attr/battery_level", verb: read, allowed: false, rule: 'deny "entity:lock.*" [read write]', line: 14, profile: agent}
+  - {resource: "entity:alarm_control_panel.home", verb: read, allowed: false, rule: 'deny "entity:alarm_control_panel.*" [read write]', line: 15, profile: agent}
+  - {resource: "entity:light.wohnzimmer_decke", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer', line: 10, profile: agent, notes: 0}
+  - {resource: "entity:light.kueche", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent, notes: 0}
+  - {resource: "entity:switch.kaffee", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "file:configuration.yaml", verb: edit, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
+  - {resource: "file:packages/heating.yaml/block/climate", verb: edit, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
+  - {resource: "file:packages/new.yaml", verb: create, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
+  - {resource: "file:configuration.yaml", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  # story 2
+  - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:pg_*" [read edit create]', line: 11, profile: agent}
+  - {resource: "automation:pg_new", verb: create, allowed: true, rule: 'allow "automation:pg_*" [read edit create]', line: 11, profile: agent}
+  - {resource: "automation:pg_heating", verb: delete, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "automation:heating", verb: edit, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "automation:heating", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  # story 3
+  - {resource: "entity:light.kueche/registry/labels", verb: edit, allowed: true, rule: 'allow "entity:*/registry/labels" [edit]', line: 12, profile: agent}
+  - {resource: "entity:light.kueche/registry/area_id", verb: edit, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "entity:light.kueche/registry/name", verb: edit, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "entity:lock.front_door/registry/labels", verb: edit, allowed: false, rule: 'deny "entity:lock.*" [read write]', line: 14, profile: agent}
+  # story 4 (read side; masking is phase 3)
+  - {resource: "entity:device_tracker.jan/attr/latitude", verb: read, allowed: false, rule: 'deny "entity:device_tracker.*/attr/latitude" [read]', line: 16, profile: agent}
+  - {resource: "entity:device_tracker.jan/attr/longitude", verb: read, allowed: false, rule: 'deny "entity:device_tracker.*/attr/longitude" [read]', line: 17, profile: agent}
+  - {resource: "entity:device_tracker.jan", verb: read, allowed: true, rule: 'allow "entity:*" [read]', line: 9, profile: agent}

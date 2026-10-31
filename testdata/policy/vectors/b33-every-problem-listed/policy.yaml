@@ -1,0 +1,9 @@
+version: 1
+active: agnet
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entiy:*": [read]
+    deny:
+      "entity:lock.*": [wirte]

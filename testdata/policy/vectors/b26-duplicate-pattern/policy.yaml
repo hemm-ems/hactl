@@ -1,0 +1,8 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    deny:
+      "entity:lock.*": [read]
+      "entity:lock.*": [write]

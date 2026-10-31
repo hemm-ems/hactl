@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: a wildcard where the grammar wants a literal (closed registry field, sub-resource word)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7
+      },
+      {
+        "line": 8
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

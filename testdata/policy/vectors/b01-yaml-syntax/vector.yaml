@@ -1,0 +1,12 @@
+{
+  "clause": "D-60: not valid YAML is broken; a syntax error is reported as the one problem it is, with a line",
+  "load_error": {
+    "count": 1,
+    "problems": [
+      {
+        "line_positive": true
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

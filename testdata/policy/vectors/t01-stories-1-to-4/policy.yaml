@@ -1,0 +1,20 @@
+version: 1
+active: agent
+profiles:
+  default:
+    allow: { "*": [read, write] }
+  agent:
+    default: deny
+    allow:
+      "entity:*":                       [read]
+      "entity:light.*":                 [control]
+      "automation:pg_*":                [read, edit, create]
+      "entity:*/registry/labels":       [edit]
+    deny:
+      "entity:lock.*":                  [read, write]
+      "entity:alarm_control_panel.*":   [read, write]
+      "entity:device_tracker.*/attr/latitude":  [read]
+      "entity:device_tracker.*/attr/longitude": [read]
+      "file:**":                        [write]
+    where:
+      "entity:light.*": { area: wohnzimmer }

@@ -1,0 +1,19 @@
+{
+  "clause": "Lint checks every declared profile, not only the effective one",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "lock.front_door"
+      ]
+    },
+    "findings": [
+      {
+        "code": "no-match",
+        "profile": "other",
+        "rule": "deny \"entity:lokc.*\" [write]",
+        "line": 11
+      }
+    ],
+    "unchecked": []
+  }
+}

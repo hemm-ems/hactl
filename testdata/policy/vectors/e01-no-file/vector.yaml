@@ -1,0 +1,10 @@
+clause: "D-58: no policy.yaml is allow-all, every verdict names `no policy file`"
+view: {exists: false, selected_by: no-file, active: "", allow_all: true, default: allow, profiles: [], what_if: false}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: true, rule: "no policy file", line: 0, profile: ""}
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: "no policy file", line: 0, profile: ""}
+  - {resource: "file:configuration.yaml", verb: delete, allowed: true, rule: "no policy file", line: 0, profile: ""}
+  - {resource: "system:reload/automation", verb: control, allowed: true, rule: "no policy file", line: 0, profile: ""}
+  - {resource: "dashboard:", verb: edit, allowed: true, rule: "no policy file", line: 0, profile: ""}
+  - {resource: "service:homeassistant.restart", verb: control, allowed: true, rule: "no policy file", line: 0, profile: ""}
+lint: {nil_inventory: true, findings: [], unchecked: []}

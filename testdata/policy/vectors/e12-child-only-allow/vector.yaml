@@ -1,0 +1,8 @@
+clause: "D-52 / story 3: an allow on a child alone grants only the child — not the parent, not a sibling field, not another verb"
+cases:
+  - {resource: "entity:light.kitchen/registry/labels", verb: edit, allowed: true, rule: 'allow "entity:*/registry/labels" [edit]', line: 7}
+  - {resource: "entity:light.kitchen", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen/registry", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen/registry/name", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen/registry/area_id", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen/registry/labels", verb: read, allowed: false, rule: "default: deny", line: 0}

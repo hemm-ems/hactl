@@ -1,0 +1,6 @@
+clause: "D-52 clause 2: deny overrides allow, even a more specific allow; the same pattern in allow and deny is valid"
+view: {exists: true, selected_by: active, active: agent, default: deny}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [control]', line: 7, profile: agent}
+  - {resource: "entity:lock.back_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [control]', line: 7, profile: agent}
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: 'allow "entity:lock.*" [read control]', line: 9, profile: agent}

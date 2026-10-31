@@ -15,11 +15,11 @@ import (
 	"github.com/hemm-ems/hactl/internal/policy"
 )
 
-// policyInstance is a contract fixture (a stubbed Home Assistant with
+// policyFixtureInstance is a contract fixture (a stubbed Home Assistant with
 // light.kitchen in area kitchen_id "Kitchen", label energy, and
 // automation.morning whose config id is 1700000000000) with content written
 // as its policy.yaml; content "" writes no file.
-func policyInstance(t *testing.T, content string) string {
+func policyFixtureInstance(t *testing.T, content string) string {
 	t.Helper()
 	f := buildContractFixture(t)
 	if content != "" {
@@ -68,7 +68,7 @@ profiles:
 
 // D-58: no file, no change.
 func TestPolicyNoFile(t *testing.T) {
-	dir := policyInstance(t, "")
+	dir := policyFixtureInstance(t, "")
 
 	out, code, err := runPolicy(t, dir, "show")
 	if code != 0 || !strings.Contains(out, "no policy file") || !strings.Contains(out, policy.Disclaimer) || !strings.Contains(out, "not enforced yet") {
@@ -97,7 +97,7 @@ func TestPolicyNoFile(t *testing.T) {
 
 // D-60: a broken file is reported by show and lint, refused by check.
 func TestPolicyBrokenFile(t *testing.T) {
-	dir := policyInstance(t, "version: 1\nprofiles:\n  agent:\n    deny:\n      \"entity:lock.*\": [wirte]\n")
+	dir := policyFixtureInstance(t, "version: 1\nprofiles:\n  agent:\n    deny:\n      \"entity:lock.*\": [wirte]\n")
 	file := filepath.Join(dir, policy.FileName)
 
 	out, code, _ := runPolicy(t, dir, "show")
@@ -146,7 +146,7 @@ func TestPolicyBrokenFile(t *testing.T) {
 // The exit code is the verdict: 0 allowed, 1 denied with a verdict on stdout;
 // a refusal is exit 1 with nothing on stdout.
 func TestPolicyCheckVerdicts(t *testing.T) {
-	dir := policyInstance(t, policyAgentFile)
+	dir := policyFixtureInstance(t, policyAgentFile)
 
 	out, code, _ := runPolicy(t, dir, "check", "entity:lock.front_door", "control")
 	if code != 1 || !strings.HasPrefix(out, "denied: entity:lock.front_door control\n") ||
@@ -194,8 +194,8 @@ func TestPolicyCheckVerdicts(t *testing.T) {
 }
 
 // D-61: the implicit default is said loudly.
-func TestPolicyShowSaysAllowAllLoudly(t *testing.T) {
-	dir := policyInstance(t, "version: 1\nprofiles:\n  agent: {default: deny}\n")
+func TestPolicyShowAllowAllIsLoud(t *testing.T) {
+	dir := policyFixtureInstance(t, "version: 1\nprofiles:\n  agent: {default: deny}\n")
 	out, code, _ := runPolicy(t, dir, "show")
 	if code != 0 || !strings.Contains(out, "ALLOW-ALL") || !strings.Contains(out, "agent") {
 		t.Errorf("implicit: code=%d\n%s", code, out)
@@ -210,7 +210,7 @@ func TestPolicyShowSaysAllowAllLoudly(t *testing.T) {
 // flagcontract surface): it evaluates the named declared profile, says so,
 // and leaves the effective profile as the file's active: says.
 func TestPolicyAsIsTheSameWhatIfOnShowAndCheck(t *testing.T) {
-	dir := policyInstance(t, policyAgentFile)
+	dir := policyFixtureInstance(t, policyAgentFile)
 
 	out, code, _ := runPolicy(t, dir, "show", "--as", "default")
 	if code != 0 || !strings.Contains(out, "what-if: --as default") || !strings.Contains(out, "effective profile is still agent") ||
@@ -237,7 +237,7 @@ func TestPolicyAsIsTheSameWhatIfOnShowAndCheck(t *testing.T) {
 	}
 
 	// No file: any --as is refused on both.
-	empty := policyInstance(t, "")
+	empty := policyFixtureInstance(t, "")
 	for _, args := range [][]string{{"show", "--as", "agent"}, {"check", "entity:x.y", "read", "--as", "agent"}} {
 		if out, code, _ := runPolicy(t, empty, args...); code != 1 || out != "" {
 			t.Errorf("%v with no file: code=%d stdout=%q, want a refusal", args, code, out)
@@ -264,7 +264,7 @@ func TestPolicyHasNoCallTimeProfileSelector(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	dir := policyInstance(t, policyAgentFile)
+	dir := policyFixtureInstance(t, policyAgentFile)
 	t.Setenv("HACTL_PROFILE", "default")
 	out, code, _ := runPolicy(t, dir, "check", "entity:lock.x", "read", "--json")
 	if code != 1 || !strings.Contains(out, `"profile": "agent"`) {
@@ -277,7 +277,7 @@ func TestPolicyHasNoCallTimeProfileSelector(t *testing.T) {
 // both no-match; unenumerated kinds are unchecked and fail without
 // --allow-partial.
 func TestPolicyLintAgainstTheInstance(t *testing.T) {
-	dir := policyInstance(t, `version: 1
+	dir := policyFixtureInstance(t, `version: 1
 active: agent
 profiles:
   agent:
@@ -322,7 +322,7 @@ profiles:
 	}
 
 	// --allow-partial accepts unchecked kinds, never findings.
-	clean := policyInstance(t, "version: 1\nprofiles:\n  default:\n    deny:\n      \"file:**\": [write]\n      \"entity:light.*\": [delete]\n")
+	clean := policyFixtureInstance(t, "version: 1\nprofiles:\n  default:\n    deny:\n      \"file:**\": [write]\n      \"entity:light.*\": [delete]\n")
 	if out, code, _ := runPolicy(t, clean, "lint"); code != 1 || !strings.Contains(out, "unchecked: 1 kind(s)") {
 		t.Errorf("unchecked without --allow-partial: code=%d\n%s", code, out)
 	}

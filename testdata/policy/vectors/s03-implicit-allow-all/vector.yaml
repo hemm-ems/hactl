@@ -1,0 +1,10 @@
+clause: "D-61: no `active:` and no `default` profile is the implicit allow-all; lint reports implicit-allow-all as a file-level finding"
+view: {exists: true, selected_by: implicit-allow-all, active: "", allow_all: true, default: allow, profiles: [agent, other], what_if: false}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: true, rule: "implicit allow-all: no active: and no default profile", line: 0, profile: ""}
+  - {resource: "file:configuration.yaml", verb: delete, allowed: true, rule: "implicit allow-all: no active: and no default profile", line: 0, profile: ""}
+lint:
+  inventory: {entity: [lock.front_door]}
+  findings:
+    - {code: implicit-allow-all, profile: "", rule: ""}
+  unchecked: []
