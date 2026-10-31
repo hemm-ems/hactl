@@ -137,14 +137,20 @@ func assertRefused(t *testing.T, addr, why string) {
 	}
 }
 
-// assertAccepted holds addr to be both a valid resource and a valid pattern.
+// assertAccepted holds addr to be both a valid resource and a valid pattern,
+// read back as written: the resource's String() and the loaded rule's
+// Pattern are addr itself, so no character was dropped on the way in.
 func assertAccepted(t *testing.T, addr, why string) {
 	t.Helper()
-	if _, err := policy.ParseResource(addr); err != nil {
+	if r, err := policy.ParseResource(addr); err != nil {
 		t.Errorf("ParseResource(%q) = %v, want it accepted (%s)", addr, err, why)
+	} else if got := r.String(); got != addr {
+		t.Errorf("ParseResource(%q).String() = %q, want the address back as written (%s)", addr, got, why)
 	}
-	if _, err := policy.Load(writePolicy(t, patternBody(addr))); err != nil {
+	if p, err := policy.Load(writePolicy(t, patternBody(addr))); err != nil {
 		t.Errorf("pattern %q refused (%v), want it valid (%s)", addr, err, why)
+	} else if rules := p.Rules(); len(rules) != 1 || rules[0].Pattern != addr {
+		t.Errorf("pattern %q loaded as rules %+v, want the one rule with that pattern as written (%s)", addr, rules, why)
 	}
 }
 

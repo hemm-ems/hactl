@@ -145,7 +145,7 @@ func TestToolHandlerInjectsPinnedDir(t *testing.T) {
 
 	// D-64: a --dir naming another directory is refused and nothing runs;
 	// one naming the pinned directory itself runs as given.
-	for _, cmd := range []string{"--dir /other ent ls", "ent ls --dir=/other", "ent ls --dir /tmp/instance --dir /other", "tpl eval -- --dir /other"} {
+	for _, cmd := range []string{"--dir /other ent ls", "ent ls --dir=/other", "ent ls --dir /tmp/instance --dir /other", "tpl eval -- --dir /other", "ent ls --dir"} {
 		gotArgs = nil
 		res := callTool(t, opts, cmd)
 		if !res.IsError || gotArgs != nil || !strings.Contains(textOf(t, res), "pinned") {
