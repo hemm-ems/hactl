@@ -28,11 +28,10 @@
 //
 // # The shared glob (D-2, D-28)
 //
-// Rules match with the same glob as `--pattern`: one matcher, never two. Today
-// that matcher is `matchGlob`/`matchPattern` in internal/cmd/ent.go. DECIDED
-// here (contract stage, phase 1): the glob engine moves to a new leaf package
-// `internal/glob`, imported by both internal/cmd and this package, with two
-// entry points over one engine:
+// Rules match with the same glob as `--pattern`: one matcher, never two. The
+// engine is the leaf package `internal/glob` (moved there from
+// internal/cmd/ent.go in phase 1), imported by both internal/cmd and this
+// package, with two entry points over one engine:
 //
 //   - glob.Match(s, pattern) — case-insensitive (D-2), anchored at both ends,
 //     `*` any run of characters, `?` exactly one character, every other byte
@@ -50,4 +49,12 @@
 // an allow. The policy uses MatchQualified for the id of the two kinds whose ids
 // are qualified (`entity`, `service`) and Match for every other id and every
 // sub-resource segment, segment by segment (see the manual, "Matching").
+//
+// Undecided, and recorded here rather than assumed: MatchQualified applies to
+// a wildcard-free entity or service pattern too, so a domain-less literal
+// (`entity:front_door`) matches that name in every domain (`lock.front_door`,
+// `cover.front_door`). Whether such a literal should match only the full id,
+// or be a broken file, is an open decision; the behaviour is pinned by
+// TestUnqualifiedLiteralMatchesTheNameInEveryDomainPendingDecision so the
+// decision visibly changes it.
 package policy

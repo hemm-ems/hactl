@@ -1,9 +1,12 @@
 package policy
 
 import (
-	"errors"
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/hemm-ems/hactl/internal/glob"
 )
 
 // FileName is the policy file inside an instance directory (D-57). hactl
@@ -61,6 +64,25 @@ const (
 type Policy struct {
 	source string
 	exists bool
+
+	// profiles are the declared profiles, sorted by name; nil for no file.
+	profiles []*profile
+	// view is the profile this view evaluates, nil for an AllowAll view.
+	view      *profile
+	selection Selection
+	// base* record the effective profile when this view is a what-if, so
+	// `policy show --as` can say what it is NOT showing.
+	baseActive    string
+	baseSelection Selection
+}
+
+// profile is one declared profile.
+type profile struct {
+	name  string
+	line  int
+	deflt Effect
+	// rules: deny rules first, then allow rules, each by (Line, Pattern).
+	rules []Rule
 }
 
 // Load reads `<instanceDir>/policy.yaml`.
@@ -78,10 +100,8 @@ type Policy struct {
 //   - Otherwise: the Policy, viewed through the profile D-61/D-62 select.
 //
 // Load never consults the environment or a flag for the profile (D-62).
-//
-// Implementation: evaluator stage.
 func Load(instanceDir string) (*Policy, error) {
-	return nil, notImplemented("Load(" + instanceDir + ")")
+	return load(instanceDir)
 }
 
 // Problem is one reason a policy file is broken (D-60).
@@ -129,14 +149,25 @@ func (p *Policy) Exists() bool { return p.exists }
 // Active returns the name of the profile this view evaluates, or "" when no
 // profile is in effect (SelectedByNoFile, SelectedByImplicit). For a what-if
 // view it is the `--as` profile.
-//
-// Implementation: evaluator stage.
-func (p *Policy) Active() string { return "" }
+func (p *Policy) Active() string {
+	if p.view == nil {
+		return ""
+	}
+	return p.view.name
+}
 
 // Selection says how Active was chosen.
-//
-// Implementation: evaluator stage.
-func (p *Policy) Selection() Selection { return "" }
+func (p *Policy) Selection() Selection { return p.selection }
+
+// Effective returns the effective profile and how it was selected, ignoring
+// any what-if: for a view from As it is the receiver's, never the `--as`
+// profile.
+func (p *Policy) Effective() (string, Selection) {
+	if p.selection == SelectedByWhatIf {
+		return p.baseActive, p.baseSelection
+	}
+	return p.Active(), p.selection
+}
 
 // WhatIf reports whether this view came from As — a `--as` what-if.
 func (p *Policy) WhatIf() bool { return p.Selection() == SelectedByWhatIf }
@@ -151,33 +182,61 @@ func (p *Policy) AllowAll() bool {
 
 // Profiles returns every profile the file declares, sorted by name (byte
 // order). Empty for no file.
-//
-// Implementation: evaluator stage.
-func (p *Policy) Profiles() []string { return nil }
+func (p *Policy) Profiles() []string {
+	out := make([]string, len(p.profiles))
+	for i, pr := range p.profiles {
+		out[i] = pr.name
+	}
+	return out
+}
 
 // Default returns the default effect of the profile this view evaluates:
 // Deny when it declares `default: deny`, Allow otherwise (including an
 // AllowAll view).
-//
-// Implementation: evaluator stage.
-func (p *Policy) Default() Effect { return "" }
+func (p *Policy) Default() Effect {
+	if p.view == nil {
+		return Allow
+	}
+	return p.view.deflt
+}
 
 // Rules returns the rules of the profile this view evaluates, deny rules
 // first, then allow rules, each group ordered by Line, then Pattern. Empty for
 // an AllowAll view.
-//
-// Implementation: evaluator stage.
-func (p *Policy) Rules() []Rule { return nil }
+func (p *Policy) Rules() []Rule {
+	if p.view == nil {
+		return []Rule{}
+	}
+	return append([]Rule(nil), p.view.rules...)
+}
 
 // As returns a what-if view that evaluates the declared profile name instead
 // of the effective one (D-62). The receiver is unchanged, the result's
 // Selection is SelectedByWhatIf, and every Verdict it produces has WhatIf set.
 // An undeclared name — including any name when there is no file — is an
 // error naming the declared profiles.
-//
-// Implementation: evaluator stage.
 func (p *Policy) As(name string) (*Policy, error) {
-	return nil, notImplemented("As(" + name + ")")
+	if !p.exists {
+		return nil, fmt.Errorf("--as %q: there is no policy file, so there is no profile to evaluate", name)
+	}
+	pr := p.profile(name)
+	if pr == nil {
+		declared := p.Profiles()
+		if len(declared) == 0 {
+			return nil, fmt.Errorf("--as %q: the policy file declares no profiles", name)
+		}
+		return nil, fmt.Errorf("--as %q: no such profile (declared: %s)", name, strings.Join(declared, ", "))
+	}
+	base, baseSel := p.Effective()
+	return &Policy{
+		source:        p.source,
+		exists:        p.exists,
+		profiles:      p.profiles,
+		view:          pr,
+		selection:     SelectedByWhatIf,
+		baseActive:    base,
+		baseSelection: baseSel,
+	}, nil
 }
 
 // Rule is one entry of a profile's `allow:` or `deny:` mapping.
@@ -196,7 +255,10 @@ type Rule struct {
 	Where *Where
 	// Line is the 1-based line of the pattern key in the file.
 	Line int
+
+	addr address
 }
+
 
 // Text renders the rule as a Verdict names it and `policy show` lists it:
 //
@@ -212,6 +274,17 @@ func (r Rule) Text() string {
 		s += " where " + r.Where.Text()
 	}
 	return s
+}
+
+// covers reports whether the rule applies to verb v on resource r, before
+// any `where:` selector.
+func (r Rule) covers(res Resource, v Verb) bool {
+	return slices.Contains(r.Verbs, v) && r.addr.matches(res)
+}
+
+// headText is Text without the selector: what a Verdict note names.
+func (r Rule) headText() string {
+	return string(r.Effect) + " " + strconv.Quote(r.Pattern) + " [" + strings.Join(r.Written, " ") + "]"
 }
 
 // Where is a `where:` selector (D-55): live narrowing of an allow on an entity
@@ -329,20 +402,118 @@ type Live interface {
 //
 // Decide never errors and never panics: r is assumed valid (ParseResource's
 // output), and a live failure is a non-match recorded in Notes.
-//
-// Implementation: evaluator stage. The placeholder denies everything.
 func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
-	_ = live
-	return Verdict{
-		Allowed: false,
-		Rule:    "policy: not implemented (" + r.String() + " " + v.String() + ")",
-		Level:   Level,
+	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}}
+	switch p.selection {
+	case SelectedByNoFile:
+		out.Allowed, out.Rule = true, RuleNoFile
+		return out
+	case SelectedByImplicit:
+		out.Allowed, out.Rule = true, RuleImplicit
+		return out
 	}
+	pr := p.view
+	out.Profile = pr.name
+
+	// Rules are held deny-first, each group by (Line, Pattern): the first
+	// match of the deciding effect is the one named (H-16).
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && rule.covers(r, v) {
+			out.Rule, out.Line = rule.Text(), rule.Line
+			return out
+		}
+	}
+	var granted *Rule
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect != Allow || !rule.covers(r, v) {
+			continue
+		}
+		if rule.Where != nil {
+			holds, reason := rule.Where.holds(rule.addr.kind, r.ID, live)
+			if reason != "" {
+				out.Notes = append(out.Notes, "where not evaluated for "+rule.headText()+": "+reason)
+				continue
+			}
+			if !holds {
+				continue
+			}
+		}
+		if granted == nil {
+			granted = rule
+		}
+	}
+	if granted != nil {
+		out.Allowed, out.Rule, out.Line = true, granted.Text(), granted.Line
+		return out
+	}
+	if pr.deflt == Deny {
+		out.Rule = RuleDefaultDeny
+		return out
+	}
+	out.Allowed, out.Rule = true, RuleDefaultAllow
+	return out
 }
 
-// errNotImplemented marks a placeholder the evaluator stage replaces.
-var errNotImplemented = errors.New("policy: not implemented")
+// profile returns the declared profile name, or nil.
+func (p *Policy) profile(name string) *profile {
+	for _, pr := range p.profiles {
+		if pr.name == name {
+			return pr
+		}
+	}
+	return nil
+}
 
-func notImplemented(what string) error {
-	return errors.Join(errNotImplemented, errors.New(what))
+// holds evaluates the selector for the resource id of kind k. A non-empty
+// reason means it could not be evaluated, which never grants (fail closed).
+func (w Where) holds(k Kind, id string, live Live) (bool, string) {
+	if live == nil {
+		return false, "no live instance to evaluate it against"
+	}
+	if len(w.Area) > 0 {
+		var area Ref
+		var ok bool
+		var err error
+		if k == KindDevice {
+			area, ok, err = live.DeviceArea(id)
+		} else {
+			area, ok, err = live.EntityArea(id)
+		}
+		if err != nil {
+			return false, err.Error()
+		}
+		if !ok || !anyRefMatches([]Ref{area}, w.Area) {
+			return false, ""
+		}
+	}
+	if len(w.Label) > 0 {
+		var labels []Ref
+		var err error
+		if k == KindDevice {
+			labels, err = live.DeviceLabels(id)
+		} else {
+			labels, err = live.EntityLabels(id)
+		}
+		if err != nil {
+			return false, err.Error()
+		}
+		if !anyRefMatches(labels, w.Label) {
+			return false, ""
+		}
+	}
+	return true, ""
+}
+
+// anyRefMatches: one of refs matches one of values, by id or by name.
+func anyRefMatches(refs []Ref, values []string) bool {
+	for _, ref := range refs {
+		for _, v := range values {
+			if glob.Match(ref.ID, v) || (ref.Name != "" && glob.Match(ref.Name, v)) {
+				return true
+			}
+		}
+	}
+	return false
 }

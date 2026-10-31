@@ -1178,15 +1178,17 @@ profiles:
 
 **A broken file fails closed** (D-60). A file hactl cannot read as a policy is refused, never read leniently, because a typo must never silently become allow-all. Broken means any of:
 
-- not valid YAML, or the top level is not a mapping;
+- not valid YAML, the top level is not a mapping, or more than one YAML document (a second `---` would be ignored);
+- a YAML alias, anchor reference or merge key (`*d`, `<<:`) anywhere — write every value out;
+- any mapping key twice at any level (top level, a profile name, a profile's keys, an `allow`/`deny` pattern, a `where` pattern, a selector key) — both lines are named;
 - a key this section does not define, at any level (`profile:` for `profiles:`, `allows:`, a selector key other than `area`/`label`);
+- a value of the wrong shape: `profiles`, a profile, `allow`, `deny`, `where` or a selector that is not a mapping — an empty `agent:` included (write `agent: {}`);
 - `version` missing or not `1`;
-- `active` empty, or naming a profile the file does not declare;
+- `active` present but empty (`active:`, `active: ~`, `active: ""`) or not a string, or naming a profile the file does not declare;
 - `default` other than `allow` or `deny`;
 - a pattern that breaks the grammar below — unknown kind, wrong number of id segments, unknown sub-resource, a wildcard where the grammar wants a literal, a `system` id that names (or, as a glob, matches) none of its set;
 - a verb list that is empty, not a list, or holds an unknown verb (`wirte`);
-- the same pattern twice in one `allow` or `deny`;
-- a `where` key that is not an `allow` pattern of the same profile, a `where` on a kind other than `entity` and `device` (or on `*`), or an empty selector;
+- a `where` key that is not an `allow` pattern of the same profile, a `where` on a kind other than `entity` and `device` (or on `*`), an empty selector, or an empty selector value;
 - a `policy.yml` in the instance directory — hactl reads only `policy.yaml`, and a policy saved under the wrong name must not silently be no policy.
 
 Every problem is named as `<file>:<line>: <message>`. `policy show` and `policy lint` report the problems (exit 1); `policy check` refuses (exit 1, empty stdout). Once enforcement lands, every command except `policy show` and `policy lint` refuses the same way.
@@ -1297,7 +1299,7 @@ Validates the file, then checks every rule of **every** profile, not only the ef
 | `no-match` | the pattern's id matches nothing of its kind on the live instance — a typo in a deny is a silent hole otherwise |
 | `unreachable` | for one of its verbs, every live match of the allow is denied by a deny of the same profile, so it can never decide |
 
-Live checks compare the id part only (never sub-resources) against: `entity` — the entity_ids in states and the entity registry; `device`, `area`, `floor`, `label` — their registries; `automation` and `script` — the ids `auto ls` and `script ls` print; `dashboard` — the url_paths `dash ls` prints plus the default; `service` — the services Home Assistant reports; `system` — its fixed set. `template`, `helper`, `config_entry` and `file` are not enumerated in this version and are listed as **unchecked**, as is every kind Home Assistant could not be read for — an unchecked kind is never reported clean.
+Live checks compare the id part only (never sub-resources) against: `entity` — the entity_ids in states and the entity registry; `device`, `area`, `floor`, `label` — their registries; `automation` — the config ids (D-1; not the entity object id `auto ls` prints, which differs for every UI-authored automation); `script` — the ids `script ls` prints; `dashboard` — the url_paths `dash ls` prints plus the default; `service` — the services Home Assistant reports; `system` — its fixed set. `template`, `helper`, `config_entry` and `file` are not enumerated in this version and are listed as **unchecked**, as is every kind Home Assistant could not be read for — an unchecked kind is never reported clean.
 
 Exit 0 when there is no file, or the file is valid, nothing was found and nothing was unchecked; exit 1 otherwise. `--allow-partial` accepts unchecked kinds (they are still listed) — it never hides a finding.
 

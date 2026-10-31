@@ -1,6 +1,11 @@
 package policy
 
-import "errors"
+import (
+	"errors"
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // Finding codes `policy lint` reports (manual, "policy lint"). Each is a way a
 // rule can fail to mean what its author wrote. Tests compare against these.
@@ -89,9 +94,140 @@ type Inventory interface {
 //
 // A Policy with no file reports nothing. Lint never errors: an inventory
 // failure is an Unchecked entry, not a failed lint.
-//
-// Implementation: evaluator stage.
 func Lint(p *Policy, inv Inventory) LintReport {
-	_, _ = p, inv
-	return LintReport{Findings: []Finding{}, Unchecked: []Unchecked{}}
+	rep := LintReport{Findings: []Finding{}, Unchecked: []Unchecked{}}
+	if p == nil || !p.exists {
+		return rep
+	}
+	if base, sel := p.Effective(); sel == SelectedByImplicit && base == "" && len(p.profiles) > 0 {
+		rep.Findings = append(rep.Findings, Finding{
+			Code: CodeImplicitAllowAll,
+			Message: "profiles are declared (" + strings.Join(p.Profiles(), ", ") + "), but there is no active: " +
+				"and no default profile, so none of them is in effect: everything is allowed",
+		})
+	}
+	live, unchecked := enumerate(p, inv)
+	rep.Unchecked = append(rep.Unchecked, unchecked...)
+	for _, pr := range p.profiles {
+		rep.Findings = append(rep.Findings, lintProfile(pr, live)...)
+	}
+	sortFindings(rep.Findings)
+	return rep
+}
+
+// enumerate asks inv once for every kind some rule names, in Kinds() order
+// (never map order, H-16). A kind it cannot list is Unchecked.
+func enumerate(p *Policy, inv Inventory) (map[Kind][]string, []Unchecked) {
+	named := map[Kind]bool{}
+	for _, pr := range p.profiles {
+		for _, r := range pr.rules {
+			if !r.addr.any {
+				named[r.addr.kind] = true
+			}
+		}
+	}
+	live := map[Kind][]string{}
+	var unchecked []Unchecked
+	for _, k := range Kinds() {
+		if !named[k] {
+			continue
+		}
+		if inv == nil {
+			unchecked = append(unchecked, Unchecked{Kind: k, Reason: "no live instance"})
+			continue
+		}
+		ids, err := inv.IDs(k)
+		switch {
+		case errors.Is(err, ErrNotEnumerated):
+			unchecked = append(unchecked, Unchecked{Kind: k, Reason: "not enumerated"})
+		case err != nil:
+			unchecked = append(unchecked, Unchecked{Kind: k, Reason: err.Error()})
+		default:
+			sorted := append([]string(nil), ids...)
+			sort.Strings(sorted)
+			live[k] = sorted
+		}
+	}
+	return live, unchecked
+}
+
+// lintProfile reports one profile's rules.
+func lintProfile(pr *profile, live map[Kind][]string) []Finding {
+	var out []Finding
+	for i := range pr.rules {
+		r := pr.rules[i]
+		finding := func(code, msg string) {
+			out = append(out, Finding{Code: code, Profile: pr.name, Rule: r.Text(), Line: r.Line, Message: msg})
+		}
+		if r.Effect == Allow && pr.deflt != Deny {
+			finding(CodeRedundantAllow, "profile "+strconv.Quote(pr.name)+" has no default: deny, so it already allows "+
+				"whatever no deny matches: this allow (and any where: on it) decides nothing")
+		}
+		if r.addr.any {
+			continue
+		}
+		ids, enumerated := live[r.addr.kind]
+		if !enumerated {
+			continue
+		}
+		var matched []string
+		for _, id := range ids {
+			if r.addr.matchID(id) {
+				matched = append(matched, id)
+			}
+		}
+		if len(matched) == 0 {
+			finding(CodeNoMatch, "matches no "+string(r.addr.kind)+" on this instance")
+			continue
+		}
+		if r.Effect != Allow {
+			continue
+		}
+		for _, v := range r.Verbs {
+			if allDenied(pr, r, matched, v) {
+				finding(CodeUnreachable, "never decides "+v.String()+": every "+string(r.addr.kind)+
+					" it matches is denied "+v.String()+" by a deny of this profile")
+			}
+		}
+	}
+	return out
+}
+
+// allDenied reports whether every matched id — with the allow's own sub path
+// appended literally — is denied v by some deny of the profile.
+func allDenied(pr *profile, allow Rule, matched []string, v Verb) bool {
+	sub := strings.Join(allow.addr.sub, "/")
+	for _, id := range matched {
+		res := Resource{Kind: allow.addr.kind, ID: id, Sub: sub}
+		denied := false
+		for _, d := range pr.rules {
+			if d.Effect == Deny && d.covers(res, v) {
+				denied = true
+				break
+			}
+		}
+		if !denied {
+			return false
+		}
+	}
+	return true
+}
+
+// sortFindings orders by (Line, Code, Profile, Rule, Message): a total order.
+func sortFindings(fs []Finding) {
+	sort.SliceStable(fs, func(i, j int) bool {
+		a, b := fs[i], fs[j]
+		switch {
+		case a.Line != b.Line:
+			return a.Line < b.Line
+		case a.Code != b.Code:
+			return a.Code < b.Code
+		case a.Profile != b.Profile:
+			return a.Profile < b.Profile
+		case a.Rule != b.Rule:
+			return a.Rule < b.Rule
+		default:
+			return a.Message < b.Message
+		}
+	})
 }

@@ -92,6 +92,16 @@ var unidentifiedWireStructs = map[string]string{
 	"grepRow":          "hactl's own --json output shape for `grep`",
 	"grepSource":       "hactl's own --json output shape for `grep`",
 	"grepUnread":       "hactl's own --json output shape for `grep`",
+
+	"policyShowDoc":       "hactl's own --json output shape for `policy show`",
+	"policyShowRule":      "hactl's own --json output shape for `policy show`",
+	"policyShowWhere":     "hactl's own --json output shape for `policy show`",
+	"policyProblem":       "hactl's own --json output shape for `policy show`",
+	"policyCheckDoc":      "hactl's own --json output shape for `policy check`",
+	"policyLintDoc":       "hactl's own --json output shape for `policy lint`",
+	"policyLintFinding":   "hactl's own --json output shape for `policy lint`",
+	"policyLintUnchecked": "hactl's own --json output shape for `policy lint`",
+
 	"EnergyPreferences": "a configured-but-empty energy dashboard is a real answer (both lists " +
 		"legitimately empty); the source/flow/device elements carry the identity, and the " +
 		"unconfigured case never reaches the decode — HA answers a WS error (\"No prefs\", " +

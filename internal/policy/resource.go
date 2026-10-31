@@ -1,5 +1,10 @@
 package policy
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Kind is the first part of a resource address, `<kind>:<id>[/<sub>…]`. The set
 // is closed: a kind not listed here is a D-60 problem in a rule and a refusal in
 // `policy check`. Kinds are spelled exactly as below (lowercase, no folding).
@@ -138,7 +143,11 @@ type Resource struct {
 
 // String renders the address in the grammar ParseResource reads:
 // `<kind>:<id>` plus `/<sub>` when Sub is set. ParseResource(r.String()) == r
-// for every valid r.
+// for every r ParseResource returns. A Resource built by hand is not
+// necessarily one of those: a file path whose second-to-last segment is
+// `block` (`packages/block/x.yaml`) renders to an address ParseResource reads
+// as the block sub-resource of `packages`, because the grammar says a trailing
+// `/block/<id>` always is one.
 func (r Resource) String() string {
 	s := string(r.Kind) + ":" + r.ID
 	if r.Sub != "" {
@@ -163,8 +172,13 @@ func (r Resource) String() string {
 //
 // For file, a trailing `/block/<id>` is always read as the block sub-resource;
 // everything before it is the path.
-//
-// Implementation: evaluator stage.
 func ParseResource(s string) (Resource, error) {
-	return Resource{}, notImplemented("ParseResource(" + s + ")")
+	if s == "*" || strings.ContainsAny(s, "*?") {
+		return Resource{}, fmt.Errorf("resource %q holds a wildcard: a resource names one thing (patterns belong in rules)", s)
+	}
+	a, err := parseAddress(s, true)
+	if err != nil {
+		return Resource{}, fmt.Errorf("resource %q: %w", s, err)
+	}
+	return Resource{Kind: a.kind, ID: strings.Join(a.id, "/"), Sub: strings.Join(a.sub, "/")}, nil
 }

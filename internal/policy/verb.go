@@ -1,6 +1,10 @@
 package policy
 
-import "strconv"
+import (
+	"errors"
+	"fmt"
+	"strconv"
+)
 
 // Verb is one of the five things a rule can grant or deny (D-53). The order of
 // the constants is the canonical order: every list of verbs hactl renders —
@@ -56,18 +60,45 @@ func (v Verb) String() string {
 // (lowercase; no trimming, no case folding). "write" is refused with an error
 // naming the four verbs it stands for; anything else unknown is refused with an
 // error listing the five verbs. Used by `policy check <resource> <verb>`.
-//
-// Implementation: evaluator stage.
 func ParseVerb(s string) (Verb, error) {
-	return 0, notImplemented("ParseVerb(" + s + ")")
+	for _, v := range AllVerbs() {
+		if v.String() == s {
+			return v, nil
+		}
+	}
+	if s == WriteAlias {
+		return 0, errors.New(`"write" is an alias for control, edit, create and delete in rules; a verdict is per verb, so ask about one of them`)
+	}
+	return 0, fmt.Errorf("unknown verb %q (want read, control, edit, create or delete)", s)
 }
 
 // ParseVerbs parses a rule's verb list. "write" expands to Control, Edit,
 // Create, Delete. The result is de-duplicated and in canonical order. An empty
 // list, or any unknown verb, is an error naming the offending value — the
 // caller (Load) turns it into a D-60 problem at the list's file:line.
-//
-// Implementation: evaluator stage.
 func ParseVerbs(ss []string) ([]Verb, error) {
-	return nil, notImplemented("ParseVerbs(" + strconv.Itoa(len(ss)) + " verbs)")
+	if len(ss) == 0 {
+		return nil, errors.New("empty verb list (want at least one of read, control, edit, create, delete or write)")
+	}
+	var set [Delete + 1]bool
+	for _, s := range ss {
+		if s == WriteAlias {
+			for _, v := range []Verb{Control, Edit, Create, Delete} {
+				set[v] = true
+			}
+			continue
+		}
+		v, err := ParseVerb(s)
+		if err != nil {
+			return nil, fmt.Errorf("unknown verb %q (want read, control, edit, create, delete or write)", s)
+		}
+		set[v] = true
+	}
+	out := make([]Verb, 0, len(set))
+	for _, v := range AllVerbs() {
+		if set[v] {
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
