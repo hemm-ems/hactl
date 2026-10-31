@@ -1,0 +1,5 @@
+clause: "Manual matching: `?` is exactly one character — one Unicode code point, not one byte — so a deny on `file:k?che.yaml` covers `k\u00fcche.yaml` as it covers `kuche.yaml`"
+cases:
+  - {resource: "file:kuche.yaml", verb: edit, allowed: false, rule: 'deny "file:k?che.yaml" [edit]', line: 9}
+  - {resource: "file:k\u00fcche.yaml", verb: edit, allowed: false, rule: 'deny "file:k?che.yaml" [edit]', line: 9}
+  - {resource: "file:kueche.yaml", verb: edit, allowed: true, rule: 'allow "file:**" [edit]', line: 7}

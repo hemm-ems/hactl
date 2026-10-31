@@ -1,0 +1,13 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:hallway": [read]
+      "entity:front*": [read]
+      "service:turn_on": [control]
+      "area:kitchen": [read]
+    deny:
+      "entity:front_door": [control]
+      "service:Unlock": [control]

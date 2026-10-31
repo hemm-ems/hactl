@@ -1,0 +1,12 @@
+clause: "D-68: white space (a space, a tab, a no-break space) and control characters are refused in the id of every kind — a broken file, each named with its line; the kinds HA does not restrict keep every other character (`-`, non-ASCII letters)"
+load_error:
+  file_is_policy_yaml: true
+  count: 7
+  problems:
+    - {line: 7}
+    - {line: 8}
+    - {line: 9}
+    - {line: 10}
+    - {line: 11}
+    - {line: 12}
+    - {line: 13}

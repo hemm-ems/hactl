@@ -26,7 +26,8 @@ package policy_test
 //	view:              Exists/Selection/Active/AllowAll/Default/Profiles/WhatIf
 //	live:              the Live a case evaluates with (mode: fixture|nil|error)
 //	cases:             (resource, verb) → allowed, rule | rule_contains, line,
-//	                   profile, notes (count), notes_contains (per note index)
+//	                   profile, notes (count), notes_contains (per note index),
+//	                   partial, partial_denies [{rule, line}] (D-66)
 //	lint:              policy.Lint over a fixture Inventory (or nil_inventory),
 //	                   findings compared in order, unchecked compared in order
 //
@@ -39,6 +40,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -97,6 +99,18 @@ type caseExpect struct {
 	Notes         *int         `yaml:"notes"`
 	NotesContains [][]string   `yaml:"notes_contains"`
 	Live          *liveFixture `yaml:"live"`
+	// Partial and PartialDenies pin D-66. The Go fields they are read from
+	// (Verdict.Partial, Verdict.PartialDenies) mirror the --json keys the
+	// manual fixes (`partial`, `partial_denies`); they are read by reflection
+	// so this runner compiles before D-66 is built.
+	Partial       *bool            `yaml:"partial"`
+	PartialDenies *[]ruleRefExpect `yaml:"partial_denies"`
+}
+
+// ruleRefExpect is one entry of a partial verdict's descendant denies.
+type ruleRefExpect struct {
+	Rule string `yaml:"rule"`
+	Line int    `yaml:"line"`
 }
 
 type lintExpect struct {
@@ -117,6 +131,13 @@ type findingExpect struct {
 type uncheckedExpect struct {
 	Kind   string `yaml:"kind"`
 	Reason string `yaml:"reason"`
+	// Profile, Rule and Line pin D-65's per-rule entries (manual "policy
+	// lint" --json: `profile`/`rule` "" and `line` 0 for a kind's own entry).
+	// Read by reflection from Unchecked's fields of the same names, so the
+	// runner compiles before they exist; asserted only when present here.
+	Profile *string `yaml:"profile"`
+	Rule    *string `yaml:"rule"`
+	Line    *int    `yaml:"line"`
 }
 
 // --- the Live fixture -------------------------------------------------------
@@ -496,6 +517,7 @@ func checkCase(t *testing.T, v vector, p *policy.Policy, c caseExpect, whatIf bo
 	if c.Notes != nil && len(got.Notes) != *c.Notes {
 		t.Errorf("%s: %d notes, want %d: %q", label, len(got.Notes), *c.Notes, got.Notes)
 	}
+	checkPartial(t, label, got, c)
 	for i, want := range c.NotesContains {
 		if i >= len(got.Notes) {
 			t.Errorf("%s: note %d missing (notes %q)", label, i, got.Notes)
@@ -543,6 +565,7 @@ func checkLint(t *testing.T, v vector, p *policy.Policy) {
 		if string(got.Kind) != want.Kind || got.Reason != want.Reason {
 			t.Errorf("[%s]\nunchecked %d = %+v, want %+v", v.Clause, i, got, want)
 		}
+		checkUncheckedRule(t, v.Clause, i, got, want)
 	}
 }
 
@@ -551,4 +574,123 @@ func derefLine(p *int) any {
 		return "any"
 	}
 	return *p
+}
+
+// --- D-66 / D-65 fields, read by reflection ------------------------------------
+
+// structField returns v's exported field name, or ok=false when the type has
+// no such field (the decision is not built yet).
+func structField(v any, name string) (reflect.Value, bool) {
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return reflect.Value{}, false
+	}
+	f := rv.FieldByName(name)
+	return f, f.IsValid()
+}
+
+// ruleRefOf reads one descendant-deny entry: a struct with a Text() method
+// (a policy.Rule) or a Rule string field, and a Line int field.
+func ruleRefOf(e reflect.Value) (ruleRefExpect, bool) {
+	var out ruleRefExpect
+	if e.Kind() == reflect.String {
+		out.Rule = e.String()
+		out.Line = -1
+		return out, true
+	}
+	if m := e.MethodByName("Text"); m.IsValid() && m.Type().NumIn() == 0 && m.Type().NumOut() == 1 {
+		out.Rule = m.Call(nil)[0].String()
+	} else if f := e.FieldByName("Rule"); f.IsValid() && f.Kind() == reflect.String {
+		out.Rule = f.String()
+	} else {
+		return out, false
+	}
+	if f := e.FieldByName("Line"); f.IsValid() && f.CanInt() {
+		out.Line = int(f.Int())
+	} else {
+		out.Line = -1
+	}
+	return out, true
+}
+
+// verdictPartial reads Verdict.Partial and Verdict.PartialDenies (D-66).
+// ok is false, with a reason, when the fields do not exist.
+func verdictPartial(got policy.Verdict) (partial bool, denies []ruleRefExpect, ok bool, why string) {
+	pf, has := structField(got, "Partial")
+	if !has || pf.Kind() != reflect.Bool {
+		return false, nil, false, "policy.Verdict has no bool field Partial (D-66 not built)"
+	}
+	df, has := structField(got, "PartialDenies")
+	if !has || df.Kind() != reflect.Slice {
+		return pf.Bool(), nil, false, "policy.Verdict has no slice field PartialDenies (D-66 not built)"
+	}
+	for i := range df.Len() {
+		r, ok := ruleRefOf(df.Index(i))
+		if !ok {
+			return pf.Bool(), nil, false, fmt.Sprintf("PartialDenies[%d] (%s) carries no rule text", i, df.Index(i).Type())
+		}
+		denies = append(denies, r)
+	}
+	return pf.Bool(), denies, true, ""
+}
+
+func checkPartial(t *testing.T, label string, got policy.Verdict, c caseExpect) {
+	t.Helper()
+	if c.Partial == nil && c.PartialDenies == nil {
+		return
+	}
+	partial, denies, ok, why := verdictPartial(got)
+	if !ok {
+		t.Errorf("%s: %s", label, why)
+		return
+	}
+	if c.Partial != nil && partial != *c.Partial {
+		t.Errorf("%s: Partial = %v, want %v (denies %+v)", label, partial, *c.Partial, denies)
+	}
+	if c.PartialDenies != nil {
+		want := *c.PartialDenies
+		if len(denies) != len(want) {
+			t.Errorf("%s: PartialDenies = %+v, want %+v", label, denies, want)
+			return
+		}
+		for i := range want {
+			if denies[i].Rule != want[i].Rule || (denies[i].Line >= 0 && denies[i].Line != want[i].Line) {
+				t.Errorf("%s: PartialDenies[%d] = %+v, want %+v", label, i, denies[i], want[i])
+			}
+			if denies[i].Line < 0 {
+				t.Errorf("%s: PartialDenies[%d] carries no Line", label, i)
+			}
+		}
+	}
+}
+
+// checkUncheckedRule asserts the per-rule fields of an Unchecked entry (D-65).
+func checkUncheckedRule(t *testing.T, clause string, i int, got policy.Unchecked, want uncheckedExpect) {
+	t.Helper()
+	if want.Profile == nil && want.Rule == nil && want.Line == nil {
+		return
+	}
+	for _, f := range []struct {
+		name string
+		want any
+	}{{"Profile", want.Profile}, {"Rule", want.Rule}, {"Line", want.Line}} {
+		fv, has := structField(got, f.name)
+		if !has {
+			t.Errorf("[%s]\nunchecked %d: policy.Unchecked has no field %s (D-65 per-rule entries not built)", clause, i, f.name)
+			continue
+		}
+		switch w := f.want.(type) {
+		case *string:
+			if w != nil && (fv.Kind() != reflect.String || fv.String() != *w) {
+				t.Errorf("[%s]\nunchecked %d: %s = %v, want %q", clause, i, f.name, fv, *w)
+			}
+		case *int:
+			if w != nil && (!fv.CanInt() || int(fv.Int()) != *w) {
+				t.Errorf("[%s]\nunchecked %d: %s = %v, want %d", clause, i, f.name, fv, *w)
+			}
+		}
+	}
 }
