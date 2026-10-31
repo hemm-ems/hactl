@@ -174,8 +174,10 @@ func (r Resource) String() string {
 //     allows;
 //   - a character outside the id's charset (D-68): entity and service ids are
 //     ASCII letters, digits, `_` and `.`; helper, area, floor and label ids
-//     ASCII letters, digits and `_`; no id of any kind holds white space or a
-//     control character;
+//     ASCII letters, digits and `_`; device and config_entry ids hold no
+//     white space; no id segment and no free sub-resource segment of any kind
+//     starts or ends with white space or holds a control character or a
+//     format character (Unicode Cf: zero-width space, BOM, bidi controls…);
 //   - a file path with a `.` or `..` segment, or a segment named `block` (in
 //     any case) anywhere but before a trailing block id (D-67).
 //
