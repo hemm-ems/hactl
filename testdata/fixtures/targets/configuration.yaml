@@ -1,0 +1,35 @@
+# targets fixture — the oracle rig for service-call target expansion.
+#
+# Question it answers (SPEC-permissions.md, E-1): when a service call names an
+# area, floor, label, device or group instead of entity ids, WHICH entities
+# does Home Assistant act on — and does the WebSocket command
+# `extract_from_target` answer the same set before the call is made? A policy
+# that checks "may this caller control every entity the call reaches" is only
+# as right as that set.
+#
+# `demo:` is here because it is the only supported way to get real DEVICES
+# with lights on them: area-via-device and label-via-device cannot be built
+# without devices, and HA has no "create device" command. `group:` loads the
+# old-style group integration so the rig can create a group at runtime with
+# `group.set` (expand_group). Everything else — floor, areas, label,
+# placements, hidden flag — is registry state the test builds itself, because
+# none of it has a YAML form.
+
+homeassistant:
+  name: Targets Oracle
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+demo:
+
+group:
+
+logger:
+  default: warning
