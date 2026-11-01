@@ -136,6 +136,8 @@ func assertSameBodies(t *testing.T, what string, noFile, implicit []string) {
 // before the policy existed, byte for byte, and no audit log appears. The
 // golden was recorded from the commands as they were before stage 2b wired
 // them (HACTL_UPDATE_GOLDEN=1 rewrites it; never do that to make this pass).
+// One line was changed by hand, on purpose: the confirmed `helper delete` now
+// names its domain with or without a policy (D-123).
 func TestTypedWritesWithoutAProfileAreUnchanged(t *testing.T) {
 	var got strings.Builder
 	for _, c := range typedCommands {

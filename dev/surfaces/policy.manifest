@@ -717,7 +717,7 @@ cmd hactl helper create = proven: TestHelperCreateRefusedByItsPlan
 
 # map: delete helper:{domain}/{id} + delete entity:{domain}.{id} when registered
 # (orphan; the preview reads the registry for it while a profile is in effect).
-# Sends &domain= while a profile is in effect (D-58 otherwise).
+# Always sends &domain=, with or without a profile (D-123).
 cmd hactl helper delete = proven: TestHelperDeleteRefusedByItsPlan
 
 # map: create on every area id (kind-wide, D-75; reported as `area:*`).
