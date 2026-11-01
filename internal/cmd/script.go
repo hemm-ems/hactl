@@ -21,6 +21,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 	"github.com/hemm-ems/hactl/internal/writer"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
@@ -904,6 +905,12 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
+	// The plan: create on the file's top-level key, as the companion keys it.
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptCreatePlan(content))
+	if err != nil {
+		return err
+	}
+
 	if !flagScriptConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
@@ -912,6 +919,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 			with("id", candidate.ID).
 			with("file", flagScriptFile).
 			with("bytes", len(data)).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -970,16 +978,26 @@ func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("script %q not found (use 'script ls' to see available scripts): %w", scriptID, err)
 	}
 
+	// Resolve while the entity is still real; afterwards a registry entry is
+	// indistinguishable from an older ghost. The preview resolves it too while
+	// a profile is in effect, because the cleanup is part of the plan (D-78);
+	// without one it stays the confirmed run's read (D-58).
+	orphan := ""
+	if flagScriptConfirm || policyInEffect() {
+		orphan = registeredEntityID(ctx, cfg, "script."+normalizeScriptID(scriptID))
+	}
+	note, err := checkWritePlan(w, !flagScriptConfirm, deletePlan("delete script", policy.KindScript, scriptID, orphan))
+	if err != nil {
+		return err
+	}
+
 	if !flagScriptConfirm {
 		return dryRun("delete script").
 			with("id", remote.ID).
 			with("bytes", len(remote.Content)).
+			withPolicy(note).
 			render(w)
 	}
-
-	// Resolve while the entity is still real; afterwards a registry entry is
-	// indistinguishable from an older ghost.
-	orphan := registeredEntityID(ctx, cfg, "script."+normalizeScriptID(scriptID))
 
 	if _, err := cc.DeleteScriptDef(ctx, scriptID); err != nil {
 		return fmt.Errorf("deleting script: %w", err)

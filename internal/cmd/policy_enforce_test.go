@@ -464,6 +464,11 @@ type confirmedCoverageCase struct {
 	// setup, when set, prepares the rig before the run (a companion .env, an
 	// input file) and may rewrite the run's own copy of args.
 	setup func(t *testing.T, ts *cmdTestServer, args []string)
+	// start, when set, builds the instance instead of startCmdServer(ws,
+	// http) and returns its directory and the full args to run (a family's
+	// own rig: a companion beside Home Assistant, files to pass with -f).
+	// setup is not used with it.
+	start func(t *testing.T) (dir string, args []string)
 }
 
 var confirmedCoverageCases = []confirmedCoverageCase{
@@ -509,16 +514,22 @@ func uncoveredChecks(plan, requests []reqmap.Check) []string {
 func TestEveryConfirmedRequestIsInThePlan(t *testing.T) {
 	for _, tc := range confirmedCoverageCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := startCmdServer(t, tc.ws, tc.http)
-			writePolicyFile(t, ts.dir, policyAllowEverything)
+			var dir string
 			args := slices.Clone(tc.args)
-			if tc.setup != nil {
-				tc.setup(t, ts, args)
+			if tc.start != nil {
+				dir, args = tc.start(t)
+			} else {
+				ts := startCmdServer(t, tc.ws, tc.http)
+				dir = ts.dir
+				if tc.setup != nil {
+					tc.setup(t, ts, args)
+				}
 			}
+			writePolicyFile(t, dir, policyAllowEverything)
 			rec := &coverageRecorder{}
 			policyRecorder = rec
 			defer func() { policyRecorder = nil }()
-			out, err := runPolicyCLI(t, ts.dir, args...)
+			out, err := runPolicyCLI(t, dir, args...)
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}

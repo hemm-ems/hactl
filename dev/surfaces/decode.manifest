@@ -27,6 +27,7 @@ internal/cmd/script.go:normalizeScriptYAML = exempt: parses the user's own scrip
 internal/cmd/script.go:normalizeScriptCreateYAML = exempt: parses the user's own create input; refuses empty input and anything but one top-level key
 internal/cmd/tpl.go:classifyTemplate = exempt: parses the user's own template YAML; an empty document is refused explicitly ("template file is empty")
 internal/writer/writer.go:readLocalAutomation = exempt: parses the user's own local file, whose emptiness is the caller's to see — a blank candidate diffs as a deletion and validate_config refuses it; the REMOTE document is decoded by remoteEntry, proven above
+internal/cmd/policy_typed.go:yamlTop = exempt: parses the user's own candidate file, or hactl's own automation backup, for a write command's policy plan; a document that decodes to nothing names no id, so the plan refuses the write (fail closed, D-78) — it never renders as success
 
 # --- transport envelopes: checked explicitly, results re-decoded under the sweep
 internal/haapi/websocket.go:(*WSClient).TraceList = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal with degeneracy.Check

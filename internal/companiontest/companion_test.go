@@ -359,7 +359,7 @@ func TestCreateAndGetHelper(t *testing.T) {
 		t.Errorf("domain = %q, want input_boolean", got.Domain)
 	}
 
-	del, err := testClient.DeleteHelper(ctx, cr.ID)
+	del, err := testClient.DeleteHelper(ctx, cr.ID, "")
 	if err != nil {
 		t.Fatalf("delete helper: %v", err)
 	}

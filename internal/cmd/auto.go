@@ -1056,6 +1056,15 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 			asPreview(!flagAutoConfirm).
 			render(w)
 	}
+
+	// The plan (H-29's command layer), checked before the diff is shown and
+	// before the first write, the same in the preview and under --confirm:
+	// edit on the target, + create on the file's id when it differs (E-5,
+	// D-78); a file without a usable id is refused (R-6).
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoApplyPlan(configID, flagAutoFile))
+	if err != nil {
+		return err
+	}
 	if !flagJSON {
 		_, _ = fmt.Fprintf(w, "diff:\n")
 		renderAutoDiff(w, diff.Lines)
@@ -1091,7 +1100,7 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 				"%d lines change on disk, not %d: this entry is rewritten in the companion's canonical "+
 					"style (start from `hactl auto cat %s` to see your file in it)", extra, diff.ChangedLines(), autoID))
 		}
-		return plan.render(w)
+		return plan.withPolicy(note).render(w)
 	}
 
 	if !flagJSON {
@@ -1195,6 +1204,13 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		return valErr
 	}
 
+	// The plan: create on the id the file declares; a file without a usable
+	// id is refused (D-78) — the same bytes the companion is sent.
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoCreatePlan(data))
+	if err != nil {
+		return err
+	}
+
 	if !flagAutoConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
@@ -1203,6 +1219,7 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 			with("file", flagAutoFile).
 			with("bytes", len(data)).
 			withIf(validation != "", "validation", validation).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -1386,9 +1403,27 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 	// automations.yaml but not loaded (no live entity) is still resolvable —
 	// and one that is live but yaml-authored without an `id:` still is not,
 	// which is why a live entity alone also counts.
-	_, defErr := cc.GetAutomationDef(ctx, companionRef)
+	def, defErr := cc.GetAutomationDef(ctx, companionRef)
 	if defErr != nil && !hadLiveEntity {
 		return fmt.Errorf("automation %q not found (use 'auto ls' to see available automations): %w", autoID, defErr)
+	}
+
+	// The plan: delete on the config id + the registry cleanup that follows
+	// it. The id counts as a config id only when the companion's GET answered
+	// with that very id — the same proof the request layer asks of the DELETE
+	// (D-72); otherwise the companion would fall back to an alias or an entity
+	// id, and the delete is refused (D-78).
+	verifiedID := ""
+	if defErr == nil && def.ID == companionRef {
+		verifiedID = companionRef
+	}
+	orphan := ""
+	if hadLiveEntity {
+		orphan = liveEntityID
+	}
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoDeletePlan(verifiedID, orphan))
+	if err != nil {
+		return err
 	}
 
 	if !flagAutoConfirm {
@@ -1396,6 +1431,7 @@ func runAutoDelete(ctx context.Context, w io.Writer, autoID string) error {
 			with("id", autoID).
 			withIf(hadLiveEntity && liveAuto.Attributes.ID != "", "config_id", liveAuto.Attributes.ID).
 			withIf(hadLiveEntity, "entity_id", liveEntityID).
+			withPolicy(note).
 			render(w)
 	}
 

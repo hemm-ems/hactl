@@ -14,6 +14,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 // tplEntityDomains are the entity-domain keys a modern `template:` block can
@@ -258,6 +259,13 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 				"(e.g. `triggers: [...]` alongside `sensor: [ {...} ]`)", kind.strayKey)
 	}
 
+	// The plan: create on every unique_id the file declares; an entity
+	// without one has no address, so the create is refused (D-78).
+	note, err := checkWritePlan(w, !flagTplConfirm, tplCreatePlan(content))
+	if err != nil {
+		return err
+	}
+
 	if !flagTplConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
@@ -270,7 +278,7 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 		} else {
 			plan = plan.with("domain", flagTplDomain)
 		}
-		return plan.with("bytes", len(data)).render(w)
+		return plan.with("bytes", len(data)).withPolicy(note).render(w)
 	}
 
 	cc, err := connectCompanion(ctx)
@@ -352,10 +360,17 @@ func runTplDelete(ctx context.Context, w io.Writer, uniqueID string) error {
 	// indistinguishable from an older ghost.
 	orphans := templateEntityIDs(ctx, cfg, uniqueID)
 
+	// The plan: delete on the template + the registry cleanup that follows it.
+	note, err := checkWritePlan(w, !flagTplConfirm, deletePlan("delete template", policy.KindTemplate, uniqueID, orphans...))
+	if err != nil {
+		return err
+	}
+
 	if !flagTplConfirm {
 		return dryRun("delete template").
 			with("unique_id", remote.UniqueID).
 			with("entities", strings.Join(orphans, ", ")).
+			withPolicy(note).
 			render(w)
 	}
 

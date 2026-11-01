@@ -461,9 +461,14 @@ func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*Hel
 	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
-// DeleteHelper calls DELETE /v1/config/helper?id=<id>.
-func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResponse, error) {
+// DeleteHelper calls DELETE /v1/config/helper?id=<id>[&domain=<domain>]. An
+// empty domain is left out, and the companion then looks the id up across
+// every helper domain (409 when it is ambiguous).
+func (c *Client) DeleteHelper(ctx context.Context, id, domain string) (*ConfigDeleteResponse, error) {
 	q := url.Values{"id": {id}}
+	if domain != "" {
+		q.Set("domain", domain)
+	}
 	data, err := c.doDelete(ctx, "/v1/config/helper", q)
 	if err != nil {
 		return nil, err
