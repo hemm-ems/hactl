@@ -1,0 +1,4222 @@
+{
+ "about": "Request-layer mapping vectors for H-29 (phase 2). One or more vectors per request row of dev/surfaces/policy.manifest (ws/rest/companion; cmd rows are proven at the command layer), plus negative vectors. Authored from the contract only. A request goes in; the row it matches, its disposition (write, read-deferred, exempt, unmapped, unmappable) and, for a write, its (resource, verb) set come out. Checks compare as a set. `refused` is the phase-2 consequence (D-74): unmappable is refused; unmapped is refused for every WS type and every non-GET method. `facts` is what the same command invocation already holds (D-72), overlaid on `facts_ref`.",
+ "facts": {
+  "house": {
+   "policy_hash": "sha256:policy-a",
+   "live_entities": [
+    "light.kitchen",
+    "light.desk",
+    "switch.fan",
+    "lock.front_door",
+    "script.renamed_wipe",
+    "script.morning",
+    "sensor.temp",
+    "weather.home"
+   ],
+   "registry": {
+    "entities": [
+     {
+      "entity_id": "light.kitchen",
+      "unique_id": "hue-1",
+      "platform": "hue",
+      "device_id": "dev_hue1",
+      "area_id": "kitchen",
+      "labels": [
+       "critical"
+      ],
+      "config_entry_id": "01HUEENTRY"
+     },
+     {
+      "entity_id": "light.desk",
+      "unique_id": "hue-2",
+      "platform": "hue",
+      "device_id": "dev_hue2",
+      "area_id": "office",
+      "labels": [],
+      "config_entry_id": "01HUEENTRY"
+     },
+     {
+      "entity_id": "switch.fan",
+      "unique_id": "fan-1",
+      "platform": "tasmota",
+      "device_id": "dev_fan",
+      "area_id": null,
+      "labels": [],
+      "config_entry_id": "01TASMOTA"
+     },
+     {
+      "entity_id": "lock.front_door",
+      "unique_id": "zw-7",
+      "platform": "zwave_js",
+      "device_id": "dev_lock",
+      "area_id": null,
+      "labels": [
+       "critical"
+      ],
+      "config_entry_id": "01ZWAVE"
+     },
+     {
+      "entity_id": "script.renamed_wipe",
+      "unique_id": "wipe_all",
+      "platform": "script",
+      "area_id": "office",
+      "labels": []
+     },
+     {
+      "entity_id": "script.morning",
+      "unique_id": "morning",
+      "platform": "script",
+      "labels": []
+     },
+     {
+      "entity_id": "sensor.temp",
+      "unique_id": "tpl_temp",
+      "platform": "template",
+      "labels": []
+     },
+     {
+      "entity_id": "weather.home",
+      "unique_id": "met-1",
+      "platform": "met",
+      "labels": [],
+      "config_entry_id": "01MET"
+     }
+    ],
+    "devices": [
+     {
+      "id": "dev_hue1",
+      "area_id": "kitchen",
+      "labels": [],
+      "config_entries": [
+       "01HUEENTRY"
+      ]
+     },
+     {
+      "id": "dev_hue2",
+      "area_id": "office",
+      "labels": [],
+      "config_entries": [
+       "01HUEENTRY",
+       "01OTHER"
+      ]
+     },
+     {
+      "id": "dev_fan",
+      "area_id": "office",
+      "labels": [
+       "critical"
+      ],
+      "config_entries": [
+       "01TASMOTA"
+      ]
+     },
+     {
+      "id": "dev_lock",
+      "area_id": "hall",
+      "labels": [],
+      "config_entries": [
+       "01ZWAVE"
+      ]
+     }
+    ],
+    "areas": [
+     {
+      "area_id": "kitchen",
+      "floor_id": "ground",
+      "labels": []
+     },
+     {
+      "area_id": "office",
+      "floor_id": "upstairs",
+      "labels": [
+       "critical"
+      ]
+     },
+     {
+      "area_id": "hall",
+      "floor_id": "ground",
+      "labels": []
+     }
+    ]
+   },
+   "dashboard_configs": {
+    "main": {
+     "title": "Home",
+     "views": [
+      {
+       "path": "kitchen",
+       "title": "Kitchen",
+       "cards": [
+        {
+         "type": "light",
+         "entity": "light.kitchen"
+        }
+       ]
+      },
+      {
+       "path": "office",
+       "title": "Office",
+       "cards": []
+      },
+      {
+       "title": "Untitled",
+       "cards": []
+      }
+     ]
+    },
+    "": {
+     "views": [
+      {
+       "path": "home",
+       "cards": []
+      }
+     ]
+    }
+   },
+   "dashboard_ids": {
+    "5f1c0e7d": "main"
+   },
+   "verified_automation_ids": [
+    "prod_heating"
+   ],
+   "options_flow_handlers": {
+    "flow_opt_1": "01HUEENTRY"
+   },
+   "ref_replace_plans": [
+    {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "policy_hash": "sha256:policy-a",
+     "checks": [
+      {
+       "verb": "edit",
+       "resource": "file:automations.yaml"
+      },
+      {
+       "verb": "edit",
+       "resource": "automation:morning_lights/config"
+      },
+      {
+       "verb": "edit",
+       "resource": "file:packages/kitchen.yaml"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "vectors": [
+  {
+   "id": "ws-auth",
+   "why": "the handshake is transport (manifest: ws auth)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "auth",
+     "access_token": "redacted"
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws auth"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-addons",
+   "why": "companion discovery, step one",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons",
+     "method": "get"
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws supervisor/api GET /addons"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-addon-info",
+   "why": "companion discovery, step two; {slug} is one segment",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/a0d7b954_hactl/info",
+     "method": "get"
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws supervisor/api GET /addons/{slug}/info"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-ingress-session",
+   "why": "a POST on the wire that is transport plumbing",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/ingress/session",
+     "method": "post"
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws supervisor/api POST /ingress/session"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-extract-from-target",
+   "why": "the policy check's own oracle (D-59)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "extract_from_target",
+     "target": {
+      "area_id": [
+       "office"
+      ]
+     },
+     "expand_group": true
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws extract_from_target"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-unknown-post",
+   "why": "an endpoint no row names: unmapped, and every WS type is mutating",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/a0d7b954_hactl/restart",
+     "method": "post"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-known-endpoint-other-method",
+   "why": "(POST, /addons) is not (GET, /addons)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons",
+     "method": "post"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-unknown-get",
+   "why": "a supervisor GET no row names is still a WS type: refused, not 'unmapped GET'",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/a0d7b954_hactl/logs",
+     "method": "get"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-dot-segment",
+   "why": "R-8: a `..` segment in the endpoint is unmappable, never canonicalised to /ingress/session",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/../ingress/session",
+     "method": "post"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-encoded-slash",
+   "why": "R-8: %2F inside {slug}",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/a%2Fb/info",
+     "method": "get"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-supervisor-slug-two-segments",
+   "why": "R-8: {slug} matches exactly one segment",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "supervisor/api",
+     "endpoint": "/addons/a/b/info",
+     "method": "get"
+    }
+   },
+   "expect": {
+    "disposition_any": [
+     "unmapped",
+     "unmappable"
+    ],
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-unknown-type",
+   "why": "E-9: an unmapped websocket type is refused",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/remove_all"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-call-service-unmapped",
+   "why": "hactl calls services over REST; a WS call_service has no row",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "call_service",
+     "domain": "lock",
+     "service": "unlock",
+     "target": {
+      "entity_id": "lock.front_door"
+     }
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-test-infra-token",
+   "why": "internal/hatest's long-lived-token write is test infrastructure, never a product row",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "auth/long_lived_access_token",
+     "client_name": "x",
+     "lifespan": 365
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-subscribe-unmapped",
+   "why": "every WS type counts as mutating unless a row says otherwise",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "subscribe_events",
+     "event_type": "state_changed"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-labels",
+   "why": "labels -> registry/labels",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "labels": [
+      "critical",
+      "night"
+     ]
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/entity_registry/update",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "entity:light.kitchen/registry/labels"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-area-null",
+   "why": "area_id null clears, still an edit",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "area_id": null
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/entity_registry/update",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "entity:light.kitchen/registry/area_id"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-rename",
+   "why": "new_entity_id -> registry/entity_id + create the new id (E-5)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "new_entity_id": "light.cooking"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/entity_registry/update",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "entity:light.kitchen/registry/entity_id"
+     },
+     {
+      "verb": "create",
+      "resource": "entity:light.cooking"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-name-icon-disabled",
+   "why": "name, icon, disabled_by map 1:1, one check per changed key",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.desk",
+     "name": "Desk",
+     "icon": "mdi:lamp",
+     "disabled_by": null
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/entity_registry/update",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "entity:light.desk/registry/name"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:light.desk/registry/icon"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:light.desk/registry/disabled_by"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-unknown-key",
+   "why": "hidden_by has no grammar field: refused",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "hidden_by": "user"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/entity_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-unknown-key-beside-known",
+   "why": "one unknown key refuses the whole request, never a partial mapping",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "labels": [],
+     "aliases": [
+      "k"
+     ]
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/entity_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-no-entity-id",
+   "why": "nothing to address",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "labels": []
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/entity_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-zwsp-id",
+   "why": "D-69: a zero-width space in a mapped id is unmappable",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kit\u200bchen",
+     "labels": []
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/entity_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-bad-new-id",
+   "why": "D-68: the new id is parsed with the grammar too",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/update",
+     "entity_id": "light.kitchen",
+     "new_entity_id": "light.cook ing"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/entity_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-entreg-remove",
+   "why": "the orphan cleanup after a delete",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/remove",
+     "entity_id": "script.morning"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/entity_registry/remove",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "entity:script.morning"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-devreg-fields",
+   "why": "area_id, labels, name_by_user, field by field",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/device_registry/update",
+     "device_id": "dev_hue1",
+     "area_id": "office",
+     "labels": [
+      "critical"
+     ],
+     "name_by_user": "Hue bulb"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/device_registry/update",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "device:dev_hue1/registry/area_id"
+     },
+     {
+      "verb": "edit",
+      "resource": "device:dev_hue1/registry/labels"
+     },
+     {
+      "verb": "edit",
+      "resource": "device:dev_hue1/registry/name_by_user"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-devreg-unknown-key",
+   "why": "disabled_by is no device grammar field: refused",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/device_registry/update",
+     "device_id": "dev_hue1",
+     "disabled_by": "user"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/device_registry/update",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-label-create",
+   "why": "HA mints the id: create on EVERY label id, reported label:* kind_wide (D-75)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/create",
+     "name": "Critical",
+     "color": "red"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/label_registry/create",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "label:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-label-delete-cascade",
+   "why": "delete + every current holder, enumerated from the registries (D-76)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/delete",
+     "label_id": "critical"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/label_registry/delete",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "label:critical"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:light.kitchen/registry/labels"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:lock.front_door/registry/labels"
+     },
+     {
+      "verb": "edit",
+      "resource": "device:dev_fan/registry/labels"
+     },
+     {
+      "verb": "edit",
+      "resource": "area:office"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-label-delete-no-holders",
+   "why": "a label nobody holds: the delete alone",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/delete",
+     "label_id": "unused"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/label_registry/delete",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "label:unused"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-label-delete-bad-id",
+   "why": "D-68: label ids are letters, digits and _",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/delete",
+     "label_id": "crit-ical"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws config/label_registry/delete",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-area-create",
+   "why": "create on EVERY area id; floor_id is the new area's own field, floor:* not checked",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/area_registry/create",
+     "name": "Attic",
+     "floor_id": "upstairs"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/area_registry/create",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "area:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-area-delete-cascade",
+   "why": "every entity and device whose OWN area_id is it; switch.fan only inherits office via its device",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/area_registry/delete",
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/area_registry/delete",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "area:office"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:light.desk/registry/area_id"
+     },
+     {
+      "verb": "edit",
+      "resource": "entity:script.renamed_wipe/registry/area_id"
+     },
+     {
+      "verb": "edit",
+      "resource": "device:dev_hue2/registry/area_id"
+     },
+     {
+      "verb": "edit",
+      "resource": "device:dev_fan/registry/area_id"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-floor-create",
+   "why": "create on EVERY floor id",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/floor_registry/create",
+     "name": "Cellar",
+     "level": -1
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/floor_registry/create",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "floor:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-floor-delete-cascade",
+   "why": "+ edit every area on that floor",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/floor_registry/delete",
+     "floor_id": "ground"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws config/floor_registry/delete",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "floor:ground"
+     },
+     {
+      "verb": "edit",
+      "resource": "area:kitchen"
+     },
+     {
+      "verb": "edit",
+      "resource": "area:hall"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-save-view",
+   "why": "diffed against the stored config this invocation read: one changed view",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config/save",
+     "url_path": "main",
+     "config": {
+      "title": "Home",
+      "views": [
+       {
+        "path": "kitchen",
+        "title": "Kitchen",
+        "cards": [
+         {
+          "type": "light",
+          "entity": "light.desk"
+         }
+        ]
+       },
+       {
+        "path": "office",
+        "title": "Office",
+        "cards": []
+       },
+       {
+        "title": "Untitled",
+        "cards": []
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/config/save",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main/views/kitchen"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-save-no-prior-read",
+   "why": "no stored config in this invocation: the dashboard as a whole",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config/save",
+     "url_path": "new-dash",
+     "config": {
+      "views": [
+       {
+        "path": "a",
+        "cards": []
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/config/save",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:new-dash"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-save-lovelace-is-default",
+   "why": "url_path `lovelace` canonicalises to dashboard:",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config/save",
+     "url_path": "lovelace",
+     "config": {
+      "views": [
+       {
+        "path": "home",
+        "cards": [
+         {
+          "type": "markdown"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/config/save",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:/views/home"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-save-absent-is-default",
+   "why": "url_path absent canonicalises to dashboard:",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config/save",
+     "config": {
+      "views": [
+       {
+        "path": "home",
+        "cards": [
+         {
+          "type": "markdown"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/config/save",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:/views/home"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-save-view-path-slash",
+   "why": "a view path that is not one grammar segment is unmappable",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config/save",
+     "url_path": "main",
+     "config": {
+      "title": "Home",
+      "views": [
+       {
+        "path": "kit/chen",
+        "title": "Kitchen",
+        "cards": [
+         {
+          "type": "light",
+          "entity": "light.kitchen"
+         }
+        ]
+       },
+       {
+        "path": "office",
+        "title": "Office",
+        "cards": []
+       },
+       {
+        "title": "Untitled",
+        "cards": []
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws lovelace/config/save",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-create",
+   "why": "url_path is sent explicitly",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/create",
+     "url_path": "energy-view",
+     "title": "Energy",
+     "require_admin": false,
+     "show_in_sidebar": true
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/dashboards/create",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "dashboard:energy-view"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-delete",
+   "why": "dashboard_id resolved through the list this invocation read",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/delete",
+     "dashboard_id": "5f1c0e7d"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "ws lovelace/dashboards/delete",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "dashboard:main"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-delete-unknown-id",
+   "why": "no list read naming this id in this invocation: unmappable",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/delete",
+     "dashboard_id": "deadbeef"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws lovelace/dashboards/delete",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-dash-delete-no-list",
+   "why": "no list read at all in this invocation: unmappable",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/delete",
+     "dashboard_id": "5f1c0e7d"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws lovelace/dashboards/delete",
+    "refused": true
+   },
+   "facts_ref": "house",
+   "facts": {
+    "dashboard_ids": {}
+   }
+  },
+  {
+   "id": "ws-read-trace-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/list",
+     "domain": "automation"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws trace/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-trace-get",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "prod_heating",
+     "run_id": "r1"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws trace/get"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-validate_config",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "validate_config",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.kitchen"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws validate_config"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-system_log-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "system_log/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws system_log/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-repairs-list_issues",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "repairs/list_issues"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws repairs/list_issues"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-entity_registry-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/entity_registry/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-area_registry-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/area_registry/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/area_registry/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-label_registry-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/label_registry/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-floor_registry-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/floor_registry/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/floor_registry/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-auth-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/auth/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/auth/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-config-device_registry-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/device_registry/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws config/device_registry/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-lovelace-dashboards-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws lovelace/dashboards/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-lovelace-config",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config",
+     "url_path": "main"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws lovelace/config"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-manifest-list",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "manifest/list"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws manifest/list"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-lovelace-resources",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/resources"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws lovelace/resources"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-recorder-get_statistics_metadata",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/get_statistics_metadata",
+     "statistic_ids": [
+      "sensor.temp"
+     ]
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws recorder/get_statistics_metadata"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-recorder-statistics_during_period",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/statistics_during_period",
+     "start_time": "2026-11-01T00:00:00Z",
+     "statistic_ids": [
+      "sensor.temp"
+     ],
+     "period": "hour"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws recorder/statistics_during_period"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-recorder-list_statistic_ids",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/list_statistic_ids"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws recorder/list_statistic_ids"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "ws-read-energy-get_prefs",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "energy/get_prefs"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "ws energy/get_prefs"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-entity-target",
+   "why": "E-2 service + E-1 reach (one domain's entity service)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on",
+    "json": {
+     "entity_id": "light.kitchen",
+     "brightness": 120
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:light.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.kitchen"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.kitchen"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-area-restricted-to-domain",
+   "why": "an entity service's reach is restricted to its own domain (D-59)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:light.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.desk",
+      "switch.fan",
+      "script.renamed_wipe"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-all",
+   "why": "entity_id: all = every live entity of the domain, no reach question needed",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_off",
+    "json": {
+     "entity_id": "all"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:light.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.kitchen"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-all-uppercase",
+   "why": "`ALL` is `all` (compared case-insensitively, D-59 refined)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_off",
+    "json": {
+     "entity_id": "ALL"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:light.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.kitchen"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-platform-service-all",
+   "why": "R-1: a domain without live entities is not an entity service; `all` = every live entity of every domain",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/zwave_js/clear_lock_usercode",
+    "json": {
+     "entity_id": "all",
+     "code_slot": 1
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:zwave_js.clear_lock_usercode"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.kitchen"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:switch.fan"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:lock.front_door"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.renamed_wipe"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.morning"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:sensor.temp"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:weather.home"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-platform-service-target",
+   "why": "R-1: a platform service is checked against the whole referenced set",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/zwave_js/clear_lock_usercode",
+    "json": {
+     "entity_id": "lock.front_door",
+     "code_slot": 1
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:zwave_js.clear_lock_usercode"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:lock.front_door"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "lock.front_door"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-ha-turn-on-fanout",
+   "why": "R-2: homeassistant.turn_on = whole set + each domain's service + /run per script (unique_id = config key, D-84)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/homeassistant/turn_on",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:homeassistant.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:switch.fan"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.renamed_wipe"
+     },
+     {
+      "verb": "control",
+      "resource": "service:light.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "service:switch.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "service:script.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all/run"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.desk",
+      "switch.fan",
+      "script.renamed_wipe"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-ha-turn-off-fanout",
+   "why": "turn_off fans out per domain too, but starts no script",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/homeassistant/turn_off",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:homeassistant.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:switch.fan"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.renamed_wipe"
+     },
+     {
+      "verb": "control",
+      "resource": "service:light.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "service:switch.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "service:script.turn_off"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.desk",
+      "switch.fan",
+      "script.renamed_wipe"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-ha-toggle-fanout",
+   "why": "toggle fans out and can start scripts",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/homeassistant/toggle",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:homeassistant.toggle"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:light.desk"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:switch.fan"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.renamed_wipe"
+     },
+     {
+      "verb": "control",
+      "resource": "service:light.toggle"
+     },
+     {
+      "verb": "control",
+      "resource": "service:switch.toggle"
+     },
+     {
+      "verb": "control",
+      "resource": "service:script.toggle"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all/run"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.desk",
+      "switch.fan",
+      "script.renamed_wipe"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-script-turn-on-renamed",
+   "why": "script.turn_on -> script:<registry unique_id>/run, also for a renamed entity (D-84)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/script/turn_on",
+    "json": {
+     "entity_id": "script.renamed_wipe"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:script.turn_on"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.renamed_wipe"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all/run"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "script.renamed_wipe"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-script-toggle",
+   "why": "script.toggle starts a script",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/script/toggle",
+    "json": {
+     "entity_id": "script.morning"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:script.toggle"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.morning"
+     },
+     {
+      "verb": "control",
+      "resource": "script:morning/run"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "script.morning"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-script-turn-off",
+   "why": "script.turn_off starts nothing: no /run",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/script/turn_off",
+    "json": {
+     "entity_id": "script.morning"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:script.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:script.morning"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "script.morning"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-per-script-service",
+   "why": "script.<x>: x itself is the config id, no lookup (D-84)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/script/morning",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:script.morning"
+     },
+     {
+      "verb": "control",
+      "resource": "script:morning/run"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-no-target",
+   "why": "no selector and no entity in the data: the service check alone (D-73)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/homeassistant/restart",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:homeassistant.restart"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-data-mapping-key",
+   "why": "scene.apply's entities: a mapping KEY naming a live entity needs control (D-73)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/scene/apply",
+    "json": {
+     "entities": {
+      "lock.front_door": "unlocked"
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:scene.apply"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:lock.front_door"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-data-string-value-deep",
+   "why": "a string value at any depth naming a live entity; a non-live one is not checked",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/persistent_notification/create",
+    "json": {
+     "title": "light.nonexistent",
+     "message": "hi",
+     "data": {
+      "refs": [
+       {
+        "who": "lock.front_door"
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:persistent_notification.create"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:lock.front_door"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-reach-error-answer",
+   "why": "an error answer to extract_from_target: fail-closed, reach unknown",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "reason_contains": "reach unknown",
+    "refused": true
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "error": "invalid_format"
+    }
+   }
+  },
+  {
+   "id": "svc-reach-no-answer",
+   "why": "no answer at all: fail-closed, reach unknown",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on",
+    "json": {
+     "area_id": "office"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "reason_contains": "reach unknown",
+    "refused": true
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": null
+   }
+  },
+  {
+   "id": "svc-return-response-query",
+   "why": "the query is not part of the key and does not make it a read",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/weather/get_forecasts?return_response=true",
+    "json": {
+     "entity_id": "weather.home",
+     "type": "daily"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/services/{domain}/{service}",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "service:weather.get_forecasts"
+     },
+     {
+      "verb": "control",
+      "resource": "entity:weather.home"
+     }
+    ]
+   },
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "weather.home"
+     ]
+    }
+   }
+  },
+  {
+   "id": "svc-dot-dot",
+   "why": "R-8: a `..` segment is unmappable, never canonicalised",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/../config/core/check_config",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-dot",
+   "why": "R-8: a `.` segment is unmappable",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/./light/turn_on",
+    "json": {
+     "entity_id": "light.kitchen"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-encoded-slash",
+   "why": "R-8: %2F in a placeholder",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light%2Fx/turn_on",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-encoded-slash-lower",
+   "why": "R-8: %2f is %2F",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on%2f..%2f..%2flock%2funlock",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-encoded-backslash",
+   "why": "R-8: %5C",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn%5Con",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-extra-segment",
+   "why": "{service} matches exactly one segment",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on/extra",
+    "json": {}
+   },
+   "expect": {
+    "disposition_any": [
+     "unmapped",
+     "unmappable"
+    ],
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "svc-bad-domain-charset",
+   "why": "D-68: a service id holds no `-`",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light-x/turn_on",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-config-entry-delete",
+   "why": "delete + every entity and device naming the entry (D-76; dev_hue2 has another entry too)",
+   "request": {
+    "transport": "rest",
+    "method": "DELETE",
+    "path": "/api/config/config_entries/entry/01HUEENTRY"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest DELETE /api/config/config_entries/entry/{entry_id}",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "config_entry:01HUEENTRY"
+     },
+     {
+      "verb": "delete",
+      "resource": "entity:light.kitchen"
+     },
+     {
+      "verb": "delete",
+      "resource": "entity:light.desk"
+     },
+     {
+      "verb": "delete",
+      "resource": "device:dev_hue1"
+     },
+     {
+      "verb": "delete",
+      "resource": "device:dev_hue2"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-start",
+   "why": "body.handler is the entry_id",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/options/flow",
+    "json": {
+     "handler": "01HUEENTRY"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/config/config_entries/options/flow",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:01HUEENTRY/options"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-start-nonstring",
+   "why": "a handler that is not a string is unmappable",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/options/flow",
+    "json": {
+     "handler": 7
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "rest POST /api/config/config_entries/options/flow",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-start-no-body",
+   "why": "no handler: unmappable",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/options/flow",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "rest POST /api/config/config_entries/options/flow",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-step-known",
+   "why": "handler from the start response this invocation holds (D-83)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/options/flow/flow_opt_1",
+    "json": {
+     "mode": "fast"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:01HUEENTRY/options"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-step-unknown",
+   "why": "no start response: kind-wide on every entry's options (over-deny)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/options/flow/flow_other",
+    "json": {
+     "mode": "fast"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:*/options",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-abort",
+   "why": "abort takes the start's verb",
+   "request": {
+    "transport": "rest",
+    "method": "DELETE",
+    "path": "/api/config/config_entries/options/flow/flow_opt_1"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest DELETE /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:01HUEENTRY/options"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-abort-unknown",
+   "why": "abort of a flow this invocation did not start: kind-wide",
+   "request": {
+    "transport": "rest",
+    "method": "DELETE",
+    "path": "/api/config/config_entries/options/flow/flow_other"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest DELETE /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:*/options",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-get",
+   "why": "R-5: GET runs the current step, mapped as the options step's write",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/options/flow/flow_opt_1"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest GET /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:01HUEENTRY/options"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-options-flow-get-unknown",
+   "why": "R-5 with no start response: kind-wide",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/options/flow/flow_other"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest GET /api/config/config_entries/options/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "config_entry:*/options",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-config-flow-start",
+   "why": "a new entry has no id: create on every config_entry id (D-75)",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/flow",
+    "json": {
+     "handler": "hue",
+     "show_advanced_options": false
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/config/config_entries/flow",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "config_entry:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-config-flow-step",
+   "why": "create AND edit, kind-wide: the flow may reconfigure an existing entry",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/flow/f0123",
+    "json": {
+     "host": "1.2.3.4"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest POST /api/config/config_entries/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "config_entry:*",
+      "kind_wide": true
+     },
+     {
+      "verb": "edit",
+      "resource": "config_entry:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-config-flow-get",
+   "why": "R-5: GET runs the step; the POST step's write",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/flow/f0123"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "rest GET /api/config/config_entries/flow/{flow_id}",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "config_entry:*",
+      "kind_wide": true
+     },
+     {
+      "verb": "edit",
+      "resource": "config_entry:*",
+      "kind_wide": true
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-flow-step-traversal",
+   "why": "R-8, the review's example: a flow_id smuggling a service call",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/config/config_entries/flow/../../../services/lock/unlock",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-flow-get-encoded-traversal",
+   "why": "R-8: an encoded slash in {flow_id}; the GET is a write row family, so refused",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/flow/x%2F..%2F..%2Fentry"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getconfig-config_entries-flow_handlers",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/flow_handlers"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/config/config_entries/flow_handlers"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getconfig-config_entries-entry",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/entry"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/config/config_entries/entry"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getdiagnostics-config_entry-01HUEENTRY",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/diagnostics/config_entry/01HUEENTRY"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/diagnostics/config_entry/{entry_id}"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getstates",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/states"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getstates-light.kitchen",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states/light.kitchen"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/states/{entity_id}"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-gethistory-period-2026-11-01T00:00:00+00:00",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/history/period/2026-11-01T00:00:00+00:00?filter_entity_id=light.kitchen&end_time=2026-11-01T06:00:00+00:00"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/history/period/{start}"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getlogbook-2026-11-01T00:00:00+00:00",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/logbook/2026-11-01T00:00:00+00:00?entity=light.kitchen"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/logbook/{start}"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-geterror_log",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/error_log"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/error_log"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getservices",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/services"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/services"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-posttemplate",
+   "why": "a POST that is a read (E-6): this row keeps a method-based classifier from refusing tpl eval",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "json": {
+     "template": "{{ states('lock.front_door') }}"
+    }
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest POST /api/template"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-getconfig",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "rest GET /api/config"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-api-probe",
+   "why": "liveness probe",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/"
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "rest GET /api/"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-unknown-post",
+   "why": "E-9: an unmapped POST is refused",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/events/hactl_fired",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-dead-get-events",
+   "why": "D-81: GetEvents is deleted, its row with it; an unmapped GET is allowed in phase 2",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/events"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": false
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-dead-get-automation-config",
+   "why": "D-81: GetAutomationConfig is deleted; unmapped GET, allowed in phase 2",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/automation/config/prod_heating"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": false
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-delete-state",
+   "why": "no DELETE row on /api/states/{entity_id}: refused",
+   "request": {
+    "transport": "rest",
+    "method": "DELETE",
+    "path": "/api/states/light.kitchen"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-post-state",
+   "why": "setting a state has no row: refused",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/states/light.kitchen",
+    "json": {
+     "state": "on"
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-put-config-entry",
+   "why": "a method no row names on a known path: refused",
+   "request": {
+    "transport": "rest",
+    "method": "PUT",
+    "path": "/api/config/config_entries/entry/01HUEENTRY",
+    "json": {}
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-ingress-post",
+   "why": "a companion wire URL reaching the REST classifier never falls into a companion row",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/hassio_ingress/Zk3x/v1/config/automation",
+    "body": "id: x\n"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-state-get-dot-dot",
+   "why": "R-8 on a read row: unmappable (whether phase 2 refuses an unmappable GET is not asserted)",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states/light.kitchen/../../config"
+   },
+   "expect": {
+    "disposition": "unmappable"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-health",
+   "why": "liveness",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/health"
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "companion GET /v1/health"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-status",
+   "why": "capability flags",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/status"
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "companion GET /v1/status"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-wiring",
+   "why": "layout probe",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/wiring?domain=input_boolean"
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "companion GET /v1/config/wiring"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ref-replace-confirmed",
+   "why": "dry_run:false after a checked dry run of the same {old,new}, same policy: that plan",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "dry_run": false
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/ref/replace",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "file:automations.yaml"
+     },
+     {
+      "verb": "edit",
+      "resource": "automation:morning_lights/config"
+     },
+     {
+      "verb": "edit",
+      "resource": "file:packages/kitchen.yaml"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ref-replace-dry-run-with-plan",
+   "why": "dry_run:true maps as the real write: same resources, same verb",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "dry_run": true
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/ref/replace",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "file:automations.yaml"
+     },
+     {
+      "verb": "edit",
+      "resource": "automation:morning_lights/config"
+     },
+     {
+      "verb": "edit",
+      "resource": "file:packages/kitchen.yaml"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ref-replace-dry-run-absent",
+   "why": "dry_run absent defaults to TRUE: the body is decoded, mapped as the dry run",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking"
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/ref/replace",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "file:automations.yaml"
+     },
+     {
+      "verb": "edit",
+      "resource": "automation:morning_lights/config"
+     },
+     {
+      "verb": "edit",
+      "resource": "file:packages/kitchen.yaml"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ref-replace-no-plan",
+   "why": "dry_run:false with no checked dry run in this invocation: unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "dry_run": false
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/ref/replace",
+    "refused": true
+   },
+   "facts_ref": "house",
+   "facts": {
+    "ref_replace_plans": []
+   }
+  },
+  {
+   "id": "comp-ref-replace-other-new",
+   "why": "a checked plan for another {old,new} authorises nothing",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.galley",
+     "dry_run": false
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/ref/replace",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ref-replace-stale-policy",
+   "why": "R-7/D-72: a plan checked under another policy content hash authorises nothing",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "dry_run": false
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/ref/replace",
+    "refused": true
+   },
+   "facts_ref": "house",
+   "facts": {
+    "policy_hash": "sha256:policy-b"
+   }
+  },
+  {
+   "id": "comp-ref-replace-string-flag",
+   "why": "dry_run must be a boolean; \"false\" is not trusted either way",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ref/replace",
+    "json": {
+     "old": "light.kitchen",
+     "new": "light.cooking",
+     "dry_run": "false"
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/ref/replace",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-create-item",
+   "why": "a bare item with ?domain=: its unique_id",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/template?domain=sensor",
+    "body": "name: Outdoor\nunique_id: tpl_outdoor\nstate: \"{{ 1 }}\"\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/config/template",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "template:tpl_outdoor"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-create-block",
+   "why": "a full block: every unique_id it declares",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/template",
+    "body": "sensor:\n  - name: Outdoor\n    unique_id: tpl_outdoor\n    state: \"{{ 1 }}\"\nbinary_sensor:\n  - name: Door\n    unique_id: tpl_door\n    state: \"{{ true }}\"\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/config/template",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "template:tpl_outdoor"
+     },
+     {
+      "verb": "create",
+      "resource": "template:tpl_door"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-create-missing-uid",
+   "why": "D-78: an entity without unique_id has no address: refused",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/template",
+    "body": "triggers:\n  - trigger: time_pattern\n    minutes: /5\nsensor:\n  - name: A\n    unique_id: tpl_a\n    state: \"1\"\n  - name: B\n    state: \"2\"\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/template",
+    "reason_contains": "template entity without unique_id",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-create-item-missing-uid",
+   "why": "D-78 for a bare item",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/template?domain=sensor",
+    "body": "name: Outdoor\nstate: \"1\"\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/template",
+    "reason_contains": "template entity without unique_id",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-delete",
+   "why": "delete template:{id}",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/template?id=tpl_outdoor"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion DELETE /v1/config/template",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "template:tpl_outdoor"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-tpl-delete-empty-id",
+   "why": "an empty id addresses nothing",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/template?id="
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion DELETE /v1/config/template",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-put",
+   "why": "edit script:{id}/config; the companion pins the body to ?id",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/script?id=morning&dry_run=false",
+    "body": "alias: Morning\nsequence: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion PUT /v1/config/script",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "script:morning/config"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-put-dry-run",
+   "why": "the dry-run variant is checked the same",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/script?id=morning&dry_run=true",
+    "body": "alias: Morning\nsequence: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion PUT /v1/config/script",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "script:morning/config"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-post",
+   "why": "create script:{the body's single top-level key}",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/script",
+    "body": "evening_routine:\n  alias: Evening\n  sequence: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/config/script",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "script:evening_routine"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-post-two-keys",
+   "why": "no single top-level key: unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/script",
+    "body": "a_one:\n  sequence: []\nb_two:\n  sequence: []\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/script",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-delete",
+   "why": "delete script:{id}",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/script?id=morning"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion DELETE /v1/config/script",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "script:morning"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-delete-slash-id",
+   "why": "an id holding `/` is not one grammar id",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/script?id=a%2Fb"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion DELETE /v1/config/script",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-script-delete-no-id",
+   "why": "no ?id: nothing to address",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/script"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion DELETE /v1/config/script",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-put",
+   "why": "edit automation:{id}/config when the body's id is the target",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/automation?id=prod_heating&dry_run=false",
+    "body": "id: prod_heating\nalias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion PUT /v1/config/automation",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "automation:prod_heating/config"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-put-dry-run",
+   "why": "the dry-run variant is checked the same",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/automation?id=prod_heating&dry_run=true",
+    "body": "id: prod_heating\nalias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion PUT /v1/config/automation",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "automation:prod_heating/config"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-put-rename",
+   "why": "E-5: a body id that differs is a hidden rename: + create the new id",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/automation?id=prod_heating&dry_run=false",
+    "body": "id: heating_v2\nalias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion PUT /v1/config/automation",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "automation:prod_heating/config"
+     },
+     {
+      "verb": "create",
+      "resource": "automation:heating_v2"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-put-no-id",
+   "why": "R-6/D-78: a body with no id is unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/automation?id=prod_heating&dry_run=false",
+    "body": "alias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion PUT /v1/config/automation",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-put-int-id",
+   "why": "R-6/D-78: a non-string id is unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/automation?id=prod_heating&dry_run=false",
+    "body": "id: 1700000000\nalias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion PUT /v1/config/automation",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-post",
+   "why": "create automation:{body.id}",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/automation",
+    "body": "id: night_mode\nalias: Night\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/config/automation",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "automation:night_mode"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-post-no-id",
+   "why": "no id to create: unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/automation",
+    "body": "alias: Night\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/automation",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-delete-verified",
+   "why": "a config id a GET verified in this invocation",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/automation?id=prod_heating"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion DELETE /v1/config/automation",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "automation:prod_heating"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-auto-delete-unverified",
+   "why": "an unverified ?id= may resolve by alias: unmappable (D-72, D-78)",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/automation?id=Heating%20alias"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion DELETE /v1/config/automation",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-helper-post",
+   "why": "create helper:{?domain}/{the body's single top-level key}",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/helper?domain=input_boolean",
+    "json": {
+     "guest_mode": {
+      "name": "Guest mode"
+     }
+    }
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/config/helper",
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "helper:input_boolean/guest_mode"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-helper-post-no-domain",
+   "why": "no ?domain: unmappable",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/helper",
+    "json": {
+     "guest_mode": {
+      "name": "Guest mode"
+     }
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/helper",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-helper-post-bad-id",
+   "why": "D-68: helper ids are letters, digits and _",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/helper?domain=input_boolean",
+    "json": {
+     "guest-mode": {
+      "name": "Guest mode"
+     }
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion POST /v1/config/helper",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-helper-delete",
+   "why": "delete helper:{domain}/{id}, with the &domain= hactl must send",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/helper?id=guest_mode&domain=input_boolean"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion DELETE /v1/config/helper",
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "helper:input_boolean/guest_mode"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-helper-delete-no-domain",
+   "why": "a domain-less mutating helper request is refused",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/v1/config/helper?id=guest_mode"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "companion DELETE /v1/config/helper",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-wg-config",
+   "why": "edit system:wireguard",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/wireguard/config?tunnel=wg0",
+    "body": "[Interface]\nPrivateKey = redacted\n"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/wireguard/config",
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "system:wireguard"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-wg-start",
+   "why": "control system:wireguard",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/wireguard/start?tunnel=wg0"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/wireguard/start",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "system:wireguard"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-wg-stop",
+   "why": "control system:wireguard",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/wireguard/stop?tunnel=wg0"
+   },
+   "expect": {
+    "disposition": "write",
+    "row": "companion POST /v1/wireguard/stop",
+    "checks": [
+     {
+      "verb": "control",
+      "resource": "system:wireguard"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-check-config",
+   "why": "a POST that is a read, mapped explicitly",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ha/check-config"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion POST /v1/ha/check-config"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-files",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/files"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/files"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-file",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=automations.yaml&resolve=true"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/file"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-block",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/block?path=template.yaml&id=tpl_outdoor"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/block"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-related-entity",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/related/entity?entity_id=light.kitchen"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/related/entity"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-ref-scan",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/scan?target=light.kitchen"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/ref/scan"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-ref-grep",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/grep?term=kitchen"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/ref/grep"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-ref-entities",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/entities"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/ref/entities"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-template",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/template?id=tpl_outdoor"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/template"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-script",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/script?id=morning"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/script"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-automation",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/automation?id=prod_heating"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/automation"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-helpers",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/helpers?domain=input_boolean"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/helpers"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-config-helper",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/helper?id=guest_mode"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/helper"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-wireguard-status",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/wireguard/status?tunnel=wg0"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/wireguard/status"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-read-logs",
+   "why": "a read row: mapped, enforcement is phase 3",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/logs?component=refscan"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/logs"
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-put-file",
+   "why": "D-81: WriteConfigFile is deleted, so PUT /v1/config/file has no row: refused",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/file?path=secrets.yaml&dry_run=false",
+    "body": "x: 1\n"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-reload",
+   "why": "D-81: ReloadDomain is deleted: refused",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ha/reload/automation"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-put-helper",
+   "why": "D-81: UpdateHelper is deleted: refused",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/helper?id=guest_mode",
+    "json": {
+     "guest_mode": {}
+    }
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-put-template",
+   "why": "D-81: WriteTemplate is deleted: refused",
+   "request": {
+    "transport": "companion",
+    "method": "PUT",
+    "path": "/v1/config/template?id=tpl_outdoor&dry_run=false",
+    "body": "name: x\n"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-list-templates",
+   "why": "D-81: ListTemplates is deleted; an unmapped GET, allowed in phase 2",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/templates"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": false
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-list-scripts",
+   "why": "D-81: ListScriptDefs is deleted; an unmapped GET, allowed in phase 2",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/scripts"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": false
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dead-list-automations",
+   "why": "D-81: ListAutomationDefs is deleted; an unmapped GET, allowed in phase 2",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/automations"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": false
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-unknown-wg-action",
+   "why": "a companion POST no row names",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/wireguard/restart?tunnel=wg0"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-dot-dot",
+   "why": "R-8 on the logical route",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/config/../ha/reload/automation"
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "comp-ingress-wire-url",
+   "why": "keyed by the LOGICAL route, never by the Ingress wire URL: no prefix is stripped",
+   "request": {
+    "transport": "companion",
+    "method": "DELETE",
+    "path": "/api/hassio_ingress/Zk3x/v1/config/script?id=morning"
+   },
+   "expect": {
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
+   },
+   "facts_ref": "house"
+  }
+ ],
+ "redirects": [
+  {
+   "id": "redirect-same-mapping",
+   "why": "a hop that maps identically (the query is not part of the key) may be followed",
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "light.kitchen"
+     ]
+    }
+   },
+   "from": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on",
+    "json": {
+     "entity_id": "light.kitchen"
+    }
+   },
+   "to": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/light/turn_on?return_response=true",
+    "json": {
+     "entity_id": "light.kitchen"
+    }
+   },
+   "same": true
+  },
+  {
+   "id": "redirect-different-service",
+   "why": "a hop to another service maps differently: refused (D-74)",
+   "facts_ref": "house",
+   "facts": {
+    "reach": {
+     "entities": [
+      "lock.front_door"
+     ]
+    }
+   },
+   "from": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/lock/lock",
+    "json": {
+     "entity_id": "lock.front_door"
+    }
+   },
+   "to": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/services/lock/unlock",
+    "json": {
+     "entity_id": "lock.front_door"
+    }
+   },
+   "same": false
+  },
+  {
+   "id": "redirect-read-to-write-row",
+   "why": "a GET read row redirected onto a flow GET (a write row) maps differently",
+   "facts_ref": "house",
+   "from": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/entry"
+   },
+   "to": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/flow/f0123"
+   },
+   "same": false
+  }
+ ]
+}
