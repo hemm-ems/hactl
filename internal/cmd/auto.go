@@ -1233,7 +1233,10 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 		res = res.warn("automation reloaded but its live entity_id could not be confirmed")
 	default:
 		res = res.text("entity_id: %s", resp.EntityID)
-		if resp.EntityID != resp.ID {
+		// The config id is bare and the entity_id carries its domain, so the
+		// two are compared on the object id. Comparing them whole made the
+		// note fire on every create, agreeing ids included (F-13).
+		if strings.TrimPrefix(resp.EntityID, "automation.") != resp.ID {
 			res = res.text("note: live entity_id (%s) differs from config id (%s) — HA derives entity_id from alias, not id", resp.EntityID, resp.ID)
 		}
 	}
