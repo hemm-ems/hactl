@@ -58,6 +58,7 @@ internal/policy/reqmap/restmap.go:jsonObject = proven: TestServiceCallMapping
 internal/policy/reqmap/companionmap.go:yamlMapping = proven: TestClassifyWriteRequests
 internal/policy/reqmap/companionmap.go:mapRefReplace = proven: TestClassifyWriteRequests
 internal/policy/reqmap/dashboard.go:decodeObject = proven: TestDiffDashboard
+internal/policy/reqmap/refowner.go:RefChangeOwners = proven: TestRefChangeOwnersFailsWhenItCannotPlace
 
 # --- the policy gate (H-29) -------------------------------------------------------
 internal/haapi/websocket.go:(*wsConn).ReadJSON = exempt: the gated connection forwards gorilla's ReadJSON to its callers, each of which is its own site on this surface
