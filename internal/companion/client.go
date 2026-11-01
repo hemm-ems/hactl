@@ -174,20 +174,6 @@ func (c *Client) ReadConfigBlock(ctx context.Context, path, id string) (*ConfigB
 	return &r, decodeResponse("/v1/config/block", data, &r)
 }
 
-// WriteConfigFile calls PUT /v1/config/file?path=<path>&dry_run=<dryRun>.
-func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryRun bool) (*ConfigWriteResponse, error) {
-	q := url.Values{
-		"path":    {path},
-		"dry_run": {strconv.FormatBool(dryRun)},
-	}
-	data, err := c.doPut(ctx, "/v1/config/file", q, content, mimeText)
-	if err != nil {
-		return nil, err
-	}
-	var r ConfigWriteResponse
-	return &r, decodeResponse("/v1/config/file", data, &r)
-}
-
 // RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>[&stale=true].
 // With stale=true a renamed/deleted entity returns 200 + StaleRefs instead of 404.
 func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool) (*RelatedEntityResponse, error) {
@@ -285,16 +271,6 @@ func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun b
 
 // --- Template CRUD ---
 
-// ListTemplates calls GET /v1/config/templates.
-func (c *Client) ListTemplates(ctx context.Context) (*TemplatesResponse, error) {
-	data, err := c.doGet(ctx, "/v1/config/templates", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r TemplatesResponse
-	return &r, decodeResponse("/v1/config/templates", data, &r)
-}
-
 // GetTemplate calls GET /v1/config/template?id=<id>.
 func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse, error) {
 	q := url.Values{"id": {id}}
@@ -303,20 +279,6 @@ func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse,
 		return nil, err
 	}
 	var r TemplateResponse
-	return &r, decodeResponse("/v1/config/template", data, &r)
-}
-
-// WriteTemplate calls PUT /v1/config/template?id=<id>&dry_run=<dryRun>.
-func (c *Client) WriteTemplate(ctx context.Context, id, content string, dryRun bool) (*ConfigDeleteResponse, error) {
-	q := url.Values{
-		"id":      {id},
-		"dry_run": {strconv.FormatBool(dryRun)},
-	}
-	data, err := c.doPut(ctx, "/v1/config/template", q, content, mimeText)
-	if err != nil {
-		return nil, err
-	}
-	var r ConfigDeleteResponse
 	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
@@ -346,16 +308,6 @@ func (c *Client) DeleteTemplate(ctx context.Context, id string) (*ConfigDeleteRe
 }
 
 // --- Script CRUD ---
-
-// ListScriptDefs calls GET /v1/config/scripts.
-func (c *Client) ListScriptDefs(ctx context.Context) (*ScriptsResponse, error) {
-	data, err := c.doGet(ctx, "/v1/config/scripts", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r ScriptsResponse
-	return &r, decodeResponse("/v1/config/scripts", data, &r)
-}
 
 // GetScriptDef calls GET /v1/config/script?id=<id>.
 func (c *Client) GetScriptDef(ctx context.Context, id string) (*ScriptResponse, error) {
@@ -404,16 +356,6 @@ func (c *Client) DeleteScriptDef(ctx context.Context, id string) (*ConfigDeleteR
 }
 
 // --- Automation CRUD ---
-
-// ListAutomationDefs calls GET /v1/config/automations.
-func (c *Client) ListAutomationDefs(ctx context.Context) (*AutomationsResponse, error) {
-	data, err := c.doGet(ctx, "/v1/config/automations", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r AutomationsResponse
-	return &r, decodeResponse("/v1/config/automations", data, &r)
-}
 
 // GetAutomationDef calls GET /v1/config/automation?id=<id>.
 func (c *Client) GetAutomationDef(ctx context.Context, id string) (*AutomationResponse, error) {
@@ -517,17 +459,6 @@ func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*Hel
 	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
-// UpdateHelper calls PUT /v1/config/helper?id=<id>.
-func (c *Client) UpdateHelper(ctx context.Context, id, content string) (*ConfigDeleteResponse, error) {
-	q := url.Values{"id": {id}}
-	data, err := c.doPut(ctx, "/v1/config/helper", q, content, mimeJSON)
-	if err != nil {
-		return nil, err
-	}
-	var r ConfigDeleteResponse
-	return &r, decodeResponse("/v1/config/helper", data, &r)
-}
-
 // DeleteHelper calls DELETE /v1/config/helper?id=<id>.
 func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResponse, error) {
 	q := url.Values{"id": {id}}
@@ -537,12 +468,6 @@ func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResp
 	}
 	var r ConfigDeleteResponse
 	return &r, decodeResponse("/v1/config/helper", data, &r)
-}
-
-// ReloadDomain calls POST /v1/ha/reload/<domain>.
-func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
-	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "", mimeText)
-	return err
 }
 
 // CheckConfig calls POST /v1/ha/check-config and reports whether the HA

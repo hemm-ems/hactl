@@ -82,8 +82,6 @@ var unidentifiedWireStructs = map[string]string{
 	"WireGuardMonitor": "every field is optional, and the booleans are honestly false when idle",
 	"WireGuardForward": "every field is optional: `{\"running\": false}` alone is the documented answer " +
 		"when no forward was started, and the counters are honestly zero before the first connection",
-	"AutomationDefinition": "an automation with no `id:` is legal HA and the companion reports " +
-		"it as an empty id (routes/automations.py)",
 
 	"energySourceRow": "hactl's own --json output shape for `energy show`",
 	"statisticRowJSON": "hactl's own --json output shape for `ent hist --stats`",
@@ -109,9 +107,6 @@ var unidentifiedWireStructs = map[string]string{
 		"oracle-probed), which EnergyGetPrefs surfaces before anything renders",
 
 	// ---- list wrappers: an empty list is the answer, the elements carry identity ----
-	"AutomationsResponse": "empty list is a legitimate answer; AutomationDefinition elements are checked",
-	"ScriptsResponse":     "empty list is a legitimate answer; ScriptDefinition elements are checked",
-	"TemplatesResponse":   "empty list is a legitimate answer; TemplateDefinition elements are checked",
 	"HelpersResponse":     "empty list is a legitimate answer; HelperDefinition elements are checked",
 	"ConfigFilesResponse": "empty list is a legitimate answer; the entries are bare strings",
 	"RefEntitiesResponse": "empty list is a legitimate answer; RefEntity elements are checked",
@@ -221,7 +216,7 @@ const inheritedUnprobed = "inherited: declared before this gate existed; its pre
 // when the gate was built. TestSweep_UnprobedIdentityFieldsOnlyShrink refuses
 // any number above it, so the debt is a ratchet rather than a habit. Lower it
 // whenever a field is probed — never raise it.
-const unprobedIdentityFieldBaseline = 81
+const unprobedIdentityFieldBaseline = 78
 
 // identityFieldEvidence is the field-level half of the H-14 classification, and
 // it exists because the struct-level half could not have caught finding #38.
@@ -274,7 +269,6 @@ var identityFieldEvidence = map[string]string{
 	"ConfigBlockResponse.path":             inheritedUnprobed,
 	"ConfigDeleteResponse.status":          inheritedUnprobed,
 	"ConfigFileResponse.path":              inheritedUnprobed,
-	"ConfigWriteResponse.status":           inheritedUnprobed,
 	"DeviceConsumption.stat_consumption":   inheritedUnprobed,
 	"DeviceRegistryEntry.id":               inheritedUnprobed,
 	"EnergyFlow.stat_energy_from":          inheritedUnprobed,
@@ -313,7 +307,6 @@ var identityFieldEvidence = map[string]string{
 	"SchemaField.name":                     inheritedUnprobed,
 	"ScriptCreateResponse.id":              inheritedUnprobed,
 	"ScriptCreateResponse.status":          inheritedUnprobed,
-	"ScriptDefinition.id":                  inheritedUnprobed,
 	"ScriptResponse.id":                    inheritedUnprobed,
 	"ServiceDomain.domain":                 inheritedUnprobed,
 	"ServiceStateChange.entity_id":         inheritedUnprobed,
@@ -331,7 +324,6 @@ var identityFieldEvidence = map[string]string{
 		"--domain parameter, both members of _ENTITY_DOMAINS, so it is never a legal empty string. " +
 		"unique_id is deliberately NOT an identity here: the route rejects a missing unique_id KEY " +
 		"but not an empty unique_id STRING",
-	"TemplateDefinition.domain":            inheritedUnprobed,
 	"TemplateResponse.unique_id":           inheritedUnprobed,
 	"TraceSummary.domain":                  inheritedUnprobed,
 	"TraceSummary.item_id":                 inheritedUnprobed,

@@ -297,10 +297,24 @@ func checkDecoded(t *testing.T, label string, rt reflect.Type, s *openapi3.Schem
 	}
 }
 
+// neverCalledSpecPaths are the vendored spec's routes hactl deliberately never
+// calls (D-81). Their client methods had no product caller and were deleted in
+// phase 2 of the permission policy: a method nobody calls is a policy mapping
+// nobody exercises. The routes stay in the companion and in the vendored spec,
+// so H-3's spec drift is unaffected. A path listed here that the client calls
+// again, or that leaves the spec, fails below.
+var neverCalledSpecPaths = map[string]string{
+	"/v1/config/templates":   "no command lists the companion's template definitions; one is read with GET /v1/config/template",
+	"/v1/config/scripts":     "no command lists the companion's script definitions; one is read with GET /v1/config/script",
+	"/v1/config/automations": "no command lists the companion's automation definitions; one is read with GET /v1/config/automation",
+	"/v1/ha/reload/{domain}": "the companion reloads inside its own write routes, and the reloads hactl sends itself are HA service calls",
+}
+
 // TestEndpointsCoverSpecPaths keeps the Endpoints table complete both ways: every
-// spec path is called by the client and every client path is documented. A new
-// companion route therefore forces a loud classification failure here rather than
-// slipping through unreflected (TC-7).
+// spec path is called by the client or listed as never called, with its reason,
+// and every client path is documented. A new companion route therefore forces a
+// loud classification failure here rather than slipping through unreflected
+// (TC-7).
 func TestEndpointsCoverSpecPaths(t *testing.T) {
 	spec := loadCompanionSpec(t)
 
@@ -309,8 +323,17 @@ func TestEndpointsCoverSpecPaths(t *testing.T) {
 		inTable[ep.Path] = true
 	}
 	for path := range spec.Paths.Map() {
-		if !inTable[path] {
+		_, never := neverCalledSpecPaths[path]
+		switch {
+		case inTable[path] && never:
+			t.Errorf("spec path %q is called by the client and listed as never called — delete its neverCalledSpecPaths line", path)
+		case !inTable[path] && !never:
 			t.Errorf("spec path %q is in no companion.Endpoints entry — add the client call or classify it", path)
+		}
+	}
+	for path := range neverCalledSpecPaths {
+		if spec.Paths.Find(path) == nil {
+			t.Errorf("neverCalledSpecPaths names %q, which the vendored spec no longer has — delete the line", path)
 		}
 	}
 	for path := range inTable {

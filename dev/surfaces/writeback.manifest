@@ -80,7 +80,7 @@
 
 # --- proven: a named test writes with --confirm and reads HA back -------------
 #
-# auto apply / auto rollback: reads GetAutomationConfig from HA's REST API before
+# auto apply / auto rollback: reads HA's own automation config API before
 # and after, asserts the trigger (a field the command never prints) as the
 # witness, and compares the whole canonicalised document after the rollback.
 hactl auto apply = proven: TestE2EAutoApplyWritesOnlyItsOwnEntryCLI

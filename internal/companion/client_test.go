@@ -100,50 +100,6 @@ func TestReadConfigFile_NotFound(t *testing.T) {
 	}
 }
 
-func TestWriteConfigFile_DryRun(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		if got := r.URL.Query().Get("dry_run"); got != "true" {
-			t.Errorf("dry_run = %q, want true", got)
-		}
-		_ = json.NewEncoder(w).Encode(ConfigWriteResponse{Status: "dry_run", Diff: "--- a/test.yaml\n+++ b/test.yaml\n"})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	wr, err := c.WriteConfigFile(context.Background(), "test.yaml", "key: value\n", true)
-	if err != nil {
-		t.Fatalf("WriteConfigFile dry_run: %v", err)
-	}
-	if wr.Status != "dry_run" { //nolint:goconst
-		t.Errorf("status = %q, want dry_run", wr.Status)
-	}
-}
-
-func TestWriteConfigFile_Apply(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("dry_run"); got != "false" {
-			t.Errorf("dry_run = %q, want false", got)
-		}
-		_ = json.NewEncoder(w).Encode(ConfigWriteResponse{Status: "applied", Backup: "test.yaml.bak.20260428T120000"})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	wr, err := c.WriteConfigFile(context.Background(), "test.yaml", "key: value\n", false)
-	if err != nil {
-		t.Fatalf("WriteConfigFile apply: %v", err)
-	}
-	if wr.Status != "applied" {
-		t.Errorf("status = %q, want applied", wr.Status)
-	}
-	if wr.Backup == "" {
-		t.Error("backup is empty")
-	}
-}
-
 func TestBearerTokenSent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -162,30 +118,6 @@ func TestBearerTokenSent(t *testing.T) {
 }
 
 // --- Template CRUD tests ---
-
-func TestListTemplates(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/config/templates" {
-			t.Errorf("path = %q, want /v1/config/templates", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(TemplatesResponse{Templates: []TemplateDefinition{
-			{UniqueID: "temp_power", Name: "Power Sensor", Domain: "sensor", State: "{{ states('sensor.raw') | float }}"},
-		}})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	r, err := c.ListTemplates(context.Background())
-	if err != nil {
-		t.Fatalf("ListTemplates: %v", err)
-	}
-	if len(r.Templates) != 1 {
-		t.Fatalf("templates count = %d, want 1", len(r.Templates))
-	}
-	if r.Templates[0].UniqueID != "temp_power" { //nolint:goconst
-		t.Errorf("unique_id = %q, want temp_power", r.Templates[0].UniqueID)
-	}
-}
 
 func TestGetTemplate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -206,31 +138,6 @@ func TestGetTemplate(t *testing.T) {
 	}
 	if r.Content == "" {
 		t.Error("content is empty")
-	}
-}
-
-func TestWriteTemplate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		if got := r.URL.Query().Get("id"); got != "temp_power" {
-			t.Errorf("id = %q, want temp_power", got)
-		}
-		if got := r.URL.Query().Get("dry_run"); got != "true" {
-			t.Errorf("dry_run = %q, want true", got)
-		}
-		_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "dry_run"})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	r, err := c.WriteTemplate(context.Background(), "temp_power", "state: '{{ 2 }}'\n", true)
-	if err != nil {
-		t.Fatalf("WriteTemplate: %v", err)
-	}
-	if r.Status != "dry_run" {
-		t.Errorf("status = %q, want dry_run", r.Status)
 	}
 }
 
@@ -283,30 +190,6 @@ func TestDeleteTemplate(t *testing.T) {
 }
 
 // --- Script CRUD tests ---
-
-func TestListScriptDefs(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/config/scripts" {
-			t.Errorf("path = %q, want /v1/config/scripts", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(ScriptsResponse{Scripts: []ScriptDefinition{
-			{ID: "notify_all", Alias: "Notify All", Mode: "single"},
-		}})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	r, err := c.ListScriptDefs(context.Background())
-	if err != nil {
-		t.Fatalf("ListScriptDefs: %v", err)
-	}
-	if len(r.Scripts) != 1 {
-		t.Fatalf("scripts count = %d, want 1", len(r.Scripts))
-	}
-	if r.Scripts[0].ID != "notify_all" { //nolint:goconst
-		t.Errorf("id = %q, want notify_all", r.Scripts[0].ID)
-	}
-}
 
 func TestGetScriptDef(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -389,27 +272,6 @@ func TestDeleteScriptDef(t *testing.T) {
 }
 
 // --- Automation CRUD tests ---
-
-func TestListAutomationDefs(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/config/automations" {
-			t.Errorf("path = %q, want /v1/config/automations", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(AutomationsResponse{Automations: []AutomationDefinition{
-			{ID: "auto_1", Alias: "Motion Light", Mode: "single"},
-		}})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	r, err := c.ListAutomationDefs(context.Background())
-	if err != nil {
-		t.Fatalf("ListAutomationDefs: %v", err)
-	}
-	if len(r.Automations) != 1 {
-		t.Fatalf("automations count = %d, want 1", len(r.Automations))
-	}
-}
 
 func TestGetAutomationDef(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -622,28 +484,6 @@ func TestCreateHelper(t *testing.T) {
 	}
 }
 
-func TestUpdateHelper(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %q, want PUT", r.Method)
-		}
-		if got := r.URL.Query().Get("id"); got != "guest_mode" {
-			t.Errorf("id = %q, want guest_mode", got)
-		}
-		_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "applied"})
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	r, err := c.UpdateHelper(context.Background(), "guest_mode", "guest_mode:\n  name: Updated Mode\n")
-	if err != nil {
-		t.Fatalf("UpdateHelper: %v", err)
-	}
-	if r.Status != "applied" {
-		t.Errorf("status = %q, want applied", r.Status)
-	}
-}
-
 func TestDeleteHelper(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -663,25 +503,6 @@ func TestDeleteHelper(t *testing.T) {
 	}
 	if r.Status != "deleted" {
 		t.Errorf("status = %q, want deleted", r.Status)
-	}
-}
-
-func TestReloadDomain(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		if r.URL.Path != "/v1/ha/reload/input_boolean" {
-			t.Errorf("path = %q, want /v1/ha/reload/input_boolean", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "test-token")
-	if err := c.ReloadDomain(context.Background(), "input_boolean"); err != nil {
-		t.Fatalf("ReloadDomain: %v", err)
 	}
 }
 

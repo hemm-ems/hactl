@@ -32,6 +32,4 @@ internal/cmd/flow.go:renderConfigShow:e.SupportsOptions = exempt: prose from fmt
 internal/cmd/flow.go:renderConfigShow:e.SupportsReconfig = exempt: prose from fmt.Fprintf, not a table cell; `config show --json` is the separate configShowResult struct, which carries the bool as a bool
 
 internal/companion/client.go:WriteAutomationDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
-internal/companion/client.go:WriteConfigFile:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
 internal/companion/client.go:WriteScriptDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
-internal/companion/client.go:WriteTemplate:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it

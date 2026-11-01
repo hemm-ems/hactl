@@ -65,3 +65,14 @@ internal/realdata/helpers.go:StorageCollections = exempt: the walk builds a map 
 internal/realdata/leak.go:Contains = proven: TestLeakReportIsOrderedByLocationNotByMapWalk
 internal/realdata/configtext.go:ShapeDrift = proven: TestShapeDriftIsOrderedNotMapWalked
 internal/realdata/bootability.go:ExclusionReport = proven: TestExclusionReportIsOrderedNotMapWalked
+
+# --- the policy request classifier (internal/policy/reqmap) -------------------
+internal/policy/reqmap/types.go:(*checkSet).list = proven: TestServiceChecksAreSortedAndUnique
+internal/policy/reqmap/dashboard.go:DiffDashboard = proven: TestDiffDashboard
+internal/policy/reqmap/service.go:serviceReach = proven: TestServiceCallMapping
+internal/policy/reqmap/service.go:walkData = exempt: the walk only collects the mapping's keys, which are sort.Strings'd before any is visited
+internal/policy/reqmap/wsmap.go:changedKeys = exempt: the walk builds a slice that is sort.Strings'd before it is returned
+internal/policy/reqmap/rows.go:Rows = exempt: the walk builds a slice that is sorted by key before Rows returns it
+internal/policy/reqmap/classify.go:classifyHTTP = exempt: merges extra query values key by key; no value's position depends on the order the keys are visited in
+internal/policy/reqmap/companionmap.go:singleKey = exempt: walks a mapping already checked to hold exactly one key, so there is no order to observe
+internal/policy/reqmap/dashboard.go:withoutViews = exempt: copies one map into another; the result is a map, compared with reflect.DeepEqual, never ranged

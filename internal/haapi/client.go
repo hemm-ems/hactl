@@ -80,11 +80,6 @@ func (c *Client) GetState(ctx context.Context, entityID string) ([]byte, error) 
 	return c.doGet(ctx, "/api/states/"+entityID)
 }
 
-// GetAutomationConfig calls GET /api/config/automation/config/<id> and returns the raw JSON body.
-func (c *Client) GetAutomationConfig(ctx context.Context, automationID string) ([]byte, error) {
-	return c.doGet(ctx, "/api/config/automation/config/"+automationID)
-}
-
 // RenderTemplate calls POST /api/template with the given template string.
 func (c *Client) RenderTemplate(ctx context.Context, template string) (string, error) {
 	body := map[string]string{"template": template}
@@ -94,7 +89,6 @@ func (c *Client) RenderTemplate(ctx context.Context, template string) (string, e
 	}
 	return string(data), nil
 }
-
 
 // ServiceDomain is one entry of GET /api/services: a domain and the services
 // it registers, keyed by service name.
@@ -131,18 +125,6 @@ func (c *Client) ServiceList(ctx context.Context) ([]ServiceDomain, error) {
 		return nil, errors.New("/api/services returned no domains")
 	}
 	return domains, nil
-}
-
-// ServiceExists reports whether Home Assistant has a service registered under
-// domain.service. It is LookupService with the descriptor dropped, kept for
-// callers that only need the yes/no (the integration tiers probing for a
-// `<domain>.reload`).
-func (c *Client) ServiceExists(ctx context.Context, domain, service string) (bool, error) {
-	_, err := c.LookupService(ctx, domain, service)
-	if errors.Is(err, ErrServiceNotRegistered) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 // LookupService returns what Home Assistant publishes about domain.service, or
@@ -235,11 +217,6 @@ func (c *Client) CallServiceWithResponse(ctx context.Context, domain, service st
 		data = map[string]any{}
 	}
 	return c.doPost(ctx, "/api/services/"+domain+"/"+service+"?return_response=true", data)
-}
-
-// GetEvents calls GET /api/events and returns the raw JSON body.
-func (c *Client) GetEvents(ctx context.Context) ([]byte, error) {
-	return c.doGet(ctx, "/api/events")
 }
 
 // GetLogbook calls GET /api/logbook/<startTime> and returns the raw JSON body.
