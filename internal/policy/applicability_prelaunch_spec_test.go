@@ -102,6 +102,37 @@ func parentOf(t *testing.T, res string) string {
 	return policy.Resource{Kind: r.Kind, ID: r.ID}.String()
 }
 
+// changedFromAbove is what D-125 adds to a deny on res: create and delete
+// when the table lists them at res's parent (they create or delete every part
+// of it), control on an entity's state and attributes (a service call changes
+// them), and edit on a file's block (a rewrite of the file).
+func changedFromAbove(t *testing.T, res string) []policy.Verb {
+	t.Helper()
+	parent := parentOf(t, res)
+	if parent == "" {
+		return nil
+	}
+	var out []policy.Verb
+	for _, row := range applicabilityRows {
+		if row.res != parent {
+			continue
+		}
+		for _, v := range row.at {
+			if v == policy.Create || v == policy.Delete {
+				out = append(out, v)
+			}
+		}
+	}
+	r := mustResource(t, res)
+	switch {
+	case r.Kind == policy.KindEntity && (r.Sub == "state" || strings.HasPrefix(r.Sub, "attr/")):
+		out = append(out, policy.Control)
+	case r.Kind == policy.KindFile && strings.HasPrefix(r.Sub, "block/"):
+		out = append(out, policy.Edit)
+	}
+	return out
+}
+
 func oneDeny(pattern, verbs string) string {
 	return "version: 1\nactive: agent\nprofiles:\n  agent:\n    deny:\n      \"" + pattern + "\": " + verbs + "\n"
 }
@@ -145,15 +176,15 @@ profiles:
 	}
 }
 
-// TestWriteExpandsToTheVerbsThatApplyAtTheRulesAddress — D-110 (1): for every
-// row of the table, `deny "<address>": [write]` denies exactly the write verbs
-// that apply at that address or below it, and nothing else; a rule on a
-// no-write address denies no write verb at all.
+// TestWriteExpandsToTheVerbsThatApplyAtTheRulesAddress — D-110 (1), D-125: for
+// every row of the table, `deny "<address>": [write]` denies exactly the write
+// verbs that apply at that address or below it, plus those that change it
+// from above, and nothing else.
 func TestWriteExpandsToTheVerbsThatApplyAtTheRulesAddress(t *testing.T) {
 	for _, row := range applicabilityRows {
 		t.Run(row.res, func(t *testing.T) {
 			p := mustLoad(t, writePolicy(t, oneDeny(row.res, "[write]")))
-			want := appliesAtOrBelow(row.res)
+			want := append(appliesAtOrBelow(row.res), changedFromAbove(t, row.res)...)
 			r := mustResource(t, row.res)
 			for _, v := range writeVerbs {
 				got := p.Decide(r, v, nil)
@@ -170,10 +201,10 @@ func TestWriteExpandsToTheVerbsThatApplyAtTheRulesAddress(t *testing.T) {
 }
 
 // TestPartialCountsOnlyDeniesWhoseVerbAppliesWhereTheDenySits — D-110 (2) and
-// (3): a deny on a sub-resource, with every write verb written out by name,
-// still matches a direct check of exactly that address for each of them (kept
-// as written), but makes its parent partial only for the verbs that apply at
-// the deny's own address.
+// (3), D-125: a deny on a sub-resource, with every write verb written out by
+// name, still matches a direct check of exactly that address for each of them
+// (kept as written), but makes its parent partial only for the verbs that
+// apply at the deny's own address or change it from above.
 func TestPartialCountsOnlyDeniesWhoseVerbAppliesWhereTheDenySits(t *testing.T) {
 	for _, row := range applicabilityRows {
 		parent := parentOf(t, row.res)
@@ -183,12 +214,13 @@ func TestPartialCountsOnlyDeniesWhoseVerbAppliesWhereTheDenySits(t *testing.T) {
 		t.Run(row.res, func(t *testing.T) {
 			p := mustLoad(t, writePolicy(t, oneDeny(row.res, "[control, edit, create, delete]")))
 			leaf, top := mustResource(t, row.res), mustResource(t, parent)
+			changed := changedFromAbove(t, row.res)
 			for _, v := range writeVerbs {
 				if got := p.Decide(leaf, v, nil); got.Allowed {
 					t.Errorf("%s %s = allowed (%s); a verb written by name still matches a direct check of its address", v, row.res, got.Rule)
 				}
 				got := p.Decide(top, v, nil)
-				if applies := slices.Contains(row.at, v); got.Allowed == applies || got.Partial != applies {
+				if applies := slices.Contains(row.at, v) || slices.Contains(changed, v); got.Allowed == applies || got.Partial != applies {
 					t.Errorf("%s %s with a deny on %s: allowed %v partial %v (%s); want partial-denied=%v (%s applies at %s: %v)",
 						v, parent, row.res, got.Allowed, got.Partial, got.Rule, applies, v, row.res, applies)
 				}
@@ -217,21 +249,25 @@ func TestKindWideChecksIgnoreInapplicableDescendantDenies(t *testing.T) {
 	}
 }
 
-// TestADenyOnANoWritePartRefusesNoParentWrite — the manual's two examples of
-// what narrows: an explicit `deny "entity:lock.*/state" [control]` refuses no
-// service call (control is checked on the entity itself), and a block deny
-// no longer refuses an edit of its file.
+// TestADenyOnANoWritePartRefusesNoParentWrite — what still narrows (D-110,
+// D-125): a deny's verb that no command can change the part with refuses
+// nothing above it — control on a registry field, on a config, on a trace —
+// while a direct check of the part still matches the verb as written.
 func TestADenyOnANoWritePartRefusesNoParentWrite(t *testing.T) {
-	p := mustLoad(t, writePolicy(t, oneDeny("entity:lock.*/state", "[control]")))
-	if v := p.Decide(mustResource(t, "entity:lock.front_door"), policy.Control, nil); !v.Allowed {
-		t.Errorf("control entity:lock.front_door denied by %s; control does not apply at /state", v.Rule)
+	for _, tc := range []struct{ pattern, res string }{
+		{"entity:lock.*/registry/name", "entity:lock.front_door"},
+		{"automation:a1/config", "automation:a1"},
+		{"automation:a1/trace", "automation:a1"},
+		{"helper:input_boolean/h1/config", "helper:input_boolean/h1"},
+	} {
+		p := mustLoad(t, writePolicy(t, oneDeny(tc.pattern, "[control]")))
+		if v := p.Decide(mustResource(t, tc.res), policy.Control, nil); !v.Allowed || v.Partial {
+			t.Errorf("control %s under deny %s [control] = allowed %v partial %v (%s); want allowed whole",
+				tc.res, tc.pattern, v.Allowed, v.Partial, v.Rule)
+		}
 	}
-	if v := p.Decide(mustResource(t, "entity:lock.front_door/state"), policy.Control, nil); v.Allowed {
-		t.Errorf("control entity:lock.front_door/state allowed; a verb written by name is kept as written")
-	}
-
-	p = mustLoad(t, writePolicy(t, oneDeny("file:x.yaml/block/b", "[edit]")))
-	if v := p.Decide(mustResource(t, "file:x.yaml"), policy.Edit, nil); !v.Allowed {
-		t.Errorf("edit file:x.yaml denied by %s; no command writes a block on its own, so the block deny decides nothing for the file", v.Rule)
+	p := mustLoad(t, writePolicy(t, oneDeny("entity:lock.*/registry/name", "[control]")))
+	if v := p.Decide(mustResource(t, "entity:lock.front_door/registry/name"), policy.Control, nil); v.Allowed {
+		t.Errorf("control entity:lock.front_door/registry/name allowed; a verb written by name is kept as written")
 	}
 }

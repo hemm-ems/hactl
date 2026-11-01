@@ -212,9 +212,8 @@ func TestRefReplaceRefusedByItsPlan(t *testing.T) {
 // TestRefReplaceChecksFileAndDashboardParts (E-7): a deny on the rewritten
 // file refuses the file edit, and a deny on a view of a rewritten dashboard
 // refuses through the per-view diff. Every denial is listed, not only the
-// first. A deny on a block of the file no longer refuses it (D-110, refining
-// D-66): no command edits a block on its own, so edit does not apply where
-// that deny sits — deny the file or the typed entry instead.
+// first. A deny on a block of the file refuses it too, whichever block the
+// rewrite touches (D-66, D-125): an edit of the file rewrites its blocks.
 func TestRefReplaceChecksFileAndDashboardParts(t *testing.T) {
 	r := refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml\": [edit]\n      \"dashboard:\": [edit]\n"))
 	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
@@ -225,9 +224,11 @@ func TestRefReplaceChecksFileAndDashboardParts(t *testing.T) {
 		t.Errorf("both denials are reported:\n%s", out)
 	}
 
-	r = refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml/block/other\": [edit]\n"))
-	if out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new"); err != nil {
-		t.Errorf("a block deny refused the file edit (D-110: edit does not apply at a block): %v\n%s", err, out)
+	for _, block := range []string{"other", "prod_heating"} { // untouched, and the one rewritten
+		r = refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml/block/"+block+"\": [edit]\n"))
+		out, err = runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
+		assertRefused(t, "block "+block, out, err,
+			`edit file:automations.yaml — deny "file:automations.yaml/block/`+block+`" [edit] (line 6) — a part of it is denied, so all of it is`)
 	}
 }
 

@@ -133,19 +133,21 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 | `delete` | remove it | `auto delete` |
 
 `write` is shorthand for `control, edit, create, delete` — **as far as they
-apply where the rule points.** A verb applies to a resource only if some hactl
-command can ask for it there: nothing ever "switches" a registry field or
-creates an attribute. So `"entity:*/registry/entity_id": [write]` — the natural
-"no renames" rule — means `edit` only, and leaves switching lights alone, while
+can change what the rule points at.** Nothing ever "switches" a registry
+field, so `"entity:*/registry/entity_id": [write]` — the natural "no renames"
+rule — never covers `control`, and leaves switching lights alone, while
 `"entity:lock.*": [write]` covers everything you can do to a lock.
+
+A deny on a part also stops whatever would change that part from above:
+deleting or creating the whole thing, a service call on an entity (it changes
+the entity's `state` and `attr/…`), and an edit of a file (it rewrites the
+file's `block/…`). So `deny "automation:x/config": [write]` also refuses
+deleting automation `x`, and a deny on `entity:lock.*/state` refuses switching
+a lock. An allow on a part grants only the part.
+
 `hactl policy show` prints what each rule ends up meaning (`expanded` in
 `--json`), and the manual's reference has the full table of which verbs apply
-where.
-
-A few addresses take no write at all — an entity's `state` and `attr/…`, a
-file's `block/…`, a dashboard's `resources`. A deny there protects nothing from
-changes: to stop switching a lock, deny `entity:lock.*` itself, not
-`entity:lock.*/state`. If you write a verb that cannot apply where you put it
+where. If you write a verb that can change nothing where you put it
 (`"entity:*/registry/labels": [control]`), the file still loads, and
 `policy lint` tells you (`verb-not-applicable`).
 
@@ -181,8 +183,8 @@ else about the entity.
 denied, like the latitude attribute in the example above. Then:
 
 - **changing** the whole entity is denied, because it would touch the denied
-  part — counting only denies whose verb can apply where they sit, so a deny
-  on a registry field never blocks switching the entity;
+  part — counting only denies whose verb can change what they protect, so a
+  deny on a registry field never blocks switching the entity;
 - **reading** it is allowed, and the answer lists the denied part:
 
 ```console
@@ -396,9 +398,8 @@ A few things worth knowing:
   only `registry/labels`, `dash save` checks each changed view. But a change
   hactl can only address as a whole is refused by any denied part, even one it
   does not touch: with one view of a dashboard denied, changing the
-  dashboard's title is refused. A file's `block/…` is never written on its
-  own, so a deny there does not stop `ref replace` from editing the file —
-  deny the file, or the automation, script or template in it.
+  dashboard's title is refused, and with one `block/…` of a file denied,
+  `ref replace` editing that file is refused.
 - **Looking at a config flow counts as stepping it.** Asking Home Assistant
   for a flow's current state runs its current step, which can finish the flow,
   so `config flow-inspect` is checked like `config flow-step`.

@@ -78,21 +78,27 @@ func TestApplicableAtOrBelowAResource(t *testing.T) {
 }
 
 // TestWriteNarrowsPerRuleAndKeepsNamedVerbs — D-110 (1) and (2): `write`
-// becomes the verbs that apply at the pattern; a verb written by name stays,
-// applicable or not; read is untouched; a list without `write` is as parsed.
+// becomes the verbs that apply at the pattern — for a deny also those that
+// change it from above (D-125); a verb written by name stays, applicable or
+// not; read is untouched; a list without `write` is as parsed.
 func TestWriteNarrowsPerRuleAndKeepsNamedVerbs(t *testing.T) {
 	p := mustLoad(t, profileHead+
+		"    allow:\n"+
+		"      \"entity:*/attr/*\": [read, write]\n"+
+		"      \"entity:*/state\": [control]\n"+
 		"    deny:\n"+
 		"      \"entity:*/registry/entity_id\": [write, control]\n"+
-		"      \"entity:*/attr/*\": [read, write]\n"+
 		"      \"entity:lock.*\": [write]\n"+
-		"      \"entity:*/state\": [control]\n"+
+		"      \"entity:*/attr/brightness\": [write]\n"+
+		"      \"file:x.yaml/block/*\": [write]\n"+
 		"      \"system:reload/*\": [write]\n")
 	want := map[string][]Verb{
-		"entity:*/registry/entity_id": {Control, Edit},
 		"entity:*/attr/*":             {Read},
-		"entity:lock.*":               {Control, Edit, Create, Delete},
 		"entity:*/state":              {Control},
+		"entity:*/registry/entity_id": {Control, Edit, Create, Delete},
+		"entity:lock.*":               {Control, Edit, Create, Delete},
+		"entity:*/attr/brightness":    {Control, Create, Delete},
+		"file:x.yaml/block/*":         {Edit},
 		"system:reload/*":             {},
 	}
 	for _, r := range p.Rules() {
@@ -101,12 +107,73 @@ func TestWriteNarrowsPerRuleAndKeepsNamedVerbs(t *testing.T) {
 		}
 	}
 	// The named control on the registry field still decides a direct check
-	// of exactly that address, and makes nothing partial.
+	// of exactly that address, and makes nothing partial; the attribute deny
+	// does, for control changes an entity's attributes (D-125).
 	if v := p.Decide(mustResource(t, "entity:light.x/registry/entity_id"), Control, nil); v.Allowed {
 		t.Errorf("control on the registry field = %+v, want denied by the rule as written", v)
 	}
-	if v := p.DecideDenyOnly(mustResource(t, "entity:light.y"), Control); !v.Allowed || v.Partial {
-		t.Errorf("deny-only control on entity:light.y = %+v, want allowed: control applies at none of the denies below it", v)
+	if v := p.DecideDenyOnly(mustResource(t, "entity:light.y"), Control); v.Allowed || !v.Partial ||
+		len(v.PartialDenies) != 1 || v.PartialDenies[0].Rule != `deny "entity:*/attr/brightness" [write]` {
+		t.Errorf("deny-only control on entity:light.y = %+v, want denied, partial, by the attribute deny alone", v)
+	}
+}
+
+// TestDeniedUnderPatterns — D-125: a deny's pattern holds the table's verbs at
+// or below it, plus create and delete of every owner above it and what
+// changesBelow reaches; a top-level pattern gains nothing.
+func TestDeniedUnderPatterns(t *testing.T) {
+	all := []Verb{Control, Edit, Create, Delete}
+	for pat, want := range map[string][]Verb{
+		"*":                              all,
+		"entity:*":                       all,
+		"entity:*/registry/entity_id":    {Edit, Create, Delete},
+		"entity:*/registry":              {Edit, Create, Delete},
+		"entity:*/state":                 {Control, Create, Delete},
+		"entity:*/attr":                  {Control, Create, Delete},
+		"entity:*/attr/lat*":             {Control, Create, Delete},
+		"entity:*/history":               {Create, Delete},
+		"device:*/registry/area_id":      {Edit, Delete},
+		"automation:x/config":            {Edit, Create, Delete},
+		"automation:x/trace":             {Create, Delete},
+		"script:*/run":                   {Control, Create, Delete},
+		"helper:*/*/config":              {Create, Delete},
+		"dashboard:*/views/*":            {Edit, Create, Delete},
+		"dashboard:/resources":           {Create, Delete},
+		"config_entry:*/options":         {Edit, Create, Delete},
+		"config_entry:*/flow":            {Create, Delete},
+		"file:x.yaml/block/b":            {Edit},
+		"file:**":                        {Edit},
+		"system:reload/*":                {},
+		"system:cache":                   {Edit, Delete},
+		"area:*":                         {Edit, Create, Delete},
+		"template:*/config":              {Edit, Create, Delete},
+		"entity:device_tracker.*/attr/x": {Control, Create, Delete},
+	} {
+		a, err := parseAddress(pat, false)
+		if err != nil {
+			t.Fatalf("%s: %v", pat, err)
+		}
+		if got := deniedUnder(a); !slices.Equal(got, want) {
+			t.Errorf("deniedUnder(%s) = %v, want %v", pat, got, want)
+		}
+	}
+}
+
+// TestChangesBelowReachesOnlyWhatTheParentChanges — each changesBelow row
+// names a verb the table lists at the parent address itself, and a sub word
+// of the kind at which the table lists no verb of its own: it adds what the
+// table cannot say, never re-states it.
+func TestChangesBelowReachesOnlyWhatTheParentChanges(t *testing.T) {
+	for _, c := range changesBelow {
+		parent := address{kind: c.kind, id: []string{"x"}}
+		if !slices.Contains(ApplicableVerbs(Resource{Kind: c.kind, ID: "x"}), c.verb) {
+			t.Errorf("changesBelow %s %s/%s: %s does not apply at %s:<id> itself", c.kind, c.verb, c.word, c.verb, c.kind)
+		}
+		part := parent
+		part.sub = []string{c.word}
+		if got := applicableUnder(part); len(got) != 0 {
+			t.Errorf("changesBelow %s %s/%s: the table already lists %v there", c.kind, c.verb, c.word, got)
+		}
 	}
 }
 
@@ -119,20 +186,30 @@ func TestVerbNotApplicableFindings(t *testing.T) {
 		"    allow:\n"+
 		"      \"*\": [read, control]\n"+ // 7: `*` covers every kind
 		"      \"area:*\": [control, edit]\n"+ // 8: control on area applies nowhere
+		"      \"entity:*/registry/labels\": [delete]\n"+ // 9: an allow on a part grants no delete of the whole
+		"      \"entity:*/state\": [control]\n"+ // 10: … nor the control asked on the entity
 		"    deny:\n"+
-		"      \"entity:*/state\": [read, control, edit]\n"+ // 10: two findings, read never
-		"      \"file:x.yaml/block/b\": [write]\n"+ // 11: write applies to nothing
-		"      \"entity:*/registry/labels\": [write]\n") // 12: fine
+		"      \"entity:*/state\": [read, control, edit]\n"+ // 12: edit only — control changes the state (D-125)
+		"      \"file:x.yaml/block/b\": [write]\n"+ // 13: fine — an edit of the file rewrites its blocks
+		"      \"system:reload/*\": [write]\n"+ // 14: write applies to nothing
+		"      \"entity:*/registry/labels\": [write]\n"+ // 15: fine
+		"  q:\n"+
+		"    allow:\n"+
+		"      \"area:*\": [control]\n") // 18: every profile is linted
 	got := verbNotApplicable(p)
 	want := []Finding{
 		{CodeVerbNotApplicable, "p", `allow "area:*" [control edit]`, 8,
 			`"control" does not apply at area:* — no command asks for it there, so the rule decides nothing for it (no command asks for control on any area)`},
-		{CodeVerbNotApplicable, "p", `deny "entity:*/state" [read control edit]`, 10,
+		{CodeVerbNotApplicable, "p", `allow "entity:*/registry/labels" [delete]`, 9,
+			`"delete" does not apply at entity:*/registry/labels — no command asks for it there, so the rule decides nothing for it (delete on entity is checked at: entity:<id>)`},
+		{CodeVerbNotApplicable, "p", `allow "entity:*/state" [control]`, 10,
 			`"control" does not apply at entity:*/state — no command asks for it there, so the rule decides nothing for it (control on entity is checked at: entity:<id>)`},
-		{CodeVerbNotApplicable, "p", `deny "entity:*/state" [read control edit]`, 10,
+		{CodeVerbNotApplicable, "p", `deny "entity:*/state" [read control edit]`, 12,
 			`"edit" does not apply at entity:*/state — no command asks for it there, so the rule decides nothing for it (edit on entity is checked at: entity:<id>/registry/<field>)`},
-		{CodeVerbNotApplicable, "p", `deny "file:x.yaml/block/b" [write]`, 11,
-			`"write" applies to nothing at file:x.yaml/block/b — no command changes it, so the rule decides nothing for writes`},
+		{CodeVerbNotApplicable, "p", `deny "system:reload/*" [write]`, 14,
+			`"write" applies to nothing at system:reload/* — no command asks for a write there, so the rule decides nothing for writes`},
+		{CodeVerbNotApplicable, "q", `allow "area:*" [control]`, 18,
+			`"control" does not apply at area:* — no command asks for it there, so the rule decides nothing for it (no command asks for control on any area)`},
 	}
 	sortFindings(got)
 	if !reflect.DeepEqual(got, want) {

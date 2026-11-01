@@ -268,7 +268,8 @@ type Rule struct {
 	Written []string
 	// Verbs is Written parsed by ParseVerbs — de-duplicated, canonical order
 	// — with `write` expanded to the write verbs that apply at the pattern
-	// (D-110) and every verb written by name kept: what evaluation uses.
+	// (D-110; for a deny also those that change it from above, D-125) and
+	// every verb written by name kept: what evaluation uses.
 	Verbs []Verb
 	// Where is the selector narrowing this allow, nil when none. Always nil on
 	// a deny rule (`where:` narrows allows only).
@@ -282,7 +283,8 @@ type Rule struct {
 
 	addr address
 	// applicable are the write verbs that apply at the pattern — at its
-	// address or below it (D-110).
+	// address or below it (D-110), and for a deny also every verb that
+	// changes it from above (D-125).
 	applicable []Verb
 }
 

@@ -65,6 +65,22 @@ var applicability = []applicableRow{
 	{kind: KindSystem, id: "cache", verbs: []Verb{Edit, Delete}, show: "system:cache"},
 }
 
+// changesBelow lists what a verb asked at an address changes below it, besides
+// create and delete, which create or delete every part of what they act on
+// (D-125): a service call changes an entity's state and attributes, and an
+// edit of a file rewrites its blocks. word is the first sub word of the part.
+// A deny on such a part holds the verb too: a part of it is denied, so all of
+// it is (D-66).
+var changesBelow = []struct {
+	kind Kind
+	verb Verb
+	word string
+}{
+	{KindEntity, Control, "state"},
+	{KindEntity, Control, "attr"},
+	{KindFile, Edit, "block"},
+}
+
 // ApplicableVerbs returns the write verbs that apply exactly at r (D-110), in
 // the order control, edit, create, delete; none for an address no command
 // changes (`entity:<id>/state`, `file:<path>/block/<id>`, `system:logs`, …).
@@ -114,6 +130,41 @@ func applicableUnder(a address) []Verb {
 	return set.list()
 }
 
+// deniedUnder returns the write verbs that apply at a deny's pattern a
+// (D-125): the table's verbs at or below it, and every verb that, asked at an
+// address above a, changes what a covers — create and delete of every owner
+// the table lists them for, and changesBelow. An allow's are applicableUnder
+// alone: an allow on a part grants only the part.
+func deniedUnder(a address) []Verb {
+	var set verbSet
+	set.add(applicableUnder(a)...)
+	if a.any || len(a.sub) == 0 {
+		return set.list()
+	}
+	for _, row := range applicability {
+		if row.kind != a.kind || len(row.sub) >= len(a.sub) {
+			continue
+		}
+		if row.id != "" && (len(a.id) == 0 || !glob.Match(row.id, a.id[0])) {
+			continue
+		}
+		if !subShapeCovers(row.sub, a.sub[:len(row.sub)]) {
+			continue
+		}
+		for _, v := range row.verbs {
+			if v == Create || v == Delete {
+				set.add(v)
+			}
+		}
+	}
+	for _, c := range changesBelow {
+		if c.kind == a.kind && c.word == a.sub[0] {
+			set.add(c.verb)
+		}
+	}
+	return set.list()
+}
+
 // subShapeCovers reports whether the sub segments segs (a resource's, or a
 // pattern's) fall within the row's sub shape of the same length: a `*` in the
 // shape takes any segment, a word must match.
@@ -127,8 +178,9 @@ func subShapeCovers(shape, segs []string) bool {
 }
 
 // appliesHere reports whether verb v applies where the rule's pattern sits —
-// at its address or below it. read applies everywhere. Partial (D-66 step 4)
-// counts a descendant deny for v only when this holds (D-110).
+// at its address or below it, and for a deny also from above it (D-125). read
+// applies everywhere. Partial (D-66 step 4) counts a descendant deny for v
+// only when this holds (D-110).
 func (r Rule) appliesHere(v Verb) bool {
 	return v == Read || slices.Contains(r.applicable, v)
 }
@@ -187,7 +239,7 @@ func verbNotApplicable(p *Policy) []Finding {
 			}
 			if slices.Contains(r.Written, WriteAlias) && len(r.applicable) == 0 {
 				finding(strconv.Quote(WriteAlias) + " applies to nothing at " + r.Pattern +
-					" — no command changes it, so the rule decides nothing for writes")
+					" — no command asks for a write there, so the rule decides nothing for writes")
 			}
 			for _, v := range []Verb{Control, Edit, Create, Delete} {
 				if !slices.Contains(r.Written, v.String()) || r.appliesHere(v) {

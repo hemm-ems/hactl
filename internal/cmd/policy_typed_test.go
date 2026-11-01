@@ -415,3 +415,31 @@ func TestTypedPlansReadBodiesAsTheRequestLayerDoes(t *testing.T) {
 		}
 	}
 }
+
+// TestTypedDeleteRefusedByADenyOnItsConfig (D-125, the §3.5 bypass lens):
+// deleting an automation, script, template or helper deletes its config, so
+// a `write` deny on that config refuses the delete — the part is denied, so
+// all of it is.
+func TestTypedDeleteRefusedByADenyOnItsConfig(t *testing.T) {
+	part := " — a part of it is denied, so all of it is"
+	for _, tc := range []typedRefusal{
+		{
+			cmd: typedCommands[4], policy: typedPolicy("automation:heating/config", "write"), action: "delete automation", checks: 2,
+			denied: []string{`delete automation:heating — deny "automation:heating/config" [write] (line 6)` + part},
+		},
+		{
+			cmd: typedCommands[10], policy: typedPolicy("script:wakeup/config", "write"), action: "delete script", checks: 2,
+			denied: []string{`delete script:wakeup — deny "script:wakeup/config" [write] (line 6)` + part},
+		},
+		{
+			cmd: typedCommands[14], policy: typedPolicy("template:room_temp/config", "write"), action: "delete template", checks: 2,
+			denied: []string{`delete template:room_temp — deny "template:room_temp/config" [write] (line 6)` + part},
+		},
+		{
+			cmd: typedCommands[16], policy: typedPolicy("helper:input_boolean/guest_mode/config", "write"), action: "delete helper", checks: 2,
+			denied: []string{`delete helper:input_boolean/guest_mode — deny "helper:input_boolean/guest_mode/config" [write] (line 6)` + part},
+		},
+	} {
+		t.Run(tc.cmd.name, func(t *testing.T) { runTypedRefusal(t, tc) })
+	}
+}

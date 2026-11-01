@@ -55,12 +55,16 @@ func agentProfile(rules string) string {
 // TestPolicyLintReportsAVerbThatAppliesNowhereTheRuleReaches — D-110 (2): a
 // write verb written by name that applies nowhere the pattern reaches, and a
 // `write` that applies to nothing, are lint findings — not a broken file. A
-// `write` that expands to something, and a verb that applies, are not.
+// `write` that expands to something, and a verb that applies, are not; nor is
+// a deny's verb that changes its part from above (D-125), while the same verb
+// on an allow is.
 func TestPolicyLintReportsAVerbThatAppliesNowhereTheRuleReaches(t *testing.T) {
-	body := agentProfile(`    deny:
+	body := agentProfile(`    allow:
+      "entity:lock.*/state": [control]
+    deny:
       "entity:*/registry/entity_id": [control]
       "system:reload/*": [write]
-      "entity:lock.*/state": [control]
+      "entity:sensor.*/state": [control]
       "entity:*/registry/labels": [write]
       "entity:lock.*": [control]
 `)
@@ -69,7 +73,7 @@ func TestPolicyLintReportsAVerbThatAppliesNowhereTheRuleReaches(t *testing.T) {
 	got := withCode(fs, "verb-not-applicable")
 	want := map[int]string{
 		lineOf(t, body, `"entity:*/registry/entity_id"`): `"control" does not apply at entity:*/registry/entity_id — no command asks for it there, so the rule decides nothing for it (control on entity is checked at: entity:<id>)`,
-		lineOf(t, body, `"system:reload/*"`):             `"write" applies to nothing at system:reload/* — no command changes it, so the rule decides nothing for writes`,
+		lineOf(t, body, `"system:reload/*"`):             `"write" applies to nothing at system:reload/* — no command asks for a write there, so the rule decides nothing for writes`,
 		lineOf(t, body, `"entity:lock.*/state"`):         `"control" does not apply at entity:lock.*/state`,
 	}
 	for _, f := range got {

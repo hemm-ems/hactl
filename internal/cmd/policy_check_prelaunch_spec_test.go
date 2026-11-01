@@ -75,13 +75,16 @@ func TestSvcCallPreviewLiveTestRuleLeavesSwitchingAlone(t *testing.T) {
 	}
 }
 
-// TestPolicyShowExpandsWritePerAddress — D-110 (1): `expanded` is the write
-// verbs that apply at the rule's pattern; a verb written by name is kept.
+// TestPolicyShowExpandsWritePerAddress — D-110 (1), D-125: `expanded` is the
+// write verbs that apply at the rule's pattern, for a deny also those that
+// change it from above; a verb written by name is kept.
 func TestPolicyShowExpandsWritePerAddress(t *testing.T) {
 	body := `version: 1
 active: agent
 profiles:
   agent:
+    allow:
+      "entity:*/registry/labels": [write]
     deny:
       "entity:*/registry/entity_id": [write]
       "entity:lock.*": [write]
@@ -107,10 +110,11 @@ profiles:
 		t.Fatalf("%v\n%s", err, out)
 	}
 	want := map[string][]string{
-		"entity:*/registry/entity_id": {"edit"},
+		"entity:*/registry/labels":    {"edit"},
+		"entity:*/registry/entity_id": {"edit", "create", "delete"},
 		"entity:lock.*":               {"control", "edit", "create", "delete"},
 		"system:reload/*":             {},
-		"script:*/run":                {"control"},
+		"script:*/run":                {"control", "create", "delete"},
 		"device:*":                    {"edit", "delete"},
 		"file:**":                     {"edit"},
 		"automation:pg_*":             {"read", "control", "edit", "create", "delete"},
@@ -482,7 +486,7 @@ func TestPolicyCheckWriteRefusesWhereNothingApplies(t *testing.T) {
 	if cliExitCode(err) != 1 || out != "" {
 		t.Fatalf("exit %d, stdout %q; want 1 and nothing", cliExitCode(err), out)
 	}
-	if want := "write applies to nothing at entity:light.sofa/attr/brightness: no command changes it"; !strings.Contains(err.Error(), want) {
+	if want := "write applies to nothing at entity:light.sofa/attr/brightness: no command asks for a write there"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q lacks %q", err, want)
 	}
 }

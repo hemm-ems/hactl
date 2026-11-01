@@ -88,8 +88,15 @@ active: a
 profiles:
   a:
     deny:
+      "config_entry:*/options": [control]
+`, KindConfigEntry, "", Control, true, RuleDefaultAllow, 0, false},
+		{"a descendant deny on a part of what is created makes the create partial (D-125)", `version: 1
+active: a
+profiles:
+  a:
+    deny:
       "config_entry:*/options": [create]
-`, KindConfigEntry, "", Create, true, RuleDefaultAllow, 0, false},
+`, KindConfigEntry, "", Create, false, `deny "config_entry:*/options" [create]`, 6, true},
 		{"a sub-scoped kind-wide check is covered by a deny on that sub", `version: 1
 active: a
 profiles:

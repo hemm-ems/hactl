@@ -344,9 +344,9 @@ func TestPartialVerdictImpl(t *testing.T) {
 		{"entity:device_tracker.jan/attr", Read, true, true, 7, []int{11, 12}},
 		{"entity:device_tracker.jan/attr/latitude", Read, false, false, 11, nil},
 		{"file:pkgs", Edit, true, false, 8, nil}, // a path is not a descendant of another path
-		// D-110: no command edits a block on its own, so a block deny makes
-		// nothing partial; it still decides a check of the block itself.
-		{"file:a.yaml", Edit, true, false, 8, nil},
+		// D-125: an edit of the file rewrites its blocks, so a block deny
+		// makes the file's edit partial, as before D-110.
+		{"file:a.yaml", Edit, false, true, 14, []int{14}},
 		{"file:a.yaml/block/b", Edit, false, false, 14, nil},
 	}
 	for _, c := range cases {

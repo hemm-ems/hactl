@@ -453,6 +453,9 @@ func (w *walker) rules(eff Effect, what string, n *yaml.Node) []Rule {
 			continue
 		}
 		applicable := applicableUnder(addr)
+		if eff == Deny {
+			applicable = deniedUnder(addr)
+		}
 		out = append(out, Rule{Effect: eff, Pattern: pat, Written: written, Verbs: narrowWrite(written, verbs, applicable),
 			Line: kv.key.Line, Column: kv.key.Column, addr: addr, applicable: applicable})
 	}

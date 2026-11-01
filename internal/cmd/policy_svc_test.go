@@ -653,3 +653,29 @@ func checkNoProfilePreview(t *testing.T, body string, template []string, wantOut
 		t.Errorf("policy %q: an audit log was written", body)
 	}
 }
+
+// TestSvcCallRefusedByADenyOnTheEntitysState (D-125, the §3.5 bypass lens): a
+// service call changes the entity's state and attributes, so a deny on
+// either — by `write` or by `control` — refuses it, naming the deny, and
+// nothing is called. A deny on a registry field still leaves it alone (F-1).
+func TestSvcCallRefusedByADenyOnTheEntitysState(t *testing.T) {
+	rig := startSvcRig(t, reachOf("light.a"))
+	args := []string{"svc", "call", "light.turn_on", "--data", `{"entity_id":"light.a"}`}
+	for _, deny := range []string{
+		`"entity:light.a/state": [write]`,
+		`"entity:light.a/state": [control]`,
+		`"entity:light.a/attr/brightness": [control]`,
+		`"entity:light.a/attr": [write]`,
+	} {
+		writePolicyFile(t, rig.dir, svcPolicy(`    deny:`, `      `+deny))
+		pattern, verbs, _ := strings.Cut(deny, ": ")
+		for _, extra := range [][]string{nil, {"--confirm"}} {
+			out, err := runPolicyCLI(t, rig.dir, append(args, extra...)...)
+			wantRefused(t, deny+" "+strings.Join(extra, ""), out, err,
+				`control entity:light.a — deny `+pattern+` `+strings.ReplaceAll(verbs, ", ", " ")+` (line 6) — a part of it is denied, so all of it is`)
+		}
+	}
+	if n := rig.posted("light/turn_on"); n != 0 {
+		t.Errorf("a refused plan called the service %d times", n)
+	}
+}

@@ -392,7 +392,7 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 	if write {
 		verbs = policy.ApplicableAtOrBelow(res)
 		if len(verbs) == 0 {
-			return fmt.Errorf("write applies to nothing at %s: no command changes it", res)
+			return fmt.Errorf("write applies to nothing at %s: no command asks for a write there", res)
 		}
 	} else {
 		v, verr := policy.ParseVerb(verb)
