@@ -732,12 +732,12 @@ func (ws *WSClient) ResourceList(ctx context.Context) ([]LovelaceResource, error
 func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[string]any) (json.RawMessage, error) {
 	_ = ctx
 
-	id := ws.nextID.Add(1)
-	msg := map[string]any{
-		"id":   id,
-		"type": cmdType,
-	}
+	// The parameters go in first and the id and type last: the policy surface
+	// keys this send by cmdType (H-29), so no parameter may replace it.
+	msg := make(map[string]any, len(params)+2)
 	maps.Copy(msg, params)
+	msg["id"] = ws.nextID.Add(1)
+	msg["type"] = cmdType
 
 	ws.mu.Lock()
 	err := ws.conn.WriteJSON(msg)

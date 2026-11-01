@@ -61,6 +61,20 @@ func (c *Client) Call(ctx context.Context, d, s string) error {
 	_, err := c.doPost(ctx, "/api/services/"+d+"/"+s+"?return_response=true", nil)
 	return err
 }
+var pkgSend = func(ctx context.Context, ws *WSClient) error {
+	_, err := ws.sendCommand(ctx, "probe/pkgvar", nil)
+	return err
+}
+func (c *Client) Things(ctx context.Context, id string) error {
+	p := "/api/things"
+	p += "/" + id
+	_, err := c.doDelete(ctx, p)
+	return err
+}
+func (c *Client) Fire(ctx context.Context) error {
+	_, err := c.doPost(ctx, "/api/events/hactl_fired?origin=cli", nil)
+	return err
+}
 func (c *Client) Hist(ctx context.Context, start string) error {
 	path := "/api/logbook/" + url.PathEscape(start)
 	path += "?" + q
@@ -80,12 +94,16 @@ func (c *Client) Del(ctx context.Context, id string) {
 	})
 	want := []string{
 		"companion DELETE /v1/config/script",
+		"rest DELETE /api/things",
+		"rest DELETE /api/things/{id}",
 		"rest GET /api/logbook/{start}",
 		"rest POST /api/config/config_entries/flow/{flow_id}",
 		"rest POST /api/config/config_entries/options/flow/{flow_id}",
+		"rest POST /api/events/hactl_fired",
 		"rest POST /api/services/{domain}/{service}",
 		"ws config/brand_new_type",
 		"ws config/entity_registry/remove",
+		"ws probe/pkgvar",
 		"ws supervisor/api GET /addons/{slug}/info",
 		"ws supervisor/api POST /addons/{slug}/restart",
 		"ws trace/list",
@@ -138,6 +156,119 @@ func (c *Client) Bypass(ctx context.Context) ([]byte, error) { return c.send(ctx
 func (c *Client) send(ctx context.Context, method, path string) ([]byte, error) {
 	_, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
 	return nil, err
+}
+`},
+		"a WriteJSON in a function building two message types": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Either(sub bool) error {
+	msg := map[string]any{"id": 1, "type": "trace/list"}
+	if sub {
+		msg = map[string]any{"id": 1, "type": "subscribe_events"}
+	}
+	return ws.conn.WriteJSON(msg)
+}
+`},
+		"a SupervisorAPI call whose method is not a literal": {"internal/companion/x.go": `package companion
+func Probe(ctx context.Context, ws *haapi.WSClient, m string) { ws.SupervisorAPI(ctx, "/addons", m, nil) }
+`},
+		"http.Post outside the builders": {"internal/cmd/x.go": `package cmd
+func sneak() { http.Post("http://ha/api/services/lock/unlock", "application/json", nil) }
+`},
+		"http.Get outside the builders": {"internal/cmd/x.go": `package cmd
+func sneak() { http.Get("http://ha/api/states") }
+`},
+		"net/http under another name": {"internal/haapi/x.go": `package haapi
+import nethttp "net/http"
+func (c *Client) Stop(ctx context.Context) error {
+	req, _ := nethttp.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/stop", nil)
+	_, err := (&nethttp.Client{}).Do(req)
+	return err
+}
+`},
+		"a dot import of net/http": {"internal/haapi/x.go": `package haapi
+import . "net/http"
+func (c *Client) Stop(ctx context.Context) error {
+	_, err := NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/stop", nil)
+	return err
+}
+`},
+		"an http.Request built as a composite literal": {"internal/haapi/x.go": `package haapi
+func (c *Client) Stop(ctx context.Context, u *url.URL) error {
+	req := (&http.Request{Method: http.MethodPost, URL: u, Header: http.Header{}}).WithContext(ctx)
+	_, err := c.doOnce(req)
+	return err
+}
+`},
+		"an http.Request from new": {"internal/haapi/x.go": `package haapi
+func (c *Client) Stop(ctx context.Context) error {
+	req := new(http.Request)
+	_, err := c.doOnce(req)
+	return err
+}
+`},
+		"a send in a package-level func literal": {"internal/haapi/x.go": `package haapi
+var probeSend = func(ctx context.Context, ws *WSClient) (json.RawMessage, error) {
+	return ws.sendCommand(ctx, typeOf(ctx), nil)
+}
+`},
+		"a method value of sendCommand": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Probe(ctx context.Context) error {
+	send := ws.sendCommand
+	_, err := send(ctx, "probe/methval", nil)
+	return err
+}
+`},
+		"a method expression of SupervisorAPI": {"internal/haapi/x.go": `package haapi
+func Probe(ctx context.Context, ws *WSClient) {
+	f := (*WSClient).SupervisorAPI
+	f(ws, ctx, "/addons/x/restart", "post", nil)
+}
+`},
+		"a method value of a request builder": {"internal/haapi/x.go": `package haapi
+func (c *Client) Probe(ctx context.Context) {
+	post := c.doPost
+	post(ctx, "/api/events/x", nil)
+}
+`},
+		"a websocket send other than WriteJSON": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Raw() error {
+	return ws.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(` + "`" + `{"id":%d,"type":"probe/raw"}` + "`" + `, ws.nextID.Add(1))))
+}
+`},
+		"a websocket NextWriter": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Raw() error {
+	w, err := ws.conn.NextWriter(1)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte("{}"))
+	return err
+}
+`},
+		"the websocket's underlying connection": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Raw() error {
+	_, err := ws.conn.UnderlyingConn().Write([]byte("{}"))
+	return err
+}
+`},
+		"a WriteJSON message whose type is rewritten after the literal": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Mutated() error {
+	msg := map[string]any{"id": 1, "type": "trace/list"}
+	msg["type"] = "probe/mutated_write"
+	return ws.conn.WriteJSON(msg)
+}
+`},
+		"a WriteJSON message with a map copied in after the literal": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Merged(extra map[string]any) error {
+	msg := map[string]any{"id": 1, "type": "trace/list"}
+	maps.Copy(msg, extra)
+	return ws.conn.WriteJSON(msg)
+}
+`},
+		"a WriteJSON message given a key the source does not spell": {"internal/haapi/x.go": `package haapi
+func (ws *WSClient) Keyed(k string, v any) error {
+	msg := map[string]any{"id": 1, "type": "trace/list"}
+	msg[k] = v
+	return ws.conn.WriteJSON(msg)
 }
 `},
 	} {

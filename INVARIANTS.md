@@ -2245,9 +2245,19 @@ cited below):**
   without one — derived, never listed). Unclassified, stale and phantom rows
   fail as on every surface. BUILT in stage 2a (see "Enforced by" below): the
   request set is derived from the hactl binary's own packages (test rigs are
-  not product), every `http.NewRequest` outside the request builders is an
-  extractor error, and the command set is the `--confirm` commands plus every
-  Run that reaches a write sink over the product's SSA call graph; the
+  not product), every file of them whatever its build constraints and every
+  package-level initialiser as well as every function; any request built or
+  sent outside the request builders — `http.NewRequest` under any import
+  name, an `http.Request` literal, a `*http.Client`'s `Do`, a `RoundTrip`,
+  resolved by type — is an extractor error, as are a send taken as a value
+  rather than called, a websocket write other than `WriteJSON`, and a
+  `WriteJSON` message whose type is set after it is built
+  (`TestPolicyRequestExtractorRefusesWhatItCannotName`,
+  `TestPolicyTypedCheckSeesWhatSpellingCannot`); the command set is the
+  `--confirm` commands plus every command whose Run or any hook cobra runs
+  around it (PreRun/PostRun, persistent hooks up the tree) reaches a write
+  sink over the product's SSA call graph, through interface calls and
+  package func variables (`TestPolicyCommandSitesOnAModule`); the
   request lines are also held in lockstep with the classifier's row table
   (`internal/policy/reqmap`) and with `companion.Endpoints`
   (`TestPolicyManifestIsInLockstepWithTheClassifier`), and the command census

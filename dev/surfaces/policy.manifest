@@ -66,12 +66,24 @@
 #                                     clear|refresh), and the two that
 #                                     dispatch or bootstrap (mcp, setup).
 #                                     Reachability is over the product's SSA
-#                                     call graph from each command's Run
+#                                     call graph from each command's Run and
+#                                     every hook cobra runs around it (its
+#                                     PreRun/PostRun, each persistent hook of
+#                                     it and its ancestors), through package
+#                                     func variables and interface calls too
 #                                     (surfaceaudit.PolicyCommandSites); the
 #                                     sinks are the client methods sending a
 #                                     write row's request plus the declared
 #                                     system:cache, dispatch and bootstrap
 #                                     APIs — named as APIs, never as commands.
+#
+# The request half reads every product file whatever its build constraints,
+# function bodies and package-level initialisers alike, and resolves net/http
+# by import and by type (a renamed import, a *http.Client's Do, a RoundTrip,
+# an http.Request literal). What it cannot key it refuses rather than skips: a
+# send taken as a value instead of called, a websocket write other than
+# WriteJSON, a WriteJSON message whose type is set after it is built, and an
+# HTTP request built outside the request builders.
 #
 # Test infrastructure is not product and is left out on purpose:
 # internal/hatest (auth, auth/long_lived_access_token, onboarding) and

@@ -138,7 +138,7 @@ test-assert-floor:
 # dev/surfaces/README.md. Needs no Docker and no HA.
 test-surface:
 	go test ./internal/surfaceaudit/... -count=1 -v
-	go test ./internal/cmd/ -count=1 -run 'Surface|FilterFlagsAgreeOnCase' -v
+	go test ./internal/cmd/ -count=1 -run 'Surface|FilterFlagsAgreeOnCase|PolicyManifestIsInLockstep|PolicyCommandCensus' -v
 
 # surfaces — print every ledger without judging it, for deciding what to work on.
 surfaces:

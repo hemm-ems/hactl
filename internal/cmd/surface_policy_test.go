@@ -16,8 +16,43 @@ import (
 	"github.com/hemm-ems/hactl/internal/surfaceaudit"
 )
 
+// funcLoc locates a function value as the runtime reports it.
+func funcLoc(t *testing.T, path string, fn any) surfaceaudit.FuncLoc {
+	t.Helper()
+	entry := reflect.ValueOf(fn).Pointer()
+	var loc surfaceaudit.FuncLoc
+	if f := runtime.FuncForPC(entry); f != nil {
+		loc.File, loc.Line = f.FileLine(entry)
+	}
+	if loc.File == "" {
+		t.Fatalf("%s: the runtime cannot locate a function the command runs", path)
+	}
+	return loc
+}
+
+// commandHooks returns the hooks cobra can run around a command's Run: its own
+// PreRun(E)/PostRun(E) and every PersistentPreRun(E)/PersistentPostRun(E) of
+// it and its ancestors — all of them, though cobra runs only the nearest
+// persistent one unless traverse is on.
+func commandHooks(c *cobra.Command) []any {
+	var hooks []any
+	add := func(fns ...any) {
+		for _, fn := range fns {
+			if !reflect.ValueOf(fn).IsNil() {
+				hooks = append(hooks, fn)
+			}
+		}
+	}
+	add(c.PreRunE, c.PreRun, c.PostRunE, c.PostRun)
+	for p := c; p != nil; p = p.Parent() {
+		add(p.PersistentPreRunE, p.PersistentPreRun, p.PersistentPostRunE, p.PersistentPostRun)
+	}
+	return hooks
+}
+
 // policyCommands walks the live cobra tree: every command, whether it carries
-// --confirm, and where the function its Run/RunE holds is declared.
+// --confirm, where the function its Run/RunE holds is declared, and where each
+// hook cobra runs around it is.
 func policyCommands(t *testing.T) []surfaceaudit.PolicyCommand {
 	t.Helper()
 	var out []surfaceaudit.PolicyCommand
@@ -32,12 +67,10 @@ func policyCommands(t *testing.T) []surfaceaudit.PolicyCommand {
 			run = c.Run
 		}
 		if run != nil {
-			entry := reflect.ValueOf(run).Pointer()
-			if f := runtime.FuncForPC(entry); f != nil {
-				pc.RunFile, pc.RunLine = f.FileLine(entry)
-			}
-			if pc.RunFile == "" {
-				t.Fatalf("%s: the runtime cannot locate its Run function", pc.Path)
+			loc := funcLoc(t, pc.Path, run)
+			pc.RunFile, pc.RunLine = loc.File, loc.Line
+			for _, h := range commandHooks(c) {
+				pc.Hooks = append(pc.Hooks, funcLoc(t, pc.Path, h))
 			}
 		}
 		if run != nil || pc.Confirm {
@@ -165,5 +198,32 @@ func TestPolicyManifestIsInLockstepWithTheClassifier(t *testing.T) {
 	}
 	for key := range derived {
 		t.Errorf("companion.Client sends %s, which companion.Endpoints does not list", key)
+	}
+}
+
+// TestPolicyCommandCensusSeesEveryHook — the census's roots are every function
+// cobra can run for a command, not its Run alone: a write in a PreRun, a
+// PostRun or an ancestor's persistent hook makes a read command a writer.
+func TestPolicyCommandCensusSeesEveryHook(t *testing.T) {
+	noop := func(*cobra.Command, []string) error { return nil }
+	noopRun := func(*cobra.Command, []string) {}
+	root := &cobra.Command{Use: "root", PersistentPreRunE: noop}
+	mid := &cobra.Command{Use: "mid", PersistentPostRun: noopRun}
+	leaf := &cobra.Command{Use: "leaf", RunE: noop, PreRun: noopRun, PostRunE: noop}
+	root.AddCommand(mid)
+	mid.AddCommand(leaf)
+	if got := len(commandHooks(leaf)); got != 4 {
+		t.Errorf("leaf has %d hooks, want 4: its PreRun and PostRunE, mid's PersistentPostRun, root's PersistentPreRunE", got)
+	}
+	if got := len(commandHooks(root)); got != 1 {
+		t.Errorf("root has %d hooks, want its own PersistentPreRunE", got)
+	}
+	// The live tree's hooks reach the census: rootCmd has a persistent hook,
+	// so every runnable command lists at least one.
+	for _, c := range policyCommands(t) {
+		if c.RunFile != "" && len(c.Hooks) == 0 && rootCmd.PersistentPreRunE != nil {
+			t.Errorf("%s lists no hook, but rootCmd's PersistentPreRunE runs before it", c.Path)
+			break
+		}
 	}
 }

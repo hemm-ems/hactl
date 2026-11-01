@@ -26,6 +26,18 @@ type PolicyCommand struct {
 	// its `func` keyword), as runtime.FuncForPC reports it.
 	RunFile string
 	RunLine int
+	// Hooks locate the other functions cobra runs for the command: its own
+	// PreRun(E) and PostRun(E), and the PersistentPreRun(E) and
+	// PersistentPostRun(E) of the command and of every ancestor. Cobra runs
+	// only the nearest persistent hook unless traverse is on; every one is
+	// listed — an over-approximation, the direction a closure gate errs in.
+	Hooks []FuncLoc
+}
+
+// FuncLoc locates a function by the file and line runtime.FuncForPC reports.
+type FuncLoc struct {
+	File string
+	Line int
 }
 
 // declaredSinks are the writes a command can reach that are not a mapped
@@ -44,23 +56,21 @@ var declaredSinks = map[string]string{
 }
 
 // PolicyCommandSites is the command half of the policy surface: every
-// `--confirm` command, plus every command whose Run reaches a write sink
-// without one — derived, never hand-listed (D-80, R-17).
+// `--confirm` command, plus every command whose Run — or any hook cobra runs
+// around it (PolicyCommand.Hooks) — reaches a write sink without one —
+// derived, never hand-listed (D-80, R-17).
 //
 // A write sink is a function that sends a request whose classifier row is a
 // write (or that no row names — an unmapped request is mutating until it is
 // mapped), or one of declaredSinks. Reachability is over the product's SSA:
 // static calls, every function a reached function takes the value of (a
-// closure, a method value, a function passed as an argument), and every
-// method an interface call could dispatch to among the module's own types. It
+// closure, a method value, a function passed as an argument), every function
+// stored in a package-level variable it reads, and every method an interface
+// call could dispatch to among the module's own types. It
 // over-approximates — a command that can reach a write is a site even if the
 // path is conditional — which is the direction a closure gate must err in.
 func PolicyCommandSites(root string, cmds []PolicyCommand) ([]Site, error) {
-	files, err := productFiles(root)
-	if err != nil {
-		return nil, err
-	}
-	reqs, err := policyRequests(files)
+	reqs, err := productRequests(root)
 	if err != nil {
 		return nil, err
 	}
@@ -100,17 +110,21 @@ func PolicyCommandSites(root string, cmds []PolicyCommand) ([]Site, error) {
 		if c.RunFile == "" {
 			continue
 		}
-		if rel := g.rel(c.RunFile); strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
-			// A Run outside the module is a library's own command — cobra's
-			// `completion` family, added to the tree on first Execute. It calls
-			// nothing of the product's, so it can reach no write sink.
-			continue
+		var roots []*ssa.Function
+		for _, loc := range append([]FuncLoc{{File: c.RunFile, Line: c.RunLine}}, c.Hooks...) {
+			if rel := g.rel(loc.File); strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+				// A function outside the module is a library's own — cobra's
+				// `completion` family, added to the tree on first Execute. It
+				// calls nothing of the product's, so it can reach no write sink.
+				continue
+			}
+			fn := g.at(loc.File, loc.Line)
+			if fn == nil {
+				return nil, fmt.Errorf("%s: no function at %s:%d — the command's Run or hook is not where the runtime says", c.Path, loc.File, loc.Line)
+			}
+			roots = append(roots, fn)
 		}
-		fn := g.at(c.RunFile, c.RunLine)
-		if fn == nil {
-			return nil, fmt.Errorf("%s: no function at %s:%d — the command's Run is not where the runtime says", c.Path, c.RunFile, c.RunLine)
-		}
-		reached := g.sinksReached(fn, sinks)
+		reached := g.sinksReached(roots, sinks)
 		if len(reached) == 0 {
 			continue
 		}
@@ -130,6 +144,11 @@ type callGraph struct {
 	keyOf  map[*ssa.Function]string
 	types  []types.Type // every concrete module type and its pointer
 	impls  map[string][]*ssa.Function
+	// stored maps each package-level variable of func type to every function
+	// stored in it anywhere in the program (its initialiser included), so a
+	// call through the variable reaches them all (the `var isTerminal = func`
+	// seam shape).
+	stored map[*ssa.Global][]*ssa.Function
 }
 
 func loadCallGraph(root string) (*callGraph, error) {
@@ -148,6 +167,7 @@ func loadCallGraph(root string) (*callGraph, error) {
 		root: root, prog: prog,
 		byKey: map[string]*ssa.Function{}, byLine: map[string][]*ssa.Function{},
 		keyOf: map[*ssa.Function]string{}, impls: map[string][]*ssa.Function{},
+		stored: map[*ssa.Global][]*ssa.Function{},
 	}
 	for _, p := range ssaPkgs {
 		if p == nil {
@@ -176,7 +196,52 @@ func loadCallGraph(root string) (*callGraph, error) {
 		g.byKey[key] = fn
 		g.keyOf[fn] = key
 	}
+	g.indexStoredFuncs()
 	return g, nil
+}
+
+// indexStoredFuncs fills g.stored from every Store into a package-level
+// variable of a function value. A function literal that initialises a
+// variable is also keyed by the variable's name — the name the request
+// extractor gives a send inside it — so it can be a sink.
+func (g *callGraph) indexStoredFuncs() {
+	for fn := range ssautil.AllFunctions(g.prog) {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				glob, f := storedFunc(instr)
+				if f == nil {
+					continue
+				}
+				g.stored[glob] = append(g.stored[glob], f)
+				if _, keyed := g.keyOf[f]; keyed || f.Parent() == nil || !f.Pos().IsValid() {
+					continue
+				}
+				g.keyOf[f] = g.rel(g.prog.Fset.Position(f.Pos()).Filename) + "|" + glob.Name()
+			}
+		}
+	}
+}
+
+// storedFunc returns the package-level variable and the function an
+// instruction stores in it, or nil when it stores no function in one.
+func storedFunc(instr ssa.Instruction) (*ssa.Global, *ssa.Function) {
+	st, ok := instr.(*ssa.Store)
+	if !ok {
+		return nil, nil
+	}
+	glob, ok := st.Addr.(*ssa.Global)
+	if !ok {
+		return nil, nil
+	}
+	switch v := st.Val.(type) {
+	case *ssa.Function:
+		return glob, v
+	case *ssa.MakeClosure:
+		if f, isFn := v.Fn.(*ssa.Function); isFn {
+			return glob, f
+		}
+	}
+	return nil, nil
 }
 
 func (g *callGraph) rel(abs string) string {
@@ -211,11 +276,17 @@ func (g *callGraph) at(file string, line int) *ssa.Function {
 	return nil
 }
 
-// sinksReached walks the graph from fn and returns the sinks it reaches,
-// described and sorted.
-func (g *callGraph) sinksReached(start *ssa.Function, sinks map[string]string) []string {
-	seen := map[*ssa.Function]bool{start: true}
-	queue := []*ssa.Function{start}
+// sinksReached walks the graph from the roots and returns the sinks they
+// reach, described and sorted.
+func (g *callGraph) sinksReached(roots []*ssa.Function, sinks map[string]string) []string {
+	seen := map[*ssa.Function]bool{}
+	var queue []*ssa.Function
+	for _, r := range roots {
+		if !seen[r] {
+			seen[r] = true
+			queue = append(queue, r)
+		}
+	}
 	found := map[string]bool{}
 	for len(queue) > 0 {
 		fn := queue[0]
@@ -243,8 +314,9 @@ func (g *callGraph) sinksReached(start *ssa.Function, sinks map[string]string) [
 }
 
 // callees is everything fn can transfer control to: static callees, every
-// function whose value it takes, its closures, and the module's
-// implementations of every interface method it invokes.
+// function whose value it takes, its closures, every function stored in a
+// package-level variable it reads, and the module's implementations of every
+// interface method it invokes.
 func (g *callGraph) callees(fn *ssa.Function) []*ssa.Function {
 	var out []*ssa.Function
 	out = append(out, fn.AnonFuncs...)
@@ -265,8 +337,11 @@ func (g *callGraph) callees(fn *ssa.Function) []*ssa.Function {
 				if op == nil || *op == nil {
 					continue
 				}
-				if f, ok := (*op).(*ssa.Function); ok {
-					out = append(out, f)
+				switch v := (*op).(type) {
+				case *ssa.Function:
+					out = append(out, v)
+				case *ssa.Global:
+					out = append(out, g.stored[v]...)
 				}
 			}
 		}

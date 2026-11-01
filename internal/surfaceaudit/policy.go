@@ -6,10 +6,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -76,34 +78,44 @@ type requestSite struct {
 }
 
 // productFiles parses the non-test files of every module package the hactl
-// binary imports, in its default build.
-func productFiles(root string) ([]srcFile, error) {
+// binary imports — every file, whatever its build constraints: the build that
+// runs the gate is one GOOS/GOARCH, the release is several, and a send in a
+// file only another target compiles is a send all the same. It also returns
+// those packages' import paths.
+func productFiles(root string) ([]srcFile, []string, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule,
 		Dir:  root,
 	}
 	pkgs, err := packages.Load(cfg, "./cmd/hactl")
 	if err != nil {
-		return nil, fmt.Errorf("loading the hactl binary's packages: %w", err)
+		return nil, nil, fmt.Errorf("loading the hactl binary's packages: %w", err)
 	}
 	if len(pkgs) != 1 || pkgs[0].Module == nil {
-		return nil, errors.New("./cmd/hactl did not load as one package of a module")
+		return nil, nil, errors.New("./cmd/hactl did not load as one package of a module")
 	}
 	mod := pkgs[0].Module.Path
-	var paths []string
+	var paths, pkgPaths []string
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		if p.PkgPath != mod && !strings.HasPrefix(p.PkgPath, mod+"/") {
 			return
 		}
+		pkgPaths = append(pkgPaths, p.PkgPath)
 		paths = append(paths, p.GoFiles...)
+		for _, ig := range p.IgnoredFiles {
+			if strings.HasSuffix(ig, ".go") && !strings.HasSuffix(ig, "_test.go") {
+				paths = append(paths, ig)
+			}
+		}
 	})
 	sort.Strings(paths)
+	sort.Strings(pkgPaths)
 	out := make([]srcFile, 0, len(paths))
 	for _, path := range paths {
 		fset := token.NewFileSet()
 		f, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if perr != nil {
-			return nil, fmt.Errorf("parsing %s: %w", path, perr)
+			return nil, nil, fmt.Errorf("parsing %s: %w", path, perr)
 		}
 		rel, rerr := filepath.Rel(root, path)
 		if rerr != nil {
@@ -111,17 +123,142 @@ func productFiles(root string) ([]srcFile, error) {
 		}
 		out = append(out, srcFile{rel: filepath.ToSlash(rel), fset: fset, ast: f})
 	}
-	return out, nil
+	return out, pkgPaths, nil
+}
+
+// productRequests is every request the product's source can send: the
+// syntactic derivation over every product file, then the typed check over the
+// packages the host compiles — which resolves what spelling cannot (a
+// *http.Client's Do, a RoundTrip, a type that aliases http.Request).
+func productRequests(root string) ([]requestSite, error) {
+	files, pkgPaths, err := productFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	reqs, err := policyRequests(files)
+	if err != nil {
+		return nil, err
+	}
+	if errs, terr := typedSendErrors(root, pkgPaths, builderHelpers(files)); terr != nil {
+		return nil, terr
+	} else if len(errs) > 0 {
+		return nil, fmt.Errorf("requests no site can name:\n  %s", strings.Join(errs, "\n  "))
+	}
+	return reqs, nil
+}
+
+// typedSendErrors resolves every identifier of the product's packages by type
+// and reports each use of a net/http function or method that builds or sends a
+// request — NewRequest*, the package and *Client Get/Post/PostForm/Head,
+// (*Client).Do, any RoundTrip — and each http.Request literal, outside the
+// request builders and their helpers. A RoundTrip inside a RoundTrip method is
+// a transport forwarding a request built elsewhere, not a new one.
+func typedSendErrors(root string, pkgPaths []string, helpers map[string]bool) ([]string, error) {
+	cfg := &packages.Config{Mode: packages.LoadSyntax, Dir: root}
+	pkgs, err := packages.Load(cfg, pkgPaths...)
+	if err != nil {
+		return nil, fmt.Errorf("type-checking the hactl binary's packages: %w", err)
+	}
+	var errs []string
+	for _, p := range pkgs {
+		if len(p.Errors) > 0 {
+			return nil, fmt.Errorf("package %s does not type-check: %w", p.PkgPath, p.Errors[0])
+		}
+		for _, file := range p.Syntax {
+			abs := p.Fset.Position(file.Pos()).Filename
+			rel, rerr := filepath.Rel(root, abs)
+			if rerr != nil {
+				rel = abs
+			}
+			rel = filepath.ToSlash(rel)
+			dir := filepath.ToSlash(filepath.Dir(rel))
+			for _, decl := range file.Decls {
+				for _, fn := range sendUnits(decl) {
+					name := funcName(fn)
+					builds := helpers[dir+"|"+name] || isBuilder(dir, name)
+					errs = append(errs, typedUnitErrors(p, rel, name, fn, builds)...)
+				}
+			}
+		}
+	}
+	sort.Strings(errs)
+	return errs, nil
+}
+
+// typedUnitErrors is typedSendErrors for one function or initialiser.
+func typedUnitErrors(p *packages.Package, rel, name string, fn *ast.FuncDecl, builds bool) []string {
+	if builds {
+		return nil
+	}
+	forwarding := strings.HasSuffix(name, ").RoundTrip")
+	var errs []string
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		var what string
+		switch x := n.(type) {
+		case *ast.Ident:
+			if f, ok := p.TypesInfo.Uses[x].(*types.Func); ok && httpSend(f) && (f.Name() != "RoundTrip" || !forwarding) {
+				what = "net/http " + f.FullName() + " builds or sends a request"
+			}
+		case *ast.CompositeLit:
+			if isNetHTTPRequest(p.TypesInfo.TypeOf(x)) {
+				what = "an http.Request literal builds a request"
+			}
+		}
+		if what != "" {
+			errs = append(errs, fmt.Sprintf("%s:%d (%s): %s outside the request builders, which no policy site names",
+				rel, p.Fset.Position(n.Pos()).Line, name, what))
+		}
+		return true
+	})
+	return errs
+}
+
+// httpSend reports whether a net/http function or method builds or sends a
+// request.
+func httpSend(f *types.Func) bool {
+	if f.Pkg() == nil || f.Pkg().Path() != "net/http" {
+		return false
+	}
+	sig, _ := f.Type().(*types.Signature)
+	if sig == nil || sig.Recv() == nil {
+		switch f.Name() {
+		case "NewRequest", "NewRequestWithContext", "Get", "Post", "PostForm", "Head":
+			return true
+		}
+		return false
+	}
+	if f.Name() == "RoundTrip" {
+		return true
+	}
+	recv := sig.Recv().Type()
+	if ptr, ok := recv.(*types.Pointer); ok {
+		recv = ptr.Elem()
+	}
+	if named, ok := recv.(*types.Named); ok && named.Obj().Name() == "Client" {
+		switch f.Name() {
+		case "Do", "Get", "Post", "PostForm", "Head":
+			return true
+		}
+	}
+	return false
+}
+
+// isNetHTTPRequest reports whether t is net/http.Request or a pointer to it.
+func isNetHTTPRequest(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := types.Unalias(t).(*types.Named)
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "net/http" && named.Obj().Name() == "Request"
 }
 
 // PolicyRequestSites is the request half of the policy surface: every request
 // the product's source can send.
 func PolicyRequestSites(root string) ([]Site, error) {
-	files, err := productFiles(root)
-	if err != nil {
-		return nil, err
-	}
-	reqs, err := policyRequests(files)
+	reqs, err := productRequests(root)
 	if err != nil {
 		return nil, err
 	}
@@ -222,38 +359,29 @@ func uniqueSorted(ss []string) []string {
 // policyRequests derives the requests in a set of parsed files. An unresolvable
 // send — a websocket type, a Supervisor endpoint or an HTTP request built where
 // no site can be named — is an error, never a silent omission.
+//
+// Every function body is read, and so is every package-level initialiser (a
+// `var send = func(…) { … }` is a send like any method). net/http is
+// recognised by the name each file imports it under, not by the spelling
+// `http`; a dot import of it is refused, since it hides every call it makes.
 func policyRequests(files []srcFile) ([]requestSite, error) {
 	helpers := builderHelpers(files)
 	var out []requestSite
 	var errs []string
 	for _, f := range files {
 		dir := filepath.ToSlash(filepath.Dir(f.rel))
+		httpIDs, err := httpNames(f.ast)
+		if err != nil {
+			errs = append(errs, f.rel+": "+err.Error())
+			continue
+		}
 		for _, decl := range f.ast.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+			for _, fn := range sendUnits(decl) {
+				name := funcName(fn)
+				reqs, unitErrs := unitRequests(f, dir, fn, name, httpIDs, helpers[dir+"|"+name] || isBuilder(dir, name))
+				errs = append(errs, unitErrs...)
+				out = append(out, reqs...)
 			}
-			name := funcName(fn)
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, isCall := n.(*ast.CallExpr)
-				if !isCall {
-					return true
-				}
-				line := f.fset.Position(call.Pos()).Line
-				where := fmt.Sprintf("%s:%d (%s)", f.rel, line, name)
-				if helpers[dir+"|"+name] && isHTTPConstructor(call) {
-					return true // a builder's own helper: the builder's callers are the sites
-				}
-				reqs, err := requestsOfCall(call, fn, name, dir)
-				if err != nil {
-					errs = append(errs, where+": "+err.Error())
-					return true
-				}
-				for _, k := range reqs {
-					out = append(out, requestSite{key: k, file: f.rel, line: line, fn: name})
-				}
-				return true
-			})
 		}
 	}
 	if len(errs) > 0 {
@@ -261,6 +389,151 @@ func policyRequests(files []srcFile) ([]requestSite, error) {
 		return nil, fmt.Errorf("requests no site can name:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return out, nil
+}
+
+// sendUnits returns the bodies a declaration can send from: a function with a
+// body, or each value of a package-level var/const spec, wrapped as a function
+// named after the variable so a site and its sink key can name it.
+func sendUnits(decl ast.Decl) []*ast.FuncDecl {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if d.Body != nil {
+			return []*ast.FuncDecl{d}
+		}
+	case *ast.GenDecl:
+		var out []*ast.FuncDecl
+		for _, spec := range d.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, v := range vs.Values {
+				name := "_"
+				if i < len(vs.Names) {
+					name = vs.Names[i].Name
+				}
+				out = append(out, &ast.FuncDecl{
+					Name: ast.NewIdent(name),
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+					Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ExprStmt{X: v}}},
+				})
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// unitRequests derives the requests one function (or initialiser) sends.
+// builds reports whether it is a request builder or a builder's helper, the
+// only places an HTTP request may be constructed.
+func unitRequests(f srcFile, dir string, fn *ast.FuncDecl, name string, httpIDs map[string]bool, builds bool) ([]requestSite, []string) {
+	var out []requestSite
+	var errs []string
+	called := map[ast.Expr]bool{}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			called[call.Fun] = true
+		}
+		return true
+	})
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if n == nil {
+			return false
+		}
+		line := f.fset.Position(n.Pos()).Line
+		where := fmt.Sprintf("%s:%d (%s)", f.rel, line, name)
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if !called[x] && isSendName(x.Sel.Name, dir) {
+				errs = append(errs, where+": "+x.Sel.Name+" is taken as a value, not called — a send the extractor cannot key; call it directly")
+			}
+		case *ast.CompositeLit:
+			if isHTTPRequestType(x.Type, httpIDs) && !builds {
+				errs = append(errs, where+": an http.Request literal outside the request builders builds a request no policy site names")
+			}
+		case *ast.CallExpr:
+			if builds && (isHTTPConstructor(x, httpIDs) || isNewHTTPRequest(x, httpIDs)) {
+				return true // a builder's own request: the builder's callers are the sites
+			}
+			reqs, err := requestsOfCall(x, fn, name, dir, httpIDs)
+			if err != nil {
+				errs = append(errs, where+": "+err.Error())
+				return true
+			}
+			for _, k := range reqs {
+				out = append(out, requestSite{key: k, file: f.rel, line: line, fn: name})
+			}
+		}
+		return true
+	})
+	return out, errs
+}
+
+// httpNames returns the names a file can call net/http by: the name it imports
+// the package under, and `http` always (a fixture without imports, and the
+// over-approximation otherwise). A dot import is an error.
+func httpNames(f *ast.File) (map[string]bool, error) {
+	names := map[string]bool{"http": true}
+	for _, imp := range f.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || path != "net/http" || imp.Name == nil {
+			continue
+		}
+		switch imp.Name.Name {
+		case ".":
+			return nil, errors.New("a dot import of net/http hides every request built with it")
+		case "_":
+		default:
+			names[imp.Name.Name] = true
+		}
+	}
+	return names, nil
+}
+
+// rawWSSends are the websocket.Conn methods that put bytes on the wire without
+// the one keyable shape (WriteJSON of a message with a literal type), and the
+// accessor that hands out the raw connection.
+var rawWSSends = map[string]bool{
+	"WriteMessage": true, "WriteControl": true, "NextWriter": true, "WritePreparedMessage": true,
+	"UnderlyingConn": true,
+}
+
+// isSendName reports whether a selector names a send: the generic senders, the
+// websocket writes, and — in their own directory — the request builders.
+func isSendName(sel, dir string) bool {
+	switch sel {
+	case "sendCommand", "SupervisorAPI", "WriteJSON":
+		return true
+	}
+	if rawWSSends[sel] {
+		return true
+	}
+	switch dir {
+	case haapiDir:
+		_, ok := haapiBuilders[sel]
+		return ok
+	case companionDir:
+		_, ok := companionBuilders[sel]
+		return ok
+	}
+	return false
+}
+
+// isHTTPRequestType reports whether a type expression is net/http's Request.
+func isHTTPRequestType(e ast.Expr, httpIDs map[string]bool) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Request" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && httpIDs[pkg.Name]
+}
+
+// isNewHTTPRequest reports whether a call is `new(http.Request)`.
+func isNewHTTPRequest(call *ast.CallExpr, httpIDs map[string]bool) bool {
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && id.Name == "new" && len(call.Args) == 1 && isHTTPRequestType(call.Args[0], httpIDs)
 }
 
 // funcName spells a declaration the way enclosingFunc does.
@@ -272,20 +545,20 @@ func funcName(fn *ast.FuncDecl) string {
 }
 
 // requestsOfCall returns the keys of the requests one call sends, if any.
-func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string) ([]string, error) {
+func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string, httpIDs map[string]bool) ([]string, error) {
+	if isNewHTTPRequest(call, httpIDs) {
+		return nil, errors.New("new(http.Request) outside the request builders builds a request no policy site names")
+	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return nil, nil
 	}
 	method := sel.Sel.Name
-	if pkg, isPkg := sel.X.(*ast.Ident); isPkg && pkg.Name == "http" {
-		switch method {
-		case "NewRequest", "NewRequestWithContext", "Get", "Post", "PostForm", "Head":
-			if isBuilder(dir, name) {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("http.%s outside the request builders (%s doGet/doDelete/doPost/doPostOnce, %s doGet/doPostBody/doDelete/doPut) builds a request no policy site names", method, haapiDir, companionDir)
-		}
+	if isHTTPConstructor(call, httpIDs) {
+		return nil, fmt.Errorf("http.%s outside the request builders (%s doGet/doDelete/doPost/doPostOnce, %s doGet/doPostBody/doDelete/doPut) builds a request no policy site names", method, haapiDir, companionDir)
+	}
+	if rawWSSends[method] {
+		return nil, fmt.Errorf("conn.%s puts a websocket message on the wire that no `ws <type>` site can name; send through sendCommand or a WriteJSON of a literal type", method)
 	}
 	switch method {
 	case "sendCommand":
@@ -293,7 +566,7 @@ func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string) ([]s
 	case "SupervisorAPI":
 		return supervisorKeys(call, fn)
 	case "WriteJSON":
-		return writeJSONKeys(fn, name)
+		return writeJSONKeys(call, fn, name)
 	}
 	if dir == haapiDir && !isBuilder(dir, name) {
 		if m, isB := haapiBuilders[method]; isB {
@@ -309,14 +582,14 @@ func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string) ([]s
 }
 
 // isHTTPConstructor reports whether a call is one of the net/http calls that
-// build or send a request.
-func isHTTPConstructor(call *ast.CallExpr) bool {
+// build or send a request, under any name the file imports net/http by.
+func isHTTPConstructor(call *ast.CallExpr, httpIDs map[string]bool) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
 	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || pkg.Name != "http" {
+	if !ok || !httpIDs[pkg.Name] {
 		return false
 	}
 	switch sel.Sel.Name {
@@ -487,29 +760,80 @@ func supervisorKeys(call *ast.CallExpr, fn *ast.FuncDecl) ([]string, error) {
 
 // writeJSONKeys keys a direct conn.WriteJSON by the `"type": "<lit>"` of the
 // message its function builds. The generic sender is the one function whose
-// type is not a literal.
-func writeJSONKeys(fn *ast.FuncDecl, name string) ([]string, error) {
-	var lits []string
-	dynamic := false
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		kv, ok := n.(*ast.KeyValueExpr)
-		if !ok || litString(kv.Key) != "type" {
-			return true
-		}
-		if v := litString(kv.Value); v != "" {
-			lits = append(lits, v)
-		} else {
-			dynamic = true
-		}
-		return true
-	})
-	if dynamic && len(lits) == 0 && name == wsSender {
+// type is not a literal: its callers are the sites. A direct sender must build
+// its message with exactly one literal type and never set the message's
+// "type" — or a key it does not spell, or copy a map in — afterwards: the
+// wire would carry a type the literal does not name.
+func writeJSONKeys(call *ast.CallExpr, fn *ast.FuncDecl, name string) ([]string, error) {
+	if name == wsSender {
 		return nil, nil
+	}
+	msgVar := ""
+	if len(call.Args) == 1 {
+		if id, ok := call.Args[0].(*ast.Ident); ok {
+			msgVar = id.Name
+		}
+	}
+	lits, dynamic, rewritten := scanMessage(fn, msgVar)
+	if rewritten {
+		return nil, errors.New("conn.WriteJSON of a message whose \"type\" — or a key the source does not spell, or a copied-in map — is set after the message is built; the type sent must be the literal it is built with")
 	}
 	if len(lits) != 1 || dynamic {
 		return nil, fmt.Errorf("conn.WriteJSON in a function building %d literal message types (and a dynamic one: %v); a direct send must build exactly one", len(lits), dynamic)
 	}
 	return []string{"ws " + lits[0]}, nil
+}
+
+// scanMessage reads a direct sender's body: the literal `"type"` values it
+// builds, whether one is not a literal, and whether the message variable sent
+// has its type — or a key the source does not spell — set afterwards, or a
+// map copied in with maps.Copy.
+func scanMessage(fn *ast.FuncDecl, msgVar string) (lits []string, dynamic, rewritten bool) {
+	isMsg := func(e ast.Expr) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && msgVar != "" && id.Name == msgVar
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.KeyValueExpr:
+			if litString(x.Key) != "type" {
+				return true
+			}
+			if v := litString(x.Value); v != "" {
+				lits = append(lits, v)
+			} else {
+				dynamic = true
+			}
+		case *ast.AssignStmt:
+			for _, l := range x.Lhs {
+				if ix, ok := l.(*ast.IndexExpr); ok && isMsg(ix.X) && (litString(ix.Index) == "type" || !isStringLit(ix.Index)) {
+					rewritten = true
+				}
+			}
+		case *ast.CallExpr:
+			if isMapsCopy(x) && isMsg(x.Args[0]) {
+				rewritten = true
+			}
+		}
+		return true
+	})
+	return lits, dynamic, rewritten
+}
+
+// isMapsCopy reports whether a call is maps.Copy with arguments.
+func isMapsCopy(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Copy" || len(call.Args) == 0 {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "maps"
+}
+
+// isStringLit reports whether e is a string literal.
+func isStringLit(e ast.Expr) bool {
+	b, ok := e.(*ast.BasicLit)
+	return ok && b.Kind == token.STRING
 }
 
 func httpKeys(tr reqmap.Transport, method string, call *ast.CallExpr, fn *ast.FuncDecl) ([]string, error) {
