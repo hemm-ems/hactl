@@ -526,3 +526,26 @@ func splitPath(s string) []string {
 	}
 	return strings.Split(s, "/")
 }
+
+// matchesEveryID reports whether the pattern's id matches every id its kind can
+// have: each segment consists of `*` alone (any run of them), and the segments
+// span the kind's id — exactly IDSegments of them, or, for a file, one `**`
+// anywhere. A literal character anywhere means some id is not matched.
+func (a *address) matchesEveryID() bool {
+	if a.any {
+		return true
+	}
+	doubleStar := false
+	for _, seg := range a.id {
+		if seg == "" || strings.Trim(seg, "*") != "" {
+			return false
+		}
+		if seg == "**" {
+			doubleStar = true
+		}
+	}
+	if a.spec.Kind == KindFile {
+		return doubleStar
+	}
+	return len(a.id) == a.spec.IDSegments
+}

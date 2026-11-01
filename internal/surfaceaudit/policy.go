@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"golang.org/x/tools/go/packages"
+	"gopkg.in/yaml.v3"
 
 	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
@@ -67,6 +68,10 @@ const (
 	wsSender = "(*WSClient).sendCommand"
 	// wsProxy is the generic Supervisor proxy; its callers are the sites.
 	wsProxy = "(*WSClient).SupervisorAPI"
+	// wsGate is the gated connection's WriteJSON: every websocket message
+	// passes it on its way out (H-29's one hook), so it forwards what its
+	// callers built — they are the sites.
+	wsGate = "(*wsConn).WriteJSON"
 )
 
 // requestSite is one derived request, with the function that sends it.
@@ -77,39 +82,97 @@ type requestSite struct {
 	fn   string // enclosingFunc spelling: "(*WSClient).EntityRegistryUpdate"
 }
 
-// productFiles parses the non-test files of every module package the hactl
-// binary imports — every file, whatever its build constraints: the build that
-// runs the gate is one GOOS/GOARCH, the release is several, and a send in a
-// file only another target compiles is a send all the same. It also returns
-// those packages' import paths.
-func productFiles(root string) ([]srcFile, []string, error) {
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule,
-		Dir:  root,
+// buildTarget is one GOOS/GOARCH the release builds.
+type buildTarget struct{ goos, goarch string }
+
+func (b buildTarget) env() []string {
+	if b.goos == "" {
+		return nil // the host
 	}
-	pkgs, err := packages.Load(cfg, "./cmd/hactl")
+	return append(os.Environ(), "GOOS="+b.goos, "GOARCH="+b.goarch, "CGO_ENABLED=0")
+}
+
+// releaseTargets reads every GOOS/GOARCH pair `.goreleaser.yaml` builds (A-9):
+// the product is what the release ships, not what the host that runs the gate
+// compiles. A tree without the file (a fixture module) is read for the host
+// alone; a file that does not parse, or lists no target, is an error — a gate
+// that silently fell back to the host would prove one target of several.
+func releaseTargets(root string) ([]buildTarget, error) {
+	raw, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml")) //nolint:gosec // the module's own release config
+	if errors.Is(err, os.ErrNotExist) {
+		return []buildTarget{{}}, nil
+	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("loading the hactl binary's packages: %w", err)
+		return nil, fmt.Errorf("reading .goreleaser.yaml: %w", err)
 	}
-	if len(pkgs) != 1 || pkgs[0].Module == nil {
-		return nil, nil, errors.New("./cmd/hactl did not load as one package of a module")
+	var cfg struct {
+		Builds []struct {
+			Goos   []string `yaml:"goos"`
+			Goarch []string `yaml:"goarch"`
+		} `yaml:"builds"`
 	}
-	mod := pkgs[0].Module.Path
-	var paths, pkgPaths []string
-	packages.Visit(pkgs, nil, func(p *packages.Package) {
-		if p.PkgPath != mod && !strings.HasPrefix(p.PkgPath, mod+"/") {
-			return
-		}
-		pkgPaths = append(pkgPaths, p.PkgPath)
-		paths = append(paths, p.GoFiles...)
-		for _, ig := range p.IgnoredFiles {
-			if strings.HasSuffix(ig, ".go") && !strings.HasSuffix(ig, "_test.go") {
-				paths = append(paths, ig)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing .goreleaser.yaml: %w", err)
+	}
+	seen := map[buildTarget]bool{}
+	var out []buildTarget
+	for _, b := range cfg.Builds {
+		for _, goos := range b.Goos {
+			for _, goarch := range b.Goarch {
+				t := buildTarget{goos: goos, goarch: goarch}
+				if !seen[t] {
+					seen[t] = true
+					out = append(out, t)
+				}
 			}
 		}
-	})
+	}
+	if len(out) == 0 {
+		return nil, errors.New(".goreleaser.yaml lists no goos/goarch build target")
+	}
+	return out, nil
+}
+
+// productBuild is the binary's module packages as one or more release targets
+// compile them alike.
+type productBuild struct {
+	targets  []buildTarget
+	pkgPaths []string
+}
+
+// productFiles parses the non-test files of every module package the hactl
+// binary imports on ANY release target (A-9) — every file, whatever its build
+// constraints: the build that runs the gate is one GOOS/GOARCH, the release is
+// several, and a send in a file or a package only another target compiles is a
+// send all the same. It also returns the distinct builds — targets whose
+// module packages and files are the same compile alike and are type-checked
+// once.
+func productFiles(root string) ([]srcFile, []productBuild, error) {
+	targets, err := releaseTargets(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	pathSet := map[string]bool{}
+	builds := map[string]*productBuild{}
+	var order []string
+	for _, target := range targets {
+		pkgPaths, sig, err := loadTarget(root, target, pathSet)
+		if err != nil {
+			return nil, nil, err
+		}
+		key := strings.Join(sig, "\n")
+		if b, ok := builds[key]; ok {
+			b.targets = append(b.targets, target)
+			continue
+		}
+		builds[key] = &productBuild{targets: []buildTarget{target}, pkgPaths: pkgPaths}
+		order = append(order, key)
+	}
+	paths := make([]string, 0, len(pathSet))
+	for p := range pathSet {
+		paths = append(paths, p)
+	}
 	sort.Strings(paths)
-	sort.Strings(pkgPaths)
 	out := make([]srcFile, 0, len(paths))
 	for _, path := range paths {
 		fset := token.NewFileSet()
@@ -123,15 +186,58 @@ func productFiles(root string) ([]srcFile, []string, error) {
 		}
 		out = append(out, srcFile{rel: filepath.ToSlash(rel), fset: fset, ast: f})
 	}
-	return out, pkgPaths, nil
+	distinct := make([]productBuild, 0, len(order))
+	for _, k := range order {
+		distinct = append(distinct, *builds[k])
+	}
+	return out, distinct, nil
+}
+
+// loadTarget loads the binary's import closure for one release target, adds
+// every non-test file of its module packages to pathSet (constraint-ignored
+// ones included) and returns the package paths and a signature of what the
+// target compiles, both sorted.
+func loadTarget(root string, target buildTarget, pathSet map[string]bool) (pkgPaths, sig []string, err error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule,
+		Dir:  root,
+		Env:  target.env(),
+	}
+	pkgs, err := packages.Load(cfg, "./cmd/hactl")
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading the hactl binary's packages for %s/%s: %w", target.goos, target.goarch, err)
+	}
+	if len(pkgs) != 1 || pkgs[0].Module == nil {
+		return nil, nil, errors.New("./cmd/hactl did not load as one package of a module")
+	}
+	mod := pkgs[0].Module.Path
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		if p.PkgPath != mod && !strings.HasPrefix(p.PkgPath, mod+"/") {
+			return
+		}
+		pkgPaths = append(pkgPaths, p.PkgPath)
+		sig = append(sig, p.PkgPath+":"+strings.Join(p.GoFiles, ","))
+		for _, f := range p.GoFiles {
+			pathSet[f] = true
+		}
+		for _, ig := range p.IgnoredFiles {
+			if strings.HasSuffix(ig, ".go") && !strings.HasSuffix(ig, "_test.go") {
+				pathSet[ig] = true
+			}
+		}
+	})
+	sort.Strings(pkgPaths)
+	sort.Strings(sig)
+	return pkgPaths, sig, nil
 }
 
 // productRequests is every request the product's source can send: the
 // syntactic derivation over every product file, then the typed check over the
-// packages the host compiles — which resolves what spelling cannot (a
-// *http.Client's Do, a RoundTrip, a type that aliases http.Request).
+// packages each distinct release build compiles — which resolves what
+// spelling cannot (a *http.Client's Do, a RoundTrip, a type that aliases
+// http.Request).
 func productRequests(root string) ([]requestSite, error) {
-	files, pkgPaths, err := productFiles(root)
+	files, builds, err := productFiles(root)
 	if err != nil {
 		return nil, err
 	}
@@ -139,30 +245,45 @@ func productRequests(root string) ([]requestSite, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errs, terr := typedSendErrors(root, pkgPaths, builderHelpers(files)); terr != nil {
-		return nil, terr
-	} else if len(errs) > 0 {
+	helpers := builderHelpers(files)
+	seen := map[string]bool{}
+	var errs []string
+	for _, b := range builds {
+		berrs, terr := typedSendErrors(root, b, helpers)
+		if terr != nil {
+			return nil, terr
+		}
+		for _, e := range berrs {
+			if !seen[e] {
+				seen[e] = true
+				errs = append(errs, e)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		sort.Strings(errs)
 		return nil, fmt.Errorf("requests no site can name:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return reqs, nil
 }
 
-// typedSendErrors resolves every identifier of the product's packages by type
-// and reports each use of a net/http function or method that builds or sends a
-// request — NewRequest*, the package and *Client Get/Post/PostForm/Head,
+// typedSendErrors resolves every identifier of one release build's packages by
+// type and reports each use of a net/http function or method that builds or
+// sends a request — NewRequest*, the package and *Client Get/Post/PostForm/Head,
 // (*Client).Do, any RoundTrip — and each http.Request literal, outside the
 // request builders and their helpers. A RoundTrip inside a RoundTrip method is
 // a transport forwarding a request built elsewhere, not a new one.
-func typedSendErrors(root string, pkgPaths []string, helpers map[string]bool) ([]string, error) {
-	cfg := &packages.Config{Mode: packages.LoadSyntax, Dir: root}
-	pkgs, err := packages.Load(cfg, pkgPaths...)
+func typedSendErrors(root string, b productBuild, helpers map[string]bool) ([]string, error) {
+	t := b.targets[0]
+	cfg := &packages.Config{Mode: packages.LoadSyntax, Dir: root, Env: t.env()}
+	pkgs, err := packages.Load(cfg, b.pkgPaths...)
 	if err != nil {
 		return nil, fmt.Errorf("type-checking the hactl binary's packages: %w", err)
 	}
 	var errs []string
 	for _, p := range pkgs {
 		if len(p.Errors) > 0 {
-			return nil, fmt.Errorf("package %s does not type-check: %w", p.PkgPath, p.Errors[0])
+			return nil, fmt.Errorf("package %s does not type-check (target %s/%s): %w", p.PkgPath, t.goos, t.goarch, p.Errors[0])
 		}
 		for _, file := range p.Syntax {
 			abs := p.Fset.Position(file.Pos()).Filename
@@ -765,7 +886,7 @@ func supervisorKeys(call *ast.CallExpr, fn *ast.FuncDecl) ([]string, error) {
 // "type" — or a key it does not spell, or copy a map in — afterwards: the
 // wire would carry a type the literal does not name.
 func writeJSONKeys(call *ast.CallExpr, fn *ast.FuncDecl, name string) ([]string, error) {
-	if name == wsSender {
+	if name == wsSender || name == wsGate {
 		return nil, nil
 	}
 	msgVar := ""

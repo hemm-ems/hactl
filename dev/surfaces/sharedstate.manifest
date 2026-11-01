@@ -19,6 +19,13 @@ internal/backupfile/backupfile.go:Write = proven: TestWriteNeverOverwritesAnExis
 internal/manual/state.go:saveState = exempt: session bookkeeping, tmp+rename, last-write-wins by design; a lost record costs one duplicate manual delivery and is self-correcting
 internal/cmd/witness.go:saveWitness = exempt: preview bookkeeping, tmp+rename; a lost record costs one extra refusal naming the dry-run to run, which is the fail-safe direction
 
+# --- the policy audit log (D-71) --------------------------------------------
+# Append-only, opened without O_TRUNC: two hactl processes appending to it at
+# once interleave whole lines and lose none. The one rename is the documented
+# rotation: at 10 MiB the log replaces its single previous generation.
+internal/policy/enforce/audit.go:(*Audit).Append = exempt: opens the audit log O_APPEND|O_CREATE without O_TRUNC — lines are only ever added, by any caller
+internal/policy/enforce/audit.go:(*Audit).rotate = exempt: the D-71 rotation — at 10 MiB the log is renamed to policy-audit.log.1, replacing the previous generation by design (one generation is kept)
+
 # --- not a destroyer in practice -------------------------------------------
 internal/instancelock/lock.go:Acquire = exempt: opens the lock file without O_TRUNC and never writes to it; the file carries no content to destroy
 internal/cmd/setup.go:writeInstanceEnv = exempt: `hactl setup` exists to write this instance's .env; replacing it is the command the caller ran, not a side effect of one

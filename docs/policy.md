@@ -311,8 +311,7 @@ with its line:
 
 ```console
 $ hactl policy check entity:light.sofa control
-policy file is broken — hactl refuses to answer from it (D-60):
-/home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write)
+policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write)
 ```
 
 `policy show` and `policy lint` still run and list every problem. **Every

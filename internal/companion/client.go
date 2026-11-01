@@ -18,6 +18,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/httpretry"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // Content-Type values sent per endpoint. Most write endpoints declare a
@@ -621,7 +623,7 @@ func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
@@ -634,7 +636,7 @@ func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, 
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doDelete(ctx context.Context, path string, query url.Values) ([]byte, error) {
@@ -646,7 +648,7 @@ func (c *Client) doDelete(ctx context.Context, path string, query url.Values) ([
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doPut(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
@@ -659,7 +661,7 @@ func (c *Client) doPut(ctx context.Context, path string, query url.Values, conte
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 // applyIngressAuth attaches the cached Supervisor ingress session cookie to
@@ -683,10 +685,14 @@ func (c *Client) applyIngressAuth(req *http.Request, forceRefresh bool) error {
 	return nil
 }
 
-func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
+func (c *Client) doWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	bodyBytes, err := drainBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req, gated, err := c.gate(ctx, req, bodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -723,7 +729,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 
 		respBody, status, err := c.doOnce(attemptReq)
 		cancel()
-		if err != nil && lastErr != nil && budget.Cut(req.Context(), err) {
+		if err != nil && lastErr != nil && budget.Cut(ctx, err) {
 			return nil, budget.Stopped(lastErr)
 		}
 		var answer error
@@ -748,9 +754,49 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		if answer != nil {
 			return nil, answer
 		}
+		if gated.gate != nil {
+			gated.gate.Observe(gated.req, respBody)
+		}
 		return respBody, nil
 	}
 	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, c.route(req.URL.Path))
+}
+
+// gate decides one companion request by its logical route — the path without
+// the transport prefix, the same on the direct URL and under Ingress — once,
+// before the retry loop (D-74, R-15). The context is marked, so the shared
+// HTTP transport's hook lets the attempts through instead of mapping them a
+// second time as Home Assistant REST. With no gate installed the request is
+// returned untouched (D-58).
+func (c *Client) gate(ctx context.Context, req *http.Request, body []byte) (*http.Request, gatedRequest, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return req, gatedRequest{}, nil
+	}
+	wire := req.URL.EscapedPath()
+	if req.URL.RawQuery != "" {
+		wire += "?" + req.URL.RawQuery
+	}
+	route := wire
+	if c.basePath != "" {
+		trimmed, ok := strings.CutPrefix(wire, c.basePath)
+		if !ok || !strings.HasPrefix(trimmed, "/") {
+			return nil, gatedRequest{}, fmt.Errorf("policy: companion request %s is outside the client's own path %q (fail closed)", c.route(req.URL.Path), c.basePath)
+		}
+		route = trimmed
+	}
+	r := reqmap.Request{Transport: reqmap.Companion, Method: req.Method, Path: route, Body: body}
+	if err := g.Check(ctx, r); err != nil {
+		return nil, gatedRequest{}, err
+	}
+	marked := reqgate.WithChecked(ctx, reqgate.Checked{Request: r, WirePath: wire, Prefix: c.basePath})
+	return req.WithContext(marked), gatedRequest{gate: g, req: r}, nil
+}
+
+// gatedRequest is a request the gate decided, to be shown its answer.
+type gatedRequest struct {
+	gate reqgate.Gate
+	req  reqmap.Request
 }
 
 // doOnce performs a single HTTP request attempt and returns the response

@@ -169,7 +169,7 @@ func wantField(t *testing.T, what string, m map[string]any, key string, want any
 	}
 }
 
-var showKeys = []string{"file", "exists", "valid", "problems", "level", "disclaimer", "enforced",
+var showKeys = []string{"file", "exists", "valid", "problems", "level", "disclaimer", "enforced", "enforced_verbs",
 	"profile", "selected_by", "what_if", "allow_all", "default", "profiles", "rules"}
 
 var checkKeys = []string{"resource", "verb", "allowed", "rule", "line", "profile",
@@ -180,7 +180,8 @@ var lintKeys = []string{"file", "exists", "valid", "level", "findings", "uncheck
 // --- policy show ---------------------------------------------------------------
 
 // TestPolicyShowWithoutAFile: D-58 — `no policy file`, allow-all, exit 0;
-// the level-A disclaimer and `not enforced yet` are printed regardless.
+// the level-A disclaimer is printed regardless, and with no profile in effect
+// nothing is enforced (`enforced: nothing`, `enforced_verbs` [], D-70).
 func TestPolicyShowWithoutAFile(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), "")
 
@@ -188,7 +189,7 @@ func TestPolicyShowWithoutAFile(t *testing.T) {
 	if cliExitCode(err) != 0 {
 		t.Fatalf("policy show (no file): exit %d (%v), want 0\n%s", cliExitCode(err), err, out)
 	}
-	for _, want := range []string{"no policy file", policy.Disclaimer, "not enforced yet"} {
+	for _, want := range []string{"no policy file", policy.Disclaimer, "enforced: nothing"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("policy show (no file) does not say %q:\n%s", want, out)
 		}
@@ -210,6 +211,7 @@ func TestPolicyShowWithoutAFile(t *testing.T) {
 	wantField(t, "show/no-file", m, "level", "A")
 	wantField(t, "show/no-file", m, "disclaimer", policy.Disclaimer)
 	wantField(t, "show/no-file", m, "enforced", false)
+	wantField(t, "show/no-file", m, "enforced_verbs", []string{})
 	wantField(t, "show/no-file", m, "what_if", false)
 }
 
@@ -230,7 +232,8 @@ func TestPolicyShowJSONForTheManualExample(t *testing.T) {
 	wantField(t, what, m, "problems", []any{})
 	wantField(t, what, m, "level", "A")
 	wantField(t, what, m, "disclaimer", policy.Disclaimer)
-	wantField(t, what, m, "enforced", false)
+	wantField(t, what, m, "enforced", true)
+	wantField(t, what, m, "enforced_verbs", []string{"control", "edit", "create", "delete"})
 	wantField(t, what, m, "profile", "agent")
 	wantField(t, what, m, "selected_by", "active")
 	wantField(t, what, m, "what_if", false)
@@ -282,7 +285,7 @@ func TestPolicyShowJSONForTheManualExample(t *testing.T) {
 // TestPolicyShowProseForTheManualExample: the prose names the file, the
 // disclaimer verbatim, the profile and how it was selected, the default, every
 // rule with its line (denies before allows), the declared profiles and
-// `not enforced yet`.
+// `enforced: writes — reads not yet`.
 func TestPolicyShowProseForTheManualExample(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), policyManualExample)
 	out, err := runPolicyCLI(t, dir, "policy", "show")
@@ -290,7 +293,7 @@ func TestPolicyShowProseForTheManualExample(t *testing.T) {
 		t.Fatalf("policy show: exit %d (%v)\n%s", cliExitCode(err), err, out)
 	}
 	for _, want := range []string{
-		filepath.Join(dir, policy.FileName), policy.Disclaimer, "agent", "active", "deny", "not enforced yet", "default",
+		filepath.Join(dir, policy.FileName), policy.Disclaimer, "agent", "active", "deny", "enforced: writes — reads not yet", "default",
 		`deny "entity:lock.*" [read write]`, `deny "entity:device_tracker.*/attr/latitude" [read]`, `deny "file:**" [write]`,
 		`allow "entity:*" [read]`, `allow "entity:light.*" [control] where area=wohnzimmer`,
 		`allow "automation:pg_*" [read edit create]`, `allow "entity:*/registry/labels" [edit]`,
@@ -542,7 +545,9 @@ func TestPolicyCheckJSON(t *testing.T) {
 			wantField(t, what, m, "selected_by", "active")
 			wantField(t, what, m, "what_if", false)
 			wantField(t, what, m, "level", "A")
-			wantField(t, what, m, "enforced", false)
+			// D-70: a write verb is enforced while a profile is in effect,
+			// read is not yet.
+			wantField(t, what, m, "enforced", tc.verb != "read")
 			wantField(t, what, m, "notes", []any{})
 			// D-66: none of these has a descendant deny for its verb.
 			wantField(t, what, m, "partial", false)
@@ -975,10 +980,10 @@ func TestHACTLProfileEnvironmentHasNoEffect(t *testing.T) {
 
 // --- phase 1 scope ----------------------------------------------------------------
 
-// TestPolicyIsNotEnforcedYet: "In this version no command other than policy
-// show|check|lint reads the file" — a profile that denies everything changes
+// TestPolicyDoesNotEnforceReadsYet: reads are not enforced in this version
+// (D-54, phase 3) — a profile that denies everything, reads included, changes
 // nothing about a read such as `area ls`.
-func TestPolicyIsNotEnforcedYet(t *testing.T) {
+func TestPolicyDoesNotEnforceReadsYet(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{
 		"config/area_registry/list": []any{map[string]any{"area_id": "wohnzimmer", "name": "Wohnzimmer"}},
 	}, nil)
@@ -988,7 +993,7 @@ func TestPolicyIsNotEnforcedYet(t *testing.T) {
 	}
 	out, err := runPolicyCLI(t, ts.dir, "area", "ls")
 	if err != nil {
-		t.Fatalf("area ls under a deny-all policy failed: %v — phase 1 enforces nothing", err)
+		t.Fatalf("area ls under a deny-all policy failed: %v — reads are not enforced yet", err)
 	}
 	if !strings.Contains(out, "wohnzimmer") {
 		t.Errorf("area ls under a deny-all policy lost its row:\n%s", out)

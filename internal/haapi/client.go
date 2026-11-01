@@ -15,6 +15,8 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/httpretry"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // Client is a REST client for the Home Assistant API.
@@ -26,7 +28,10 @@ import (
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
-	token      string
+	// basePath is baseURL's own path, which the policy gate strips so a
+	// request is mapped by its API path (H-29).
+	basePath string
+	token    string
 }
 
 // DefaultTimeout is the per-request timeout applied to new clients.
@@ -43,8 +48,13 @@ const DialTimeout = 5 * time.Second
 // New creates a new HA API client.
 func New(baseURL, token string) *Client {
 	trimmed := strings.TrimRight(baseURL, "/")
+	var basePath string
+	if u, err := url.Parse(trimmed); err == nil {
+		basePath = strings.TrimRight(u.EscapedPath(), "/")
+	}
 	return &Client{
 		baseURL:    trimmed,
+		basePath:   basePath,
 		token:      token,
 		httpClient: HTTPClient(trimmed),
 	}
@@ -302,7 +312,7 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
@@ -310,7 +320,7 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doPost(ctx context.Context, path string, body any) ([]byte, error) {
@@ -322,7 +332,7 @@ func (c *Client) doPost(ctx context.Context, path string, body any) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 // doPostOnce is like doPost but does not retry on 5xx server errors.
@@ -344,6 +354,18 @@ func (c *Client) doPostOnce(ctx context.Context, path string, body any) ([]byte,
 func (c *Client) doOnce(req *http.Request) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
+
+	bodyBytes, err := drainRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req, gated, err := c.gate(req.Context(), req, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	if bodyBytes != nil {
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
 
 	start := time.Now()
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL is constructed from user-provided baseURL by design
@@ -367,21 +389,87 @@ func (c *Client) doOnce(req *http.Request) ([]byte, error) {
 		return nil, httpStatusError(req.Method, req.URL.Path, resp.StatusCode, respBody)
 	}
 
+	gated.observe(respBody)
 	return respBody, nil
 }
 
-func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
+// drainRequestBody reads and closes a request's body so it can be decided and
+// replayed. A request without a body yields nil.
+func drainRequestBody(req *http.Request) ([]byte, error) {
+	if req.Body == nil {
+		return nil, nil
+	}
+	b, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading request body: %w", err)
+	}
+	_ = req.Body.Close()
+	return b, nil
+}
+
+// gatedRequest is a request the policy gate decided, to be shown its answer.
+type gatedRequest struct {
+	gate reqgate.Gate
+	req  reqmap.Request
+}
+
+// observe hands a successful answer to the gate that decided the request.
+func (g gatedRequest) observe(resp []byte) {
+	if g.gate != nil {
+		g.gate.Observe(g.req, resp)
+	}
+}
+
+// gate decides one logical REST request before it is first sent — once,
+// before the retry loop, never per attempt (D-74) — and marks its context so
+// the shared transport's hook lets its retries through and maps a redirect
+// hop again. With no gate installed the request is returned untouched (D-58).
+func (c *Client) gate(ctx context.Context, req *http.Request, body []byte) (*http.Request, gatedRequest, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return req, gatedRequest{}, nil
+	}
+	wire := wirePath(req.URL)
+	r := reqmap.Request{Transport: reqmap.REST, Method: req.Method, Path: stripBase(wire, c.basePath), Body: body}
+	if err := g.Check(ctx, r); err != nil {
+		return nil, gatedRequest{}, err
+	}
+	marked := reqgate.WithChecked(ctx, reqgate.Checked{Request: r, WirePath: wire, Prefix: c.basePath})
+	return req.WithContext(marked), gatedRequest{gate: g, req: r}, nil
+}
+
+// wirePath is a URL's escaped path and raw query, as it goes on the wire.
+func wirePath(u *url.URL) string {
+	p := u.EscapedPath()
+	if u.RawQuery != "" {
+		p += "?" + u.RawQuery
+	}
+	return p
+}
+
+// stripBase removes a client's own base path from a wire path. A path outside
+// it is returned whole, and maps as whatever it is.
+func stripBase(wire, base string) string {
+	if base == "" {
+		return wire
+	}
+	if rest, ok := strings.CutPrefix(wire, base); ok && strings.HasPrefix(rest, "/") {
+		return rest
+	}
+	return wire
+}
+
+func (c *Client) doWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	var bodyBytes []byte
-	if req.Body != nil {
-		var err error
-		bodyBytes, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, fmt.Errorf("reading request body: %w", err)
-		}
-		_ = req.Body.Close()
+	bodyBytes, err := drainRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req, gated, err := c.gate(ctx, req, bodyBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	maxAttempts := 3
@@ -412,7 +500,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 			// retried: an unreachable HA doesn't heal in 500ms, and
 			// retrying compounds the stall. Only 5xx responses retry.
 			slog.Debug("HTTP request failed", "method", req.Method, "error", err, "duration", duration) //nolint:gosec // structured log
-			if lastErr != nil && budget.Cut(req.Context(), err) {
+			if lastErr != nil && budget.Cut(ctx, err) {
 				return nil, budget.Stopped(lastErr)
 			}
 			return nil, fmt.Errorf("%s %s: %w", req.Method, req.URL.Path, err)
@@ -449,6 +537,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 			return nil, httpStatusError(req.Method, req.URL.Path, resp.StatusCode, respBody)
 		}
 
+		gated.observe(respBody)
 		return respBody, nil
 	}
 

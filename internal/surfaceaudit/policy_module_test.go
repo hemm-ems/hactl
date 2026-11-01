@@ -447,3 +447,56 @@ func (s *Store) RefreshTraces() error { return nil }
 		}
 	})
 }
+
+// TestPolicyRequestSitesCoverEveryReleaseTarget (A-9) — the request half is
+// derived for every GOOS/GOARCH .goreleaser.yaml builds, not for the host
+// that runs the gate: a package only the windows build imports is product,
+// and a request it builds outside the clients is refused. Without the
+// release file the same module is read for the host alone and the package is
+// not seen — which is what makes the release-file case able to fail.
+func TestPolicyRequestSitesCoverEveryReleaseTarget(t *testing.T) {
+	winOnly := map[string]string{
+		"internal/cmd/win.go": "//go:build windows\n\npackage cmd\n\nimport _ \"example.com/fx/internal/winonly\"\n",
+		"internal/winonly/winonly.go": `package winonly
+
+import (
+	"context"
+	"net/http"
+)
+
+func Stop(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://ha/api/services/homeassistant/stop", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+`,
+	}
+	if runtimeIsWindows() {
+		t.Skip("the host is windows: the host-only build already compiles the windows-only package")
+	}
+	if _, err := surfaceaudit.PolicyRequestSites(writeModule(t, requestModule(maps.Clone(winOnly)))); err != nil {
+		t.Fatalf("host-only derivation (no .goreleaser.yaml) refused a package only windows imports: %v", err)
+	}
+
+	withRelease := maps.Clone(winOnly)
+	withRelease[".goreleaser.yaml"] = "version: 2\nbuilds:\n  - main: ./cmd/hactl\n    goos: [linux, windows]\n    goarch: [amd64]\n"
+	_, err := surfaceaudit.PolicyRequestSites(writeModule(t, requestModule(withRelease)))
+	if err == nil || !strings.Contains(err.Error(), "internal/winonly/winonly.go") {
+		t.Errorf("a request built in a package only the windows release imports was not refused: %v", err)
+	}
+
+	empty := maps.Clone(winOnly)
+	empty[".goreleaser.yaml"] = "version: 2\nbuilds:\n  - main: ./cmd/hactl\n"
+	if _, err := surfaceaudit.PolicyRequestSites(writeModule(t, requestModule(empty))); err == nil ||
+		!strings.Contains(err.Error(), "no goos/goarch") {
+		t.Errorf("a release file listing no target was read as the host: %v", err)
+	}
+}
+
+func runtimeIsWindows() bool { return filepath.Separator == '\\' }

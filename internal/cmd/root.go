@@ -63,7 +63,7 @@ var rootCmd = family(&cobra.Command{
 // rootPreRun is the root's PersistentPreRunE, installed in init() rather than
 // in the literal above: it calls confirmGuard, which walks a command's parent
 // chain up to rootCmd, and Go rejects that as an initialization cycle.
-func rootPreRun(cmd *cobra.Command, _ []string) error {
+func rootPreRun(cmd *cobra.Command, args []string) error {
 	// The domain check runs before the value is installed anywhere, so a
 	// duration that cannot bound a connection never reaches one: `--timeout
 	// -1s` used to arrive at net.Dialer as a deadline already in the past and
@@ -73,6 +73,12 @@ func rootPreRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	haapi.DefaultTimeout = flagTimeout
+	// The policy is read once per invocation, before anything is checked or
+	// sent: a broken file refuses here (D-60), and while a profile is in
+	// effect every request of this invocation passes its gate (H-29).
+	if err := startPolicySession(cmd, args); err != nil {
+		return err
+	}
 	// Both of these need the command cobra RESOLVED and the flags it PARSED —
 	// the guard checks the target that would be written, and the lock is taken
 	// only for a write. That is why they run here and not in Execute(): the
@@ -155,6 +161,7 @@ func releaseWriteLock() {
 
 func init() {
 	rootCmd.PersistentPreRunE = rootPreRun
+	rootCmd.PersistentPostRunE = rootPostRun
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")
 	// `--since` is deliberately NOT here: it is declared on the nine commands
 	// that read it (see sinceCommands in since.go), because a flag on a command
@@ -390,6 +397,7 @@ func Execute() error {
 	defer rootCmd.SetOut(nil)
 
 	executed, err := rootCmd.ExecuteC()
+	err = finishPolicySession(err)
 	markGeneratedScript(executed)
 	if err == nil {
 		// A preview that ran and succeeded is what authorizes the matching
@@ -438,9 +446,11 @@ func Execute() error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// Name the instance the failing command was talking to — with
-		// multi-instance discovery the target is otherwise invisible.
+		// multi-instance discovery the target is otherwise invisible. Not
+		// under a policy refusal, whose stderr is its own summary (D-70: one
+		// line for a denial, one per problem for a broken file).
 		var nf *config.ConfigNotFoundError
-		if dir := config.ResolvedDir(); dir != "" && !errors.As(err, &nf) {
+		if dir := config.ResolvedDir(); dir != "" && !errors.As(err, &nf) && policyErrorClass(err) == "" {
 			fmt.Fprintf(os.Stderr, "instance: %s\n", dir)
 		}
 		return err
@@ -503,7 +513,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	if target, _, findErr := rootCmd.Find(args[1:]); findErr == nil {
 		target.SetContext(ctx)
 	}
-	err := rootCmd.ExecuteContext(ctx)
+	err := finishPolicySession(rootCmd.ExecuteContext(ctx))
 
 	// After, not before: cobra adds the `completion` subtree lazily during
 	// ExecuteC, so a Find ahead of the run cannot resolve it and the mark would

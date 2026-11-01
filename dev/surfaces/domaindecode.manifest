@@ -63,3 +63,7 @@ internal/cmd/cc.go:componentEntityIDs = exempt: decodes the whole payload into e
 internal/cmd/cc.go:enrichVersionsFromUpdateEntities = exempt: decodes the whole payload into entityState and reads installed_version out of the map with a type assertion, so a foreign type is a missed enrichment rather than a failed command
 internal/cmd/helper.go:fetchStorageHelpers = exempt: decodes the whole payload into entityState, whose attributes are map[string]any; the helper rows are built from entity_id and state alone
 internal/cmd/ref.go:fetchStateEntityIDs = exempt: decodes the whole payload into entityState and returns entity_ids only, so no attribute of any entity is ever typed
+
+# The policy gate's live entity set (H-29): it decodes each state's entity_id
+# and nothing else, so no domain's attribute type is part of its schema.
+internal/policy/enforce/hafetch.go:(*HAFetcher).LiveEntityIDs = exempt: decodes only entity_id from every state — no attribute is decoded, so no domain's attribute shape can fail it

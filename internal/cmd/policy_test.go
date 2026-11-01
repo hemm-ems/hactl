@@ -74,7 +74,7 @@ func TestPolicyNoFile(t *testing.T) {
 	dir := policyFixtureInstance(t, "")
 
 	out, code, err := runPolicy(t, dir, "show")
-	if code != 0 || !strings.Contains(out, "no policy file") || !strings.Contains(out, policy.Disclaimer) || !strings.Contains(out, "not enforced yet") {
+	if code != 0 || !strings.Contains(out, "no policy file") || !strings.Contains(out, policy.Disclaimer) || !strings.Contains(out, "enforced: nothing") {
 		t.Errorf("show: code=%d err=%v\n%s", code, err, out)
 	}
 	out, code, _ = runPolicy(t, dir, "show", "--json")

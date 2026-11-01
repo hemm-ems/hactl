@@ -58,3 +58,11 @@ internal/policy/reqmap/restmap.go:jsonObject = proven: TestServiceCallMapping
 internal/policy/reqmap/companionmap.go:yamlMapping = proven: TestClassifyWriteRequests
 internal/policy/reqmap/companionmap.go:mapRefReplace = proven: TestClassifyWriteRequests
 internal/policy/reqmap/dashboard.go:decodeObject = proven: TestDiffDashboard
+
+# --- the policy gate (H-29) -------------------------------------------------------
+internal/haapi/websocket.go:(*wsConn).ReadJSON = exempt: the gated connection forwards gorilla's ReadJSON to its callers, each of which is its own site on this surface
+internal/policy/enforce/facts.go:(*factCache).observe = exempt: records a fact from an answer the request already returned to its command; a decode failure or a zero value records nothing, and an unrecorded fact can only refuse a later request or widen its check (fail closed), never render an answer
+internal/policy/enforce/facts.go:(*factCache).observeRefReplace = exempt: records a ref/replace dry run as the plan its confirmed write is mapped through; a decode failure records no plan, and a confirmed write without one is refused (D-77)
+internal/policy/enforce/hafetch.go:(*HAFetcher).LiveEntityIDs = exempt: decodes only each state's entity_id for the policy check; a state without one refuses the whole answer, so a service call's reach is unknown and the call refused (D-73), never computed from a partial set
+internal/surfaceaudit/policy.go:releaseTargets = proven: TestPolicyRequestSitesCoverEveryReleaseTarget
+internal/policy/enforce/session.go:needsOf = exempt: decodes a service call's own outgoing data only to see whether it is empty; a body that does not decode keeps every fact asked, and the classifier refuses a body that is no object

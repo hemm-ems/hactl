@@ -2301,8 +2301,36 @@ exactly that command; drop one resource from one command's plan (the orphan
 registry remove, `script.reload`) — `TestEveryConfirmedRequestIsInThePlan`
 must go red on exactly that command.
 
-- Enforced by: DRAFT — the gate and the mapping exist; the hooks and the
-  command layer do not (stage 2b), so no request is refused yet. Built in
+- Enforced by: DRAFT — the gate, the mapping, the hooks and the command
+  layer's plan API exist; one command (`label create`, the reference) checks
+  its plan, the other families wire theirs in stage 2b, so this law stays a
+  draft until every `cmd` line of `dev/surfaces/policy.manifest` is proven.
+  Built in stage 2b core (2026-11-01): the policy is loaded in the root's
+  pre-run once per invocation and per MCP call, and only while a profile is
+  in effect is a session started and the request gate (`internal/policy/
+  reqgate`) installed — TestNoProfileIsByteIdentical, TestNoGateNoChange; the
+  hooks — one verdict per logical request before the retry loop
+  (TestRESTRequestGetsOneVerdictBeforeItsRetries), nothing sent when refused
+  (TestRefusedRESTRequestIsNeverSent, TestRefusedCompanionRequestIsNeverSent),
+  a redirect hop mapped again (TestRedirectHopPassesTheGateAgain), a request
+  no client decided decided at the transport
+  (TestUnmarkedRequestIsDecidedAtTheTransport), every websocket send through
+  one gated connection (TestEveryWebsocketSendPassesTheGate), the companion by
+  logical route (TestCompanionRequestGetsOneVerdictOnEveryTransport), unmapped
+  mutating refused and the same requests sent without a profile
+  (TestUnmappedMutatingRequestIsRefused); the session — every write decided
+  and audited, reads not (TestRequestLayerDecidesWritesOnly), the reach asked
+  and refused when unanswered (TestServiceCallReach), facts per invocation and
+  per policy hash (TestFactCacheIsTaggedWithThePolicyHash,
+  TestFetchedFactsAreDroppedAfterAWrite, TestObservedFactsAuthorise); the
+  command layer — TestLabelCreateRefusedByItsPlan, TestLabelCreateAllowedPlan,
+  TestRefusedPreviewRecordsNoWitness, TestRequestLayerRefusalEndsTheInvocation;
+  R-12's harness — TestEveryConfirmedRequestIsInThePlan (families register
+  their commands) and its watched-to-fail half
+  TestUncoveredChecksCatchesAPlanOneResourceShort; D-60's half —
+  TestBrokenPolicyRefusesEveryCommand, TestMCPRefusesEachCallOnABrokenPolicy;
+  the request half derived for every release target (A-9) —
+  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in
   stage 2a and watched to fail on 2026-11-01 (a websocket type added to
   `haapi` without a line went red as unclassified; a read command made to
   reach a registry remove went red as a new write command; a manifest line
