@@ -1022,14 +1022,17 @@ func TestPolicyFamilyHasNoExplainYet(t *testing.T) {
 // automation, a helper, a template entity or a script itself is what a service
 // call reaching that entity checks for denies only. A deny on it is enforced;
 // a denial by `default: deny` alone is not — the profile default decides on the
-// entity — and policy check says so instead of claiming enforcement.
+// entity — and policy check says so instead of claiming enforcement. A script
+// whose run the same default denies is the exception (D-128): `script run`
+// enforces control script:<id>/run in full, so the denial is enforced and the
+// note names the run.
 func TestPolicyCheckTypedControlIsEnforcedForItsDenies(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    deny:\n      \"automation:prod_*\": [write]\n")
 	out, err := runPolicyCLI(t, dir, "policy", "check", "automation:prod_heating", "control")
 	if cliExitCode(err) != 1 || !strings.Contains(out, "enforced: a write command refuses what this verdict denies\n") {
 		t.Errorf("a deny on the typed address: exit %d\n%s", cliExitCode(err), out)
 	}
-	for _, res := range []string{"automation:kitchen", "helper:input_boolean/guest", "template:t", "script:s"} {
+	for _, res := range []string{"automation:kitchen", "helper:input_boolean/guest", "template:t"} {
 		out, err = runPolicyCLI(t, dir, "policy", "check", res, "control")
 		if cliExitCode(err) != 1 || !strings.Contains(out, "rule: default: deny\n") ||
 			!strings.Contains(out, "not enforced: control on ") || strings.Contains(out, "enforced: a write command") {
@@ -1038,7 +1041,12 @@ func TestPolicyCheckTypedControlIsEnforcedForItsDenies(t *testing.T) {
 		out, _ = runPolicyCLI(t, dir, "policy", "check", res, "control", "--json")
 		wantField(t, res, decodeObject(t, out), "enforced", false)
 	}
-	for _, res := range []string{"script:s/run", "entity:light.x"} {
+	out, err = runPolicyCLI(t, dir, "policy", "check", "script:s", "control")
+	if cliExitCode(err) != 1 || strings.Contains(out, "not enforced") ||
+		!strings.Contains(out, "note: a run is checked as control script:s/run, denied — default: deny:") {
+		t.Errorf("script:s, its run denied by the default: exit %d\n%s", cliExitCode(err), out)
+	}
+	for _, res := range []string{"script:s", "script:s/run", "entity:light.x"} {
 		out, _ = runPolicyCLI(t, dir, "policy", "check", res, "control", "--json")
 		wantField(t, res, decodeObject(t, out), "enforced", true)
 	}

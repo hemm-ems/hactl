@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -137,5 +138,67 @@ func TestPolicyCheckInapplicableVerbNoteSaysItDecidesNothing(t *testing.T) {
 		"enforced: a write command refuses what this verdict denies\n"
 	if cliExitCode(err) != 0 || out != want {
 		t.Errorf("exit %d (%v)\n got: %q\nwant: %q", cliExitCode(err), err, out, want)
+	}
+}
+
+// TestPolicyCheckWriteScriptCountsTheRunTheDefaultDenies (D-128 (2), corrected): on a
+// script the default that decides the deny-only `control script:<id>` also
+// decides `control script:<id>/run`, which `script run` enforces in full — so
+// the write check counts that control verdict whenever the run is denied, and
+// says the run decides it, never "the default decides on the entity". When
+// the run is allowed, the deny-only exemption holds and the line names the
+// run instead.
+func TestPolicyCheckWriteScriptCountsTheRunTheDefaultDenies(t *testing.T) {
+	const base = "    default: deny\n    allow:\n" +
+		"      \"script:morning\": [edit, create, delete]\n" +
+		"      \"entity:script.morning_renamed\": [control]\n" +
+		"      \"service:script.turn_on\": [control]\n"
+	rig := startSvcRig(t, reachOf("script.morning_renamed"))
+	writePolicyFile(t, rig.dir, agentPolicy(base))
+
+	out, err := runPolicyCLI(t, rig.dir, "policy", "check", "script:morning", "write")
+	want := "denied: script:morning write\n" +
+		"control: denied — default: deny\n" +
+		"  note: a run is checked as control script:morning/run, denied — default: deny: script run and a service call starting the script refuse it\n" +
+		"edit: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"create: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"delete: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"profile: agent (selected by active)\n" +
+		"enforced: a write command refuses what this verdict denies\n"
+	if cliExitCode(err) != 1 || out != want {
+		t.Errorf("run denied: exit %d (%v)\n got: %q\nwant: %q", cliExitCode(err), err, out, want)
+	}
+	out, err = runPolicyCLI(t, rig.dir, "policy", "check", "script:morning", "write", "--json")
+	if cliExitCode(err) != 1 {
+		t.Errorf("run denied --json: exit %d (%v), want 1", cliExitCode(err), err)
+	}
+	m := decodeObject(t, out)
+	wantField(t, "run denied --json", m, "allowed", false)
+	verdicts, _ := m["verdicts"].([]any)
+	control, _ := verdicts[0].(map[string]any)
+	wantField(t, "run denied --json control", control, "verb", "control")
+	wantField(t, "run denied --json control", control, "enforced", true)
+	out, err = runPolicyCLI(t, rig.dir, "policy", "check", "script:morning", "control")
+	if cliExitCode(err) != 1 || strings.Contains(out, "not enforced") || !strings.Contains(out, "enforced: a write command refuses what this verdict denies\n") {
+		t.Errorf("run denied, control alone: exit %d (%v)\n%s", cliExitCode(err), err, out)
+	}
+	out, err = runPolicyCLI(t, rig.dir, "script", "run", "morning_renamed", "--confirm")
+	wantRefused(t, "the run the check calls denied", out, err, "control script:morning/run — default: deny")
+
+	writePolicyFile(t, rig.dir, agentPolicy(base+"      \"script:morning/run\": [control]\n"))
+	out, err = runPolicyCLI(t, rig.dir, "policy", "check", "script:morning", "write")
+	want = "allowed: script:morning write\n" +
+		"control: denied — default: deny\n" +
+		"  not enforced: control on script:<id> is checked for its denies only — a run is decided by control script:morning/run, which is allowed\n" +
+		"edit: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"create: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"delete: allowed — allow \"script:morning\" [edit create delete] (line 7)\n" +
+		"profile: agent (selected by active)\n" +
+		"enforced: a write command refuses what this verdict denies\n"
+	if cliExitCode(err) != 0 || out != want {
+		t.Errorf("run allowed: exit %d (%v)\n got: %q\nwant: %q", cliExitCode(err), err, out, want)
+	}
+	if out, err = runPolicyCLI(t, rig.dir, "script", "run", "morning_renamed", "--confirm"); err != nil {
+		t.Errorf("the run the check calls allowed was refused: %v\n%s", err, out)
 	}
 }

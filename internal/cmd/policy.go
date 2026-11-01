@@ -334,8 +334,10 @@ type policyCheckDoc struct {
 	UnmetWhere []policy.UnmetWhere `json:"unmet_where"`
 
 	// denyOnlyDefault: a deny-only check (D-107) denied by the default alone,
-	// which no command enforces — the text answer says so.
+	// which no command enforces — the text answer says so. scriptRun is the
+	// allowed script:<id>/run that decides a script's run instead (D-128).
 	denyOnlyDefault bool
+	scriptRun       string
 }
 
 // policyCheckWriteDoc is `policy check <resource> write --json` (D-120): one
@@ -467,7 +469,7 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		case doc.Verb == policy.Read.String():
 			_, _ = fmt.Fprintln(w, "not enforced yet: reads are a later version")
 		case doc.denyOnlyDefault:
-			_, _ = fmt.Fprintln(w, denyOnlyDefaultText(res))
+			_, _ = fmt.Fprintln(w, denyOnlyDefaultText(res, doc.scriptRun))
 		case doc.Enforced:
 			_, _ = fmt.Fprintln(w, "enforced: a write command refuses what this verdict denies")
 		default:
@@ -487,12 +489,34 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 	// A typed address a service call reaches is checked for its denies only
 	// (D-107): a denial by the profile default alone is never enforced there.
 	denyOnlyDefault := denyOnlyControl(res, v) && !verdict.Allowed && verdict.Rule == policy.RuleDefaultDeny
+	// A script is the exception when its run is denied: the default that
+	// decided control on script:<id> decides script:<id>/run too, which
+	// `script run` and a service call starting the script enforce in full,
+	// so the denial counts (D-128).
+	var runNote, runAllowed string
+	if denyOnlyDefault && res.Kind == policy.KindScript {
+		run := policy.Resource{Kind: policy.KindScript, ID: res.ID, Sub: "run"}
+		rv := pol.Decide(run, v, live)
+		if rv.Allowed {
+			runAllowed = run.String()
+		} else {
+			denyOnlyDefault = false
+			rule := rv.Rule
+			if rv.Line > 0 {
+				rule = fmt.Sprintf("%s (line %d)", rv.Rule, rv.Line)
+			}
+			runNote = fmt.Sprintf("a run is checked as control %s, denied — %s: script run and a service call starting the script refuse it", run, rule)
+		}
+	}
 	doc := policyCheckDoc{
 		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
 		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
 		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v) && !denyOnlyDefault, Notes: verdict.Notes,
 		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{}, UnmetWhere: verdict.UnmetWhere,
-		denyOnlyDefault: denyOnlyDefault,
+		denyOnlyDefault: denyOnlyDefault, scriptRun: runAllowed,
+	}
+	if runNote != "" {
+		doc.Notes = append(doc.Notes, runNote)
 	}
 	for _, d := range verdict.PartialDenies {
 		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
@@ -516,7 +540,8 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 // overall verdict, one line per applicable verb with its partial, where-not-met
 // and note lines indented below it, then the profile and the enforced line.
 // Exit 0 only when every verb a command enforces is allowed: a deny-only
-// control the default decided is shown and does not count (D-128).
+// control the default decided is shown and does not count (D-128) — a
+// script's counts when the default also denies its run (D-128).
 func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource, docs []policyCheckDoc) error {
 	enforced, _ := policyEnforcement(pol)
 	doc := policyCheckWriteDoc{
@@ -561,7 +586,7 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 				fmt.Fprintf(&b, "  note: %s\n", n)
 			}
 			if d.denyOnlyDefault {
-				fmt.Fprintf(&b, "  %s\n", denyOnlyDefaultText(res))
+				fmt.Fprintf(&b, "  %s\n", denyOnlyDefaultText(res, d.scriptRun))
 			}
 		}
 		fmt.Fprintf(&b, "profile: %s\n", checkProfileText(doc.Profile, doc.SelectedBy))
@@ -590,8 +615,12 @@ func checkProfileText(profile, selectedBy string) string {
 }
 
 // denyOnlyDefaultText says that a default-deny verdict on a deny-only address
-// (D-107) is not enforced.
-func denyOnlyDefaultText(res policy.Resource) string {
+// (D-107) is not enforced, and what decides instead: the entity a service
+// call reaches, or for a script the allowed run (D-128).
+func denyOnlyDefaultText(res policy.Resource, scriptRun string) string {
+	if scriptRun != "" {
+		return fmt.Sprintf("not enforced: control on %s:<id> is checked for its denies only — a run is decided by control %s, which is allowed", res.Kind, scriptRun)
+	}
 	return fmt.Sprintf("not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches", res.Kind)
 }
 
