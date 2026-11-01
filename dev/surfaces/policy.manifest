@@ -681,20 +681,20 @@ cmd hactl helper create = debt: the preview checks nothing yet — phase 2 comma
 cmd hactl helper delete = debt: the orphan entity is not in the preview yet — phase 2 command layer
 
 # map: create on every area id (kind-wide, D-75; reported as `area:*`).
-cmd hactl area create = debt: the preview contacts nothing and checks nothing yet
+cmd hactl area create = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: delete area:{area_id} + edit entity:{e}/registry/area_id and edit
 # device:{d}/registry/area_id for every entity and device whose own area_id
 # is it — the cascade as a deliberate superset, enumerated in the preview
 # (D-76).
-cmd hactl area delete = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl area delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: create on every floor id (kind-wide, D-75).
-cmd hactl floor create = debt: the preview contacts nothing and checks nothing yet
+cmd hactl floor create = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: delete floor:{floor_id} + edit area:{a} for every area on it (the
 # cascade as a deliberate superset, D-76).
-cmd hactl floor delete = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl floor delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: create on every label id (kind-wide, D-75). The reference command of
 # the plan API (stage 2b): its preview and --confirm check the plan before the
@@ -704,7 +704,7 @@ cmd hactl label create = proven: TestLabelCreateRefusedByItsPlan
 # map: delete label:{label_id} + edit entity:{e}/registry/labels, edit
 # device:{d}/registry/labels and edit area:{a} for every current holder (the
 # cascade as a deliberate superset, D-76).
-cmd hactl label delete = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl label delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: per view against the stored config: edit|create|delete
 # dashboard:{u}/views/{path}, edit dashboard:{u} for non-view keys and
@@ -739,42 +739,42 @@ cmd hactl ent rename = debt: the preview counts references and checks nothing ye
 
 # map: edit entity:{entity_id}/registry/labels. Assigning a label is not
 # editing label:{id}.
-cmd hactl ent set-label = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl ent set-label = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit entity:{entity_id}/registry/area_id (--clear too).
-cmd hactl ent set-area = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl ent set-area = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit device:{device_id}/registry/area_id (device resolved by id or name).
-cmd hactl device set-area = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl device set-area = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit device:{device_id}/registry/labels.
-cmd hactl device set-label = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl device set-label = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: delete config_entry:{entry_id} + delete entity:{e}, device:{d} for every
 # registry row naming the entry — the cascade as a deliberate superset,
 # enumerated in the preview (D-76).
-cmd hactl config delete = debt: the preview checks nothing yet, and the cascade is not enumerated
+cmd hactl config delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit config_entry:{entry_id}/options.
-cmd hactl config options = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl config options = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: create on every config_entry id (kind-wide, D-75; a new entry has no
 # id until HA answers).
-cmd hactl config flow-start = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl config flow-start = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: --options: edit config_entry:{handler}/options (the handler is the
 # entry_id, D-83; kind-wide on every entry's options when this invocation
 # holds no start response naming the handler); otherwise create and edit on
 # every config_entry id (D-75). The preview's own GET of the flow is that same
 # write (D-74), so the check runs before it.
-cmd hactl config flow-step = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl config flow-step = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: a command without --confirm that drives a flow: its GET runs the
 # flow's current step (D-74, R-5), so it checks the matching write before
 # sending — without --options create and edit on every config_entry id, with
 # --options edit config_entry:{handler}/options (kind-wide when the handler is
 # unknown). Denied -> refused, naming the rule (it has nothing else to do).
-cmd hactl config flow-inspect = debt: the GET is not checked before it is sent — phase 2 command layer
+cmd hactl config flow-inspect = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit system:wireguard. The preview contacts nothing; the check is local.
 cmd hactl companion wireguard config = debt: the local preview checks nothing yet — phase 2 command layer
@@ -788,17 +788,17 @@ cmd hactl companion wireguard down = debt: the local preview checks nothing yet 
 # map: (read command) the options-flow probe is checked as edit
 # config_entry:{entry_id}/options BEFORE it is sent; denied -> the probe is
 # skipped with a note, never a refusal of config show (D-79).
-cmd hactl config show = debt: the probe is not checked before it is sent — phase 2 command layer
+cmd hactl config show = proven: TestConfigShowProbeSkippedWhenDenied
 
 # map: delete system:cache (local only, sends nothing; D-79). The audit log
 # survives it.
-cmd hactl cache clear = debt: a local write no check covers yet — phase 2 command layer
+cmd hactl cache clear = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit system:cache (local write; its HA requests are phase-3 reads;
 # D-79). hactl's implicit bookkeeping writes — id cache, log and timeseries
 # caches, the confirm witness, backups, the instance lock, the audit log — are
 # exempt and are no write site.
-cmd hactl cache refresh = debt: a local write no check covers yet — phase 2 command layer
+cmd hactl cache refresh = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: exempt (bootstrap). Writes <instance>/.env and probes GET /api/; no
 # policy resource. A broken policy.yaml refuses it like every command outside

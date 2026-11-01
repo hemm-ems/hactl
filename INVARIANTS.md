@@ -2347,3 +2347,18 @@ must go red on exactly that command.
   TestDashboardViewDiff; and the implementer's own: TestClassifyWriteRequests,
   TestServiceCallMapping, TestDashboardSaveMapping, TestDiffDashboard,
   TestWholePathRule, TestUnmappedRequests, TestEveryRowHasAVector.
+  Built in stage 2b, registry family (2026-11-01): the plans of `ent` and
+  `device set-label|set-area`, `area|floor create|delete`, `label delete`,
+  `config delete|options|flow-start|flow-step|flow-inspect`, `config show`'s
+  probe and `cache clear|refresh` — each the manual's row, checked in the
+  preview and under `--confirm` before the first write, refused naming the
+  rule (TestRegistryFamilyPlansAreTheManualsTable,
+  TestRegistryFamilyRefusesItsPlanNamingTheRule,
+  TestRegistryFamilyRefusalJSONIsThePreviewEnvelope,
+  TestConfigShowProbeSkippedWhenDenied, TestCacheClearRefusedKeepsTheCache);
+  the delete cascades planned through the request layer's own mapping
+  (D-90: TestRequestChecksIsTheRequestLayersMapping); without a profile each
+  preview sends exactly the requests it sent before
+  (TestRegistryFamilyWithoutAProfileAsksNothingMore); all eighteen write
+  runs registered in TestEveryConfirmedRequestIsInThePlan — watched to fail
+  by dropping `area delete`'s cascade and `ent set-label`'s field.

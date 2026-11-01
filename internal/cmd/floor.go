@@ -11,6 +11,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var floorCmd = family(&cobra.Command{
@@ -134,6 +135,13 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string, level *int) e
 		return err
 	}
 
+	// The plan (H-29), checked in the preview and again before the write:
+	// Home Assistant mints the floor id, so create on every floor id (D-75).
+	note, err := checkWritePlan(w, !flagFloorConfirm, newWritePlan("create floor").addKindWide(policy.Create, policy.KindFloor, ""))
+	if err != nil {
+		return err
+	}
+
 	if !flagFloorConfirm {
 		plan := dryRun("create floor").with("name", name)
 		if level != nil {
@@ -143,6 +151,7 @@ func runFloorCreate(ctx context.Context, w io.Writer, name string, level *int) e
 		}
 		return plan.
 			withIf(flagFloorIcon != "", "icon", flagFloorIcon).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -194,10 +203,20 @@ func runFloorDelete(ctx context.Context, w io.Writer, floorID string) error {
 		return fmt.Errorf("floor %q not found (use 'floor ls' to see available floors)", floorID)
 	}
 
+	// The plan (H-29): the floor, and every area on it — the cascade as a
+	// deliberate superset, enumerated from the area registry exactly as the
+	// request layer maps the delete (D-76).
+	plan := newWritePlan("delete floor").addRequestMapping(ctx, registryDeleteRequest(policy.KindFloor, entry.FloorID))
+	note, err := checkWritePlan(w, !flagFloorConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagFloorConfirm {
 		return dryRun("delete floor").
 			with("floor_id", entry.FloorID).
 			with("name", entry.Name).
+			withPolicy(note).
 			render(w)
 	}
 

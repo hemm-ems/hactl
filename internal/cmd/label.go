@@ -189,10 +189,21 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 	}
 	labelID = entry.LabelID
 
+	// The plan (H-29): the label, and the labels field of every entity,
+	// device and area holding it — the cascade as a deliberate superset,
+	// enumerated from the registries exactly as the request layer maps the
+	// delete (D-76).
+	plan := newWritePlan("delete label").addRequestMapping(ctx, registryDeleteRequest(policy.KindLabel, labelID))
+	note, err := checkWritePlan(w, !flagLabelConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagLabelConfirm {
 		return dryRun("delete label").
 			with("label_id", entry.LabelID).
 			with("name", entry.Name).
+			withPolicy(note).
 			render(w)
 	}
 
