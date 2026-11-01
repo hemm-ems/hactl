@@ -298,6 +298,9 @@ you want to keep:
 The first `dash save` on a dashboard nothing is stored for yet (right after
 `dash create`) creates the views it brings, so `create` on those views is what
 it needs; anything else in it, such as a title, needs `edit` on the dashboard.
+A first save that brings no view at all (`{}`, an empty `views` list) still
+stores a dashboard where none was — on the auto-generated default dashboard it
+replaces what users see — so it needs `edit` on the dashboard too.
 
 ### Switching typed entries
 
