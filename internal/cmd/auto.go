@@ -1044,6 +1044,20 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	if diffErr != nil {
 		return diffErr
 	}
+
+	// D-130 (issue #169): a file carrying another `id:` would not edit the
+	// automation named here — the write would replace it with a different
+	// one. Refused once the target is known to exist (so a bogus reference
+	// still reads as "not found"), but before the diff is printed and before
+	// anything is validated or rehearsed: the dry run already says what
+	// --confirm would refuse, with or without a policy.
+	candidate, err := os.ReadFile(flagAutoFile) //nolint:gosec // file path provided by user via CLI flag
+	if err != nil {
+		return fmt.Errorf("reading local file: %w", err)
+	}
+	if idErr := writer.CheckCandidateID(flagAutoFile, candidate, configID); idErr != nil {
+		return idErr
+	}
 	if !diff.HasChanges {
 		// A no-op is still an outcome a machine caller has to be able to read:
 		// under --json this used to be the prose line "no changes detected" and

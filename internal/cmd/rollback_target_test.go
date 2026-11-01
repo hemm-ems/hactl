@@ -33,7 +33,7 @@ func rollbackRig(t *testing.T) (configID string) {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(backupDir, "2026-07-27T10-00-00_"+configID+".yaml")
-	if err := os.WriteFile(backup, []byte("alias: Climate Schedule\ntrigger: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(backup, []byte("id: '"+configID+"'\nalias: Climate Schedule\ntrigger: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return configID

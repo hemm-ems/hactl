@@ -271,6 +271,9 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 	if automationID == "" {
 		automationID = extractAutoIDFromBackup(backupFile)
 	}
+	if idErr := checkIdentity(backupRole, backupFile, data, automationID); idErr != nil {
+		return nil, idErr
+	}
 
 	if w.cc == nil {
 		return nil, ErrNoCompanion
@@ -306,6 +309,11 @@ func (w *Writer) Rollback(ctx context.Context, automationID string) (*ApplyResul
 // PlanRollback resolves which backup Rollback would restore, without applying
 // it — the dry-run preview for `hactl rollback`. It needs neither the HA client
 // nor the WS connection, so a Writer built with nil clients is sufficient.
+//
+// It reads the backup it names, because the preview refuses what the restore
+// would refuse (H-2): a backup whose `id:` is not the id it would be restored
+// to is a different automation (D-130), and a plan naming it as the undo would
+// be a plan for a rename.
 func (w *Writer) PlanRollback(automationID string) (*ApplyResult, error) {
 	backupFile, err := w.findLatestBackup(automationID)
 	if err != nil {
@@ -314,6 +322,13 @@ func (w *Writer) PlanRollback(automationID string) (*ApplyResult, error) {
 	id := automationID
 	if id == "" {
 		id = extractAutoIDFromBackup(backupFile)
+	}
+	data, err := os.ReadFile(filepath.Clean(backupFile))
+	if err != nil {
+		return nil, fmt.Errorf("reading backup: %w", err)
+	}
+	if idErr := checkIdentity(backupRole, backupFile, data, id); idErr != nil {
+		return nil, idErr
 	}
 	return &ApplyResult{
 		AutomationID: id,
