@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 // AuditFileName is the audit log's name under `<instance>/cache/` (D-71).
@@ -35,6 +37,9 @@ type AuditLine struct {
 	Rule     string `json:"rule"`
 	Line     int    `json:"line"`
 	Profile  string `json:"profile"`
+	// UnmetWhere are the narrowed allows tried whose selector did not hold
+	// (D-112), present only when there are any.
+	UnmetWhere []policy.UnmetWhere `json:"unmet_where,omitempty"`
 }
 
 // Audit appends to `<instance>/cache/policy-audit.log`. hactl never reads it

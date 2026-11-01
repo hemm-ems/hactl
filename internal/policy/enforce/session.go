@@ -151,7 +151,7 @@ func (s *Session) CheckPlan(p Plan, dryRun, previewPassed bool) (PlanResult, err
 	lines := make([]AuditLine, 0, len(p.Checks))
 	for _, c := range p.Checks {
 		v := s.decide(c)
-		lines = append(lines, s.line(LayerCommand, dryRun, c.Target(), c.Verb.String(), v.Allowed, v.Rule, v.Line))
+		lines = append(lines, s.verdictLine(LayerCommand, dryRun, c, v))
 		if !v.Allowed {
 			ref.Denied = append(ref.Denied, denial(c, v))
 		}
@@ -251,7 +251,7 @@ func (s *Session) Check(ctx context.Context, req reqmap.Request) error {
 	lines := make([]AuditLine, 0, len(res.Checks))
 	for _, c := range res.Checks {
 		v := s.decide(c)
-		lines = append(lines, s.line(LayerRequest, s.dryRun, c.Target(), c.Verb.String(), v.Allowed, v.Rule, v.Line))
+		lines = append(lines, s.verdictLine(LayerRequest, s.dryRun, c, v))
 		if !v.Allowed {
 			ref.Denied = append(ref.Denied, denial(c, v))
 		}
@@ -443,8 +443,17 @@ func (s *Session) decide(c reqmap.Check) policy.Verdict {
 func denial(c reqmap.Check, v policy.Verdict) Denial {
 	return Denial{
 		Resource: c.Target(), Verb: c.Verb.String(), Rule: v.Rule, Line: v.Line,
-		Partial: v.Partial, KindWide: c.KindWide,
+		Partial: v.Partial, KindWide: c.KindWide, UnmetWhere: unmetWhere(v),
 	}
+}
+
+// unmetWhere is a verdict's unmet selectors (D-112), nil when there are none
+// so a denial and an audit line carry the key only when it says something.
+func unmetWhere(v policy.Verdict) []policy.UnmetWhere {
+	if len(v.UnmetWhere) == 0 {
+		return nil
+	}
+	return v.UnmetWhere
 }
 
 func (s *Session) newDenial(layer string, dryRun bool, action string) *DeniedError {
@@ -472,6 +481,13 @@ func (s *Session) line(layer string, dryRun bool, resource, verb string, allowed
 		Time: s.now().Format(time.RFC3339), Command: s.command, DryRun: dryRun, Layer: layer,
 		Resource: resource, Verb: verb, Allowed: allowed, Rule: rule, Line: lineNo, Profile: s.pol.Active(),
 	}
+}
+
+// verdictLine is the audit line of check c's verdict v.
+func (s *Session) verdictLine(layer string, dryRun bool, c reqmap.Check, v policy.Verdict) AuditLine {
+	l := s.line(layer, dryRun, c.Target(), c.Verb.String(), v.Allowed, v.Rule, v.Line)
+	l.UnmetWhere = unmetWhere(v)
+	return l
 }
 
 // describe names a request the way a refusal of it does: `ws <type>`,

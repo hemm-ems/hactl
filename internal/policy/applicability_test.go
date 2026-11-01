@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -146,5 +148,81 @@ func TestVerbNotApplicableFindings(t *testing.T) {
 	}
 	if n != len(want) {
 		t.Errorf("Lint reported %d verb-not-applicable findings, want %d: %+v", n, len(want), rep.Findings)
+	}
+}
+
+// TestUnmetWhereNamesTheFirstFailingKey — D-112: each narrowed allow tried
+// whose selector is false is one entry, in the order tried, with the first key
+// that failed (area before label); a device's own area and labels are asked;
+// an unevaluable selector is a note, not an entry; an allow that grants
+// empties the list.
+func TestUnmetWhereNamesTheFirstFailingKey(t *testing.T) {
+	p := mustLoad(t, profileHead+
+		"    allow:\n"+
+		"      \"entity:light.*\": [control]\n"+ // 7
+		"      \"entity:light.k*\": [control]\n"+ // 8
+		"      \"device:*\": [delete]\n"+ // 9
+		"    where:\n"+
+		"      \"entity:light.*\": {area: [wohnzimmer, buero], label: agent_ok}\n"+
+		"      \"entity:light.k*\": {label: [agent_ok, pg_*]}\n"+
+		"      \"device:*\": {area: hall}\n")
+	live := fakeLive{
+		entityArea:   map[string]Ref{"light.kitchen": {ID: "kitchen_id", Name: "Kitchen"}, "light.kuehl": {ID: "buero", Name: "Büro"}},
+		entityLabels: map[string][]Ref{"light.kuehl": {{ID: "energy", Name: "Energy"}}},
+		deviceArea:   map[string]Ref{"dev_in_garage": {ID: "garage", Name: "Garage"}},
+	}
+	for _, c := range []struct {
+		res  string
+		verb Verb
+		want []UnmetWhere
+	}{
+		{"entity:light.kitchen", Control, []UnmetWhere{
+			{`allow "entity:light.*" [control] where area=wohnzimmer|buero label=agent_ok`, 7, "light.kitchen is in area kitchen_id, not wohnzimmer or buero"},
+			{`allow "entity:light.k*" [control] where label=agent_ok|pg_*`, 8, "light.kitchen has no label agent_ok or pg_*"},
+		}},
+		// The area holds, so the label is the first key that fails.
+		{"entity:light.kuehl", Control, []UnmetWhere{
+			{`allow "entity:light.*" [control] where area=wohnzimmer|buero label=agent_ok`, 7, "light.kuehl has no label agent_ok"},
+			{`allow "entity:light.k*" [control] where label=agent_ok|pg_*`, 8, "light.kuehl has no label agent_ok or pg_*"},
+		}},
+		{"entity:light.attic", Control, []UnmetWhere{
+			{`allow "entity:light.*" [control] where area=wohnzimmer|buero label=agent_ok`, 7, "light.attic has no area"},
+		}},
+		{"device:dev_in_garage", Delete, []UnmetWhere{{`allow "device:*" [delete] where area=hall`, 9, "dev_in_garage is in area garage, not hall"}}},
+		{"device:dev_nowhere", Delete, []UnmetWhere{{`allow "device:*" [delete] where area=hall`, 9, "dev_nowhere has no area"}}},
+		{"entity:switch.x", Control, []UnmetWhere{}}, // no narrowed allow matched
+	} {
+		v := p.Decide(mustResource(t, c.res), c.verb, live)
+		if v.Allowed || v.Rule != RuleDefaultDeny || !reflect.DeepEqual(v.UnmetWhere, c.want) {
+			t.Errorf("%s %s = allowed %v rule %q unmet %+v, want denied by the default with %+v", c.res, c.verb, v.Allowed, v.Rule, v.UnmetWhere, c.want)
+		}
+	}
+
+	// An earlier unmet selector, then a grant: the list is empty.
+	q := mustLoad(t, profileHead+
+		"    allow:\n"+
+		"      \"entity:light.k*\": [control]\n"+
+		"      \"entity:light.*\": [control]\n"+
+		"    where:\n"+
+		"      \"entity:light.k*\": {label: agent_ok}\n")
+	if v := q.Decide(mustResource(t, "entity:light.kitchen"), Control, live); !v.Allowed || v.UnmetWhere == nil || len(v.UnmetWhere) != 0 {
+		t.Errorf("granted after an unmet selector = %+v, want allowed with an empty unmet_where", v)
+	}
+
+	// Home Assistant unreachable: a note, never an entry.
+	v := p.Decide(mustResource(t, "entity:light.kitchen"), Control, fakeLive{err: errors.New("HA unreachable")})
+	if len(v.UnmetWhere) != 0 || len(v.Notes) != 2 || !strings.Contains(v.Notes[0], "HA unreachable") {
+		t.Errorf("unevaluable selectors = notes %q unmet %+v, want two notes and no entry", v.Notes, v.UnmetWhere)
+	}
+
+	// Every evaluator returns an empty, never nil, list.
+	for _, v := range []Verdict{
+		p.DecideDenyOnly(mustResource(t, "automation:x"), Control),
+		p.DecideKindWide(KindArea, "", Create),
+		p.DecideKindWideDenyOnly(KindScript, "", Control),
+	} {
+		if v.UnmetWhere == nil {
+			t.Errorf("verdict %+v has a nil UnmetWhere", v)
+		}
 	}
 }

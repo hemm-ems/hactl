@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -193,7 +194,7 @@ func TestCheckPlanRefusesEveryDeniedPairInPlanOrder(t *testing.T) {
 		{Resource: "automation:prod_heating", Verb: "delete", Rule: `deny "automation:prod_*" [delete]`, Line: 7},
 		{Resource: "label:*", Verb: "create", Rule: `deny "label:secret" [create]`, Line: 6, KindWide: true},
 	}
-	if !slices.Equal(ref.Denied, want) {
+	if !reflect.DeepEqual(ref.Denied, want) {
 		t.Errorf("denied\n  got  %+v\n  want %+v", ref.Denied, want)
 	}
 	if got := ref.Error(); got != `policy_denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 7)` {
