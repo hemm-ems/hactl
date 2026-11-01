@@ -467,26 +467,33 @@ action:
 
 	for _, tc := range []struct {
 		name, pattern, resource string
-		partial                 bool
 	}{
 		// One of the two files the rewrite touches is denied: neither is written.
-		{"one denied file", "file:scripts.yaml", "file:scripts.yaml", false},
+		{"one denied file", "file:scripts.yaml", "file:scripts.yaml"},
 		// R-3: the change in automations.yaml also maps to its typed owner.
-		{"typed owner", "automation:" + autoID, "automation:" + autoID + "/config", false},
-		// D-66: a file is addressed whole, so a denied block it does not even
-		// rewrite refuses the edit of the file.
-		{"denied block elsewhere in the file", "file:scripts.yaml/block/pg_policy_untouched", "file:scripts.yaml", true},
+		{"typed owner", "automation:" + autoID, "automation:" + autoID + "/config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			policy := pgE2EPolicy(fmt.Sprintf("    deny:\n      %q: [edit]\n", tc.pattern))
 			assertE2ERefused(t, policyE2EDir(t, policy), args, e2eDenied{
-				Resource: tc.resource, Verb: "edit", Partial: tc.partial,
+				Resource: tc.resource, Verb: "edit",
 				Rule: fmt.Sprintf("deny %q [edit]", tc.pattern),
 				Line: policyLineOfE2E(t, policy, fmt.Sprintf("%q", tc.pattern)),
 			})
 			untouched(t)
 		})
 	}
+
+	// D-110, refining D-66: no command edits a block on its own, so edit does
+	// not apply where a block deny sits and the file edit is not partly
+	// denied by it — the preview passes and names no denial.
+	blockDeny := pgE2EPolicy("    deny:\n      \"file:scripts.yaml/block/pg_policy_untouched\": [edit]\n")
+	if stdout, stderr, code := runPolicyE2E(t, policyE2EDir(t, blockDeny), nil, args...); code != 0 ||
+		!strings.Contains(stdout, "checked, allowed (profile "+pgE2EProfile+")") {
+		t.Errorf("hactl %v under a block deny: exit %d, want an allowed preview (D-110)\nstdout:\n%s\nstderr:\n%s",
+			args, code, stdout, stderr)
+	}
+	untouched(t)
 
 	assertE2EAllowed(t, policyE2EDir(t, openE2EPolicy), args...)
 	for _, file := range []string{"automations.yaml", "scripts.yaml"} {
