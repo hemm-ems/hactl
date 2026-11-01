@@ -111,6 +111,7 @@ var unidentifiedWireStructs = map[string]string{
 
 	// ---- list wrappers: an empty list is the answer, the elements carry identity ----
 	"HelpersResponse":     "empty list is a legitimate answer; HelperDefinition elements are checked",
+	"TemplatesResponse":   "empty list is a legitimate answer; TemplateDefinition elements are checked",
 	"ConfigFilesResponse": "empty list is a legitimate answer; the entries are bare strings",
 	"RefEntitiesResponse": "empty list is a legitimate answer; RefEntity elements are checked",
 	"LogsResponse":        "empty list is a legitimate answer; LogEntry elements are checked",
@@ -334,6 +335,10 @@ var identityFieldEvidence = map[string]string{
 		"--domain parameter, both members of _ENTITY_DOMAINS, so it is never a legal empty string. " +
 		"unique_id is deliberately NOT an identity here: the route rejects a missing unique_id KEY " +
 		"but not an empty unique_id STRING",
+	"TemplateDefinition.domain": "contract 2026-11-01: read out of the emitting route " +
+		"(companion routes/templates.py _extract_entities) — domain is the block key the entity " +
+		"was found under, iterated from _ENTITY_DOMAINS, so it is never a legal empty string. " +
+		"unique_id is deliberately NOT an identity: the route lists an entity without one as \"\"",
 	"TemplateResponse.unique_id":     inheritedUnprobed,
 	"TraceSummary.domain":            inheritedUnprobed,
 	"TraceSummary.item_id":           inheritedUnprobed,

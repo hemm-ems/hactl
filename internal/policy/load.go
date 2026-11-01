@@ -507,6 +507,7 @@ func (w *walker) where(pr *profile, what string, n *yaml.Node) {
 		}
 		sel, ok := w.selector(kv.val, pat)
 		if ok {
+			sel.Line = kv.key.Line
 			target.Where = sel
 		}
 	}

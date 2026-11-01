@@ -3936,6 +3936,20 @@
    "facts_ref": "house"
   },
   {
+   "id": "comp-read-config-templates",
+   "why": "a read row: mapped, enforcement is phase 3 (policy lint's template enumeration, D-116)",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/templates"
+   },
+   "expect": {
+    "disposition": "read-deferred",
+    "row": "companion GET /v1/config/templates"
+   },
+   "facts_ref": "house"
+  },
+  {
    "id": "comp-read-config-template",
    "why": "a read row: mapped, enforcement is phase 3",
    "request": {
@@ -4095,21 +4109,6 @@
     "disposition": "unmapped",
     "row": "",
     "refused": true
-   },
-   "facts_ref": "house"
-  },
-  {
-   "id": "comp-dead-list-templates",
-   "why": "D-81: ListTemplates is deleted; an unmapped GET, allowed in phase 2",
-   "request": {
-    "transport": "companion",
-    "method": "GET",
-    "path": "/v1/config/templates"
-   },
-   "expect": {
-    "disposition": "unmapped",
-    "row": "",
-    "refused": false
    },
    "facts_ref": "house"
   },

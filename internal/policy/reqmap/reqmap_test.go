@@ -585,6 +585,7 @@ var readVectors = []vector{
 	{name: "ref scan", req: comp("GET", "/v1/ref/scan?target=light.kitchen", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/scan", checks: []string{"read file:*"}},
 	{name: "ref grep", req: comp("GET", "/v1/ref/grep?term=x", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/grep", checks: []string{"read file:*"}},
 	{name: "ref entities", req: comp("GET", "/v1/ref/entities", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/entities", checks: []string{"read file:*"}},
+	{name: "template list", req: comp("GET", "/v1/config/templates", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/templates", checks: []string{"read template:*"}},
 	{name: "template read", req: comp("GET", "/v1/config/template?id=t1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/template", checks: []string{"read template:t1/config"}},
 	{name: "script read", req: comp("GET", "/v1/config/script?id=s1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/script", checks: []string{"read script:s1/config"}},
 	{name: "automation read", req: comp("GET", "/v1/config/automation?id=a1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/automation", checks: []string{"read automation:a1/config"}},

@@ -273,6 +273,18 @@ func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun b
 
 // --- Template CRUD ---
 
+// ListTemplates calls GET /v1/config/templates: every template entity the
+// companion's template files define. `policy lint` checks template: rules
+// against their unique_ids (D-116).
+func (c *Client) ListTemplates(ctx context.Context) (*TemplatesResponse, error) {
+	data, err := c.doGet(ctx, "/v1/config/templates", nil)
+	if err != nil {
+		return nil, err
+	}
+	var r TemplatesResponse
+	return &r, decodeResponse("/v1/config/templates", data, &r)
+}
+
 // GetTemplate calls GET /v1/config/template?id=<id>.
 func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse, error) {
 	q := url.Values{"id": {id}}

@@ -31,6 +31,18 @@ const (
 	// match is denied for that verb by a deny in the same profile — it can
 	// never decide.
 	CodeUnreachable = "unreachable"
+	// CodeNoEffect: an allow naming control on an automation, helper or
+	// template address. Control there is checked for denies only (D-107), so
+	// the allow grants nothing for it (D-111).
+	CodeNoEffect = "no-effect"
+	// CodeSelfGrant: under `default: deny`, a narrowed allow whose `where:`
+	// another allow of the profile lets the agent satisfy itself — by editing
+	// the labels or the area the selector reads (D-114).
+	CodeSelfGrant = "self-grant"
+	// CodeHalfProtected: a deny protects an automation's, script's, helper's
+	// or template's config but not the entity it owns, or the entity but not
+	// the config (D-115).
+	CodeHalfProtected = "half-protected"
 )
 
 // Finding is one lint result.
@@ -51,8 +63,7 @@ type Finding struct {
 // error (whose text is the reason then). Tests compare against these.
 const (
 	// ReasonNotEnumerated: the inventory does not list the kind
-	// (ErrNotEnumerated) — template, helper, config_entry and file in this
-	// version.
+	// (ErrNotEnumerated) — file in this version (D-116).
 	ReasonNotEnumerated = "not enumerated"
 	// ReasonNoLive: Lint ran without an inventory.
 	ReasonNoLive = "no live instance"
@@ -64,6 +75,15 @@ const (
 	// ReasonAttrsNotEnumerated: the rule names `attr/<name>` and the inventory
 	// cannot list attributes (it is not an AttributeInventory).
 	ReasonAttrsNotEnumerated = "attributes not enumerated"
+	// ReasonCounterpartNotResolved: a deny CodeHalfProtected looks at whose
+	// counterpart — the entity a typed entry owns, or the typed entry owning
+	// an entity — could not be resolved, because the registries could not be
+	// read (D-115).
+	ReasonCounterpartNotResolved = "counterpart not resolved"
+	// ReasonSelfGrantNotResolved: a narrowed allow CodeSelfGrant looks at
+	// whose matched entities' or devices' areas could not be resolved,
+	// because the registries could not be read (D-114).
+	ReasonSelfGrantNotResolved = "self-grant not resolved"
 )
 
 // Unchecked records something lint could not check against the live
@@ -95,6 +115,18 @@ type LintReport struct {
 // ErrNotEnumerated is what an Inventory returns for a kind it does not list.
 // Lint turns it into an Unchecked entry with the reason ReasonNotEnumerated.
 var ErrNotEnumerated = errors.New("policy: kind not enumerated")
+
+// PartialError is what an Inventory returns, beside the ids it could read,
+// when one of a kind's sources answered and another failed — helper without
+// the companion lists its storage half (D-116). Lint lists the kind Unchecked
+// with Err's text and draws from the partial list only what a missing id
+// cannot make false: no rule is no-match or unreachable against it, but a
+// live match in it is a real one (CodeHalfProtected).
+type PartialError struct{ Err error }
+
+func (e *PartialError) Error() string { return e.Err.Error() }
+
+func (e *PartialError) Unwrap() error { return e.Err }
 
 // Inventory lists the live ids of a kind, for CodeNoMatch and
 // CodeUnreachable. The CLI implements it over Home Assistant (manual: which
@@ -139,11 +171,23 @@ type AttributeInventory interface {
 //     path is no longer than the allow's, each literal allow segment matches
 //     the deny's segment, and each wildcard allow segment faces a deny
 //     segment of only `*`. `where:` is ignored here: a deny wins regardless.
+//   - CodeNoEffect for every allow rule on an automation, helper or template
+//     address without a sub-resource whose written verbs name `control`
+//     (D-111). A `write` there is not flagged: its edit, create and delete
+//     grant.
+//   - CodeNoMatch for every `where:` value — area against the area registry,
+//     label against the label registry, by id or name with the shared glob —
+//     that matches nothing, on the line of the `where:` entry (D-113). A
+//     value of only `*` counts as checked.
+//   - CodeSelfGrant and CodeHalfProtected from the registries (see
+//     RegistryInventory, selfGrant and halfProtected).
 //   - Unchecked for every kind that some rule names and inv cannot list
 //     (inv nil: every such kind, ReasonNoLive), and for every rule holding a
 //     free sub-resource segment other than `attr/<name>` that holds a literal
 //     character (ReasonSubNotChecked), whether or not its kind is enumerated;
-//     a segment of only `*` (`*`, `**`) counts as checked (D-65).
+//     a segment of only `*` (`*`, `**`) counts as checked (D-65). A `where:`
+//     value's registry that could not be read lists its kind (area, label)
+//     like any other, once.
 //
 // A Policy with no file reports nothing. Lint never errors: an inventory
 // failure is an Unchecked entry, not a failed lint.
@@ -159,7 +203,7 @@ func Lint(p *Policy, inv Inventory) LintReport {
 				"and no default profile, so none of them is in effect: everything is allowed",
 		})
 	}
-	l := &linter{inv: inv}
+	l := &linter{inv: inv, pol: p}
 	l.enumerate(p)
 	for _, pr := range p.profiles {
 		l.profile(pr)
@@ -173,11 +217,16 @@ func Lint(p *Policy, inv Inventory) LintReport {
 // linter carries one Lint run's live data and results.
 type linter struct {
 	inv  Inventory
+	pol  *Policy
 	live map[Kind][]string
+	// partial marks a kind whose live ids came with a *PartialError.
+	partial map[Kind]bool
 
 	attrsAsked bool
 	attrs      map[string][]string
 	attrsErr   string
+
+	regs registryCache
 
 	findings []Finding
 	kinds    []Unchecked
@@ -203,6 +252,7 @@ func (l *linter) enumerate(p *Policy) {
 		}
 	}
 	l.live = map[Kind][]string{}
+	l.partial = map[Kind]bool{}
 	for _, k := range Kinds() {
 		if !named[k] {
 			continue
@@ -212,9 +262,16 @@ func (l *linter) enumerate(p *Policy) {
 			continue
 		}
 		ids, err := l.inv.IDs(k)
+		var partial *PartialError
 		switch {
 		case errors.Is(err, ErrNotEnumerated):
 			l.kinds = append(l.kinds, Unchecked{Kind: k, Reason: ReasonNotEnumerated})
+		case errors.As(err, &partial):
+			l.kinds = append(l.kinds, Unchecked{Kind: k, Reason: partial.Err.Error()})
+			sorted := append([]string(nil), ids...)
+			sort.Strings(sorted)
+			l.live[k] = sorted
+			l.partial[k] = true
 		case err != nil:
 			l.kinds = append(l.kinds, Unchecked{Kind: k, Reason: err.Error()})
 		default:
@@ -241,21 +298,23 @@ func (l *linter) profile(pr *profile) {
 			finding(CodeRedundantAllow, "profile "+strconv.Quote(pr.name)+" has no default: deny, so it already allows "+
 				"whatever no deny matches: this allow (and any where: on it) decides nothing")
 		}
+		if msg := noEffect(r); msg != "" {
+			finding(CodeNoEffect, msg)
+		}
+		if r.Where != nil {
+			l.whereValues(pr, r)
+		}
 		if r.addr.any {
 			continue
 		}
 		if r.addr.hasUncheckableSub() {
 			unchecked(ReasonSubNotChecked)
 		}
-		ids, enumerated := l.live[r.addr.kind]
+		// A partial list proves a match, never the absence of one: nothing
+		// below is drawn from it (matchedIDs reports it not enumerated).
+		matched, enumerated := l.matchedIDs(r.addr)
 		if !enumerated {
 			continue
-		}
-		var matched []string
-		for _, id := range ids {
-			if r.addr.matchID(id) {
-				matched = append(matched, id)
-			}
 		}
 		if len(matched) == 0 {
 			finding(CodeNoMatch, "matches no "+string(r.addr.kind)+" on this instance")
@@ -281,6 +340,36 @@ func (l *linter) profile(pr *profile) {
 			}
 		}
 	}
+	l.selfGrant(pr)
+	l.halfProtected(pr)
+}
+
+// noEffect is CodeNoEffect's message for rule r, "" when r is not a control
+// allow on an automation, helper or template address (D-111). The entity
+// pattern it suggests is the one a service call on such an entity is decided
+// on: the automation domain, the helper pattern's domain (`*` when it holds a
+// wildcard), or any domain for a template entity.
+func noEffect(r Rule) string {
+	if r.Effect != Allow || r.addr.any || len(r.addr.sub) > 0 || !slices.Contains(r.Written, Control.String()) {
+		return ""
+	}
+	var entity string
+	switch r.addr.kind {
+	case KindAutomation:
+		entity = "entity:automation.*"
+	case KindHelper:
+		domain := r.addr.id[0]
+		if glob.HasWildcard(domain) {
+			domain = "*"
+		}
+		entity = "entity:" + domain + ".*"
+	case KindTemplate:
+		entity = "entity:*.*"
+	default:
+		return ""
+	}
+	return "control on " + r.Pattern + " is checked for denies only, so this allow grants nothing for control — " +
+		"grant switching on the entity instead: allow " + strconv.Quote(entity) + ": [control], and its service"
 }
 
 // anyAttr reports whether one of the entities has an attribute matching the

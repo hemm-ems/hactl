@@ -205,6 +205,25 @@ type RefChange struct {
 	Reformatted bool `json:"reformatted,omitempty"`
 }
 
+// TemplateDefinition is one template entity in GET /v1/config/templates.
+type TemplateDefinition struct {
+	// UniqueID is "" for an entity without one: HA does not require it, and
+	// the companion lists such an entity rather than skipping it.
+	UniqueID          string `json:"unique_id"`
+	Name              string `json:"name"`
+	Domain            string `json:"domain"`
+	State             string `json:"state"`
+	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
+	DeviceClass       string `json:"device_class,omitempty"`
+	// Trigger is true when the entity lives in a trigger-based `template:` block.
+	Trigger bool `json:"trigger,omitempty"`
+}
+
+// TemplatesResponse is the response from GET /v1/config/templates.
+type TemplatesResponse struct {
+	Templates []TemplateDefinition `json:"templates"`
+}
+
 // TemplateResponse is the response from GET /v1/config/template.
 type TemplateResponse struct {
 	UniqueID string `json:"unique_id"`

@@ -4,6 +4,9 @@
     "inventory": {
       "entity": [
         "light.kitchen"
+      ],
+      "area": [
+        "wohnzimmer"
       ]
     },
     "findings": [

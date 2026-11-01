@@ -149,6 +149,7 @@ var (
 		compRow("GET", "/v1/ref/scan", ReadDeferred, readListing("file", "")),
 		compRow("GET", "/v1/ref/grep", ReadDeferred, readListing("file", "")),
 		compRow("GET", "/v1/ref/entities", ReadDeferred, readListing("file", "")),
+		compRow("GET", "/v1/config/templates", ReadDeferred, readListing("template", "")),
 		compRow("GET", "/v1/config/template", ReadDeferred, readQueryID("template", "id", "config")),
 		compRow("GET", "/v1/config/script", ReadDeferred, readQueryID("script", "id", "config")),
 		compRow("GET", "/v1/config/automation", ReadDeferred, readQueryID("automation", "id", "config")),

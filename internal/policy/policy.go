@@ -332,6 +332,9 @@ type Where struct {
 	// the resource itself (an entity's own labels — HA does not inherit
 	// labels from the device, H-8).
 	Label []string
+	// Line is the 1-based line of the selector's key under `where:` — where
+	// lint reports a value that matches nothing (D-113).
+	Line int
 }
 
 // Text renders the selector: `area=<v>` then `label=<v>`, each present only

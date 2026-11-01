@@ -11,8 +11,8 @@ import "github.com/hemm-ems/hactl/internal/degeneracy"
 // property there degrades exactly like the HA wire does: zero values, no error,
 // a rendered table of blanks. The identities below make that loud instead.
 //
-// List wrappers (ConfigFilesResponse, HelpersResponse, RefEntitiesResponse,
-// LogsResponse) have no method on purpose: an empty list is a legitimate
+// List wrappers (ConfigFilesResponse, HelpersResponse, TemplatesResponse,
+// RefEntitiesResponse, LogsResponse) have no method on purpose: an empty list is a legitimate
 // answer, and poisoning it would turn "no helpers configured" into a failure.
 // Their *elements* carry the identity instead, which is where a wire-shape
 // change actually shows.
@@ -129,6 +129,16 @@ func (c *RefChange) Identity() []degeneracy.Field {
 		{Name: "before", Value: &c.Before},
 		{Name: "after", Value: &c.After},
 	}
+}
+
+// Identity reports the template entity's domain — the `template:` block key it
+// was found under, which the companion always fills from _ENTITY_DOMAINS.
+//
+// unique_id is deliberately excluded: HA does not require one on a template
+// entity, and the companion reports such an entity with an empty unique_id
+// rather than skipping it. An entity nothing can address is a real answer.
+func (d *TemplateDefinition) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "domain", Value: &d.Domain}}
 }
 
 // Identity reports which template definition was returned.
