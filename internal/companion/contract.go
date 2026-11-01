@@ -36,6 +36,7 @@ var Endpoints = []Endpoint{
 	{"GET", "/v1/ref/grep", &RefGrepResponse{}},
 	{"GET", "/v1/ref/entities", &RefEntitiesResponse{}},
 	{"POST", "/v1/ref/replace", &RefReplaceResponse{}},
+	{"GET", "/v1/config/templates", &TemplatesResponse{}},
 	{"GET", "/v1/config/template", &TemplateResponse{}},
 	{"POST", "/v1/config/template", &TemplateCreateResponse{}},
 	{"DELETE", "/v1/config/template", &ConfigDeleteResponse{}},
@@ -68,7 +69,6 @@ var Endpoints = []Endpoint{
 // beside Endpoints so the unit tier and the companion tier
 // (TestSpecPathCountMatchesClient) read one list, never two (TC-7).
 var NeverCalledSpecPaths = map[string]string{
-	"/v1/config/templates":   "no command lists the companion's template definitions; one is read with GET /v1/config/template",
 	"/v1/config/scripts":     "no command lists the companion's script definitions; one is read with GET /v1/config/script",
 	"/v1/config/automations": "no command lists the companion's automation definitions; one is read with GET /v1/config/automation",
 	"/v1/ha/reload/{domain}": "the companion reloads inside its own write routes, and the reloads hactl sends itself are HA service calls",

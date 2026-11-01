@@ -238,6 +238,25 @@ func (i fixtureInventory) IDs(kind policy.Kind) ([]string, error) {
 	return nil, policy.ErrNotEnumerated
 }
 
+// Refs and Registries make the fixture a policy.RegistryInventory: the areas
+// and labels a `where:` value is checked against are the inventory's area and
+// label ids (no names), and the vectors model no registry rows.
+func (i fixtureInventory) Refs(kind policy.Kind) ([]policy.Ref, error) {
+	ids, err := i.IDs(kind)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]policy.Ref, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, policy.Ref{ID: id})
+	}
+	return refs, nil
+}
+
+func (i fixtureInventory) Registries() (*policy.Registries, error) {
+	return &policy.Registries{}, nil
+}
+
 // --- the runner -------------------------------------------------------------
 
 func loadVectors(t *testing.T) []string {

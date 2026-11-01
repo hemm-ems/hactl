@@ -290,7 +290,8 @@ type AutomationResponse struct {
 > As first designed. `WriteConfigFile`, `ListTemplates`, `WriteTemplate`,
 > `ListScriptDefs`, `ListAutomationDefs`, `UpdateHelper` and `ReloadDomain` had no
 > product caller and were deleted on 2026-11-01 (`docs/decisions.md` D-81); their
-> routes stay in the companion and its spec.
+> routes stay in the companion and its spec. `ListTemplates` came back the same
+> day as `policy lint`'s template enumeration (D-116).
 
 ```go
 // Health

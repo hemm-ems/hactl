@@ -532,12 +532,12 @@ companion POST /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 companion DELETE /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 
 # (PUT /v1/config/helper, PUT /v1/config/file, PUT /v1/config/template,
-# POST /v1/ha/reload/{domain}, GET /v1/config/templates|scripts|automations:
-# no rows — their client methods have no product caller and are deleted in
-# phase 2, D-81. GET /v1/config/templates comes back with `policy lint`'s
-# template enumeration (D-116): its row — read-deferred-phase3, a listing —
-# its classifier row and its vector arrive in the same change as the call. The companion's implicit reload inside its own write routes
-# is not a request hactl sends and is not checked; documented.)
+# POST /v1/ha/reload/{domain}, GET /v1/config/scripts|automations: no rows —
+# their client methods have no product caller and are deleted in phase 2,
+# D-81. GET /v1/config/templates came back with `policy lint`'s template
+# enumeration (D-116); its row is below. The companion's implicit reload
+# inside its own write routes is not a request hactl sends and is not
+# checked; documented.)
 
 # map: edit system:wireguard (the tunnel is not addressable).
 companion POST /v1/wireguard/config = proven: TestEveryWriteRequestHasAMapping
@@ -577,6 +577,10 @@ companion GET /v1/ref/grep = debt: read-deferred-phase3 — a wide read, row fil
 
 # map: read-deferred-phase3, wide read; each row file:{location}.
 companion GET /v1/ref/entities = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+
+# map: read-deferred-phase3 listing template:{unique_id} per row. Sent by
+# `policy lint` to enumerate template ids (D-116), a read.
+companion GET /v1/config/templates = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
 
 # map: read-deferred-phase3 template:{id}/config.
 companion GET /v1/config/template = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3

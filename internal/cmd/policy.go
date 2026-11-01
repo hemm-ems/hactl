@@ -487,6 +487,12 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 	for _, d := range verdict.PartialDenies {
 		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
 	}
+	// An allow reads like a grant there, but enforcement never consults it
+	// (D-111): the verdict stands, the note says what it is worth.
+	if denyOnlyControl(res, v) && verdict.Allowed && verdict.Line > 0 && strings.HasPrefix(verdict.Rule, string(policy.Allow)+" ") {
+		doc.Notes = append(doc.Notes, "control on "+doc.Resource+
+			" is checked for its denies only — this allow grants nothing; a service call is decided by the entity's own verdict")
+	}
 	// A write verb no command asks for at or below the resource answers as
 	// any other, and says so (D-110).
 	if v != policy.Read && !slices.Contains(policy.ApplicableAtOrBelow(res), v) {
@@ -716,8 +722,9 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allo
 
 // haInventory lists live ids for lint (manual "policy lint"). Every
 // Home Assistant source is fetched at most once, on demand: the states once
-// (entity ids, automation config ids, script ids and attributes all come from
-// it), the WebSocket connection once. After the first transport failure —
+// (entity ids, automation config ids, script ids, storage helpers and
+// attributes all come from it), the WebSocket connection once. The companion
+// adds the YAML helpers and the templates (policy_inventory.go). After the first transport failure —
 // refused, timed out — it stops asking: every later Home Assistant-backed
 // question answers with that same error, so a stalled host costs one
 // --timeout, not one per kind. Any other failure makes only its own kind
@@ -736,6 +743,9 @@ type haInventory struct {
 	ws     *haapi.WSClient
 	wsDone bool
 	wsErr  error
+
+	// companionErr is the companion's connection failure, once there was one.
+	companionErr error
 }
 
 var _ policy.AttributeInventory = (*haInventory)(nil)
@@ -764,6 +774,12 @@ func (h *haInventory) IDs(kind policy.Kind) ([]string, error) {
 		return h.scriptIDs()
 	case policy.KindService:
 		return h.serviceIDs()
+	case policy.KindHelper:
+		return h.helperIDs()
+	case policy.KindTemplate:
+		return h.templateIDs()
+	case policy.KindConfigEntry:
+		return h.configEntryIDs()
 	}
 	return nil, policy.ErrNotEnumerated
 }

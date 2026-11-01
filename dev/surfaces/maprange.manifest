@@ -69,6 +69,7 @@ internal/realdata/bootability.go:ExclusionReport = proven: TestExclusionReportIs
 
 # --- the policy request classifier (internal/policy/reqmap) -------------------
 internal/policy/reqmap/types.go:(*checkSet).list = proven: TestServiceChecksAreSortedAndUnique
+internal/policy/lint_registry.go:sortedKeys = exempt: the walk builds a slice that is sort.Strings'd before it is returned
 internal/policy/reqmap/dashboard.go:DiffDashboard = proven: TestDiffDashboard
 internal/policy/reqmap/service.go:serviceReach = proven: TestServiceCallMapping
 internal/policy/reqmap/service.go:walkData = exempt: the walk only collects the mapping's keys, which are sort.Strings'd before any is visited

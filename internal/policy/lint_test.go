@@ -10,6 +10,11 @@ import (
 type fakeInventory struct {
 	ids  map[Kind][]string
 	errs map[Kind]error
+	// refs are the areas and labels by kind; reg the registry rows (none
+	// when nil); regErr fails Registries.
+	refs   map[Kind][]Ref
+	reg    *Registries
+	regErr error
 }
 
 func (f fakeInventory) IDs(k Kind) ([]string, error) {
@@ -20,6 +25,26 @@ func (f fakeInventory) IDs(k Kind) ([]string, error) {
 		return ids, nil
 	}
 	return nil, ErrNotEnumerated
+}
+
+func (f fakeInventory) Refs(k Kind) ([]Ref, error) {
+	if err, ok := f.errs[k]; ok {
+		return nil, err
+	}
+	if refs, ok := f.refs[k]; ok {
+		return refs, nil
+	}
+	return nil, ErrNotEnumerated
+}
+
+func (f fakeInventory) Registries() (*Registries, error) {
+	if f.regErr != nil {
+		return nil, f.regErr
+	}
+	if f.reg == nil {
+		return &Registries{}, nil
+	}
+	return f.reg, nil
 }
 
 func codes(rep LintReport) []string {

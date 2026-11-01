@@ -97,9 +97,10 @@ type requestVectorFile struct {
 // deadRoutes are the request keys of the client methods D-81 deletes. None may
 // come back as a manifest row; testdata/policy/requests/vectors.json holds a
 // vector for each asserting it is unmapped (comp-dead-*, rest-dead-*).
+// `companion GET /v1/config/templates` came back with `policy lint`'s
+// template enumeration (D-116) and is a mapped read row again.
 var deadRoutes = []string{
 	"companion PUT /v1/config/file",
-	"companion GET /v1/config/templates",
 	"companion PUT /v1/config/template",
 	"companion GET /v1/config/scripts",
 	"companion GET /v1/config/automations",
