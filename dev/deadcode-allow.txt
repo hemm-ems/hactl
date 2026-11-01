@@ -26,7 +26,6 @@ internal/policy/reqmap/rows.go Rows             # harness: the classifier's row 
 internal/policy/reqmap/types.go Disposition.String  # harness: names a disposition in the classifier's tests and the gate's reports
 
 # --- orphan ------------------------------------------------------------------
-internal/policy/reqmap/companionmap.go LocationsOutsidePlan  # orphan: the after-the-fact report of a confirmed ref/replace that wrote outside its checked plan (D-77) — wired by the ref family in stage 2b
 # The trace/log disk cache (internal/cache.Store) is written and read by nothing
 # in the binary. Its six read/write methods are kept alive entirely by
 # store_test.go. Either `auto show`/`log` start using it or the subsystem goes.

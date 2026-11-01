@@ -580,7 +580,7 @@ func init() {
 		return confirmedCoverageCase{name: name, args: args, ws: ws, http: handlers}
 	}
 	apply := coverage("script apply", reachOf(), "script", "apply", "morning", "-f", "<file>", "--confirm")
-	apply.setup = func(t *testing.T, ts *cmdTestServer, args []string) {
+	apply.setup = func(t *testing.T, ts *cmdTestServer, args []string) []string {
 		t.Helper()
 		pointAtCompanion(t, ts)
 		file := filepath.Join(ts.dir, "morning.yaml")
@@ -588,6 +588,7 @@ func init() {
 			t.Fatal(err)
 		}
 		args[slices.Index(args, "<file>")] = file
+		return args
 	}
 	confirmedCoverageCases = append(confirmedCoverageCases,
 		coverage("svc call on an area", reachOf("light.a", "lock.door"),

@@ -24,6 +24,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/glob"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
 )
 
 var (
@@ -1527,12 +1528,31 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 			strings.Join(scope.unreadSources(), " and "), renameScopeDetail(scope))
 	}
 
+	// The plan (E-5 + E-7, D-77), checked in the preview and again before the
+	// registry update, which is the first write: the rename itself and every
+	// resource the reference rewrite after it touches. With no profile nothing
+	// is asked or checked (D-58).
+	var note *planPolicyNote
+	var checked *refCheckedPlan
+	if policySession != nil {
+		plan := newWritePlan("rename entity").
+			add(policy.Edit, policy.KindEntity, oldID, "registry/entity_id").
+			add(policy.Create, policy.KindEntity, newID, "")
+		if checked, err = addRenameReferences(ctx, plan, src, oldID, newID); err != nil {
+			return err
+		}
+		if note, err = checkWritePlan(w, !flagEntConfirm, plan); err != nil {
+			return err
+		}
+	}
+
 	if !flagEntConfirm {
 		return dryRun("rename entity").
 			with("entity_id", oldID).
 			with("new_entity_id", newID).
 			withIf(entry.Platform != "", "platform", entry.Platform).
 			with("references", refs).
+			withPolicy(note).
 			withHint("use --confirm to rename the registry entry and rewrite every reference "+
 				"(reference detail: hactl ref scan "+oldID+")").
 			render(w)
@@ -1545,12 +1565,33 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 		_, _ = fmt.Fprintf(w, "renamed registry entry %s -> %s\n", oldID, newID)
 	}
 
-	if err := refReplaceWithOptions(ctx, w, oldID, newID, true, flagEntRenameAllowPartial); err != nil {
+	if err := refReplaceRun(ctx, w, oldID, newID, true, flagEntRenameAllowPartial, checked); err != nil {
+		var refusal *enforce.DeniedError
+		if errors.As(err, &refusal) {
+			return err // its report already said what was written (D-77)
+		}
 		return fmt.Errorf("registry entry renamed to %s, but the reference rewrite failed: %w — "+
 			"references may still point at %s; re-run 'hactl ref replace %s %s --confirm' (idempotent)",
 			newID, err, oldID, oldID, newID)
 	}
 	return nil
+}
+
+// addRenameReferences declares the reference half of a rename, under a
+// profile: the companion's dry run of the rewrite and every dashboard it would
+// change, as `ref replace` checks them (D-77) — computed before the registry
+// update so the whole rename is refused before anything is written (E-7).
+func addRenameReferences(ctx context.Context, plan *writePlan, src *refSources, oldID, newID string) (*refCheckedPlan, error) {
+	dashboards, err := src.ws.DashboardList(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing dashboards: %w", err)
+	}
+	dashPlans, _ := planDashboardReplacements(ctx, src.ws, dashboards, oldID, newID)
+	dry, err := src.cc.RefReplace(ctx, oldID, newID, true)
+	if err != nil {
+		return nil, fmt.Errorf("companion ref replace: %w", err)
+	}
+	return addRefReplace(ctx, plan, src.cc, oldID, newID, dry.Changes, dashPlans), nil
 }
 
 // renameScopeDetail names what went unread, one clause per source, so the

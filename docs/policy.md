@@ -217,7 +217,7 @@ written:
 
 ```console
 $ hactl ref replace light.old light.new
-policy_denied: would replace references — refused by policy, nothing was written
+policy_denied: would rename "light.old" to "light.new" — refused by policy, nothing was written
   denied: edit file:packages/locks.yaml — deny "file:packages/lock*" [write] (line 15)
   denied: edit dashboard:security — deny "dashboard:security" [write] (line 16)
   checked: 41 resources, 2 denied
@@ -271,6 +271,14 @@ A few things worth knowing:
   whose `id:` differs from the target renames the automation, so it needs
   `create` on the new id; a file with no `id:` at all is refused. `ref replace`
   that rewrites an automation's `id:` is a rename too.
+- **A rewritten file is also checked as what is in it.** `ref replace` (and
+  `ent rename`) reads each file it would rewrite to see which automation,
+  script or template entity every change lies in, and needs `edit` on that
+  entry's config as well as on the file. If hactl cannot read the file, or
+  cannot find the change in it, the rewrite is refused rather than checked as
+  the file alone. A change hactl cannot place in such an entry — an
+  automation without an `id:`, a template entity without a `unique_id` — is
+  checked as its file only.
 - **Partly denied means denied.** If an entity is allowed but its
   `registry/entity_id` is denied, a command that would change the whole entity
   is refused. hactl writes at the finest level it can — `ent set-label` checks

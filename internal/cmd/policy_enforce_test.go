@@ -462,8 +462,8 @@ type confirmedCoverageCase struct {
 	ws   map[string]any
 	http map[string]http.HandlerFunc
 	// setup, when set, prepares the rig before the run (a companion .env, an
-	// input file) and may rewrite the run's own copy of args.
-	setup func(t *testing.T, ts *cmdTestServer, args []string)
+	// input file) and returns the args to run (it gets its own copy).
+	setup func(t *testing.T, ts *cmdTestServer, args []string) []string
 	// start, when set, builds the instance instead of startCmdServer(ws,
 	// http) and returns its directory and the full args to run (a family's
 	// own rig: a companion beside Home Assistant, files to pass with -f).
@@ -522,7 +522,7 @@ func TestEveryConfirmedRequestIsInThePlan(t *testing.T) {
 				ts := startCmdServer(t, tc.ws, tc.http)
 				dir = ts.dir
 				if tc.setup != nil {
-					tc.setup(t, ts, args)
+					args = tc.setup(t, ts, args)
 				}
 			}
 			writePolicyFile(t, dir, policyAllowEverything)

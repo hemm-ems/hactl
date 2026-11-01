@@ -2385,3 +2385,24 @@ must go red on exactly that command.
   (TestRegistryFamilyWithoutAProfileAsksNothingMore); all eighteen write
   runs registered in TestEveryConfirmedRequestIsInThePlan — watched to fail
   by dropping `area delete`'s cascade and `ent set-label`'s field.
+  Built in stage 2b, the multi-target writes (2026-11-01): `ref replace` and
+  `ent rename` check the companion's dry run of the rewrite, each change
+  placed in the automation, script or template entry its path runs through
+  (D-77, R-3; a rewritten id or unique_id is a rename, E-5), before the first
+  write, and report a file written outside that plan after the fact (A-7);
+  the dash family checks per view (D-66) — TestRefReplaceRefusedByItsPlan,
+  TestRefReplaceChecksFileAndDashboardParts, TestRefReplaceIDRewriteIsARename,
+  TestRefReplaceUnplaceableChangeFailsClosed,
+  TestRefReplaceConfirmChecksADryRunFirst,
+  TestRefReplaceReportsAFileWrittenOutsideThePlan,
+  TestEntRenameRefusedByItsPlan, TestEntRenameConfirmChecksOncePerInvocation,
+  TestDashSaveRefusedByItsPlan, TestDashDefaultDashboardIsOneAddress,
+  TestDashReplaceCreateDeleteRefusedByTheirPlans,
+  TestBulkWritesWithoutAProfileAreUnchanged (D-58: the same bytes and the same
+  requests as before the policy, pinned against the pre-enforcement build),
+  the placement itself — TestRefChangeOwners and its siblings in
+  `internal/policy/reqmap` — and the six commands registered in
+  TestEveryConfirmedRequestIsInThePlan. Watched to fail: dropping the
+  dashboard part, the typed owners, the recorded plan, the confirmed run's
+  dry-run check, the dash save diff, the default dashboard's canonical id or
+  the written-outside-the-plan report each turned these red.
