@@ -135,6 +135,53 @@ var serviceVectors = []vector{
 		checks: []string{"control entity:light.hall", "control service:light.turn_off"},
 	},
 	{
+		name:  "a comma-separated list of entities in the data names each of them (D-73)",
+		req:   rest("POST", "/api/services/scene/create", `{"scene_id":"s","snapshot_entities":"light.kitchen, lock.front_door"}`),
+		facts: &reqmap.Facts{Live: liveStates},
+		disp:  reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.kitchen", "control entity:lock.front_door", "control service:scene.create"},
+	},
+	{
+		name: "entity_id: all on a homeassistant service is every live entity, even with a live homeassistant.* entity (R-1)",
+		req:  rest("POST", "/api/services/homeassistant/turn_off", `{"entity_id":"all"}`),
+		facts: &reqmap.Facts{Live: &reqmap.LiveStates{EntityIDs: []string{
+			"homeassistant.update_available", "light.kitchen", "lock.front_door",
+		}}},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control entity:homeassistant.update_available", "control entity:light.kitchen", "control entity:lock.front_door",
+			"control service:homeassistant.turn_off", "control service:light.turn_off", "control service:lock.turn_off",
+		},
+	},
+	{
+		name: "a script's run is looked up by its exact entity id, never a near-colliding one (D-84)",
+		req:  rest("POST", "/api/services/script/turn_on", `{"entity_id":"script.morning"}`),
+		facts: &reqmap.Facts{
+			Live:  &reqmap.LiveStates{EntityIDs: []string{"script.good_morning", "script.morning"}},
+			Reach: &reqmap.Reach{EntityIDs: []string{"script.morning"}},
+			Registries: &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+				{EntityID: "script.good_morning", UniqueID: "gm"},
+				{EntityID: "script.morning", UniqueID: "m"},
+			}},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control entity:script.morning", "control script:m/run", "control service:script.turn_on"},
+	},
+	{
+		name: "a script's run is looked up by its exact entity id, in either registry order",
+		req:  rest("POST", "/api/services/script/turn_on", `{"entity_id":"script.good_morning"}`),
+		facts: &reqmap.Facts{
+			Live:  &reqmap.LiveStates{EntityIDs: []string{"script.good_morning", "script.morning"}},
+			Reach: &reqmap.Reach{EntityIDs: []string{"script.good_morning"}},
+			Registries: &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+				{EntityID: "script.morning", UniqueID: "m"},
+				{EntityID: "script.good_morning", UniqueID: "gm"},
+			}},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control entity:script.good_morning", "control script:gm/run", "control service:script.turn_on"},
+	},
+	{
 		name:    "an error answer to the reach question refuses the call (D-73)",
 		req:     rest("POST", "/api/services/light/turn_on", `{"area_id":"kitchen"}`),
 		facts:   svcFacts(nil, errors.New("unknown_command")),
@@ -196,6 +243,10 @@ func TestReachQuery(t *testing.T) {
 		{"all beside an area keeps the area", `{"entity_id":"all","area_id":"x"}`, map[string]any{"area_id": []any{"x"}, "expand_group": true}},
 		{"no target", `{"message":"hi"}`, nil},
 		{"no body", ``, nil},
+		{"every value of a list selector is asked", `{"entity_id":["light.a","light.b"],"device_id":["d1","d2"]}`,
+			map[string]any{"entity_id": []any{"light.a", "light.b"}, "device_id": []any{"d1", "d2"}, "expand_group": true}},
+		{"a list at the top level and under target keeps every value of both", `{"entity_id":["light.a","light.b"],"target":{"entity_id":["light.c","light.d"]}}`,
+			map[string]any{"entity_id": []any{"light.a", "light.b", "light.c", "light.d"}, "expand_group": true}},
 	} {
 		got, err := reqmap.ReachQuery(rest("POST", "/api/services/light/turn_on", c.body))
 		if err != nil {
@@ -214,6 +265,7 @@ func TestReachQuery(t *testing.T) {
 		rest("POST", "/api/services/light/../turn_on", "{}"),
 		comp("POST", "/api/services/light/turn_on", "{}"),
 		rest("POST", "/api/services/light/turn_on", "[]"),
+		rest("POST", "/api/foo/bar/baz", "{}"),
 	} {
 		if _, err := reqmap.ReachQuery(req); err == nil {
 			t.Errorf("ReachQuery(%s %s %s) answered; it is no service call to ask about", req.Transport, req.Method, req.Path)

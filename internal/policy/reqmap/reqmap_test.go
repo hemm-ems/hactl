@@ -110,6 +110,12 @@ var writeVectors = []vector{
 		refused: "fail-closed: unmappable request",
 	},
 	{
+		name: "an entity registry update naming no field is still checked, as the registry entry whole",
+		req:  ws("config/entity_registry/update", map[string]any{"entity_id": "light.kitchen"}),
+		disp: reqmap.Write, row: "ws config/entity_registry/update",
+		checks: []string{"edit entity:light.kitchen/registry"},
+	},
+	{
 		name: "entity registry remove is delete entity",
 		req:  ws("config/entity_registry/remove", map[string]any{"entity_id": "automation.x"}),
 		disp: reqmap.Write, row: "ws config/entity_registry/remove",
@@ -120,6 +126,12 @@ var writeVectors = []vector{
 		req:  ws("config/device_registry/update", map[string]any{"device_id": "dev1", "area_id": "kitchen", "labels": []any{}, "name_by_user": "x"}),
 		disp: reqmap.Write, row: "ws config/device_registry/update",
 		checks: []string{"edit device:dev1/registry/area_id", "edit device:dev1/registry/labels", "edit device:dev1/registry/name_by_user"},
+	},
+	{
+		name: "a device registry update naming no field is still checked, as the registry entry whole",
+		req:  ws("config/device_registry/update", map[string]any{"device_id": "dev1"}),
+		disp: reqmap.Write, row: "ws config/device_registry/update",
+		checks: []string{"edit device:dev1/registry"},
 	},
 	{
 		name: "a device registry key the grammar lacks is refused",
@@ -682,6 +694,13 @@ func TestWholePathRule(t *testing.T) {
 		{name: "a GET that runs a flow step keeps its write row's mutating answer", req: rest("GET", "/api/config/config_entries/flow/..", ""), disp: reqmap.Unmappable, row: "rest GET /api/config/config_entries/flow/{flow_id}", refused: "fail-closed: unmappable request"},
 		{name: "a supervisor endpoint with a dot-dot slug", req: ws("supervisor/api", map[string]any{"endpoint": "/addons/../info", "method": "get"}), disp: reqmap.Unmappable, row: "ws supervisor/api GET /addons/{slug}/info", refused: "fail-closed: unmappable request"},
 		{name: "a path without a leading slash", req: rest("POST", "api/services/light/turn_on", "{}"), disp: reqmap.Unmappable, row: "rest POST /api/services/{domain}/{service}", refused: "fail-closed: unmappable request"},
+		{name: "a raw backslash in a write", req: rest("POST", `/api/config/config_entries/flow/a\b`, "{}"), disp: reqmap.Unmappable, row: "rest POST /api/config/config_entries/flow/{flow_id}", refused: "fail-closed: unmappable request"},
+		// A path that breaks R-8 and resembles no row keeps its method's own
+		// answer: anything but GET is mutating, so it is refused, never sent
+		// as an unmapped read.
+		{name: "a POST that breaks R-8 and resembles no row", req: rest("POST", "/api/events/../services/light/turn_on", "{}"), disp: reqmap.Unmappable, refused: "fail-closed: unmappable request rest POST"},
+		{name: "a DELETE with an encoded slash that resembles no row", req: rest("DELETE", "/api/foo%2Fbar", ""), disp: reqmap.Unmappable, refused: "fail-closed: unmappable request rest DELETE"},
+		{name: "a supervisor endpoint that breaks R-8 and resembles no row", req: ws("supervisor/api", map[string]any{"endpoint": "/foo/../bar", "method": "get"}), disp: reqmap.Unmappable, refused: "fail-closed: unmappable request ws supervisor/api"},
 	} {
 		checkVector(t, v)
 	}
@@ -769,8 +788,30 @@ func TestRefReplaceChecks(t *testing.T) {
 	if _, err := reqmap.RefReplaceChecks([]reqmap.PlanChange{{Location: "../secrets.yaml"}}); err == nil {
 		t.Error("a location with a dot-dot segment mapped; it must be unmappable (D-67)")
 	}
-	if _, err := reqmap.RefReplaceChecks([]reqmap.PlanChange{{Location: "a.yaml", Owner: &reqmap.TypedOwner{Kind: policy.KindEntity, ID: "light.x"}}}); err == nil {
-		t.Error("an entity as a typed owner mapped; only automation, script and template own file entries")
+	// The owner kind is checked by name, not left to the grammar: a helper's
+	// or a file's `<id>/config` parses, so only the kind check refuses it.
+	for _, owner := range []reqmap.TypedOwner{
+		{Kind: policy.KindEntity, ID: "light.x"},
+		{Kind: policy.KindHelper, ID: "input_boolean/x"},
+		{Kind: policy.KindFile, ID: "x"},
+	} {
+		if got, err := reqmap.RefReplaceChecks([]reqmap.PlanChange{{Location: "a.yaml", Owner: &owner}}); err == nil {
+			t.Errorf("a %s as a typed owner mapped to %v; only automation, script and template own file entries", owner.Kind, got)
+		}
+	}
+}
+
+// TestRefReplaceUsesTheLatestPlan — two checked dry runs of the same {old,
+// new}: the confirmed run is mapped through the later one, which is what the
+// file looked like last (D-77).
+func TestRefReplaceUsesTheLatestPlan(t *testing.T) {
+	plans := []reqmap.RefReplacePlan{
+		{Old: "a", New: "b", Changes: []reqmap.PlanChange{{Location: "x.yaml"}}},
+		{Old: "a", New: "b", Changes: []reqmap.PlanChange{{Location: "y.yaml"}}},
+	}
+	got := reqmap.Classify(comp("POST", "/v1/ref/replace", `{"old":"a","new":"b","dry_run":false}`), &reqmap.Facts{RefReplacePlans: plans})
+	if want := []string{"edit file:y.yaml"}; got.Disposition != reqmap.Write || !slices.Equal(got.Strings(), want) {
+		t.Errorf("confirmed ref/replace after two dry runs: %s %q, want write %q", got.Disposition, got.Strings(), want)
 	}
 }
 

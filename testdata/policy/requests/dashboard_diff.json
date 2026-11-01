@@ -717,6 +717,114 @@
    "expect": {
     "error": true
    }
+  },
+  {
+   "id": "pathless-view-moved-among-paths",
+   "why": "a path-less view moved between two views with a path changes their sequence (the path-less view is a placeholder in it): the dashboard as a whole, never no check",
+   "url_path": "d-x",
+   "stored": {
+    "views": [
+     {
+      "path": "a"
+     },
+     {
+      "title": "X"
+     },
+     {
+      "path": "b"
+     }
+    ]
+   },
+   "updated": {
+    "views": [
+     {
+      "title": "X"
+     },
+     {
+      "path": "a"
+     },
+     {
+      "path": "b"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "stored-not-an-object",
+   "why": "a stored config that is not a JSON object is no basis for a diff: the save is checked whole, never let through unchecked",
+   "url_path": "d-x",
+   "stored": [],
+   "updated": {
+    "views": []
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "view-path-empty-string",
+   "why": "a view whose path is the empty string has no path: its change is checked as the dashboard whole, not as an empty views/ segment",
+   "url_path": "d-x",
+   "stored": {
+    "views": [
+     {
+      "path": "",
+      "title": "old"
+     }
+    ]
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "",
+      "title": "new"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "stored-views-null",
+   "why": "stored views: null is an empty list of views, so an added view with a path is a create of that view",
+   "url_path": "d-x",
+   "stored": {
+    "views": null
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "a"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "dashboard:d-x/views/a"
+     }
+    ]
+   }
   }
  ]
 }
