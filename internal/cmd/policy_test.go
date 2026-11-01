@@ -191,7 +191,7 @@ func TestPolicyCheckVerdicts(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"check", "entity:lock.*", "control"},
-		{"check", "entity:lock.x", "write"},
+		{"check", "entity:lock.x/state", "write"}, // no write verb applies there (D-120)
 		{"check", "entitiy:lock.x", "read"},
 		{"check", "entity:lock.x", "read", "--as", "nope"},
 	} {

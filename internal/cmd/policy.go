@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -58,7 +59,8 @@ var policyCheckCmd = &cobra.Command{
 	Use:   "check <kind>:<id>[/<sub>] <verb>",
 	Short: "Answer one question: is <verb> on <resource> allowed? Exit 0 allowed, 1 denied",
 	Long: "Evaluate one resource and one verb (read, control, edit, create, delete) under the effective " +
-		"profile and name the rule that decided. The exit code is the verdict: 0 allowed, 1 denied (with the " +
+		"profile and name the rule that decided; write answers every write verb that applies at the resource, " +
+		"one verdict each, allowed only when all are. The exit code is the verdict: 0 allowed, 1 denied (with the " +
 		"verdict on stdout). An invalid resource or verb, an unknown --as profile or a broken file is refused: " +
 		"exit 1, nothing on stdout. A partial verdict (a deny covers a part of the resource) denies a write verb " +
 		"and allows read, listing the denied parts. Contacts Home Assistant only when a where: selector can " +
@@ -308,6 +310,28 @@ type policyCheckDoc struct {
 	// allowed but a deny covers a strict descendant of it.
 	Partial       bool                `json:"partial"`
 	PartialDenies []policyPartialDeny `json:"partial_denies"`
+	// UnmetWhere are the narrowed allows tried whose selector did not hold
+	// (D-112); [] when none.
+	UnmetWhere []policy.UnmetWhere `json:"unmet_where"`
+
+	// denyOnlyDefault: a deny-only check (D-107) denied by the default alone,
+	// which no command enforces — the text answer says so.
+	denyOnlyDefault bool
+}
+
+// policyCheckWriteDoc is `policy check <resource> write --json` (D-120): one
+// verdict per write verb that applies at or below the resource, each exactly
+// the one-verb document.
+type policyCheckWriteDoc struct {
+	Resource   string           `json:"resource"`
+	Verb       string           `json:"verb"`
+	Allowed    bool             `json:"allowed"`
+	Profile    string           `json:"profile"`
+	SelectedBy string           `json:"selected_by"`
+	WhatIf     bool             `json:"what_if"`
+	Level      string           `json:"level"`
+	Enforced   bool             `json:"enforced"`
+	Verdicts   []policyCheckDoc `json:"verdicts"`
 }
 
 type policyPartialDeny struct {
@@ -352,9 +376,21 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 	if err != nil {
 		return err
 	}
-	v, err := policy.ParseVerb(verb)
-	if err != nil {
-		return err
+	// `write` asks about every write verb that applies at or below the
+	// resource (D-120); one where none applies has nothing to answer.
+	write := verb == policy.WriteAlias
+	var verbs []policy.Verb
+	if write {
+		verbs = policy.ApplicableAtOrBelow(res)
+		if len(verbs) == 0 {
+			return fmt.Errorf("write applies to nothing at %s: no command changes it", res)
+		}
+	} else {
+		v, verr := policy.ParseVerb(verb)
+		if verr != nil {
+			return verr
+		}
+		verbs = []policy.Verb{v}
 	}
 	cfg, err := policyInstanceDir()
 	if err != nil {
@@ -371,20 +407,14 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 
 	ha := enforce.NewHAFetcher(ctx, cfg.URL, cfg.Token, nil)
 	defer ha.Close()
-	verdict := pol.Decide(res, v, ha.Live())
-
-	// A typed address a service call reaches is checked for its denies only
-	// (D-107): a denial by the profile default alone is never enforced there.
-	denyOnlyDefault := denyOnlyControl(res, v) && !verdict.Allowed && verdict.Rule == policy.RuleDefaultDeny
-	doc := policyCheckDoc{
-		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
-		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
-		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v) && !denyOnlyDefault, Notes: verdict.Notes,
-		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{},
+	docs := make([]policyCheckDoc, len(verbs))
+	for i, v := range verbs {
+		docs[i] = policyCheckVerdict(pol, res, v, ha.Live())
 	}
-	for _, d := range verdict.PartialDenies {
-		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
+	if write {
+		return renderPolicyCheckWrite(w, pol, res, docs)
 	}
+	doc := docs[0]
 	if flagJSON {
 		markStructuredOutput()
 		if err := writeJSON(w, doc); err != nil {
@@ -404,22 +434,21 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		} else {
 			_, _ = fmt.Fprintf(w, "rule: %s\n", doc.Rule)
 		}
+		for _, u := range doc.UnmetWhere {
+			_, _ = fmt.Fprintf(w, "%s\n", unmetWhereText(u))
+		}
 		for _, d := range doc.PartialDenies {
 			_, _ = fmt.Fprintf(w, "partial: %s (line %d)\n", d.Rule, d.Line)
 		}
-		profile := doc.Profile
-		if profile == "" {
-			profile = "none"
-		}
-		_, _ = fmt.Fprintf(w, "profile: %s (selected by %s)\n", profile, doc.SelectedBy)
+		_, _ = fmt.Fprintf(w, "profile: %s\n", checkProfileText(doc.Profile, doc.SelectedBy))
 		for _, n := range doc.Notes {
 			_, _ = fmt.Fprintf(w, "note: %s\n", n)
 		}
 		switch {
-		case v == policy.Read:
+		case doc.Verb == policy.Read.String():
 			_, _ = fmt.Fprintln(w, "not enforced yet: reads are a later version")
-		case denyOnlyDefault:
-			_, _ = fmt.Fprintf(w, "not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches (D-107)\n", res.Kind)
+		case doc.denyOnlyDefault:
+			_, _ = fmt.Fprintln(w, denyOnlyDefaultText(res))
 		case doc.Enforced:
 			_, _ = fmt.Fprintln(w, "enforced: a write command refuses what this verdict denies")
 		default:
@@ -430,6 +459,113 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		return &policyDeniedError{what: doc.Resource + " " + doc.Verb}
 	}
 	return nil
+}
+
+// policyCheckVerdict decides verb v on res and builds its one-verb document.
+func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, live policy.Live) policyCheckDoc {
+	verdict := pol.Decide(res, v, live)
+
+	// A typed address a service call reaches is checked for its denies only
+	// (D-107): a denial by the profile default alone is never enforced there.
+	denyOnlyDefault := denyOnlyControl(res, v) && !verdict.Allowed && verdict.Rule == policy.RuleDefaultDeny
+	doc := policyCheckDoc{
+		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
+		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
+		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v) && !denyOnlyDefault, Notes: verdict.Notes,
+		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{}, UnmetWhere: verdict.UnmetWhere,
+		denyOnlyDefault: denyOnlyDefault,
+	}
+	for _, d := range verdict.PartialDenies {
+		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
+	}
+	// A write verb no command asks for at or below the resource answers as
+	// any other, and says so (D-110).
+	if v != policy.Read && !slices.Contains(policy.ApplicableAtOrBelow(res), v) {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%s does not apply at %s: no command asks for it there", v, res))
+	}
+	return doc
+}
+
+// renderPolicyCheckWrite answers `policy check <resource> write` (D-120): the
+// overall verdict, one line per applicable verb with its partial, where-not-met
+// and note lines indented below it, then the profile and the enforced line.
+// Exit 0 only when every verb is allowed.
+func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource, docs []policyCheckDoc) error {
+	enforced, _ := policyEnforcement(pol)
+	doc := policyCheckWriteDoc{
+		Resource: res.String(), Verb: policy.WriteAlias, Allowed: true, Profile: docs[0].Profile,
+		SelectedBy: docs[0].SelectedBy, WhatIf: docs[0].WhatIf, Level: docs[0].Level, Enforced: enforced, Verdicts: docs,
+	}
+	for _, d := range docs {
+		doc.Allowed = doc.Allowed && d.Allowed
+	}
+	if flagJSON {
+		markStructuredOutput()
+		if err := writeJSON(w, doc); err != nil {
+			return err
+		}
+	} else {
+		var b strings.Builder
+		if doc.WhatIf {
+			fmt.Fprintf(&b, "what-if: --as %s (the effective profile is unchanged)\n", pol.Active())
+		}
+		word := "denied"
+		if doc.Allowed {
+			word = "allowed"
+		}
+		fmt.Fprintf(&b, "%s: %s %s\n", word, doc.Resource, doc.Verb)
+		for _, d := range docs {
+			word := "denied"
+			if d.Allowed {
+				word = "allowed"
+			}
+			fmt.Fprintf(&b, "%s: %s — %s", d.Verb, word, d.Rule)
+			if d.Line > 0 {
+				fmt.Fprintf(&b, " (line %d)", d.Line)
+			}
+			b.WriteString("\n")
+			for _, p := range d.PartialDenies {
+				fmt.Fprintf(&b, "  partial: %s (line %d)\n", p.Rule, p.Line)
+			}
+			for _, u := range d.UnmetWhere {
+				fmt.Fprintf(&b, "  %s\n", unmetWhereText(u))
+			}
+			for _, n := range d.Notes {
+				fmt.Fprintf(&b, "  note: %s\n", n)
+			}
+			if d.denyOnlyDefault {
+				fmt.Fprintf(&b, "  %s\n", denyOnlyDefaultText(res))
+			}
+		}
+		fmt.Fprintf(&b, "profile: %s\n", checkProfileText(doc.Profile, doc.SelectedBy))
+		if enforced {
+			b.WriteString("enforced: a write command refuses what this verdict denies\n")
+		} else {
+			b.WriteString("not enforced: no profile is in effect, so every command runs as without a policy\n")
+		}
+		if _, err := io.WriteString(w, b.String()); err != nil {
+			return err
+		}
+	}
+	if !doc.Allowed {
+		return &policyDeniedError{what: doc.Resource + " " + doc.Verb}
+	}
+	return nil
+}
+
+// checkProfileText is the `profile:` line's value: the profile and how it was
+// selected, `none` when no profile decided.
+func checkProfileText(profile, selectedBy string) string {
+	if profile == "" {
+		profile = "none"
+	}
+	return profile + " (selected by " + selectedBy + ")"
+}
+
+// denyOnlyDefaultText says that a default-deny verdict on a deny-only address
+// (D-107) is not enforced.
+func denyOnlyDefaultText(res policy.Resource) string {
+	return fmt.Sprintf("not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches (D-107)", res.Kind)
 }
 
 // --- policy lint -------------------------------------------------------------

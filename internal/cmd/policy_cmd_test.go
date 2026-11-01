@@ -603,7 +603,8 @@ func TestPolicyCheckRefusesWithoutAVerdict(t *testing.T) {
 		{"unknown kind", good, []string{"entiy:lock.front_door", "read"}, "", true},
 		{"wildcard resource", good, []string{"entity:lock.*", "read"}, "", true},
 		{"unknown sub-resource", good, []string{"entity:lock.front_door/attrs/x", "read"}, "", false},
-		{"write is not a verb to check", good, []string{"entity:lock.front_door", "write"}, "", true},
+		// D-120: write is answered per verb, and refused where none applies.
+		{"write where no write verb applies", good, []string{"entity:lock.front_door/attr/x", "write"}, "write applies to nothing", true},
 		{"unknown verb", good, []string{"entity:lock.front_door", "wirte"}, "", false},
 		{"uppercase verb", good, []string{"entity:lock.front_door", "Read"}, "", false},
 		{"one argument", good, []string{"entity:lock.front_door"}, "", false},
