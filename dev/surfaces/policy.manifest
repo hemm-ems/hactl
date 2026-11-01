@@ -12,10 +12,16 @@
 # TestEveryPolicyRequestRowHasAVector (internal/surfaceaudit) holds them in
 # lockstep with the request vectors (testdata/policy/requests/vectors.json),
 # written from this file before the classifier existed. A request line is
-# `proven` once a named test asserts its mapping — the classifier exists; the hooks that apply it to a
-# live request (sendCommand, the shared RoundTripper, companion.Client) are
-# stage 2b and are proven by H-29's planned enforcement tests, not by these
-# lines. Command lines stay debt until the command layer checks its plan.
+# `proven` once a named test asserts its mapping. The hooks that apply the
+# classifier to every live request (the gated websocket connection, the REST
+# and companion clients before their retry loops, the shared RoundTripper) are
+# built (stage 2b core) and proven by TestEveryWebsocketSendPassesTheGate,
+# TestRESTRequestGetsOneVerdictBeforeItsRetries,
+# TestCompanionRequestGetsOneVerdictOnEveryTransport and
+# TestUnmappedMutatingRequestIsRefused, not by these lines. A command line
+# stays debt until the command checks its plan through the plan API
+# (checkWritePlan, internal/cmd/policy_enforce.go) and registers its --confirm
+# run in TestEveryConfirmedRequestIsInThePlan; label create is the first.
 #
 # --- what a site is ----------------------------------------------------------
 #
@@ -166,16 +172,12 @@ ws supervisor/api GET /addons/{slug}/info = exempt: companion transport discover
 # included, and again on a 401 retry. Never counts as a write in preview parity.
 ws supervisor/api POST /ingress/session = exempt: an Ingress auth session is transport plumbing — a mutating method that changes no Home Assistant resource
 
-# (ws extract_from_target — the policy check's own oracle for E-1, mapped
-# exempt (policy oracle): asked by svc call's check with expand_group: true
-# (D-59), never with entity_id: all; no answer or an error answer is
-# `fail-closed: reach unknown`; it must never be gated by the call it serves.
-# PLANNED: no product code sends it yet (only
-# internal/integration/oracle_target_expansion_test.go), so it is no site and
-# has no line. Stage 2b adds the method, its classifier row and this line
-# together, and flips the request vector ws-extract-from-target
-# (testdata/policy/requests/vectors.json), which pins it unmapped until then,
-# back to exempt.)
+# map: exempt (policy oracle). The policy check's own question for E-1 (D-59):
+# haapi.WSClient.ExtractFromTarget, asked by the request layer while it maps a
+# service call, with expand_group: true and never with entity_id: all; no
+# answer or an error answer is `fail-closed: reach unknown`. It must never be
+# gated by the call it serves.
+ws extract_from_target = exempt: the policy check's own oracle for a service call's reach (D-59) — reads the target's references and changes nothing
 
 # --- writes ----------------------------------------------------------------------
 
@@ -694,8 +696,10 @@ cmd hactl floor create = debt: the preview contacts nothing and checks nothing y
 # cascade as a deliberate superset, D-76).
 cmd hactl floor delete = debt: the preview checks nothing yet — phase 2 command layer
 
-# map: create on every label id (kind-wide, D-75).
-cmd hactl label create = debt: the preview contacts nothing and checks nothing yet
+# map: create on every label id (kind-wide, D-75). The reference command of
+# the plan API (stage 2b): its preview and --confirm check the plan before the
+# first write, and its confirmed requests are held to the plan (R-12).
+cmd hactl label create = proven: TestLabelCreateRefusedByItsPlan
 
 # map: delete label:{label_id} + edit entity:{e}/registry/labels, edit
 # device:{d}/registry/labels and edit area:{a} for every current holder (the

@@ -2,6 +2,8 @@ package policy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -57,7 +59,8 @@ func load(instanceDir string) (*Policy, error) {
 		sortProblems(problems)
 		return nil, &LoadError{File: path, Problems: problems}
 	}
-	pol.source, pol.exists = path, true
+	sum := sha256.Sum256(data)
+	pol.source, pol.exists, pol.hash = path, true, hex.EncodeToString(sum[:])
 	return pol, nil
 }
 

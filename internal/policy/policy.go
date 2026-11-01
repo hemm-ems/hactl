@@ -64,6 +64,11 @@ const (
 type Policy struct {
 	source string
 	exists bool
+	// hash is the hex SHA-256 of the file's bytes as loaded, "" without a
+	// file. Everything enforcement verifies and then relies on is tagged with
+	// it, so nothing checked under one policy authorises a request under
+	// another (D-72, R-7).
+	hash string
 
 	// profiles are the declared profiles, sorted by name; nil for no file.
 	profiles []*profile
@@ -148,6 +153,16 @@ func (p *Policy) Source() string { return p.source }
 
 // Exists reports whether a policy file was found.
 func (p *Policy) Exists() bool { return p.exists }
+
+// Hash is the content hash of the loaded file — the hex SHA-256 of its bytes —
+// or "" when there is no file. A what-if view carries the hash of the file it
+// came from.
+func (p *Policy) Hash() string { return p.hash }
+
+// InEffect reports whether a profile is in effect for this view: a file
+// selected one (D-61, D-62) or a what-if names one. Enforcement acts only then
+// (D-74); with no file or the implicit allow-all nothing is checked (D-58).
+func (p *Policy) InEffect() bool { return !p.AllowAll() }
 
 // Active returns the name of the profile this view evaluates, or "" when no
 // profile is in effect (SelectedByNoFile, SelectedByImplicit). For a what-if
@@ -234,6 +249,7 @@ func (p *Policy) As(name string) (*Policy, error) {
 	return &Policy{
 		source:        p.source,
 		exists:        p.exists,
+		hash:          p.hash,
 		profiles:      p.profiles,
 		view:          pr,
 		selection:     SelectedByWhatIf,
@@ -494,6 +510,86 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 	for i := range pr.rules {
 		rule := &pr.rules[i]
 		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
+		}
+	}
+	if len(out.PartialDenies) > 0 {
+		out.Partial = true
+		if v != Read {
+			first := out.PartialDenies[0]
+			out.Allowed, out.Rule, out.Line = false, first.Rule, first.Line
+		}
+	}
+	return out
+}
+
+// DecideKindWide answers verb v on EVERY id of kind k — `<kind>:*[/<sub>]` — by
+// D-75: the check a command makes when Home Assistant mints the id (area,
+// floor and label create, a new config entry), so there is no id to check yet.
+//
+//  1. AllowAll view: allowed, as Decide.
+//  2. A deny for v whose pattern names kind k (or is `*`), whatever its id, and
+//     whose sub path covers sub: denied, the first such deny (line, then column)
+//     decides — a deny on one id refuses a check on all of them.
+//  3. Else an allow for v without `where:` whose id matches every id of the
+//     kind — each id segment only `*` (or a `**` in a file id), as many as the
+//     kind's id spans — and whose sub path covers sub grants, the first in file
+//     order. A narrower allow covers some ids, not all, and grants nothing here.
+//  4. Else the profile default.
+//  5. If 3 or 4 allowed, a deny for v on a strict descendant of sub on kind k
+//     (any id) makes the verdict partial: a write verb is denied naming the
+//     first such deny, read lists them (D-66).
+//
+// sub is the `/`-joined sub path below each id ("" = the resource itself). The
+// verdict never consults a where: selector, so it needs no Live.
+func (p *Policy) DecideKindWide(k Kind, sub string, v Verb) Verdict {
+	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	switch p.selection {
+	case SelectedByNoFile:
+		out.Allowed, out.Rule = true, RuleNoFile
+		return out
+	case SelectedByImplicit:
+		out.Allowed, out.Rule = true, RuleImplicit
+		return out
+	}
+	pr := p.view
+	out.Profile = pr.name
+	subSegs := splitPath(sub)
+
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect != Deny || !slices.Contains(rule.Verbs, v) {
+			continue
+		}
+		if rule.addr.any || (rule.addr.kind == k && matchSubPrefix(rule.addr.sub, subSegs)) {
+			out.Rule, out.Line = rule.Text(), rule.Line
+			return out
+		}
+	}
+	var granted *Rule
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect != Allow || rule.Where != nil || !slices.Contains(rule.Verbs, v) {
+			continue
+		}
+		if rule.addr.any || (rule.addr.kind == k && rule.addr.matchesEveryID() && matchSubPrefix(rule.addr.sub, subSegs)) {
+			granted = rule
+			break
+		}
+	}
+	switch {
+	case granted != nil:
+		out.Allowed, out.Rule, out.Line = true, granted.Text(), granted.Line
+	case pr.deflt == Deny:
+		out.Rule = RuleDefaultDeny
+		return out
+	default:
+		out.Allowed, out.Rule = true, RuleDefaultAllow
+	}
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}

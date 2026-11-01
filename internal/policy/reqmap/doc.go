@@ -50,7 +50,6 @@
 // (testdata/policy/requests), written from the contract before this package
 // existed, one or more per row.
 //
-// Phase 2a builds the classifier only. Nothing calls it on a live request yet:
-// the hooks in sendCommand, the shared RoundTripper and companion.Client, the
-// audit log and the command layer's plan checks are stage 2b.
+// The classifier is applied to every live request by internal/policy/enforce,
+// through the hooks internal/policy/reqgate installs in the clients (stage 2b).
 package reqmap

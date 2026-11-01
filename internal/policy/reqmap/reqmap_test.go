@@ -535,6 +535,7 @@ func TestClassifyWriteRequests(t *testing.T) {
 // readVectors cover every read-deferred and exempt row.
 var readVectors = []vector{
 	{name: "ws auth is exempt", req: ws("auth", map[string]any{"access_token": "x"}), disp: reqmap.Exempt, row: "ws auth"},
+	{name: "the reach question is exempt", req: ws("extract_from_target", map[string]any{"target": map[string]any{"area_id": []any{"office"}}, "expand_group": true}), disp: reqmap.Exempt, row: "ws extract_from_target"},
 	{name: "supervisor add-on list", req: ws("supervisor/api", map[string]any{"endpoint": "/addons", "method": "get"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons"},
 	{name: "supervisor add-on info", req: ws("supervisor/api", map[string]any{"endpoint": "/addons/abc_hactl/info", "method": "get"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons/{slug}/info"},
 	{name: "supervisor method defaults to get", req: ws("supervisor/api", map[string]any{"endpoint": "/addons"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons"},

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -18,12 +17,14 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
 )
 
 // The policy family (manual "Policy (permission guardrail)", D-51..D-62).
 //
-// Phase 1 is the model and three read-only commands. Nothing else consults
-// the policy yet, which every output says (`not enforced yet`). The profile is
+// Three read-only commands over the model. Writes are enforced by every write
+// command while a profile is in effect (policy_enforce.go, H-29); reads are
+// not yet, which show and check say. The profile is
 // chosen by the file alone (D-62): there is deliberately no --profile flag
 // and no environment variable; `--as` is a what-if that never changes the
 // effective profile.
@@ -38,7 +39,7 @@ var policyCmd = family(&cobra.Command{
 	Short: "Read the instance's permission policy (a guardrail against mistakes, not a security boundary)",
 	Long: "Read <instance>/policy.yaml: which profile is in effect, what it allows, and whether its rules " +
 		"mean what their author wrote. " + policy.Disclaimer + ". hactl never writes the file. " +
-		"Not enforced yet: no other command consults the policy in this version.",
+		"Writes are enforced while a profile is in effect; reads are not yet.",
 })
 
 var policyShowCmd = &cobra.Command{
@@ -142,20 +143,24 @@ type policyProblem struct {
 }
 
 type policyShowDoc struct {
-	File       string           `json:"file"`
-	Exists     bool             `json:"exists"`
-	Valid      bool             `json:"valid"`
-	Problems   []policyProblem  `json:"problems"`
-	Level      string           `json:"level"`
-	Disclaimer string           `json:"disclaimer"`
-	Enforced   bool             `json:"enforced"`
-	Profile    string           `json:"profile"`
-	SelectedBy string           `json:"selected_by"`
-	WhatIf     bool             `json:"what_if"`
-	AllowAll   bool             `json:"allow_all"`
-	Default    string           `json:"default"`
-	Profiles   []string         `json:"profiles"`
-	Rules      []policyShowRule `json:"rules"`
+	File       string          `json:"file"`
+	Exists     bool            `json:"exists"`
+	Valid      bool            `json:"valid"`
+	Problems   []policyProblem `json:"problems"`
+	Level      string          `json:"level"`
+	Disclaimer string          `json:"disclaimer"`
+	Enforced   bool            `json:"enforced"`
+	// EnforcedVerbs are the verbs commands enforce in this version, in the
+	// order read, control, edit, create, delete — the four write verbs while
+	// a profile is in effect, [] otherwise (D-70).
+	EnforcedVerbs []string         `json:"enforced_verbs"`
+	Profile       string           `json:"profile"`
+	SelectedBy    string           `json:"selected_by"`
+	WhatIf        bool             `json:"what_if"`
+	AllowAll      bool             `json:"allow_all"`
+	Default       string           `json:"default"`
+	Profiles      []string         `json:"profiles"`
+	Rules         []policyShowRule `json:"rules"`
 }
 
 func runPolicyShow(w io.Writer, as string, asSet bool) error {
@@ -172,9 +177,10 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 		return err
 	}
 
+	enforced, verbs := policyEnforcement(pol)
 	doc := policyShowDoc{
 		File: pol.Source(), Exists: pol.Exists(), Valid: true, Problems: []policyProblem{},
-		Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: false,
+		Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: enforced, EnforcedVerbs: verbs,
 		Profile: pol.Active(), SelectedBy: string(pol.Selection()), WhatIf: pol.WhatIf(),
 		AllowAll: pol.AllowAll(), Default: string(pol.Default()),
 		Profiles: pol.Profiles(), Rules: []policyShowRule{},
@@ -201,7 +207,12 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 		_, _ = fmt.Fprintf(w, "file: %s\n", pol.Source())
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
-	_, _ = fmt.Fprintf(w, "level: %s — not enforced yet: no other command consults the policy in this version\n", policy.Level)
+	_, _ = fmt.Fprintf(w, "level: %s\n", policy.Level)
+	if enforced {
+		_, _ = fmt.Fprintln(w, "enforced: writes — reads not yet")
+	} else {
+		_, _ = fmt.Fprintln(w, "enforced: nothing — no profile is in effect, so every command runs as without a policy")
+	}
 	if !pol.Exists() {
 		return nil
 	}
@@ -246,7 +257,7 @@ func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
 		markStructuredOutput()
 		if err := writeJSON(w, policyShowDoc{
 			File: le.File, Exists: true, Valid: false, Problems: problems,
-			Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: false,
+			Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: false, EnforcedVerbs: []string{},
 			Profiles: []string{}, Rules: []policyShowRule{},
 		}); err != nil {
 			return err
@@ -258,6 +269,17 @@ func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
 	_, _ = fmt.Fprintln(w, "BROKEN: hactl refuses to read this file as a policy (D-60); fix every problem below:")
 	_, _ = fmt.Fprintln(w, le.Error())
 	return &policyBrokenError{n: len(problems)}
+}
+
+// policyEnforcement is what commands enforce under pol's EFFECTIVE profile —
+// a what-if (`--as`) changes the view, not what is enforced: the write verbs
+// while a profile is in effect, nothing otherwise (D-70, D-74).
+func policyEnforcement(pol *policy.Policy) (bool, []string) {
+	_, sel := pol.Effective()
+	if sel == policy.SelectedByNoFile || sel == policy.SelectedByImplicit {
+		return false, []string{}
+	}
+	return true, verbNames([]policy.Verb{policy.Control, policy.Edit, policy.Create, policy.Delete})
 }
 
 func verbNames(vs []policy.Verb) []string {
@@ -301,6 +323,14 @@ func (e *policyDeniedError) Error() string { return "denied by policy: " + e.wha
 
 func (e *policyDeniedError) ExitCode() int { return 1 }
 
+// enforcedVerdict reports whether a command would act on a verdict for verb v
+// under pol: a write verb while a profile is in effect (D-70). Reads are not
+// enforced in this version.
+func enforcedVerdict(pol *policy.Policy, v policy.Verb) bool {
+	enforced, _ := policyEnforcement(pol)
+	return enforced && v != policy.Read
+}
+
 func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string, asSet bool) error {
 	// Refusals first, and before anything is written: a refusal is exit 1
 	// with nothing on stdout, a denial is exit 1 with a verdict.
@@ -325,14 +355,14 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		return err
 	}
 
-	live := &registryLive{ctx: ctx, cfg: cfg}
-	defer live.close()
-	verdict := pol.Decide(res, v, live)
+	ha := enforce.NewHAFetcher(ctx, cfg.URL, cfg.Token, nil)
+	defer ha.Close()
+	verdict := pol.Decide(res, v, ha.Live())
 
 	doc := policyCheckDoc{
 		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
 		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
-		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: false, Notes: verdict.Notes,
+		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v), Notes: verdict.Notes,
 		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{},
 	}
 	for _, d := range verdict.PartialDenies {
@@ -368,139 +398,19 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		for _, n := range doc.Notes {
 			_, _ = fmt.Fprintf(w, "note: %s\n", n)
 		}
-		_, _ = fmt.Fprintln(w, "not enforced yet: this is what the policy says, not what a command will do")
+		switch {
+		case v == policy.Read:
+			_, _ = fmt.Fprintln(w, "not enforced yet: reads are a later version")
+		case doc.Enforced:
+			_, _ = fmt.Fprintln(w, "enforced: a write command refuses what this verdict denies")
+		default:
+			_, _ = fmt.Fprintln(w, "not enforced: no profile is in effect, so every command runs as without a policy")
+		}
 	}
 	if !doc.Allowed {
 		return &policyDeniedError{what: doc.Resource + " " + doc.Verb}
 	}
 	return nil
-}
-
-// registryLive answers where: selectors from Home Assistant's registries,
-// fetched once, on first use — `policy check` contacts HA only when a
-// selector has to be evaluated. Any failure fails every question (the
-// evaluator then refuses to grant on the selector and says so).
-type registryLive struct {
-	ctx  context.Context
-	cfg  *config.Config
-	once sync.Once
-	ws   *haapi.WSClient
-	err  error
-
-	entities map[string]haapi.EntityRegistryEntry
-	devices  map[string]haapi.DeviceRegistryEntry
-	areas    map[string]haapi.AreaEntry
-	labels   map[string]haapi.LabelEntry
-}
-
-// EntityArea is the entity's own area, else its device's (H-8).
-func (l *registryLive) EntityArea(entityID string) (policy.Ref, bool, error) {
-	if err := l.load(); err != nil {
-		return policy.Ref{}, false, err
-	}
-	e, ok := l.entities[entityID]
-	if !ok {
-		return policy.Ref{}, false, nil
-	}
-	if e.AreaID != "" {
-		ref, has := l.areaRef(e.AreaID)
-		return ref, has, nil
-	}
-	ref, has := l.areaRef(l.devices[e.DeviceID].AreaID)
-	return ref, has, nil
-}
-
-// EntityLabels are the labels on the entity's own registry entry; HA does not
-// inherit labels from the device.
-func (l *registryLive) EntityLabels(entityID string) ([]policy.Ref, error) {
-	if err := l.load(); err != nil {
-		return nil, err
-	}
-	return l.labelRefs(l.entities[entityID].Labels), nil
-}
-
-func (l *registryLive) DeviceArea(deviceID string) (policy.Ref, bool, error) {
-	if err := l.load(); err != nil {
-		return policy.Ref{}, false, err
-	}
-	ref, has := l.areaRef(l.devices[deviceID].AreaID)
-	return ref, has, nil
-}
-
-func (l *registryLive) DeviceLabels(deviceID string) ([]policy.Ref, error) {
-	if err := l.load(); err != nil {
-		return nil, err
-	}
-	return l.labelRefs(l.devices[deviceID].Labels), nil
-}
-
-func (l *registryLive) load() error {
-	l.once.Do(func() {
-		ws := haapi.NewWSClient(l.cfg.URL, l.cfg.Token)
-		if err := ws.Connect(l.ctx); err != nil {
-			l.err = fmt.Errorf("connecting to HA: %w", err)
-			return
-		}
-		l.ws = ws
-		ents, err := ws.EntityRegistryList(l.ctx)
-		if err != nil {
-			l.err = fmt.Errorf("fetching entity registry: %w", err)
-			return
-		}
-		devs, err := ws.DeviceRegistryList(l.ctx)
-		if err != nil {
-			l.err = fmt.Errorf("fetching device registry: %w", err)
-			return
-		}
-		areas, err := ws.AreaRegistryList(l.ctx)
-		if err != nil {
-			l.err = fmt.Errorf("fetching area registry: %w", err)
-			return
-		}
-		labels, err := ws.LabelRegistryList(l.ctx)
-		if err != nil {
-			l.err = fmt.Errorf("fetching label registry: %w", err)
-			return
-		}
-		l.entities = make(map[string]haapi.EntityRegistryEntry, len(ents))
-		for _, e := range ents {
-			l.entities[e.EntityID] = e
-		}
-		l.devices = make(map[string]haapi.DeviceRegistryEntry, len(devs))
-		for _, d := range devs {
-			l.devices[d.ID] = d
-		}
-		l.areas = make(map[string]haapi.AreaEntry, len(areas))
-		for _, a := range areas {
-			l.areas[a.AreaID] = a
-		}
-		l.labels = make(map[string]haapi.LabelEntry, len(labels))
-		for _, lb := range labels {
-			l.labels[lb.LabelID] = lb
-		}
-	})
-	return l.err
-}
-
-func (l *registryLive) close() {
-	if l.ws != nil {
-		_ = l.ws.Close()
-	}
-}
-
-func (l *registryLive) areaRef(id string) (policy.Ref, bool) {
-	if id == "" {
-		return policy.Ref{}, false
-	}
-	return policy.Ref{ID: id, Name: l.areas[id].Name}, true
-}
-
-func (l *registryLive) labelRefs(ids []string) []policy.Ref {
-	out := make([]policy.Ref, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, policy.Ref{ID: id, Name: l.labels[id].Name})
-	}
-	return out
 }
 
 // --- policy lint -------------------------------------------------------------
