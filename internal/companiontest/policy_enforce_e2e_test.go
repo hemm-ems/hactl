@@ -272,7 +272,7 @@ func TestE2EPolicyEntRenameNeedsBothNamesCLI(t *testing.T) {
 	if _, err := testClient.CreateHelper(ctx, key+":\n  name: PG Policy Rename Source\n", "input_boolean"); err != nil {
 		t.Fatalf("seeding helper %s: %v", src, err)
 	}
-	t.Cleanup(func() { _, _ = testClient.DeleteHelper(ctx, key) })
+	t.Cleanup(func() { _, _ = testClient.DeleteHelper(ctx, key, "input_boolean") })
 	t.Cleanup(func() {
 		ws := haapi.NewWSClient(haURL, haToken)
 		if err := ws.Connect(ctx); err == nil {

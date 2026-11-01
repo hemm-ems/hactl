@@ -148,8 +148,10 @@
 # The ceiling is the number of rows not yet proven. Phase 2 is done when every
 # write row (map: control|edit|create|delete) and every cmd row is proven;
 # what may remain is read-deferred-phase3. The ceiling may fall without
-# ceremony and may only rise by editing this line on purpose.
-#ceiling 74
+# ceremony and may only rise by editing this line on purpose. Stage 2b
+# (2026-11-01) proved every write and cmd row; what remains is the 45
+# read-deferred-phase3 rows.
+#ceiling 45
 
 # =============================================================================
 # WS — Home Assistant websocket
@@ -815,13 +817,17 @@ cmd hactl config flow-step = proven: TestRegistryFamilyRefusesItsPlanNamingTheRu
 cmd hactl config flow-inspect = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 
 # map: edit system:wireguard. The preview contacts nothing; the check is local.
-cmd hactl companion wireguard config = debt: the local preview checks nothing yet — phase 2 command layer
+# Built (stage 2b, integration): wireguardPlan, checked after the .conf is read
+# and before the preview renders or the push is sent. Also
+# TestWireguardAllowedRunPostsOnce, TestWireguardWithoutAProfileIsUnchanged
+# (D-58) and TestEveryConfirmedRequestIsInThePlan.
+cmd hactl companion wireguard config = proven: TestWireguardRefusedByItsPlan
 
-# map: control system:wireguard.
-cmd hactl companion wireguard up = debt: the local preview checks nothing yet — phase 2 command layer
+# map: control system:wireguard. Built like config's.
+cmd hactl companion wireguard up = proven: TestWireguardRefusedByItsPlan
 
-# map: control system:wireguard.
-cmd hactl companion wireguard down = debt: the local preview checks nothing yet — phase 2 command layer
+# map: control system:wireguard. Built like config's.
+cmd hactl companion wireguard down = proven: TestWireguardRefusedByItsPlan
 
 # map: (read command) the options-flow probe is checked as edit
 # config_entry:{entry_id}/options BEFORE it is sent; denied -> the probe is

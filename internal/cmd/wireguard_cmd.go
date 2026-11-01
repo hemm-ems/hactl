@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/companion"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var (
@@ -205,11 +206,20 @@ func runWireguardConfig(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("reading config file: %w", err)
 	}
 	conf := string(raw)
+	// The plan (H-29's command layer): the tunnel is not addressable, so a
+	// config push is edit system:wireguard. Checked in the preview, which
+	// contacts nothing, and again under --confirm before the push; nothing
+	// with no profile in effect (D-58).
+	note, err := checkWritePlan(w, !flagWGConfirm, wireguardPlan("push config to tunnel "+flagWGTunnel, policy.Edit))
+	if err != nil {
+		return err
+	}
 	if !flagWGConfirm {
 		return dryRun("push config to tunnel "+flagWGTunnel).
 			with("tunnel", flagWGTunnel).
 			with("bytes", len(conf)).
 			with("lines", strings.Count(conf, "\n")).
+			withPolicy(note).
 			render(w)
 	}
 	cc, err := connectCompanion(ctx)
@@ -224,8 +234,13 @@ func runWireguardConfig(ctx context.Context, w io.Writer) error {
 }
 
 func runWireguardUp(ctx context.Context, w io.Writer) error {
+	// control system:wireguard, checked like config's plan (above).
+	note, err := checkWritePlan(w, !flagWGConfirm, wireguardPlan("start tunnel "+flagWGTunnel, policy.Control))
+	if err != nil {
+		return err
+	}
 	if !flagWGConfirm {
-		return dryRun("start tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).render(w)
+		return dryRun("start tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).withPolicy(note).render(w)
 	}
 	cc, err := connectCompanion(ctx)
 	if err != nil {
@@ -239,8 +254,13 @@ func runWireguardUp(ctx context.Context, w io.Writer) error {
 }
 
 func runWireguardDown(ctx context.Context, w io.Writer) error {
+	// control system:wireguard, checked like config's plan (above).
+	note, err := checkWritePlan(w, !flagWGConfirm, wireguardPlan("stop tunnel "+flagWGTunnel, policy.Control))
+	if err != nil {
+		return err
+	}
 	if !flagWGConfirm {
-		return dryRun("stop tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).render(w)
+		return dryRun("stop tunnel "+flagWGTunnel).with("tunnel", flagWGTunnel).withPolicy(note).render(w)
 	}
 	cc, err := connectCompanion(ctx)
 	if err != nil {
@@ -251,6 +271,12 @@ func runWireguardDown(ctx context.Context, w io.Writer) error {
 		return err
 	}
 	return writeWireguardAction(w, res, "stopped")
+}
+
+// wireguardPlan is a wireguard write's plan: verb v on system:wireguard, the
+// one address the tunnel has (the manual's table).
+func wireguardPlan(action string, v policy.Verb) *writePlan {
+	return newWritePlan(action).add(v, policy.KindSystem, "wireguard", "")
 }
 
 func writeWireguardAction(w io.Writer, res *companion.WireGuardActionResponse, _ string) error {

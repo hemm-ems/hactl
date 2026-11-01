@@ -2406,3 +2406,11 @@ must go red on exactly that command.
   dashboard part, the typed owners, the recorded plan, the confirmed run's
   dry-run check, the dash save diff, the default dashboard's canonical id or
   the written-outside-the-plan report each turned these red.
+  Built at stage 2b's integration (2026-11-01): `companion wireguard
+  config|up|down` check `edit`/`control system:wireguard` in the preview and
+  under `--confirm` before the companion is asked (TestWireguardRefusedByItsPlan,
+  TestWireguardAllowedRunPostsOnce, TestWireguardWithoutAProfileIsUnchanged,
+  registered in TestEveryConfirmedRequestIsInThePlan) — watched to fail with
+  `up`'s plan emptied and with `config` checked in the preview only. With this
+  every write and cmd row of `dev/surfaces/policy.manifest` is proven; the
+  ceiling (45) is the read-deferred-phase3 rows.
