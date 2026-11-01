@@ -207,7 +207,8 @@ func TestLintCountsAllWildcardFreeSegmentsAsChecked(t *testing.T) {
 	rep := Lint(p, inv) // a plain Inventory: attributes cannot be listed
 	want := []Unchecked{
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:main/views/?" [create]`, Line: 14},
-		{Kind: KindFile, Reason: ReasonNotEnumerated},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "p", Rule: `deny "file:x.yaml/block/*" [read]`, Line: 11},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "p", Rule: `deny "file:y.yaml/block/*x*" [read]`, Line: 16},
 		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:y.yaml/block/*x*" [read]`, Line: 16},
 		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/auto*" [read]`, Line: 15},
 	}
@@ -481,8 +482,9 @@ func TestLintListsEveryOtherFreeSubSegmentAsUnchecked(t *testing.T) {
 	want := []Unchecked{
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:main/views/secrte" [read]`, Line: 8},
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:*/views/a" [edit]`, Line: 11},
-		{Kind: KindFile, Reason: ReasonNotEnumerated},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "p", Rule: `deny "file:x.yaml/block/clmate" [read]`, Line: 9},
 		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:x.yaml/block/clmate" [read]`, Line: 9},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "p", Rule: `deny "file:y.yaml" [edit]`, Line: 12},
 		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/automaton" [read]`, Line: 7},
 	}
 	if !reflect.DeepEqual(rep.Unchecked, want) {

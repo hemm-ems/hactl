@@ -811,14 +811,15 @@ func TestPolicyLintUncheckedKindsAndAllowPartial(t *testing.T) {
 	m := decodeObject(t, out)
 	wantField(t, "lint/unchecked", m, "valid", true)
 	wantField(t, "lint/unchecked", m, "findings", []any{})
-	wantField(t, "lint/unchecked", m, "unchecked", []map[string]any{{"kind": "file", "reason": "not enumerated", "profile": "", "rule": "", "line": 0}})
+	fileRule := map[string]any{"kind": "file", "reason": "not enumerated", "profile": "agent", "rule": `deny "file:**" [write]`, "line": 7}
+	wantField(t, "lint/unchecked", m, "unchecked", []map[string]any{fileRule})
 
 	out, err = runPolicyCLI(t, dir, "policy", "lint", "--allow-partial", "--json")
 	if cliExitCode(err) != 0 {
 		t.Fatalf("lint --allow-partial: exit %d (%v), want 0\n%s", cliExitCode(err), err, out)
 	}
 	m = decodeObject(t, out)
-	wantField(t, "lint/allow-partial", m, "unchecked", []map[string]any{{"kind": "file", "reason": "not enumerated", "profile": "", "rule": "", "line": 0}})
+	wantField(t, "lint/allow-partial", m, "unchecked", []map[string]any{fileRule})
 
 	out, err = runPolicyCLI(t, dir, "policy", "lint")
 	if cliExitCode(err) != 1 {

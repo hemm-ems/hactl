@@ -149,7 +149,8 @@ func TestLintHalfProtectedCounterpartDenied(t *testing.T) {
 }
 
 // D-115: one finding per rule, the first counterpart named and the rest
-// counted; under default: deny nothing is editable, so nothing is half.
+// named after it (D-128: never an unexplained count); under default: deny
+// nothing is editable, so nothing is half.
 func TestLintHalfProtectedCountsAndDefaultDeny(t *testing.T) {
 	inv := house()
 	inv.ids[KindAutomation] = []string{"1700000000000", "1700000000001"}
@@ -157,8 +158,21 @@ func TestLintHalfProtectedCountsAndDefaultDeny(t *testing.T) {
 	inv.reg.AutomationIDs = map[string]string{"automation.morning": "1700000000000", "automation.evening": "1700000000001"}
 	rep := Lint(mustLoad(t, agent("    deny:\n      \"automation:17*\": [write]\n")), inv)
 	got := findingsOf(rep, CodeHalfProtected)
-	if len(got) != 1 || !strings.Contains(got[0].Message, "its entity automation.morning") || !strings.HasSuffix(got[0].Message, " (1 more like it)") {
-		t.Errorf("half-protected %+v, want one naming automation.morning (its config id sorts first) and 1 more", got)
+	if len(got) != 1 || !strings.Contains(got[0].Message, "its entity automation.morning") ||
+		!strings.HasSuffix(got[0].Message, `also deny "entity:automation.morning": [write]; the same holds for automation.evening`) {
+		t.Errorf("half-protected %+v, want one naming automation.morning (its config id sorts first), then automation.evening", got)
+	}
+	for _, tc := range []struct {
+		others []string
+		want   string
+	}{
+		{nil, ""},
+		{[]string{"a", "b", "c"}, "; the same holds for a, b, c"},
+		{[]string{"a", "b", "c", "d", "e"}, "; the same holds for a, b, c and 2 more"},
+	} {
+		if got := more(tc.others); got != tc.want {
+			t.Errorf("more(%q) = %q, want %q", tc.others, got, tc.want)
+		}
 	}
 	rep = Lint(mustLoad(t, agent("    default: deny\n    deny:\n      \"automation:17*\": [write]\n")), inv)
 	if got := findingsOf(rep, CodeHalfProtected); len(got) != 0 {

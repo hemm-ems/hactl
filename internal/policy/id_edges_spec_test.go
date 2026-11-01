@@ -312,12 +312,14 @@ func lintInventory() policy.Inventory {
 	}}}
 }
 
-// ruleUnchecked reports the per-rule Unchecked entries (Rule != "") as
-// "<reason>@<line>".
+// ruleUnchecked reports the per-rule Unchecked entries (Rule != "") other
+// than a kind's `not enumerated` as "<reason>@<line>".
 func ruleUnchecked(rep policy.LintReport) []string {
 	var out []string
 	for _, u := range rep.Unchecked {
-		if u.Rule != "" {
+		// A file rule's own `not enumerated` (D-128) is about its kind, not
+		// about its free segment, which is what these tests pin (D-65).
+		if u.Rule != "" && u.Reason != policy.ReasonNotEnumerated {
 			out = append(out, fmt.Sprintf("%s@%d", u.Reason, u.Line))
 		}
 	}

@@ -138,13 +138,30 @@ func TestLintUnchecked(t *testing.T) {
 	rep = Lint(p, inv)
 	want = []Unchecked{
 		{Kind: KindDevice, Reason: "device registry: connection refused"},
-		{Kind: KindFile, Reason: "not enumerated"},
+		{Kind: KindFile, Reason: "not enumerated", Profile: "default", Rule: `deny "file:**" [write]`, Line: 5},
 	}
 	if !reflect.DeepEqual(rep.Unchecked, want) {
 		t.Errorf("unchecked = %+v, want %+v", rep.Unchecked, want)
 	}
 	if len(rep.Findings) != 0 {
 		t.Errorf("findings = %+v, want none", rep.Findings)
+	}
+}
+
+// TestLintFileIsUncheckedPerRule (D-128): a kind the inventory does not list
+// is unchecked once per rule naming it — with the rule's profile, text and
+// line, like a free sub segment — and has no entry of its own.
+func TestLintFileIsUncheckedPerRule(t *testing.T) {
+	p := mustLoad(t, agent("    default: deny\n    allow:\n      \"file:automations.yaml\": [edit]\n"+
+		"    deny:\n      \"file:secrets.yaml\": [read, write]\n  other:\n    deny:\n      \"file:**\": [write]\n"))
+	rep := Lint(p, fakeInventory{})
+	want := []Unchecked{
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "agent", Rule: `allow "file:automations.yaml" [edit]`, Line: 7},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "agent", Rule: `deny "file:secrets.yaml" [read write]`, Line: 9},
+		{Kind: KindFile, Reason: ReasonNotEnumerated, Profile: "other", Rule: `deny "file:**" [write]`, Line: 12},
+	}
+	if !reflect.DeepEqual(rep.Unchecked, want) {
+		t.Errorf("unchecked =\n%+v\nwant\n%+v", rep.Unchecked, want)
 	}
 }
 

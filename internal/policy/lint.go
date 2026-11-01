@@ -43,6 +43,12 @@ const (
 	// or template's config but not the entity it owns, or the entity but not
 	// the config (D-115).
 	CodeHalfProtected = "half-protected"
+	// CodeBlockedByPart: under `default: deny`, an allow whose write verb a
+	// deny of the same profile on a strict-descendant pattern always refuses
+	// from above (D-125, D-127) — `allow "entity:automation.pg_*": [delete]`
+	// beside `deny "entity:*/registry/entity_id": [write]`, which holds delete
+	// on every entity because deleting the entity deletes the field.
+	CodeBlockedByPart = "blocked-by-part"
 )
 
 // Finding is one lint result.
@@ -90,10 +96,11 @@ const (
 // instance, and why. An unchecked entry is never reported as clean (H-10: a
 // sweep that could only read part of the instance is truncated).
 //
-// An entry about a whole kind (the inventory could not list it) has Profile
-// and Rule "" and Line 0. An entry about one rule — a free sub-resource
-// segment (ReasonSubNotChecked) or an `attr/<name>` whose attributes could
-// not be read (D-65) — names the rule's profile, Text() and line.
+// An entry about a whole kind (the inventory could not read it) has Profile
+// and Rule "" and Line 0. An entry about one rule — a kind the inventory
+// does not list (ReasonNotEnumerated, D-128), a free sub-resource segment
+// (ReasonSubNotChecked) or an `attr/<name>` whose attributes could not be
+// read (D-65) — names the rule's profile, Text() and line.
 type Unchecked struct {
 	Kind    Kind
 	Reason  string
@@ -113,7 +120,8 @@ type LintReport struct {
 }
 
 // ErrNotEnumerated is what an Inventory returns for a kind it does not list.
-// Lint turns it into an Unchecked entry with the reason ReasonNotEnumerated.
+// Lint lists every rule naming the kind Unchecked with the reason
+// ReasonNotEnumerated (D-128).
 var ErrNotEnumerated = errors.New("policy: kind not enumerated")
 
 // PartialError is what an Inventory returns, beside the ids it could read,
@@ -182,10 +190,14 @@ type AttributeInventory interface {
 //     label against the label registry, by id or name with the shared glob —
 //     that matches nothing, on the line of the `where:` entry (D-113). A
 //     value of only `*` counts as checked.
+//   - CodeBlockedByPart (lint_blocked.go) for every allow of a `default:
+//     deny` profile whose write verb a deny on a strict-descendant pattern
+//     always refuses from above (D-125, D-127); no live instance needed.
 //   - CodeSelfGrant and CodeHalfProtected from the registries (see
 //     RegistryInventory, selfGrant and halfProtected).
-//   - Unchecked for every kind that some rule names and inv cannot list
-//     (inv nil: every such kind, ReasonNoLive), and for every rule holding a
+//   - Unchecked for every kind that some rule names and inv cannot read
+//     (inv nil: every such kind, ReasonNoLive), for every rule naming a kind
+//     inv does not list (ReasonNotEnumerated, D-128), and for every rule holding a
 //     free sub-resource segment other than `attr/<name>` that holds a literal
 //     character (ReasonSubNotChecked), whether or not its kind is enumerated;
 //     a segment of only `*` (`*`, `**`) counts as checked (D-65). A `where:`
@@ -225,6 +237,9 @@ type linter struct {
 	live map[Kind][]string
 	// partial marks a kind whose live ids came with a *PartialError.
 	partial map[Kind]bool
+	// notEnumerated marks a kind the inventory does not list: every rule
+	// naming it is unchecked on its own (D-128).
+	notEnumerated map[Kind]bool
 
 	attrsAsked bool
 	attrs      map[string][]string
@@ -245,7 +260,8 @@ type ruleUnchecked struct {
 }
 
 // enumerate asks inv once for every kind some rule names, in Kinds() order
-// (never map order, H-16). A kind it cannot list is Unchecked.
+// (never map order, H-16). A kind it cannot read is Unchecked; a kind it does
+// not list at all is marked, and each rule naming it is Unchecked (D-128).
 func (l *linter) enumerate(p *Policy) {
 	named := map[Kind]bool{}
 	for _, pr := range p.profiles {
@@ -257,6 +273,7 @@ func (l *linter) enumerate(p *Policy) {
 	}
 	l.live = map[Kind][]string{}
 	l.partial = map[Kind]bool{}
+	l.notEnumerated = map[Kind]bool{}
 	for _, k := range Kinds() {
 		if !named[k] {
 			continue
@@ -269,7 +286,7 @@ func (l *linter) enumerate(p *Policy) {
 		var partial *PartialError
 		switch {
 		case errors.Is(err, ErrNotEnumerated):
-			l.kinds = append(l.kinds, Unchecked{Kind: k, Reason: ReasonNotEnumerated})
+			l.notEnumerated[k] = true
 		case errors.As(err, &partial):
 			l.kinds = append(l.kinds, Unchecked{Kind: k, Reason: partial.Err.Error()})
 			sorted := append([]string(nil), ids...)
@@ -311,9 +328,7 @@ func (l *linter) profile(pr *profile) {
 		if r.addr.any {
 			continue
 		}
-		if r.addr.hasUncheckableSub() {
-			unchecked(ReasonSubNotChecked)
-		}
+		l.uncheckedByShape(pr, r)
 		// A partial list proves a match, never the absence of one: nothing
 		// below is drawn from it (matchedIDs reports it not enumerated).
 		matched, enumerated := l.matchedIDs(r.addr)
@@ -344,8 +359,21 @@ func (l *linter) profile(pr *profile) {
 			}
 		}
 	}
+	l.findings = append(l.findings, blockedByPart(pr)...)
 	l.selfGrant(pr)
 	l.halfProtected(pr)
+}
+
+// uncheckedByShape lists rule r unchecked for what its pattern alone says lint
+// cannot check, live match or not: a kind the inventory does not list (D-128)
+// and a free sub segment holding a literal character (D-65).
+func (l *linter) uncheckedByShape(pr *profile, r Rule) {
+	if l.notEnumerated[r.addr.kind] {
+		l.ruleUnchecked(pr, r, ReasonNotEnumerated)
+	}
+	if r.addr.hasUncheckableSub() {
+		l.ruleUnchecked(pr, r, ReasonSubNotChecked)
+	}
 }
 
 // noEffect is CodeNoEffect's message for rule r, "" when r is not a control

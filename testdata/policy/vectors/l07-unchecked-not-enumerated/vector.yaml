@@ -1,5 +1,5 @@
 {
-  "clause": "Lint: a kind the inventory does not enumerate is Unchecked with reason `not enumerated`, in Kinds() order, and never reported clean or no-match",
+  "clause": "Lint: every rule naming a kind the inventory does not enumerate is Unchecked with reason `not enumerated` (D-128: one entry per rule, with its profile, rule and line), in Kinds() order, and never reported clean or no-match",
   "lint": {
     "inventory": {
       "entity": [

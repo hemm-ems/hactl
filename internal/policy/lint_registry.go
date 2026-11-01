@@ -516,7 +516,7 @@ func (rl registryLive) labelRefs(ids []string) []Ref {
 // allows `edit <kind>:<id>/config` (automation, script, template) or `delete
 // <kind>:<id>`. Owner and entity are resolved as the service-call check
 // resolves them (D-107). One finding per rule, naming the first counterpart
-// and how many more; a rule whose counterparts cannot be resolved is listed
+// and the others after it; a rule whose counterparts cannot be resolved is listed
 // unchecked.
 func (l *linter) halfProtected(pr *profile) {
 	var view *Policy
@@ -595,9 +595,13 @@ func configHalf(view *Policy, live Live, idx *registryIndex, r Rule, matched []s
 		return ""
 	}
 	c := found[0]
+	var others []string
+	for _, o := range found[1:] {
+		others = append(others, o.entity)
+	}
 	return r.headText() + " protects the " + string(r.addr.kind) + "'s config, but its entity " + c.entity +
 		" can still be changed (edit entity:" + c.entity + "/registry/" + c.field + " is allowed) — to protect both, also deny " +
-		strconv.Quote("entity:"+c.entity) + ": [write]" + more(len(found)-1)
+		strconv.Quote("entity:"+c.entity) + ": [write]" + more(others)
 }
 
 // entityHalf is the message for a deny r on entities whose owning typed
@@ -638,15 +642,25 @@ func entityHalf(view *Policy, live Live, idx *registryIndex, r Rule, matched []s
 		return ""
 	}
 	c := found[0]
+	var others []string
+	for _, o := range found[1:] {
+		others = append(others, o.owner)
+	}
 	return r.headText() + " protects the entity, but its config " + c.owner + " can still be changed (" + c.change +
-		" is allowed) — to protect both, also deny " + strconv.Quote(c.owner) + ": [write]" + more(len(found)-1)
+		" is allowed) — to protect both, also deny " + strconv.Quote(c.owner) + ": [write]" + more(others)
 }
 
-func more(n int) string {
-	if n <= 0 {
+// more names the counterparts after the first, so a finding never ends in an
+// unexplained count (D-128): at most three by name, then how many more.
+func more(others []string) string {
+	if len(others) == 0 {
 		return ""
 	}
-	return " (" + strconv.Itoa(n) + " more like it)"
+	const named = 3
+	if len(others) <= named {
+		return "; the same holds for " + strings.Join(others, ", ")
+	}
+	return "; the same holds for " + strings.Join(others[:named], ", ") + " and " + strconv.Itoa(len(others)-named) + " more"
 }
 
 // owned are the registry entities the typed entry <kind>:<id> owns, sorted:
