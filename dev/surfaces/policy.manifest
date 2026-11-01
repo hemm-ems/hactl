@@ -149,9 +149,11 @@
 # write row (map: control|edit|create|delete) and every cmd row is proven;
 # what may remain is read-deferred-phase3. The ceiling may fall without
 # ceremony and may only rise by editing this line on purpose. Stage 2b
-# (2026-11-01) proved every write and cmd row; what remains is the 45
-# read-deferred-phase3 rows.
-#ceiling 45
+# (2026-11-01) proved every write and cmd row; what remained was the 45
+# read-deferred-phase3 rows. Raised to 46 on purpose (2026-11-01): `policy
+# lint`'s template enumeration brought back GET /v1/config/templates, a
+# read-deferred-phase3 listing (D-116). Every write and cmd row stays proven.
+#ceiling 46
 
 # =============================================================================
 # WS — Home Assistant websocket
