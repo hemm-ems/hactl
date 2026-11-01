@@ -624,8 +624,12 @@ func pgCreateDashboard(t *testing.T, inst *hatest.Instance, urlPath string, conf
 type pgRig struct {
 	Lights  []string          // available demo lights with a device, sorted
 	DevOf   map[string]string // light → its device
-	Lock    string            // a demo lock in state locked or unlocked
-	LockDev string
+	// Lock is a registered lock in state locked or unlocked (it is placed in
+	// an area, so it needs a registry entry). Observed on HA 2026.10 (stable,
+	// 2026-11-01): the demo integration's locks have no registry entry (no
+	// unique_id), so the fixture's template lock is the one found here.
+	Lock    string
+	LockDev string // its device, "" for the template lock
 }
 
 func buildPGRig(t *testing.T, inst *hatest.Instance) pgRig {
@@ -641,11 +645,11 @@ func buildPGRig(t *testing.T, inst *hatest.Instance) pgRig {
 	seenDev := map[string]bool{}
 	for _, id := range ids {
 		row := reg[id]
-		if row.Disabled != "" || row.DeviceID == "" || row.UniqueID == "" {
+		if row.Disabled != "" || row.UniqueID == "" {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(id, "light.") && !seenDev[row.DeviceID]:
+		case strings.HasPrefix(id, "light.") && row.DeviceID != "" && !seenDev[row.DeviceID]:
 			if st := pgStateOf(t, inst, id).State; st == "on" || st == "off" {
 				rig.Lights = append(rig.Lights, id)
 				rig.DevOf[id] = row.DeviceID
@@ -661,7 +665,7 @@ func buildPGRig(t *testing.T, inst *hatest.Instance) pgRig {
 		t.Fatalf("policy rig: need 3 available demo lights on distinct devices, found %v — the rig is inert", rig.Lights)
 	}
 	if rig.Lock == "" {
-		t.Fatal("policy rig: no demo lock in state locked/unlocked — the lock cases would prove nothing")
+		t.Fatal("policy rig: no registered lock in state locked/unlocked — the lock cases would prove nothing")
 	}
 	for _, l := range rig.Lights {
 		if rig.DevOf[l] == rig.LockDev {
@@ -699,6 +703,12 @@ func newRecordingProxy(t *testing.T, target string) *recordingProxy {
 		p.mu.Lock()
 		p.seen = append(p.seen, line)
 		p.mu.Unlock()
+		// Forward the request as hactl sent it. ReverseProxy would add an
+		// X-Forwarded-For, and HA answers a forwarded request from a proxy
+		// it does not trust with 400 (observed 2026-11-01: every request
+		// through the proxy, the websocket handshake too); a nil entry tells
+		// ReverseProxy to leave the header out.
+		r.Header["X-Forwarded-For"] = nil
 		rp.ServeHTTP(w, r)
 	}))
 	t.Cleanup(p.srv.Close)

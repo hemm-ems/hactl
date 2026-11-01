@@ -2414,3 +2414,10 @@ must go red on exactly that command.
   `up`'s plan emptied and with `config` checked in the preview only. With this
   every write and cmd row of `dev/surfaces/policy.manifest` is proven; the
   ceiling (45) is the read-deferred-phase3 rows.
+  The blind Docker suite written from the contract alone
+  (`internal/integration/policy_enforce_test.go`,
+  `internal/companiontest/policy_enforce_e2e_test.go`) is green against the
+  integrated build and was watched to fail: with the command layer's check
+  disabled (`checkWritePlan` returning allowed) all 17 of its tests that
+  assert a refusal or an audit line went red (the D-58 and D-60 tests do not
+  depend on that check).

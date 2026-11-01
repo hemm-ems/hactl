@@ -34,3 +34,25 @@ logger:
   default: warning
 
 script: !include scripts.yaml
+
+# A lock with a registry entry. The demo integration's locks have none (no
+# unique_id — observed on HA stable, 2026-11-01), so they cannot be placed in
+# an area; the reach cases need a lock in an area beside an allowed light.
+input_boolean:
+  pg_policy_lock_state:
+    name: PG Policy Lock State
+    initial: true
+
+template:
+  - lock:
+      - name: PG Policy Lock
+        unique_id: pg_policy_lock
+        state: "{{ is_state('input_boolean.pg_policy_lock_state', 'on') }}"
+        lock:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.pg_policy_lock_state
+        unlock:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.pg_policy_lock_state
