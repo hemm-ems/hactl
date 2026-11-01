@@ -342,6 +342,14 @@ ws energy/get_prefs = debt: read-deferred-phase3 — no kind fits the energy pre
 # for script.{x}, x itself, since the per-script service stays named by the
 # config key after a rename (oracle: D-84,
 # TestOracleYAMLScriptUniqueIDIsConfigKey).
+# + control entity:{m} for every member the live state of a checked entity
+# lists in its `entity_id` attribute (a light/switch/... group, a scene),
+# recursively — extract_from_target expands only group.* (D-106).
+# + a DENY-ONLY control on the typed address of every checked entity: an
+# automation's config id (state attribute `id`), a script's config key, a
+# helper (registry platform = its domain) by unique_id and object id, a
+# template entity (registry platform template) by unique_id and each suffix
+# after `-`; registries unread -> that kind wide, deny-only (D-107).
 # No selector and no entity in the data -> the service check alone. No
 # system:reload/{domain} for <domain>.reload (D-73). The query
 # (?return_response=true) does not make it a read. Callers: svc call, script
@@ -764,8 +772,11 @@ cmd hactl dash delete = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
 # written outside the checked plan is reported after the fact (D-77).
 # Built (stage 2b): each change is placed in its typed owner by reading the
 # file it lies in (reqmap.RefChangeOwners — by the entry's shape, a superset
-# where the path is ambiguous); a file it cannot read or place refuses the
-# plan (`fail-closed: typed owner unknown`). The placed plan is recorded with
+# where the path is ambiguous), in every entry sharing the changed node
+# through a YAML anchor (D-104), and in every entry that pulls the file in
+# with an !include (reqmap.RefChangeIncluderOwners over the listed config
+# files, D-105); a file it cannot read or place refuses the plan
+# (`fail-closed: typed owner unknown`). The placed plan is recorded with
 # the session, so the request layer maps the confirmed write through it.
 cmd hactl ref replace = proven: TestRefReplaceRefusedByItsPlan
 

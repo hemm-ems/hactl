@@ -335,11 +335,10 @@ func needsOf(row string, req reqmap.Request) needs {
 		if json.Unmarshal(req.Body, &data) == nil && len(data) == 0 {
 			return needs{}
 		}
-		// The registries name a script entity's config id (D-84); only a
-		// service that can start scripts reads them.
-		r := routeOf(req.Path)
-		starts := strings.HasPrefix(r, "/api/services/script/") || strings.HasPrefix(r, "/api/services/homeassistant/")
-		return needs{live: true, reach: true, registries: starts}
+		// The registries name the typed address of every entity the call
+		// reaches — a script's config id (D-84), a helper's, a template
+		// entity's (D-107).
+		return needs{live: true, reach: true, registries: true}
 	case "ws config/label_registry/delete", "ws config/area_registry/delete", "ws config/floor_registry/delete":
 		return needs{registries: true}
 	case "rest DELETE /api/config/config_entries/entry/{entry_id}":
@@ -362,9 +361,9 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 	c := s.cache
 	s.mu.Unlock()
 	if need.live && !c.liveRead && f != nil {
-		if ids, err := f.LiveEntityIDs(ctx); err == nil {
+		if st, err := f.LiveStates(ctx); err == nil {
 			s.mu.Lock()
-			c.live, c.liveRead = ids, true
+			c.live, c.liveRead = st, true
 			s.mu.Unlock()
 		}
 	}
@@ -423,9 +422,15 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 }
 
 // decide answers one check: a concrete resource by Decide (where: selectors
-// asked live), a kind-wide one by DecideKindWide (D-75).
+// asked live), a kind-wide one by DecideKindWide (D-75), a deny-only one by
+// its denies alone (D-107).
 func (s *Session) decide(c reqmap.Check) policy.Verdict {
-	if c.KindWide {
+	switch {
+	case c.KindWide && c.DenyOnly:
+		return s.pol.DecideKindWideDenyOnly(c.Resource.Kind, c.Resource.Sub, c.Verb)
+	case c.DenyOnly:
+		return s.pol.DecideDenyOnly(c.Resource, c.Verb)
+	case c.KindWide:
 		return s.pol.DecideKindWide(c.Resource.Kind, c.Resource.Sub, c.Verb)
 	}
 	var live policy.Live

@@ -102,6 +102,9 @@ func normChecks(cs []reqmap.Check) []string {
 		if c.KindWide {
 			s += " kind_wide"
 		}
+		if c.DenyOnly {
+			s += " deny_only"
+		}
 		out = append(out, s)
 	}
 	sort.Strings(out)
@@ -142,7 +145,7 @@ func (f vecFacts) build(t *testing.T) reqmap.Facts {
 		OptionsFlowHandlers: f.OptionsFlowHandlers,
 	}
 	if f.LiveEntities != nil {
-		out.Live = &reqmap.LiveStates{EntityIDs: f.LiveEntities}
+		out.Live = &reqmap.LiveStates{EntityIDs: f.LiveEntities, Members: f.LiveMembers, AutomationIDs: f.LiveAutomationIDs}
 	}
 	if f.DashboardConfigs != nil {
 		out.Dashboards = map[string]reqmap.StoredDashboard{}
@@ -166,7 +169,7 @@ func (f vecFacts) build(t *testing.T) reqmap.Facts {
 	}
 	for _, e := range reg.Entities {
 		out.Registries.Entities = append(out.Registries.Entities, reqmap.RegistryEntity{
-			EntityID: e.EntityID, UniqueID: e.UniqueID,
+			EntityID: e.EntityID, UniqueID: e.UniqueID, Platform: e.Platform,
 			AreaID: deref(e.AreaID), Labels: e.Labels, ConfigEntryID: e.ConfigEntryID,
 		})
 	}
@@ -248,12 +251,17 @@ type vecCheck struct {
 	Verb     string `json:"verb"`
 	Resource string `json:"resource"`
 	KindWide bool   `json:"kind_wide"`
+	// DenyOnly: a check only a deny decides (D-107).
+	DenyOnly bool `json:"deny_only"`
 }
 
 func (c vecCheck) String() string {
 	s := c.Verb + " " + c.Resource
 	if c.KindWide {
 		s += " kind_wide"
+	}
+	if c.DenyOnly {
+		s += " deny_only"
 	}
 	return s
 }
@@ -279,7 +287,11 @@ type vecRequest struct {
 type vecFacts struct {
 	PolicyHash   string   `json:"policy_hash"`
 	LiveEntities []string `json:"live_entities"`
-	Registry     struct {
+	// LiveMembers: the `entity_id` attribute of live states (D-106).
+	LiveMembers map[string][]string `json:"live_members"`
+	// LiveAutomationIDs: the `id` attribute of live automations (D-107).
+	LiveAutomationIDs map[string]string `json:"live_automation_ids"`
+	Registry          struct {
 		Entities []struct {
 			EntityID      string   `json:"entity_id"`
 			UniqueID      string   `json:"unique_id"`

@@ -208,14 +208,12 @@ func mapServiceCall(c *call) (mapping, error) {
 	if err != nil {
 		return mapping{}, err
 	}
-	for _, id := range ids {
+	var named []string
+	walkData(data, func(s string) { named = append(named, live.names(s)...) })
+	reached := forwardedTo(append(slices.Clone(ids), named...), f.Live.Members)
+	for _, id := range reached {
 		cs.add(policy.Control, policy.KindEntity, id, "")
 	}
-	walkData(data, func(s string) {
-		for _, id := range live.names(s) {
-			cs.add(policy.Control, policy.KindEntity, id, "")
-		}
-	})
 	if domain == "homeassistant" && homeassistantFanOut[service] {
 		for _, d := range domainsOf(ids) {
 			cs.add(policy.Control, policy.KindService, d+"."+service, "")
@@ -224,7 +222,139 @@ func mapServiceCall(c *call) (mapping, error) {
 	if (domain == "script" || domain == "homeassistant") && scriptStartServices[service] {
 		cs.addScriptRuns(ids, f.Registries)
 	}
+	cs.addTypedControl(reached, f.Live, f.Registries)
 	return mapping{checks: cs.out}, cs.err
+}
+
+// forwardedTo is ids and, recursively, every entity a call on one of them is
+// forwarded to: the members its live state lists in its `entity_id`
+// attribute — a group, a light/switch/cover/fan/lock/media_player group, a
+// scene (D-106). Home Assistant's extract_from_target expands only old-style
+// `group.*` entities (observed: a light group's members are not in its
+// answer, a scene's never are), and the group or scene then calls each
+// member itself, so each member needs control as if it were named. In order,
+// each id once.
+func forwardedTo(ids []string, members map[string][]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	queue := slices.Clone(ids)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+		queue = append(queue, members[id]...)
+	}
+	return out
+}
+
+// helperPlatforms are the helper domains: an entity of one of them whose
+// registry platform is the domain itself is that helper (D-107).
+var helperPlatforms = map[string]bool{
+	"input_boolean": true, "input_number": true, "input_select": true, "input_text": true,
+	"input_datetime": true, "input_button": true, "counter": true, "timer": true, "schedule": true,
+}
+
+// addTypedControl adds, for every entity a call reaches, a deny-only `control`
+// on the typed address the entity is (D-107) — so a deny the owner wrote on
+// `automation:prod_*`, `helper:input_boolean/alarm_armed`,
+// `template:front_door_lock` or `script:prod_*` also refuses switching it,
+// while its grant stays the entity's:
+//
+//   - automation.<x>: automation:<config id>, the state's `id` attribute; an
+//     automation without one has no address and is checked as its entity;
+//   - script.<x>: script:<config key>, its registry unique_id (D-84);
+//   - an entity of a helper domain whose registry platform is that domain:
+//     helper:<domain>/<unique_id>, and helper:<domain>/<object id> too when the
+//     two differ (a renamed entity) — the id `helper ls` prints, whichever it
+//     is;
+//   - an entity whose registry platform is `template`: template:<unique_id>,
+//     and every suffix of it after a `-` (a block's own unique_id prefixes its
+//     entities' ids in the registry).
+//
+// Without the registries, a script, helper or template address cannot be read:
+// the check is kind-wide (`<kind>:*`, denied by any deny of the kind) — a
+// superset, never less.
+func (cs *cascade) addTypedControl(ids []string, live *LiveStates, reg *Registries) {
+	byID := map[string]RegistryEntity{}
+	if reg != nil {
+		for _, e := range reg.Entities {
+			byID[e.EntityID] = e
+		}
+	}
+	for _, id := range ids {
+		domain, object, _ := strings.Cut(id, ".")
+		if domain == "automation" && live != nil {
+			if cid := live.AutomationIDs[id]; cid != "" {
+				cs.addDenyOnly(policy.KindAutomation, cid)
+			}
+		}
+		if reg == nil {
+			cs.addTypedUnread(domain)
+			continue
+		}
+		if row, ok := byID[id]; ok && row.UniqueID != "" {
+			cs.addTypedRow(domain, object, row)
+		}
+	}
+}
+
+// addTypedUnread is addTypedControl's superset when the registries were not
+// read: the kind of the entity's typed address, deny-only — every kind a
+// registry row could have named (a template entity can be of any domain).
+func (cs *cascade) addTypedUnread(domain string) {
+	switch {
+	case domain == "script":
+		cs.addKindWideDenyOnly(policy.KindScript)
+	case helperPlatforms[domain]:
+		cs.addKindWideDenyOnly(policy.KindHelper)
+	}
+	cs.addKindWideDenyOnly(policy.KindTemplate)
+}
+
+// addTypedRow adds the typed address a registry row names.
+func (cs *cascade) addTypedRow(domain, object string, row RegistryEntity) {
+	switch {
+	case domain == "script":
+		cs.addDenyOnly(policy.KindScript, row.UniqueID)
+	case helperPlatforms[domain] && row.Platform == domain:
+		cs.addDenyOnly(policy.KindHelper, domain+"/"+row.UniqueID)
+		if object != row.UniqueID {
+			cs.addDenyOnly(policy.KindHelper, domain+"/"+object)
+		}
+	case row.Platform == "template":
+		uid := row.UniqueID
+		cs.addDenyOnly(policy.KindTemplate, uid)
+		for i := strings.IndexByte(uid, '-'); i >= 0; i = strings.IndexByte(uid, '-') {
+			if uid = uid[i+1:]; uid != "" {
+				cs.addDenyOnly(policy.KindTemplate, uid)
+			}
+		}
+	}
+}
+
+// addDenyOnly adds a deny-only control on <kind>:<id> (D-107).
+func (cs *cascade) addDenyOnly(kind policy.Kind, id string) {
+	if cs.err != nil {
+		return
+	}
+	ch, err := check(policy.Control, kind, id, "")
+	if err != nil {
+		cs.err = err
+		return
+	}
+	ch.DenyOnly = true
+	cs.out = append(cs.out, ch)
+}
+
+// addKindWideDenyOnly adds a deny-only control on every id of kind.
+func (cs *cascade) addKindWideDenyOnly(kind policy.Kind) {
+	ch := kindWide(policy.Control, kind, "")
+	ch.DenyOnly = true
+	cs.out = append(cs.out, ch)
 }
 
 // serviceReach is the entity set a service call acts on, sorted: `all`

@@ -2421,3 +2421,16 @@ must go red on exactly that command.
   disabled (`checkWritePlan` returning allowed) all 17 of its tests that
   assert a refusal or an audit line went red (the D-58 and D-60 tests do not
   depend on that check).
+  Fix wave after the stage-2b verification (2026-11-01): a `ref replace`
+  change is placed in every entry sharing the changed node through a YAML
+  anchor (D-104) and in every entry that pulls its file in with an
+  `!include` (D-105); a service call needs `control` on every member a
+  group or scene among its entities forwards to (D-106) and is checked, for
+  denies only, at the typed address of every automation, script, helper or
+  template entity it reaches (D-107). Each was a reproduced bypass on the
+  Docker rig and is proven there (TestE2EPolicyRefReplaceSharedAndIncludedChangesCLI,
+  TestPolicyEnforceForwardedEntities, TestPolicyEnforceTypedControl) and at
+  the unit tier (TestRefChangeOwnersPlacesAChangeInEveryEntryThatSharesIt,
+  TestRefChangeIncluderOwners, TestSvcCallChecksTheMembersAGroupOrSceneForwardsTo,
+  TestSvcCallChecksTheTypedAddressOfWhatItReaches), each watched to fail
+  with its placement or check removed.

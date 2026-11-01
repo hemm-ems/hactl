@@ -1040,7 +1040,15 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	//
 	// `script apply`, the sibling, has always returned this error. The manual
 	// promises it for both: "a preview fails exactly where --confirm would".
-	diff, diffErr := wr.Diff(ctx, configID, flagAutoFile)
+	//
+	// The candidate is read once: the diff, the policy plan and the write all
+	// take these bytes, so a pipe (`-f /dev/stdin`) is not drained by the
+	// first of them, and the plan checks the very file that is sent.
+	candidate, readErr := writer.ReadCandidate(flagAutoFile)
+	if readErr != nil {
+		return readErr
+	}
+	diff, diffErr := wr.DiffContent(ctx, configID, candidate)
 	if diffErr != nil {
 		return diffErr
 	}
@@ -1061,7 +1069,7 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	// before the first write, the same in the preview and under --confirm:
 	// edit on the target, + create on the file's id when it differs (E-5,
 	// D-78); a file without a usable id is refused (R-6).
-	note, err := checkWritePlan(w, !flagAutoConfirm, autoApplyPlan(configID, flagAutoFile))
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoApplyPlan(configID, candidate))
 	if err != nil {
 		return err
 	}
@@ -1070,7 +1078,7 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 		renderAutoDiff(w, diff.Lines)
 	}
 
-	result, err := wr.Apply(ctx, configID, flagAutoFile, flagAutoConfirm)
+	result, err := wr.ApplyContent(ctx, configID, candidate, flagAutoConfirm)
 	if err != nil {
 		return err
 	}

@@ -1012,3 +1012,31 @@ func TestPolicyFamilyHasNoExplainYet(t *testing.T) {
 		t.Errorf("policy explain wrote to stdout: %q", out)
 	}
 }
+
+// TestPolicyCheckTypedControlIsEnforcedForItsDenies (D-107): control on an
+// automation, a helper, a template entity or a script itself is what a service
+// call reaching that entity checks for denies only. A deny on it is enforced;
+// a denial by `default: deny` alone is not — the profile default decides on the
+// entity — and policy check says so instead of claiming enforcement.
+func TestPolicyCheckTypedControlIsEnforcedForItsDenies(t *testing.T) {
+	dir := policyInstance(t, closedHAURL(t), "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    deny:\n      \"automation:prod_*\": [write]\n")
+	out, err := runPolicyCLI(t, dir, "policy", "check", "automation:prod_heating", "control")
+	if cliExitCode(err) != 1 || !strings.Contains(out, "enforced: a write command refuses what this verdict denies\n") {
+		t.Errorf("a deny on the typed address: exit %d\n%s", cliExitCode(err), out)
+	}
+	for _, res := range []string{"automation:kitchen", "helper:input_boolean/guest", "template:t", "script:s"} {
+		out, err = runPolicyCLI(t, dir, "policy", "check", res, "control")
+		if cliExitCode(err) != 1 || !strings.Contains(out, "rule: default: deny\n") ||
+			!strings.Contains(out, "not enforced: control on ") || strings.Contains(out, "enforced: a write command") {
+			t.Errorf("%s denied by the default only: exit %d\n%s", res, cliExitCode(err), out)
+		}
+		out, _ = runPolicyCLI(t, dir, "policy", "check", res, "control", "--json")
+		wantField(t, res, decodeObject(t, out), "enforced", false)
+	}
+	for _, res := range []string{"script:s/run", "entity:light.x"} {
+		out, _ = runPolicyCLI(t, dir, "policy", "check", res, "control", "--json")
+		wantField(t, res, decodeObject(t, out), "enforced", true)
+	}
+	out, _ = runPolicyCLI(t, dir, "policy", "check", "automation:kitchen", "edit", "--json")
+	wantField(t, "edit on an automation", decodeObject(t, out), "enforced", true)
+}

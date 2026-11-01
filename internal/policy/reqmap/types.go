@@ -89,6 +89,12 @@ type Check struct {
 	// is empty and Resource.Sub, when set, is the sub-resource below each id.
 	// It renders as `<kind>:*[/<sub>]` and is never a concrete resource.
 	KindWide bool
+	// DenyOnly marks a check only a deny decides (D-107): the typed address
+	// (automation, script, helper, template entity) of an entity a service
+	// call reaches. The call's grant is decided on the entity; the typed
+	// address can only refuse it — the profile default and the allows do not
+	// decide it. It renders like any check.
+	DenyOnly bool
 }
 
 // Target renders the checked resource: the address, or `<kind>:*[/<sub>]` for
@@ -140,14 +146,21 @@ func (r Result) Refused() bool {
 	return (r.Disposition == Unmapped || r.Disposition == Unmappable) && r.Mutating
 }
 
-// Strings renders Checks as `<verb> <target>` lines, in order.
+// Strings renders Checks as `<verb> <target>` lines, in order; a deny-only
+// check (D-107) as `<verb> <target> (deny only)`.
 func (r Result) Strings() []string {
 	out := make([]string, len(r.Checks))
 	for i, c := range r.Checks {
 		out[i] = c.String()
+		if c.DenyOnly {
+			out[i] += DenyOnlySuffix
+		}
 	}
 	return out
 }
+
+// DenyOnlySuffix marks a deny-only check in [Result.Strings].
+const DenyOnlySuffix = " (deny only)"
 
 // Facts is what the same command invocation already read, under the same
 // loaded policy (D-72), that a mapping may rely on. Every field is optional;
@@ -184,9 +197,18 @@ type Facts struct {
 	RefReplacePlans []RefReplacePlan
 }
 
-// LiveStates is the live entity set.
+// LiveStates is the live entity set, with what each live state says about the
+// entities a call on it is forwarded to and about its typed address.
 type LiveStates struct {
 	EntityIDs []string
+	// Members maps a live entity to the entity ids its state's `entity_id`
+	// attribute lists — the members a group, a light (switch, cover, fan,
+	// media_player, lock) group or a scene forwards a call on it to (D-106).
+	// Absent = the state lists none.
+	Members map[string][]string
+	// AutomationIDs maps a live automation entity to its config id, the
+	// state's `id` attribute (D-107). Absent = the automation has none.
+	AutomationIDs map[string]string
 }
 
 // Reach is an `extract_from_target` answer: the entity ids the target
@@ -206,7 +228,11 @@ type Registries struct {
 
 // RegistryEntity is one entity registry row.
 type RegistryEntity struct {
-	EntityID      string
+	EntityID string
+	// Platform is the integration that provides the entity (`template`,
+	// `input_boolean`, `script`, …): it tells a helper or a template entity
+	// apart from other entities of its domain (D-107).
+	Platform      string
 	UniqueID      string
 	ConfigEntryID string
 	AreaID        string
@@ -277,7 +303,14 @@ type checkSet struct {
 
 func newCheckSet() *checkSet { return &checkSet{m: map[string]Check{}} }
 
-func (s *checkSet) add(c Check) { s.m[c.String()] = c }
+// add keeps one check per (verb, target); of a deny-only and a full check of
+// the same pair, the full check — the stricter one — stays.
+func (s *checkSet) add(c Check) {
+	if have, ok := s.m[c.String()]; ok && !have.DenyOnly && c.DenyOnly {
+		return
+	}
+	s.m[c.String()] = c
+}
 
 func (s *checkSet) addAll(cs []Check) {
 	for _, c := range cs {

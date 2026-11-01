@@ -158,7 +158,19 @@ type ApplyResult struct {
 // every ordering difference was normalized away on both sides at once and a
 // confirmed write could change lines the diff had shown as unchanged.
 func (w *Writer) Diff(ctx context.Context, automationID string, localPath string) (*DiffResult, error) {
-	localText, _, err := readLocalAutomation(localPath)
+	data, err := ReadCandidate(localPath)
+	if err != nil {
+		return nil, err
+	}
+	return w.DiffContent(ctx, automationID, data)
+}
+
+// DiffContent is Diff of a candidate already read (ReadCandidate): a command
+// that diffs, checks and writes one candidate reads it once, so a pipe
+// (`-f /dev/stdin`) is not drained by the first of them and every step sees
+// the same bytes (H-2).
+func (w *Writer) DiffContent(ctx context.Context, automationID string, data []byte) (*DiffResult, error) {
+	localText, _, err := parseLocalAutomation(data)
 	if err != nil {
 		return nil, err
 	}
@@ -177,11 +189,14 @@ func (w *Writer) Diff(ctx context.Context, automationID string, localPath string
 	}, nil
 }
 
-// Apply writes an automation entry through the companion. If confirm is false
+// ApplyContent writes an automation entry through the companion. If confirm is false
 // it validates the candidate and asks the companion to rehearse the same write
 // (H-2: a preview fails exactly where --confirm would).
-func (w *Writer) Apply(ctx context.Context, automationID, localPath string, confirm bool) (*ApplyResult, error) {
-	localText, localConfig, err := readLocalAutomation(localPath)
+//
+// data is the candidate as the caller read it (ReadCandidate) — the same bytes
+// it diffed and checked, never a second read of the file.
+func (w *Writer) ApplyContent(ctx context.Context, automationID string, data []byte, confirm bool) (*ApplyResult, error) {
+	localText, localConfig, err := parseLocalAutomation(data)
 	if err != nil {
 		return nil, err
 	}
@@ -357,13 +372,18 @@ func (w *Writer) remoteEntry(ctx context.Context, automationID string) (string, 
 	return resp.Content, nil
 }
 
-// readLocalAutomation reads the candidate the caller wrote, returning both its
-// exact text (what will be written) and its parsed form (what is validated).
-func readLocalAutomation(localPath string) (string, map[string]any, error) {
-	localData, err := os.ReadFile(filepath.Clean(localPath))
+// ReadCandidate reads a candidate automation file once.
+func ReadCandidate(localPath string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Clean(localPath))
 	if err != nil {
-		return "", nil, fmt.Errorf("reading local file: %w", err)
+		return nil, fmt.Errorf("reading local file: %w", err)
 	}
+	return data, nil
+}
+
+// parseLocalAutomation returns the candidate the caller wrote as both its exact
+// text (what will be written) and its parsed form (what is validated).
+func parseLocalAutomation(localData []byte) (string, map[string]any, error) {
 	var localConfig map[string]any
 	if unmarshalErr := yaml.Unmarshal(localData, &localConfig); unmarshalErr != nil {
 		return "", nil, fmt.Errorf("parsing local YAML: %w", unmarshalErr)

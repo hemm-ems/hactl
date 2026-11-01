@@ -14,8 +14,10 @@ import (
 // widens an allow — the mapping refuses (`fail-closed: reach unknown`) or
 // checks a superset instead (reqmap's pole).
 type Fetcher interface {
-	// LiveEntityIDs is the live entity set (GET /api/states).
-	LiveEntityIDs(ctx context.Context) ([]string, error)
+	// LiveStates is the live entity set (GET /api/states), with each
+	// state's forwarding members (D-106) and an automation's config id
+	// (D-107).
+	LiveStates(ctx context.Context) (*reqmap.LiveStates, error)
 	// Reach is Home Assistant's extract_from_target answer for a target,
 	// asked with expand_group: true (D-59).
 	Reach(ctx context.Context, target map[string]any) ([]string, error)
@@ -49,7 +51,7 @@ type Fetcher interface {
 type factCache struct {
 	hash string
 
-	live         []string
+	live         *reqmap.LiveStates
 	liveRead     bool
 	registries   *reqmap.Registries
 	regComplete  bool
@@ -100,7 +102,7 @@ func (c *factCache) facts(reach *reqmap.Reach, cascadeRegistries bool) *reqmap.F
 		RefReplacePlans:       append([]reqmap.RefReplacePlan(nil), c.refPlans...),
 	}
 	if c.liveRead {
-		f.Live = &reqmap.LiveStates{EntityIDs: c.live}
+		f.Live = c.live
 	}
 	if c.regRead && (c.regComplete || !cascadeRegistries) {
 		f.Registries = c.registries

@@ -91,12 +91,11 @@ func readCandidate(p *writePlan, v policy.Verb, resource, path string) ([]byte, 
 
 // autoApplyPlan: edit automation:<config id>/config, + create
 // automation:<file id> when the file's id differs (E-5, D-78), or refused when
-// the file has no usable id (R-6).
-func autoApplyPlan(configID, file string) *writePlan {
+// the file has no usable id (R-6). data is the candidate as the command read
+// it — the bytes it diffs and sends, never a second read of the file.
+func autoApplyPlan(configID string, data []byte) *writePlan {
 	p := newWritePlan("apply automation").add(policy.Edit, policy.KindAutomation, configID, "config")
-	if data, ok := readCandidate(p, policy.Create, string(policy.KindAutomation)+":"+typedNoID, file); ok {
-		p.addRenameOf(configID, data)
-	}
+	p.addRenameOf(configID, data)
 	return p
 }
 

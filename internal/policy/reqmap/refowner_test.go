@@ -1,6 +1,7 @@
 package reqmap
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -199,8 +200,10 @@ func TestRefChangeOwnersFailsWhenItCannotPlace(t *testing.T) {
 	}
 }
 
-// TestRefChangeOwnersFollowsMergeKeysAndAliases: a path through a `<<` merge
-// or an alias resolves as the companion's loaded tree does.
+// TestRefChangeOwnersFollowsMergeKeysAndAliases (D-104): a path through a `<<`
+// merge or an alias resolves as the companion's loaded tree does — and since
+// the companion rewrites the shared node once, the change lies in every entry
+// that shares it: the one holding the anchor and every one merging it in.
 func TestRefChangeOwnersFollowsMergeKeysAndAliases(t *testing.T) {
 	const doc = `- &base
   id: one
@@ -213,8 +216,173 @@ func TestRefChangeOwnersFollowsMergeKeysAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g := ownerStrings(got); !slices.Equal(g, []string{"automation:two"}) {
-		t.Errorf("owners = %q", g)
+	if g := ownerStrings(got); !slices.Equal(g, []string{"automation:one", "automation:two"}) {
+		t.Errorf("owners = %q, want both entries that share the merged triggers", g)
+	}
+}
+
+// TestRefChangeOwnersPlacesAChangeInEveryEntryThatSharesIt (D-104): the
+// live-fire reproduction — an anchor in an allowed automation, an alias of it
+// in a denied one. The companion reports the change at the anchor's location
+// only; the denied automation reads the rewritten value too, so it is an owner.
+// Also the other way round (a path through the alias), an anchored scalar,
+// a merge key bringing the anchor's whole mapping in, and an id rewritten
+// through an alias (a rename of every entry sharing it, E-5).
+func TestRefChangeOwnersPlacesAChangeInEveryEntryThatSharesIt(t *testing.T) {
+	const anchoredTrigger = `- id: pg_test
+  alias: PG test
+  trigger: &temp_trigger
+    - platform: state
+      entity_id: sensor.old_temp
+  action: []
+- id: prod_heating
+  alias: Prod heating
+  trigger: *temp_trigger
+  action: []
+- id: unrelated
+  trigger: [{platform: state, entity_id: sensor.old_temp}]
+  action: []
+`
+	const anchoredScalar = `- id: a
+  trigger: [{platform: state, entity_id: &e sensor.old_temp}]
+  action: []
+- id: b
+  trigger: [{platform: state, entity_id: *e}]
+  action: []
+`
+	const mergedMapping = `- id: a
+  trigger:
+    - &t {platform: state, entity_id: sensor.old_temp}
+  action: []
+- id: b
+  trigger:
+    - <<: *t
+      for: "00:01:00"
+  action: []
+`
+	const scripts = `common: &seq
+  sequence:
+    - action: light.turn_on
+      target: {entity_id: sensor.old_temp}
+other:
+  <<: *seq
+  alias: Other
+`
+	const sharedID = `- &x
+  id: prod_heating
+  trigger: []
+  action: []
+`
+	for _, tc := range []struct {
+		name, location, content, path, old, new string
+		want                                    []string
+	}{
+		{"change at the anchor reaches the alias", "automations.yaml", anchoredTrigger, "[0].trigger[0].entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"automation:pg_test", "automation:prod_heating"}},
+		{"change through the alias reaches the anchor", "automations.yaml", anchoredTrigger, "[1].trigger[0].entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"automation:pg_test", "automation:prod_heating"}},
+		{"an unshared entry stays alone", "automations.yaml", anchoredTrigger, "[2].trigger[0].entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"automation:unrelated"}},
+		{"an anchored scalar", "automations.yaml", anchoredScalar, "[0].trigger[0].entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"automation:a", "automation:b"}},
+		{"a merge key bringing the anchor in", "automations.yaml", mergedMapping, "[0].trigger[0].entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"automation:a", "automation:b"}},
+		{"a script merging another's sequence", "scripts.yaml", scripts, "common.sequence[0].target.entity_id", "sensor.old_temp", "sensor.new_temp",
+			[]string{"script:common", "script:other"}},
+		{"an id shared by alias is renamed once per sharing entry", "automations.yaml", sharedID + "- *x\n", "[0].id", "prod_heating", "test_heating",
+			[]string{"automation:prod_heating->test_heating"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RefChangeOwners(tc.location, []byte(tc.content), tc.path, tc.old, tc.new)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g := ownerStrings(got); !slices.Equal(g, tc.want) {
+				t.Errorf("owners = %q, want %q", g, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefChangeOwnersRefusesWhatItCannotWalk (D-104): a file whose aliases
+// nest so that the changed node is reached more ways than can be walked is an
+// error — the plan refuses — never the anchor's own entry alone.
+func TestRefChangeOwnersRefusesWhatItCannotWalk(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("- id: a\n  trigger: &l0 [{platform: state, entity_id: sensor.old}]\n  action: []\n")
+	b.WriteString("- id: b\n  x0: &l1 [*l0, *l0, *l0, *l0, *l0, *l0, *l0, *l0]\n")
+	for i := 1; i < 6; i++ {
+		fmt.Fprintf(&b, "  x%d: &l%d [*l%d, *l%d, *l%d, *l%d, *l%d, *l%d, *l%d, *l%d]\n", i, i+1, i, i, i, i, i, i, i, i)
+	}
+	b.WriteString("  trigger: [*l6]\n  action: []\n")
+	if _, err := RefChangeOwners("automations.yaml", []byte(b.String()), "[0].trigger[0].entity_id", "sensor.old", "sensor.new"); err == nil {
+		t.Error("a change reached 8^6 ways was placed; want an error (fail closed)")
+	}
+}
+
+// TestRefChangeIncluderOwners (D-105): a change in a file that other files
+// `!include` lies in the typed entries of every including file, through every
+// include tag Home Assistant's loader resolves and up through includes of
+// includes; a file of no include is no owner, and a fragment included where
+// no typed entry is gets none.
+func TestRefChangeIncluderOwners(t *testing.T) {
+	const fragment = "- platform: state\n  entity_id: sensor.old_temp\n"
+	files := map[string][]byte{
+		"configuration.yaml": []byte("homeassistant:\n  name: x\nautomation: !include automations.yaml\nscript: !include_dir_named scripts\nsensor: !include sensors.yaml\ntemplate: !include_dir_merge_list templates\n"),
+		"automations.yaml": []byte("- id: prod_heating\n  trigger: !include common/temp_trigger.yaml\n  action: []\n" +
+			"- id: other\n  trigger: []\n  action: []\n"),
+		"common/temp_trigger.yaml": []byte(fragment),
+		"scripts/wake.yaml":        []byte("alias: Wake\nsequence: !include ../common/steps.yaml\n"),
+		"common/steps.yaml":        []byte("- action: light.turn_on\n  target: {entity_id: sensor.old_temp}\n"),
+		"sensors.yaml":             []byte("- platform: template\n  sensors: !include common/sensor_body.yaml\n"),
+		"common/sensor_body.yaml":  []byte("x:\n  value_template: \"{{ states('sensor.old_temp') }}\"\n"),
+		"templates/a.yaml":         []byte("- trigger: !include ../common/tpl_trigger.yaml\n  sensor:\n    - unique_id: tpl_a\n      state: \"1\"\n"),
+		"common/tpl_trigger.yaml":  []byte(fragment),
+		"unrelated.yaml":           []byte("- id: x\n  trigger: !include common/other.yaml\n  action: []\n"),
+	}
+	for _, tc := range []struct {
+		name, location, path string
+		want                 []string
+	}{
+		{"!include in an automation entry", "common/temp_trigger.yaml", "[0].entity_id", []string{"automation:prod_heating"}},
+		{"!include in a dir-named script file", "common/steps.yaml", "[0].target.entity_id", []string{"script:wake"}},
+		{"!include below no typed entry", "common/sensor_body.yaml", "x.value_template", nil},
+		{"!include in a merged template block", "common/tpl_trigger.yaml", "[0].entity_id", []string{"template:tpl_a"}},
+		{"a file included whole is placed through its includer as by its shape", "automations.yaml", "[1].action", []string{"automation:other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RefChangeIncluderOwners(tc.location, files[tc.location], tc.path, "sensor.old_temp", "sensor.new_temp", files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g := ownerStrings(got); !slices.Equal(g, tc.want) {
+				t.Errorf("owners = %q, want %q", g, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefChangeIncluderOwnersFailsClosed (D-105): a file that may include the
+// changed one but does not parse, and includes nested past any real
+// configuration, are errors the plan refuses on.
+func TestRefChangeIncluderOwnersFailsClosed(t *testing.T) {
+	frag := []byte("- platform: state\n  entity_id: sensor.old\n")
+	broken := map[string][]byte{
+		"f.yaml":           frag,
+		"automations.yaml": []byte("- id: a\n  trigger: !include f.yaml\n  action: [unclosed\n"),
+	}
+	if _, err := RefChangeIncluderOwners("f.yaml", frag, "[0].entity_id", "sensor.old", "sensor.new", broken); err == nil {
+		t.Error("an unparseable includer was skipped; want an error")
+	}
+	deep := map[string][]byte{"f0.yaml": frag}
+	for i := 1; i <= maxIncludeDepth+1; i++ {
+		deep[fmt.Sprintf("f%d.yaml", i)] = fmt.Appendf(nil, "- !include f%d.yaml\n", i-1)
+	}
+	if _, err := RefChangeIncluderOwners("f0.yaml", frag, "[0].entity_id", "sensor.old", "sensor.new", deep); err == nil {
+		t.Error("includes nested past the bound were followed; want an error")
+	}
+	if _, err := RefChangeIncluderOwners("f.yaml", frag, "[3].entity_id", "sensor.old", "sensor.new", nil); err == nil {
+		t.Error("a path the file does not hold was placed; want an error")
 	}
 }
 

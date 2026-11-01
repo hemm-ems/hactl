@@ -26,7 +26,7 @@ internal/cmd/helper.go:helperCreateID = exempt: parses the user's own create inp
 internal/cmd/script.go:normalizeScriptYAML = exempt: parses the user's own script YAML; an empty mapping is refused explicitly before any request is made
 internal/cmd/script.go:normalizeScriptCreateYAML = exempt: parses the user's own create input; refuses empty input and anything but one top-level key
 internal/cmd/tpl.go:classifyTemplate = exempt: parses the user's own template YAML; an empty document is refused explicitly ("template file is empty")
-internal/writer/writer.go:readLocalAutomation = exempt: parses the user's own local file, whose emptiness is the caller's to see — a blank candidate diffs as a deletion and validate_config refuses it; the REMOTE document is decoded by remoteEntry, proven above
+internal/writer/writer.go:parseLocalAutomation = exempt: parses the user's own local file (read once by ReadCandidate), whose emptiness is the caller's to see — a blank candidate diffs as a deletion and validate_config refuses it; the REMOTE document is decoded by remoteEntry, proven above
 internal/cmd/policy_typed.go:yamlTop = exempt: parses the user's own candidate file, or hactl's own automation backup, for a write command's policy plan; a document that decodes to nothing names no id, so the plan refuses the write (fail closed, D-78) — it never renders as success
 
 # --- transport envelopes: checked explicitly, results re-decoded under the sweep
@@ -59,12 +59,12 @@ internal/policy/reqmap/restmap.go:jsonObject = proven: TestServiceCallMapping
 internal/policy/reqmap/companionmap.go:yamlMapping = proven: TestClassifyWriteRequests
 internal/policy/reqmap/companionmap.go:mapRefReplace = proven: TestClassifyWriteRequests
 internal/policy/reqmap/dashboard.go:decodeObject = proven: TestDiffDashboard
-internal/policy/reqmap/refowner.go:RefChangeOwners = proven: TestRefChangeOwnersFailsWhenItCannotPlace
+internal/policy/reqmap/refowner.go:parseRoot = proven: TestRefChangeOwnersFailsWhenItCannotPlace
 
 # --- the policy gate (H-29) -------------------------------------------------------
 internal/haapi/websocket.go:(*wsConn).ReadJSON = exempt: the gated connection forwards gorilla's ReadJSON to its callers, each of which is its own site on this surface
 internal/policy/enforce/facts.go:(*factCache).observe = exempt: records a fact from an answer the request already returned to its command; a decode failure or a zero value records nothing, and an unrecorded fact can only refuse a later request or widen its check (fail closed), never render an answer
 internal/policy/enforce/facts.go:(*factCache).observeRefReplace = exempt: records a ref/replace dry run as the plan its confirmed write is mapped through; a decode failure records no plan, and a confirmed write without one is refused (D-77)
-internal/policy/enforce/hafetch.go:(*HAFetcher).LiveEntityIDs = exempt: decodes only each state's entity_id for the policy check; a state without one refuses the whole answer, so a service call's reach is unknown and the call refused (D-73), never computed from a partial set
+internal/policy/enforce/hafetch.go:(*HAFetcher).LiveStates = exempt: decodes each state's entity_id (and its entity_id and id attributes, D-106/D-107) for the policy check; a state without one refuses the whole answer, so a service call's reach is unknown and the call refused (D-73), never computed from a partial set
 internal/surfaceaudit/policy.go:releaseTargets = proven: TestPolicyRequestSitesCoverEveryReleaseTarget
 internal/policy/enforce/session.go:needsOf = exempt: decodes a service call's own outgoing data only to see whether it is empty; a body that does not decode keeps every fact asked, and the classifier refuses a body that is no object

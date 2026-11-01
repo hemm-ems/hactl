@@ -17,6 +17,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/manual"
 	"github.com/hemm-ems/hactl/internal/policy/enforce"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // The service-call family under a policy (manual "Enforcement (writes)":
@@ -172,7 +173,11 @@ func planOf(t *testing.T, dir string, args ...string) ([]string, string, error) 
 	out, err := runPolicyCLI(t, dir, args...)
 	got := make([]string, 0, len(rec.plan))
 	for _, c := range rec.plan {
-		got = append(got, c.String())
+		s := c.String()
+		if c.DenyOnly {
+			s += reqmap.DenyOnlySuffix
+		}
+		got = append(got, s)
 	}
 	sort.Strings(got)
 	return got, out, err
@@ -314,7 +319,7 @@ func TestSvcCallFanOutAndScriptRuns(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	want := []string{
-		"control entity:light.a", "control entity:script.morning_renamed", "control script:morning/run",
+		"control entity:light.a", "control entity:script.morning_renamed", "control script:morning (deny only)", "control script:morning/run",
 		"control service:homeassistant.turn_on", "control service:light.turn_on", "control service:script.turn_on",
 	}
 	if !slices.Equal(plan, want) {
@@ -440,10 +445,13 @@ func TestScriptRunPlan(t *testing.T) {
 	rig := startSvcRig(t, reachOf("script.morning_renamed"))
 	writePolicyFile(t, rig.dir, policyAllowEverything)
 	plan, out, err := planOf(t, rig.dir, "script", "run", "morning_renamed")
-	if err != nil || !hasPolicyNote(out, 3) {
+	if err != nil || !hasPolicyNote(out, 4) {
 		t.Fatalf("allowed preview: %v\n%s", err, out)
 	}
-	want := []string{"control entity:script.morning_renamed", "control script:morning/run", "control service:script.turn_on"}
+	want := []string{
+		"control entity:script.morning_renamed", "control script:morning (deny only)", "control script:morning/run",
+		"control service:script.turn_on",
+	}
 	if !slices.Equal(plan, want) {
 		t.Errorf("plan\n got: %q\nwant: %q", plan, want)
 	}
@@ -478,7 +486,10 @@ func TestScriptRunPlanWithoutAReachAnswerStillChecksTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := []string{"control entity:script.morning_renamed", "control script:*/run", "control service:script.turn_on"}
+	want := []string{
+		"control entity:script.morning_renamed", "control script:*/run", "control script:morning (deny only)",
+		"control service:script.turn_on",
+	}
 	if !slices.Equal(plan, want) {
 		t.Errorf("plan\n got: %q\nwant: %q", plan, want)
 	}

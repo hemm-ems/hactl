@@ -56,3 +56,26 @@ template:
           - action: input_boolean.turn_off
             target:
               entity_id: input_boolean.pg_policy_lock_state
+
+# D-106: a light group forwards a call on it to its members, which Home
+# Assistant's extract_from_target does not expand (only old-style group.*
+# entities are). Its members are demo lights; the test reads them from the
+# group's own `entity_id` attribute. No device, so buildPGRig never picks it.
+light:
+  - platform: group
+    name: PG Policy All Lights
+    unique_id: pg_policy_all_lights
+    entities:
+      - light.bed_light
+      - light.ceiling_lights
+
+# D-107: an automation addressed by its config id — the typed address a
+# service call on automation.<x> is also checked against (denies only).
+automation:
+  - id: pg_policy_prod_heating
+    alias: PG Policy Prod Heating
+    triggers:
+      - trigger: event
+        event_type: pg_policy_never_fired
+    actions:
+      - delay: "00:00:01"

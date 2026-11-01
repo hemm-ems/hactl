@@ -35,6 +35,9 @@ type typedRig struct {
 
 	mu  sync.Mutex
 	log []string
+	// bodies holds every HTTP request's line and body, in order — what the
+	// D-58 comparison holds two runs to beyond the golden's method and path.
+	bodies []string
 }
 
 const (
@@ -245,8 +248,11 @@ func (r *typedRig) logged(h http.HandlerFunc) http.HandlerFunc {
 		if len(parts) > 0 {
 			line += "?" + strings.Join(parts, "&")
 		}
+		raw, _ := io.ReadAll(req.Body)
+		req.Body = io.NopCloser(strings.NewReader(string(raw)))
 		r.mu.Lock()
 		r.log = append(r.log, line)
+		r.bodies = append(r.bodies, line+"\n"+req.Header.Get("Content-Type")+"\n"+string(raw))
 		r.mu.Unlock()
 		h(w, req)
 	}
@@ -271,6 +277,16 @@ func (r *typedRig) requests() []string {
 	defer r.mu.Unlock()
 	out := r.log
 	r.log = nil
+	return out
+}
+
+// sentBodies returns every request's line, content type and body so far, and
+// clears them.
+func (r *typedRig) sentBodies() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.bodies
+	r.bodies = nil
 	return out
 }
 

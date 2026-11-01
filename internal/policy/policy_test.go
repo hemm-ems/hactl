@@ -726,3 +726,66 @@ func TestUnreadablePolicyPathIsALoadError(t *testing.T) {
 		}
 	})
 }
+
+// TestDecideDenyOnly (D-107): a deny-only check is decided by the denies of
+// the effective profile alone — a deny on the resource or an ancestor, or for
+// a write verb a deny on a strict descendant (D-66) — never by `default: deny`
+// and never by an allow, which grants nothing extra. Kind-wide, any deny of
+// the kind decides. The allow-all views answer as Decide.
+func TestDecideDenyOnly(t *testing.T) {
+	p := mustLoad(t, `version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "automation:pg_*": [control]
+    deny:
+      "automation:prod_*": [write]
+      "helper:input_boolean/alarm_armed/config": [control]
+`)
+	for _, c := range []struct {
+		resource string
+		allowed  bool
+		rule     string
+		line     int
+		partial  bool
+	}{
+		{"automation:prod_heating", false, `deny "automation:prod_*" [write]`, 9, false},
+		{"automation:kitchen", true, RuleNoDeny, 0, false}, // default: deny does not decide
+		{"automation:pg_test", true, RuleNoDeny, 0, false}, // nor does an allow
+		{"helper:input_boolean/alarm_armed", false, `deny "helper:input_boolean/alarm_armed/config" [control]`, 10, true},
+	} {
+		v := p.DecideDenyOnly(mustResource(t, c.resource), Control)
+		if v.Allowed != c.allowed || v.Rule != c.rule || v.Line != c.line || v.Partial != c.partial || v.Profile != "agent" {
+			t.Errorf("%s = %+v, want allowed=%v rule=%q line=%d partial=%v", c.resource, v, c.allowed, c.rule, c.line, c.partial)
+		}
+		if full := p.Decide(mustResource(t, c.resource), Control, nil); c.resource == "automation:kitchen" && full.Allowed {
+			t.Errorf("Decide allowed %s under default: deny — the case proves nothing", c.resource)
+		}
+	}
+	if v := p.DecideDenyOnly(mustResource(t, "automation:prod_heating"), Read); !v.Allowed || v.Rule != RuleNoDeny {
+		t.Errorf("read on a write deny = %+v", v)
+	}
+	for _, c := range []struct {
+		kind    Kind
+		allowed bool
+		rule    string
+	}{
+		{KindAutomation, false, `deny "automation:prod_*" [write]`},
+		{KindTemplate, true, RuleNoDeny},
+		{KindHelper, false, `deny "helper:input_boolean/alarm_armed/config" [control]`}, // a descendant deny: partial
+	} {
+		v := p.DecideKindWideDenyOnly(c.kind, "", Control)
+		if v.Allowed != c.allowed || v.Rule != c.rule {
+			t.Errorf("%s:* = %+v, want allowed=%v rule=%q", c.kind, v, c.allowed, c.rule)
+		}
+	}
+	none := mustLoad(t, "version: 1\nprofiles:\n  agent:\n    deny: {\"automation:*\": [write]}\n")
+	if v := none.DecideDenyOnly(mustResource(t, "automation:x"), Control); !v.Allowed || v.Rule != RuleImplicit {
+		t.Errorf("implicit allow-all = %+v", v)
+	}
+	if v := none.DecideKindWideDenyOnly(KindAutomation, "", Control); !v.Allowed || v.Rule != RuleImplicit {
+		t.Errorf("implicit allow-all kind-wide = %+v", v)
+	}
+}

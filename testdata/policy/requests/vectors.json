@@ -646,7 +646,7 @@
     "transport": "ws",
     "message": {
      "type": "config/entity_registry/update",
-     "entity_id": "light.kit\u200bchen",
+     "entity_id": "light.kit​chen",
      "labels": []
     }
    },
@@ -1674,7 +1674,7 @@
   },
   {
    "id": "svc-platform-service-all",
-   "why": "R-1: a domain without live entities is not an entity service; `all` = every live entity of every domain",
+   "why": "R-1: a domain without live entities is not an entity service; `all` = every live entity of every domain + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -1723,6 +1723,21 @@
      {
       "verb": "control",
       "resource": "entity:weather.home"
+     },
+     {
+      "verb": "control",
+      "resource": "script:morning",
+      "deny_only": true
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all",
+      "deny_only": true
+     },
+     {
+      "verb": "control",
+      "resource": "template:tpl_temp",
+      "deny_only": true
      }
     ]
    },
@@ -1765,7 +1780,7 @@
   },
   {
    "id": "svc-ha-turn-on-fanout",
-   "why": "R-2: homeassistant.turn_on = whole set + each domain's service + /run per script (unique_id = config key, D-84)",
+   "why": "R-2: homeassistant.turn_on = whole set + each domain's service + /run per script (unique_id = config key, D-84) + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -1809,6 +1824,11 @@
      {
       "verb": "control",
       "resource": "script:wipe_all/run"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all",
+      "deny_only": true
      }
     ]
    },
@@ -1825,7 +1845,7 @@
   },
   {
    "id": "svc-ha-turn-off-fanout",
-   "why": "turn_off fans out per domain too, but starts no script",
+   "why": "turn_off fans out per domain too, but starts no script + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -1865,6 +1885,11 @@
      {
       "verb": "control",
       "resource": "service:script.turn_off"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all",
+      "deny_only": true
      }
     ]
    },
@@ -1881,7 +1906,7 @@
   },
   {
    "id": "svc-ha-toggle-fanout",
-   "why": "toggle fans out and can start scripts",
+   "why": "toggle fans out and can start scripts + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -1925,6 +1950,11 @@
      {
       "verb": "control",
       "resource": "script:wipe_all/run"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all",
+      "deny_only": true
      }
     ]
    },
@@ -1941,7 +1971,7 @@
   },
   {
    "id": "svc-script-turn-on-renamed",
-   "why": "script.turn_on -> script:<registry unique_id>/run, also for a renamed entity (D-84)",
+   "why": "script.turn_on -> script:<registry unique_id>/run, also for a renamed entity (D-84) + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -1965,6 +1995,11 @@
      {
       "verb": "control",
       "resource": "script:wipe_all/run"
+     },
+     {
+      "verb": "control",
+      "resource": "script:wipe_all",
+      "deny_only": true
      }
     ]
    },
@@ -1979,7 +2014,7 @@
   },
   {
    "id": "svc-script-toggle",
-   "why": "script.toggle starts a script",
+   "why": "script.toggle starts a script + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -2003,6 +2038,11 @@
      {
       "verb": "control",
       "resource": "script:morning/run"
+     },
+     {
+      "verb": "control",
+      "resource": "script:morning",
+      "deny_only": true
      }
     ]
    },
@@ -2017,7 +2057,7 @@
   },
   {
    "id": "svc-script-turn-off",
-   "why": "script.turn_off starts nothing: no /run",
+   "why": "script.turn_off starts nothing: no /run + a deny-only control on the typed address of every reached script/helper/template entity (D-107)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -2037,6 +2077,11 @@
      {
       "verb": "control",
       "resource": "entity:script.morning"
+     },
+     {
+      "verb": "control",
+      "resource": "script:morning",
+      "deny_only": true
      }
     ]
    },

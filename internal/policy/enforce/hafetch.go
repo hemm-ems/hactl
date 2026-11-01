@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/hemm-ems/hactl/internal/haapi"
@@ -43,8 +44,13 @@ func NewHAFetcher(ctx context.Context, url, token string, cfgErr error) *HAFetch
 	return f
 }
 
-// LiveEntityIDs implements Fetcher.
-func (f *HAFetcher) LiveEntityIDs(ctx context.Context) ([]string, error) {
+// LiveStates implements Fetcher: the entity ids of GET /api/states, each
+// state's `entity_id` attribute — the members a group, a group platform
+// entity or a scene forwards a call to (D-106) — and an automation's `id`
+// attribute, its config id (D-107). A state without an entity_id makes the
+// whole answer unusable: the live set is then unread, and a mapping that
+// needs it fails closed (H-7).
+func (f *HAFetcher) LiveStates(ctx context.Context) (*reqmap.LiveStates, error) {
 	c, err := f.client()
 	if err != nil {
 		return nil, err
@@ -54,19 +60,57 @@ func (f *HAFetcher) LiveEntityIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	var states []struct {
-		EntityID string `json:"entity_id"`
+		EntityID   string `json:"entity_id"`
+		Attributes struct {
+			EntityID any `json:"entity_id"`
+			ID       any `json:"id"`
+		} `json:"attributes"`
 	}
 	if err := json.Unmarshal(body, &states); err != nil {
 		return nil, fmt.Errorf("parsing /api/states: %w", err)
 	}
-	ids := make([]string, 0, len(states))
+	out := &reqmap.LiveStates{
+		EntityIDs:     make([]string, 0, len(states)),
+		Members:       map[string][]string{},
+		AutomationIDs: map[string]string{},
+	}
 	for _, s := range states {
 		if s.EntityID == "" {
 			return nil, errors.New("/api/states holds a state without an entity_id")
 		}
-		ids = append(ids, s.EntityID)
+		out.EntityIDs = append(out.EntityIDs, s.EntityID)
+		if m := memberIDs(s.Attributes.EntityID); len(m) > 0 {
+			out.Members[s.EntityID] = m
+		}
+		if id, ok := s.Attributes.ID.(string); ok && id != "" && strings.HasPrefix(s.EntityID, "automation.") {
+			out.AutomationIDs[s.EntityID] = id
+		}
 	}
-	return ids, nil
+	return out, nil
+}
+
+// memberIDs reads an `entity_id` attribute: a list of entity ids, or one id
+// (a comma-separated list names each).
+func memberIDs(v any) []string {
+	var out []string
+	add := func(s string) {
+		for part := range strings.SplitSeq(s, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	switch t := v.(type) {
+	case string:
+		add(t)
+	case []any:
+		for _, e := range t {
+			if s, ok := e.(string); ok {
+				add(s)
+			}
+		}
+	}
+	return out
 }
 
 // Reach implements Fetcher.
@@ -103,7 +147,7 @@ func (f *HAFetcher) Registries(ctx context.Context) (*reqmap.Registries, bool, e
 	reg := &reqmap.Registries{}
 	for _, e := range ents {
 		reg.Entities = append(reg.Entities, reqmap.RegistryEntity{
-			EntityID: e.EntityID, UniqueID: e.UniqueID, ConfigEntryID: e.ConfigEntryID,
+			EntityID: e.EntityID, UniqueID: e.UniqueID, Platform: e.Platform, ConfigEntryID: e.ConfigEntryID,
 			AreaID: e.AreaID, Labels: e.Labels,
 		})
 	}

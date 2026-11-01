@@ -54,14 +54,14 @@ var serviceVectors = []vector{
 	{
 		name:  "entity_id: all of an entity service is every live entity of the domain, never asked",
 		req:   rest("POST", "/api/services/lock/lock", `{"entity_id":"all"}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control entity:lock.back_door", "control entity:lock.front_door", "control service:lock.lock"},
 	},
 	{
 		name:  "ALL in any case of a platform service is every live entity of every domain (R-1)",
 		req:   rest("POST", "/api/services/zwave_js/refresh_value", `{"entity_id":"ALL"}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{
 			"control entity:light.hall", "control entity:light.kitchen", "control entity:lock.back_door", "control entity:lock.front_door",
@@ -72,21 +72,21 @@ var serviceVectors = []vector{
 	{
 		name:  "an entity named as a mapping key of the data needs control (scene.apply, D-73)",
 		req:   rest("POST", "/api/services/scene/apply", `{"entities":{"lock.front_door":"unlocked","light.kitchen":{"state":"on"}}}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control entity:light.kitchen", "control entity:lock.front_door", "control service:scene.apply"},
 	},
 	{
 		name:  "an entity named as a string value at any depth needs control",
 		req:   rest("POST", "/api/services/notify/notify", `{"message":"x","data":{"actions":[{"target":"Lock.Front_Door"}]}}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control entity:lock.front_door", "control service:notify.notify"},
 	},
 	{
 		name:  "data naming no live entity is the service check alone",
 		req:   rest("POST", "/api/services/notify/notify", `{"message":"light.nonexistent"}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control service:notify.notify"},
 	},
@@ -95,7 +95,7 @@ var serviceVectors = []vector{
 		req:   rest("POST", "/api/services/script/turn_on", `{"entity_id":["script.morning"]}`),
 		facts: svcFacts([]string{"script.morning"}, nil),
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control entity:script.morning", "control script:morning_routine/run", "control service:script.turn_on"},
+		checks: []string{"control entity:script.morning", "control script:morning_routine (deny only)", "control script:morning_routine/run", "control service:script.turn_on"},
 	},
 	{
 		name:  "a script entity with no unique_id read is checked as every script's run",
@@ -123,7 +123,7 @@ var serviceVectors = []vector{
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{
 			"control entity:light.kitchen", "control entity:script.morning",
-			"control script:morning_routine/run",
+			"control script:morning_routine (deny only)", "control script:morning_routine/run",
 			"control service:homeassistant.turn_on", "control service:light.turn_on", "control service:script.turn_on",
 		},
 	},
@@ -137,7 +137,7 @@ var serviceVectors = []vector{
 	{
 		name:  "a comma-separated list of entities in the data names each of them (D-73)",
 		req:   rest("POST", "/api/services/scene/create", `{"scene_id":"s","snapshot_entities":"light.kitchen, lock.front_door"}`),
-		facts: &reqmap.Facts{Live: liveStates},
+		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control entity:light.kitchen", "control entity:lock.front_door", "control service:scene.create"},
 	},
@@ -146,7 +146,7 @@ var serviceVectors = []vector{
 		req:  rest("POST", "/api/services/homeassistant/turn_off", `{"entity_id":"all"}`),
 		facts: &reqmap.Facts{Live: &reqmap.LiveStates{EntityIDs: []string{
 			"homeassistant.update_available", "light.kitchen", "lock.front_door",
-		}}},
+		}}, Registries: &reqmap.Registries{}},
 		disp: reqmap.Write, row: svcRow,
 		checks: []string{
 			"control entity:homeassistant.update_available", "control entity:light.kitchen", "control entity:lock.front_door",
@@ -165,7 +165,7 @@ var serviceVectors = []vector{
 			}},
 		},
 		disp: reqmap.Write, row: svcRow,
-		checks: []string{"control entity:script.morning", "control script:m/run", "control service:script.turn_on"},
+		checks: []string{"control entity:script.morning", "control script:m (deny only)", "control script:m/run", "control service:script.turn_on"},
 	},
 	{
 		name: "a script's run is looked up by its exact entity id, in either registry order",
@@ -179,7 +179,104 @@ var serviceVectors = []vector{
 			}},
 		},
 		disp: reqmap.Write, row: svcRow,
-		checks: []string{"control entity:script.good_morning", "control script:gm/run", "control service:script.turn_on"},
+		checks: []string{"control entity:script.good_morning", "control script:gm (deny only)", "control script:gm/run", "control service:script.turn_on"},
+	},
+	{
+		name: "a light group forwards the call to its members: each needs control (D-106)",
+		req:  rest("POST", "/api/services/light/turn_on", `{"entity_id":"light.all_lights"}`),
+		facts: &reqmap.Facts{
+			Live: &reqmap.LiveStates{
+				EntityIDs: []string{"light.all_lights", "light.sofa", "light.desk"},
+				Members:   map[string][]string{"light.all_lights": {"light.sofa", "light.desk"}},
+			},
+			Reach:      &reqmap.Reach{EntityIDs: []string{"light.all_lights"}},
+			Registries: &reqmap.Registries{},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.all_lights", "control entity:light.desk", "control entity:light.sofa", "control service:light.turn_on"},
+	},
+	{
+		name: "a scene forwards to every entity it sets, across domains, and groups of groups recurse once each (D-106)",
+		req:  rest("POST", "/api/services/scene/turn_on", `{"entity_id":"scene.leave_home"}`),
+		facts: &reqmap.Facts{
+			Live: &reqmap.LiveStates{
+				EntityIDs: []string{"scene.leave_home", "light.all_lights", "light.sofa", "lock.front_door"},
+				Members: map[string][]string{
+					"scene.leave_home": {"light.all_lights", "lock.front_door"},
+					"light.all_lights": {"light.sofa", "light.all_lights"},
+				},
+			},
+			Reach:      &reqmap.Reach{EntityIDs: []string{"scene.leave_home"}},
+			Registries: &reqmap.Registries{},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control entity:light.all_lights", "control entity:light.sofa", "control entity:lock.front_door",
+			"control entity:scene.leave_home", "control service:scene.turn_on",
+		},
+	},
+	{
+		name: "a member an entity in the data names is forwarded to as well (D-106)",
+		req:  rest("POST", "/api/services/scene/apply", `{"entities":{"light.all_lights":"on"}}`),
+		facts: &reqmap.Facts{
+			Live: &reqmap.LiveStates{
+				EntityIDs: []string{"light.all_lights", "light.sofa"},
+				Members:   map[string][]string{"light.all_lights": {"light.sofa"}},
+			},
+			Registries: &reqmap.Registries{},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.all_lights", "control entity:light.sofa", "control service:scene.apply"},
+	},
+	{
+		name: "the typed address of every reached automation, script, helper and template entity is checked for denies (D-107)",
+		req:  rest("POST", "/api/services/homeassistant/turn_off", `{"label_id":"prod"}`),
+		facts: &reqmap.Facts{
+			Live: &reqmap.LiveStates{
+				EntityIDs: []string{
+					"automation.heating_control", "automation.no_id", "script.prod_disarm", "input_boolean.alarm_armed",
+					"input_boolean.renamed", "lock.front_door", "sensor.not_a_helper",
+				},
+				AutomationIDs: map[string]string{"automation.heating_control": "prod_heating"},
+			},
+			Reach: &reqmap.Reach{EntityIDs: []string{
+				"automation.heating_control", "automation.no_id", "script.prod_disarm", "input_boolean.alarm_armed",
+				"input_boolean.renamed", "lock.front_door", "sensor.not_a_helper",
+			}},
+			Registries: &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+				{EntityID: "script.prod_disarm", UniqueID: "prod_disarm", Platform: "script"},
+				{EntityID: "input_boolean.alarm_armed", UniqueID: "alarm_armed", Platform: "input_boolean"},
+				{EntityID: "input_boolean.renamed", UniqueID: "guest_mode", Platform: "input_boolean"},
+				{EntityID: "lock.front_door", UniqueID: "blk-front_door_lock", Platform: "template"},
+				{EntityID: "sensor.not_a_helper", UniqueID: "x", Platform: "mqtt"},
+			}},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control automation:prod_heating (deny only)",
+			"control entity:automation.heating_control", "control entity:automation.no_id",
+			"control entity:input_boolean.alarm_armed", "control entity:input_boolean.renamed",
+			"control entity:lock.front_door", "control entity:script.prod_disarm", "control entity:sensor.not_a_helper",
+			"control helper:input_boolean/alarm_armed (deny only)", "control helper:input_boolean/guest_mode (deny only)",
+			"control helper:input_boolean/renamed (deny only)",
+			"control script:prod_disarm (deny only)",
+			"control service:automation.turn_off", "control service:homeassistant.turn_off", "control service:input_boolean.turn_off",
+			"control service:lock.turn_off", "control service:script.turn_off", "control service:sensor.turn_off",
+			"control template:blk-front_door_lock (deny only)", "control template:front_door_lock (deny only)",
+		},
+	},
+	{
+		name: "without the registries a script, helper or template address cannot be read: kind-wide, denies only (D-107)",
+		req:  rest("POST", "/api/services/input_boolean/turn_off", `{"entity_id":"input_boolean.alarm_armed"}`),
+		facts: &reqmap.Facts{
+			Live:  &reqmap.LiveStates{EntityIDs: []string{"input_boolean.alarm_armed"}},
+			Reach: &reqmap.Reach{EntityIDs: []string{"input_boolean.alarm_armed"}},
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control entity:input_boolean.alarm_armed", "control helper:* (deny only)",
+			"control service:input_boolean.turn_off", "control template:* (deny only)",
+		},
 	},
 	{
 		name:    "an error answer to the reach question refuses the call (D-73)",

@@ -77,6 +77,7 @@ internal/policy/reqmap/rows.go:Rows = exempt: the walk builds a slice that is so
 internal/policy/reqmap/classify.go:classifyHTTP = exempt: merges extra query values key by key; no value's position depends on the order the keys are visited in
 internal/policy/reqmap/companionmap.go:singleKey = exempt: walks a mapping already checked to hold exactly one key, so there is no order to observe
 internal/policy/reqmap/dashboard.go:withoutViews = exempt: copies one map into another; the result is a map, compared with reflect.DeepEqual, never ranged
+internal/policy/reqmap/refowner.go:RefChangeIncluderOwners = exempt: collects the config files' names into a slice that is slices.Sort'ed before any file is parsed, so the owners come out in one order (D-105)
 internal/surfaceaudit/policy.go:builderHelpers = exempt: a monotone fixpoint over caller sets that answers a set (map membership only); every visiting order reaches the same least fixpoint, and nothing it returns is ranged into output
 internal/surfaceaudit/policy.go:onlyCalledBy = exempt: an all-of membership test returning a bool; no order is observable in the answer
 internal/surfaceaudit/policycmd.go:PolicyCommandSites = exempt: collects the declared sinks that no longer exist and sort.Strings-es them before the error renders

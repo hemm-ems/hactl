@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,6 +86,12 @@ func newBulkRig(t *testing.T, ws map[string]any, files map[string]string, dryCha
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"path": p, "content": content})
+		},
+		"/v1/config/files": func(w http.ResponseWriter, _ *http.Request) {
+			record("config/files")
+			names := slices.Sorted(maps.Keys(files))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": names})
 		},
 		"/v1/ref/scan": func(w http.ResponseWriter, req *http.Request) {
 			record("ref/scan")
@@ -238,6 +245,108 @@ func TestRefReplaceUnplaceableChangeFailsClosed(t *testing.T) {
 	assertRefused(t, "preview", out, err, "edit file:automations.yaml — fail-closed: typed owner unknown")
 }
 
+// TestRefReplaceChecksEveryEntryThatSharesTheChange (D-104): the live-fire
+// reproduction. An anchor in an allowed automation, an alias of it in a denied
+// one; the companion reports one change, at the anchor. The companion
+// rewrites the anchor once and the denied automation reads the new value, so
+// it is checked too — the preview and --confirm refuse, and the write is
+// never sent.
+func TestRefReplaceChecksEveryEntryThatSharesTheChange(t *testing.T) {
+	const autos = `- id: pg_test
+  alias: PG test
+  trigger: &temp_trigger
+    - platform: state
+      entity_id: sensor.old
+  action: []
+- id: prod_heating
+  alias: Prod heating
+  trigger: *temp_trigger
+  action: []
+`
+	ch := []map[string]any{bulkChange("automations.yaml", "[0].trigger[0].entity_id")}
+	r := newBulkRig(t, map[string]any{"lovelace/dashboards/list": []any{}, "lovelace/config": map[string]any{"views": []any{}}},
+		map[string]string{"automations.yaml": autos}, ch, ch)
+	writePolicyFile(t, r.ts.dir, agentPolicy("    deny:\n      \"automation:prod_*\": [write]\n"))
+	const want = `edit automation:prod_heating/config — deny "automation:prod_*" [write] (line 6)`
+	for _, args := range [][]string{{}, {"--confirm"}} {
+		out, err := runPolicyCLI(t, r.ts.dir, append([]string{"ref", "replace", "sensor.old", "sensor.new"}, args...)...)
+		assertRefused(t, "anchor shared by a denied automation "+strings.Join(args, ""), out, err, want)
+		if !strings.Contains(out, "checked: 3 resources, 1 denied") {
+			t.Errorf("the plan is file + both sharing automations:\n%s", out)
+		}
+	}
+	if got := r.companionRequests(); slices.Contains(got, "ref/replace dry_run=false") {
+		t.Errorf("a refused plan reached the companion's write: %q", got)
+	}
+}
+
+// TestRefReplaceChecksTheEntryIncludingAFragment (D-105): a change in a file
+// an automation pulls in with `!include` lies in that automation, although
+// the fragment has no automation's shape; a deny on the automation refuses
+// the rewrite, preview and --confirm alike. A fragment included where no
+// typed entry is stays checked as its file only.
+func TestRefReplaceChecksTheEntryIncludingAFragment(t *testing.T) {
+	files := map[string]string{
+		"configuration.yaml":       "automation: !include automations.yaml\nsensor: !include sensors.yaml\n",
+		"automations.yaml":         "- id: prod_heating\n  trigger: !include common/temp_trigger.yaml\n  action: []\n",
+		"common/temp_trigger.yaml": "- platform: state\n  entity_id: sensor.old\n",
+		"sensors.yaml":             "- platform: template\n  sensors: !include common/body.yaml\n",
+		"common/body.yaml":         "x:\n  value_template: \"{{ states('sensor.old') }}\"\n",
+	}
+	ws := map[string]any{"lovelace/dashboards/list": []any{}, "lovelace/config": map[string]any{"views": []any{}}}
+	policy := agentPolicy("    deny:\n      \"automation:prod_*\": [write]\n")
+
+	frag := []map[string]any{bulkChange("common/temp_trigger.yaml", "[0].entity_id")}
+	r := newBulkRig(t, ws, files, frag, frag)
+	writePolicyFile(t, r.ts.dir, policy)
+	for _, args := range [][]string{{}, {"--confirm"}} {
+		out, err := runPolicyCLI(t, r.ts.dir, append([]string{"ref", "replace", "sensor.old", "sensor.new"}, args...)...)
+		assertRefused(t, "fragment in a denied automation "+strings.Join(args, ""), out, err,
+			`edit automation:prod_heating/config — deny "automation:prod_*" [write] (line 6)`)
+	}
+	if got := r.companionRequests(); slices.Contains(got, "ref/replace dry_run=false") {
+		t.Errorf("a refused plan reached the companion's write: %q", got)
+	}
+
+	body := []map[string]any{bulkChange("common/body.yaml", "x.value_template")}
+	r = newBulkRig(t, ws, files, body, body)
+	writePolicyFile(t, r.ts.dir, policy)
+	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
+	if err != nil || !strings.Contains(out, "\n  policy: 1 checked, allowed (profile agent)\n") {
+		t.Errorf("a fragment below no typed entry is its file only: %v\n%s", err, out)
+	}
+}
+
+// TestRefReplaceCountsEachCheckOnce: two changes in one automation of one file
+// are one edit of the file and one of the automation — `checked` counts the
+// plan's (resource, verb) pairs, and a denial is listed once.
+func TestRefReplaceCountsEachCheckOnce(t *testing.T) {
+	const autos = `- id: prod_heating
+  triggers:
+    - trigger: state
+      entity_id: sensor.old
+    - trigger: state
+      entity_id: sensor.old
+  actions: []
+`
+	ch := []map[string]any{
+		bulkChange("automations.yaml", "[0].triggers[0].entity_id"),
+		bulkChange("automations.yaml", "[0].triggers[1].entity_id"),
+	}
+	r := newBulkRig(t, map[string]any{"lovelace/dashboards/list": []any{}, "lovelace/config": map[string]any{"views": []any{}}},
+		map[string]string{"automations.yaml": autos}, ch, ch)
+	writePolicyFile(t, r.ts.dir, agentPolicy("    deny:\n      \"automation:prod_*\": [edit]\n"))
+	const want = `edit automation:prod_heating/config — deny "automation:prod_*" [edit] (line 6)`
+	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
+	assertRefused(t, "two changes, one owner", out, err, want)
+	if !strings.Contains(out, "  checked: 2 resources, 1 denied\n") {
+		t.Errorf("checked counts a pair twice:\n%s", out)
+	}
+	if n := strings.Count(out, "  denied: "+want); n != 1 {
+		t.Errorf("the denial is listed %d times, want once:\n%s", n, out)
+	}
+}
+
 // TestRefReplaceConfirmChecksADryRunFirst (D-77): under a profile the
 // confirmed run asks the companion for the rewrite as a dry run, places and
 // checks it, and only then sends the write; the allowed preview says what it
@@ -263,7 +372,7 @@ func TestRefReplaceConfirmChecksADryRunFirst(t *testing.T) {
 	if out, err = runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new", "--confirm"); err != nil {
 		t.Fatalf("confirm: %v\n%s", err, out)
 	}
-	want := []string{"ref/replace dry_run=true", "config/file automations.yaml", "ref/replace dry_run=false"}
+	want := []string{"ref/replace dry_run=true", "config/file automations.yaml", "config/files", "ref/replace dry_run=false"}
 	if got := r.companionRequests(); !slices.Equal(got, want) {
 		t.Errorf("companion requests = %q, want %q", got, want)
 	}
@@ -358,7 +467,7 @@ func TestEntRenameConfirmChecksOncePerInvocation(t *testing.T) {
 	if out, err = runPolicyCLI(t, r.ts.dir, "ent", "rename", "sensor.old", "sensor.new", "--confirm"); err != nil {
 		t.Fatalf("confirm: %v\n%s", err, out)
 	}
-	want := []string{"ref/scan", "ref/replace dry_run=true", "config/file automations.yaml", "ref/replace dry_run=false"}
+	want := []string{"ref/scan", "ref/replace dry_run=true", "config/file automations.yaml", "config/files", "ref/replace dry_run=false"}
 	if got := r.companionRequests(); !slices.Equal(got, want) {
 		t.Errorf("companion requests = %q, want %q", got, want)
 	}
@@ -436,6 +545,42 @@ func TestDashSaveRefusedByItsPlan(t *testing.T) {
 	writePolicyFile(t, none.ts.dir, agentPolicy("    deny:\n      \"dashboard:wall-panel/views/secret\": [edit]\n"))
 	out, err = runPolicyCLI(t, none.ts.dir, "dash", "save", "wall-panel", "-f", homeOnly)
 	assertRefused(t, "no stored config", out, err, "edit dashboard:wall-panel — "+viewDeny+" — a part of it is denied")
+}
+
+// TestDashSaveUnmappableViewFailsClosed (D-68, D-69, D-101): a view whose
+// path the policy grammar refuses (a zero-width character, a trailing space)
+// cannot be addressed, so the save is refused — never dropped from the plan,
+// which would let the preview pass with nothing checked and the request layer
+// refuse the real save mid-run (H-2). Preview and --confirm alike, for dash
+// save and for dash replace, and nothing is saved.
+func TestDashSaveUnmappableViewFailsClosed(t *testing.T) {
+	const want = "edit dashboard:wall-panel — fail-closed: unmappable resource dashboard:wall-panel"
+	for _, bad := range []string{"bad\u200b", "bad "} {
+		stored := map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a")}}
+		r := dashRig(t, stored)
+		writePolicyFile(t, r.ts.dir, policyAllowEverything)
+		added := writeDashFile(t, map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a"), dashView(bad, "light.a")}})
+		for _, args := range [][]string{{}, {"--confirm"}} {
+			out, err := runPolicyCLI(t, r.ts.dir, append([]string{"dash", "save", "wall-panel", "-f", added}, args...)...)
+			assertRefused(t, fmt.Sprintf("dash save, view %q %s", bad, strings.Join(args, "")), out, err, want)
+			if strings.Contains(out, "dry-run:") {
+				t.Errorf("a save with an unmappable view previewed:\n%s", out)
+			}
+		}
+
+		withBad := map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a"), dashView(bad, "light.a")}}
+		rr := dashRig(t, withBad)
+		writePolicyFile(t, rr.ts.dir, policyAllowEverything)
+		for _, args := range [][]string{{}, {"--confirm"}} {
+			out, err := runPolicyCLI(t, rr.ts.dir, append([]string{"dash", "replace", "light.a", "light.b", "wall-panel"}, args...)...)
+			assertRefused(t, fmt.Sprintf("dash replace, view %q %s", bad, strings.Join(args, "")), out, err, want)
+		}
+		for _, rig := range []*bulkRig{r, rr} {
+			if n := rig.ts.commandCount("lovelace/config/save"); n != 0 {
+				t.Errorf("view %q: a refused save sent %d lovelace/config/save", bad, n)
+			}
+		}
+	}
 }
 
 // TestDashDefaultDashboardIsOneAddress (D-66 as refined): the default
@@ -635,6 +780,10 @@ func refCoverageCompanion() map[string]http.HandlerFunc {
 		"/v1/config/file": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"path": r.URL.Query().Get("path"), "content": bulkAutomations})
+		},
+		"/v1/config/files": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"files":["automations.yaml"]}`)
 		},
 		"/v1/ref/scan": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

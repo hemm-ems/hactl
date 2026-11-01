@@ -331,6 +331,20 @@ func enforcedVerdict(pol *policy.Policy, v policy.Verb) bool {
 	return enforced && v != policy.Read
 }
 
+// denyOnlyControl reports whether a check of verb v on r is one only a deny
+// decides at enforcement (D-107): control on an automation, a helper, a
+// template entity, or a script itself (its `run` is checked in full).
+func denyOnlyControl(r policy.Resource, v policy.Verb) bool {
+	if v != policy.Control || r.Sub != "" {
+		return false
+	}
+	switch r.Kind {
+	case policy.KindAutomation, policy.KindHelper, policy.KindTemplate, policy.KindScript:
+		return true
+	}
+	return false
+}
+
 func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string, asSet bool) error {
 	// Refusals first, and before anything is written: a refusal is exit 1
 	// with nothing on stdout, a denial is exit 1 with a verdict.
@@ -359,10 +373,13 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 	defer ha.Close()
 	verdict := pol.Decide(res, v, ha.Live())
 
+	// A typed address a service call reaches is checked for its denies only
+	// (D-107): a denial by the profile default alone is never enforced there.
+	denyOnlyDefault := denyOnlyControl(res, v) && !verdict.Allowed && verdict.Rule == policy.RuleDefaultDeny
 	doc := policyCheckDoc{
 		Resource: res.String(), Verb: v.String(), Allowed: verdict.Allowed, Rule: verdict.Rule,
 		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
-		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v), Notes: verdict.Notes,
+		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v) && !denyOnlyDefault, Notes: verdict.Notes,
 		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{},
 	}
 	for _, d := range verdict.PartialDenies {
@@ -401,6 +418,8 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 		switch {
 		case v == policy.Read:
 			_, _ = fmt.Fprintln(w, "not enforced yet: reads are a later version")
+		case denyOnlyDefault:
+			_, _ = fmt.Fprintf(w, "not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches (D-107)\n", res.Kind)
 		case doc.Enforced:
 			_, _ = fmt.Fprintln(w, "enforced: a write command refuses what this verdict denies")
 		default:

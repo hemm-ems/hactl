@@ -362,6 +362,9 @@ const (
 	// RuleDefaultAllow decides when no rule matched in a profile without
 	// `default: deny`.
 	RuleDefaultAllow = "default: allow"
+	// RuleNoDeny decides a deny-only check no deny matched (D-107): the
+	// profile default and the allows do not decide it.
+	RuleNoDeny = "no deny"
 )
 
 // Verdict is the answer to one (resource, verb) question.
@@ -510,6 +513,95 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 	for i := range pr.rules {
 		rule := &pr.rules[i]
 		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
+		}
+	}
+	if len(out.PartialDenies) > 0 {
+		out.Partial = true
+		if v != Read {
+			first := out.PartialDenies[0]
+			out.Allowed, out.Rule, out.Line = false, first.Rule, first.Line
+		}
+	}
+	return out
+}
+
+// DecideDenyOnly answers verb v on r for its denies only (D-107): denied when a
+// deny of the effective profile for v covers r, or — for a write verb — a
+// strict descendant of r (D-66's partial); otherwise allowed with RuleNoDeny.
+// The profile default and the allows never decide: a deny-only check is how a
+// service call consults a typed address it reaches (an automation, a script,
+// a helper, a template entity) whose grant is decided on the entity. The
+// AllowAll views answer as Decide.
+func (p *Policy) DecideDenyOnly(r Resource, v Verb) Verdict {
+	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	switch p.selection {
+	case SelectedByNoFile:
+		out.Allowed, out.Rule = true, RuleNoFile
+		return out
+	case SelectedByImplicit:
+		out.Allowed, out.Rule = true, RuleImplicit
+		return out
+	}
+	pr := p.view
+	out.Profile = pr.name
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && rule.covers(r, v) {
+			out.Rule, out.Line = rule.Text(), rule.Line
+			return out
+		}
+	}
+	out.Allowed, out.Rule = true, RuleNoDeny
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
+		}
+	}
+	if len(out.PartialDenies) > 0 {
+		out.Partial = true
+		if v != Read {
+			first := out.PartialDenies[0]
+			out.Allowed, out.Rule, out.Line = false, first.Rule, first.Line
+		}
+	}
+	return out
+}
+
+// DecideKindWideDenyOnly is DecideKindWide for its denies only (D-107): denied
+// when a deny for v names kind k (whatever its id) and covers sub, or — for a
+// write verb — a strict descendant of sub; otherwise allowed with RuleNoDeny.
+// It is the check on a typed address a service call reaches but whose id this
+// invocation could not read.
+func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
+	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	switch p.selection {
+	case SelectedByNoFile:
+		out.Allowed, out.Rule = true, RuleNoFile
+		return out
+	case SelectedByImplicit:
+		out.Allowed, out.Rule = true, RuleImplicit
+		return out
+	}
+	pr := p.view
+	out.Profile = pr.name
+	subSegs := splitPath(sub)
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect != Deny || !slices.Contains(rule.Verbs, v) {
+			continue
+		}
+		if rule.addr.any || (rule.addr.kind == k && matchSubPrefix(rule.addr.sub, subSegs)) {
+			out.Rule, out.Line = rule.Text(), rule.Line
+			return out
+		}
+	}
+	out.Allowed, out.Rule = true, RuleNoDeny
+	for i := range pr.rules {
+		rule := &pr.rules[i]
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}

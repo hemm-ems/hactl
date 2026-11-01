@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -89,6 +90,7 @@ func typedTranscript(t *testing.T, c typedCommand, policyBody string, confirm bo
 	}
 	args := c.argsIn(t, r, extra...)
 	r.requests()
+	r.sentBodies()
 	r.resetWS()
 	out, err := runPolicyCLI(t, r.ts.dir, args...)
 	var b strings.Builder
@@ -118,6 +120,16 @@ func typedTranscript(t *testing.T, c typedCommand, policyBody string, confirm bo
 
 const typedNoProfileGolden = "testdata/policy/typed_no_profile.golden"
 
+// assertSameBodies holds two no-profile runs to the same request bodies — what
+// the golden's method-and-path lines cannot see (D-58).
+func assertSameBodies(t *testing.T, what string, noFile, implicit []string) {
+	t.Helper()
+	a, b := strings.Join(noFile, "\n--\n"), strings.Join(implicit, "\n--\n")
+	if a != b {
+		t.Errorf("%s: the request bodies differ between no file and the implicit allow-all:\n--- no file\n%s\n--- implicit\n%s", what, a, b)
+	}
+}
+
 // TestTypedWritesWithoutAProfileAreUnchanged (D-58): with no policy file and
 // with a file that puts no profile in effect, every typed write command —
 // preview and confirmed run — prints, fails and sends exactly what it did
@@ -133,7 +145,9 @@ func TestTypedWritesWithoutAProfileAreUnchanged(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(r.ts.dir, "cache", enforce.AuditFileName)); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("%s (confirm %v): an audit log was written without a policy", c.name, confirm)
 			}
+			noFileBodies := r.sentBodies()
 			implicit, r := typedTranscript(t, c, policyImplicitAllow, confirm)
+			assertSameBodies(t, fmt.Sprintf("%s (confirm %v)", c.name, confirm), noFileBodies, r.sentBodies())
 			if implicit != noFile {
 				t.Errorf("%s (confirm %v): the implicit allow-all differs from no file:\n--- no file\n%s\n--- implicit\n%s", c.name, confirm, noFile, implicit)
 			}

@@ -3,11 +3,17 @@ package haapi
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // H-23 — every connection hactl opens is bounded by the caller's --timeout, and
@@ -246,5 +252,39 @@ func TestWSConnectReportsARedirectAsTheSchemeProblemItIs(t *testing.T) {
 	var re *RedirectError
 	if !errors.As(err, &re) {
 		t.Fatalf("error is %T (%v), want *RedirectError — the 301 response carried the cause", err, err)
+	}
+}
+
+// allowAllGate decides every request allowed.
+type allowAllGate struct{}
+
+func (allowAllGate) Check(context.Context, reqmap.Request) error                    { return nil }
+func (allowAllGate) CheckHop(context.Context, reqmap.Request, reqmap.Request) error { return nil }
+func (allowAllGate) Observe(reqmap.Request, []byte)                                 {}
+
+// TestUnreplayableBodyIsRefusedUnderAGate (D-74): a request no client decided
+// is decided by the shared transport from its body; a body it cannot copy
+// without consuming it cannot be decided, so the request is refused, never
+// sent unchecked.
+func TestUnreplayableBodyIsRefusedUnderAGate(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	defer reqgate.Install(allowAllGate{})()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/api/services/light/turn_on", io.NopCloser(strings.NewReader(`{}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.GetBody = nil
+	resp, err := HTTPClient(srv.URL).Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "cannot be replayed") {
+		t.Errorf("an unreplayable body under a gate: %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("the server saw %d requests", hits.Load())
 	}
 }

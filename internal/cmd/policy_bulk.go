@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/hemm-ems/hactl/internal/companion"
+	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/policy"
 	"github.com/hemm-ems/hactl/internal/policy/enforce"
 	"github.com/hemm-ems/hactl/internal/policy/reqmap"
@@ -94,29 +96,11 @@ func addRefReplace(ctx context.Context, p *writePlan, cc *companion.Client, oldV
 	if sess == nil {
 		return nil
 	}
-	type file struct {
-		content []byte
-		err     error
-	}
-	files := map[string]file{}
+	placer := &refPlacer{cc: cc, files: map[string]refFile{}}
 	var planned []reqmap.PlanChange
 	for _, ch := range changes {
-		f, read := files[ch.Location]
-		if !read {
-			resp, err := cc.ReadConfigFileRaw(ctx, ch.Location)
-			if err == nil {
-				f = file{content: []byte(resp.Content)}
-			} else {
-				f = file{err: err}
-			}
-			files[ch.Location] = f
-		}
 		bare := reqmap.PlanChange{Location: ch.Location, Path: ch.Path}
-		var owners []reqmap.TypedOwner
-		err := f.err
-		if err == nil {
-			owners, err = reqmap.RefChangeOwners(ch.Location, f.content, ch.Path, oldVal, newVal)
-		}
+		owners, err := placer.owners(ctx, ch, oldVal, newVal)
 		if err != nil {
 			p.addFailClosedEdit(string(policy.KindFile)+":"+ch.Location,
 				"fail-closed: typed owner unknown ("+err.Error()+")")
@@ -157,6 +141,95 @@ func addRefReplace(ctx context.Context, p *writePlan, cc *companion.Client, oldV
 		p.addDashboardSave(d.urlPath, stored, proposed)
 	}
 	return &refCheckedPlan{changes: planned}
+}
+
+// refFile is one config file as the companion served it (raw), or why not.
+type refFile struct {
+	content []byte
+	err     error
+}
+
+// refPlacer places ref/replace changes in their typed owners, reading each
+// config file once per plan.
+type refPlacer struct {
+	cc    *companion.Client
+	files map[string]refFile
+
+	listed   bool
+	every    map[string][]byte
+	everyErr error
+}
+
+func (r *refPlacer) read(ctx context.Context, loc string) refFile {
+	f, ok := r.files[loc]
+	if !ok {
+		resp, err := r.cc.ReadConfigFileRaw(ctx, loc)
+		if err == nil {
+			f = refFile{content: []byte(resp.Content)}
+		} else {
+			f = refFile{err: err}
+		}
+		r.files[loc] = f
+	}
+	return f
+}
+
+// allFiles is the instance's config files, read once, for the includes of a
+// change's file (D-105): a fragment pulled into an automation, script or
+// template entry by an `!include` lies in that entry. A listed file the
+// companion refuses to read (4xx) is left out: the companion's walk of the
+// include graph from configuration.yaml — which reached the change — never
+// read it either, so it includes nothing the rewrite touches.
+func (r *refPlacer) allFiles(ctx context.Context) (map[string][]byte, error) {
+	if r.listed {
+		return r.every, r.everyErr
+	}
+	r.listed = true
+	list, err := r.cc.ListConfigFiles(ctx)
+	if err != nil {
+		r.everyErr = fmt.Errorf("listing the config files: %w", err)
+		return nil, r.everyErr
+	}
+	r.every = map[string][]byte{}
+	for _, name := range list.Files {
+		f := r.read(ctx, name)
+		if f.err != nil {
+			if st, ok := haapi.HTTPStatus(f.err); ok && st >= 400 && st < 500 {
+				continue
+			}
+			r.everyErr = fmt.Errorf("reading %s: %w", name, f.err)
+			r.every = nil
+			return nil, r.everyErr
+		}
+		r.every[name] = f.content
+	}
+	return r.every, nil
+}
+
+// owners are the typed entries a change lies in: by its file's shape and
+// shared nodes (reqmap.RefChangeOwners, D-104) and through every file that
+// includes it (reqmap.RefChangeIncluderOwners, D-105). An error means the
+// owners cannot be known.
+func (r *refPlacer) owners(ctx context.Context, ch companion.RefChange, oldVal, newVal string) ([]reqmap.TypedOwner, error) {
+	f := r.read(ctx, ch.Location)
+	if f.err != nil {
+		return nil, f.err
+	}
+	owners, err := reqmap.RefChangeOwners(ch.Location, f.content, ch.Path, oldVal, newVal)
+	if err != nil {
+		return nil, err
+	}
+	all, err := r.allFiles(ctx)
+	if err != nil {
+		return owners, err
+	}
+	included, err := reqmap.RefChangeIncluderOwners(ch.Location, f.content, ch.Path, oldVal, newVal, all)
+	for _, o := range included {
+		if !slices.Contains(owners, o) {
+			owners = append(owners, o)
+		}
+	}
+	return owners, err
 }
 
 // checkRefReplacePlan declares a ref/replace rewrite (addRefReplace) as the

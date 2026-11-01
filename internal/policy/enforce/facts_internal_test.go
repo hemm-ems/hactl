@@ -17,7 +17,7 @@ func TestFactCacheIsTaggedWithThePolicyHash(t *testing.T) {
 	c.verifiedAutomations["heating"] = true
 	c.optionsHandlers["f1"] = "entry"
 	c.dashboards[""] = reqmap.StoredDashboard{}
-	c.live, c.liveRead = []string{"light.a"}, true
+	c.live, c.liveRead = &reqmap.LiveStates{EntityIDs: []string{"light.a"}}, true
 	c.observeRefReplace(reqmap.Request{Body: []byte(`{"old":"a","new":"b"}`)}, []byte(`{"changes":[{"location":"x.yaml","path":"p"}]}`))
 	if len(c.refPlans) != 1 || c.refPlans[0].PolicyHash != "h1" {
 		t.Fatalf("an observed ref/replace plan is not tagged with the hash: %+v", c.refPlans)

@@ -513,7 +513,17 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	if target, _, findErr := rootCmd.Find(args[1:]); findErr == nil {
 		target.SetContext(ctx)
 	}
-	err := finishPolicySession(rootCmd.ExecuteContext(ctx))
+	executed, execErr := rootCmd.ExecuteContextC(ctx)
+	err := finishPolicySession(execErr)
+	if err == nil && executed != nil {
+		// A preview that succeeded authorizes the matching --confirm here
+		// exactly as in Execute(): an MCP tool call runs through this entry
+		// point inside `hactl mcp`'s own Execute(), so the confirm guard is
+		// active for it, and without the witness every --confirm a client
+		// sent after its dry run was refused (the manual: "the dry-run +
+		// --confirm write path still applies").
+		noteDryRun(executed, executed.Flags().Args())
+	}
 
 	// After, not before: cobra adds the `completion` subtree lazily during
 	// ExecuteC, so a Find ahead of the run cannot resolve it and the mark would

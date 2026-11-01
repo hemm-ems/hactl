@@ -500,6 +500,129 @@ action:
 }
 
 // ---------------------------------------------------------------------------
+// D-104 + D-105: a change lies in every automation that reads it — through a
+// YAML alias of the anchor it is written at, and through an !include of the
+// fragment it is written in.
+// ---------------------------------------------------------------------------
+
+// reloadAutomationsE2E makes HA read automations.yaml as it is on disk now.
+func reloadAutomationsE2E(t *testing.T) {
+	t.Helper()
+	if _, err := haapi.New(haURL, haToken).CallService(context.Background(), "automation", "reload", map[string]any{}); err != nil {
+		t.Fatalf("automation.reload: %v", err)
+	}
+}
+
+// pgPolicyProdHeating is the automation the D-104/D-105 test writes and denies.
+const pgPolicyProdHeating = "pg_policy_prod_heating"
+
+// haProdHeatingTriggerEntityE2E reads pg_policy_prod_heating's first trigger
+// entity out of HA's own config API (H-12), polling until HA has loaded it.
+func haProdHeatingTriggerEntityE2E(t *testing.T) string {
+	t.Helper()
+	const id = pgPolicyProdHeating
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		body, err := haAutomationConfig(context.Background(), id)
+		if err == nil {
+			var cfg struct {
+				Trigger  []map[string]any `json:"trigger"`
+				Triggers []map[string]any `json:"triggers"`
+			}
+			if jerr := json.Unmarshal(body, &cfg); jerr != nil {
+				t.Fatalf("automation %s config: %v\n%s", id, jerr, body)
+			}
+			trig := cfg.Triggers
+			if len(cfg.Trigger) > 0 {
+				trig = cfg.Trigger
+			}
+			if len(trig) > 0 {
+				e, _ := trig[0]["entity_id"].(string)
+				return e
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("HA never served automation %s's trigger: %v", id, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func TestE2EPolicyRefReplaceSharedAndIncludedChangesCLI(t *testing.T) {
+	const (
+		oldID = "sensor.pg_policy_shared_old"
+		newID = "sensor.pg_policy_shared_new"
+		frag  = "pg_policy_temp_trigger.yaml"
+	)
+	original := readConfigFileE2E(t, "automations.yaml")
+	t.Cleanup(func() {
+		writeConfigFileE2E(t, "automations.yaml", original)
+		reloadAutomationsE2E(t)
+	})
+	shared := strings.TrimRight(original, "\n") + fmt.Sprintf(`
+- id: pg_policy_anchor_test
+  alias: PG Policy Anchor Test
+  trigger: &pg_policy_temp_trigger
+    - platform: state
+      entity_id: %s
+  action:
+    - delay: "00:00:01"
+- id: pg_policy_prod_heating
+  alias: PG Policy Prod Heating
+  trigger: *pg_policy_temp_trigger
+  action:
+    - delay: "00:00:01"
+`, oldID)
+	writeConfigFileE2E(t, "automations.yaml", shared)
+	reloadAutomationsE2E(t)
+	if got := haProdHeatingTriggerEntityE2E(t); got != oldID {
+		t.Fatalf("HA reads the aliased trigger of pg_policy_prod_heating as %q, want %q — the fixture proves nothing", got, oldID)
+	}
+
+	policy := pgE2EPolicy("    deny:\n      \"automation:pg_policy_prod_*\": [write]\n")
+	deny := e2eDenied{
+		Resource: "automation:pg_policy_prod_heating/config", Verb: "edit",
+		Rule: `deny "automation:pg_policy_prod_*" [write]`, Line: policyLineOfE2E(t, policy, `"automation:pg_policy_prod_*"`),
+	}
+	args := []string{"ref", "replace", oldID, newID}
+	t.Run("anchor shared by an alias in a denied automation", func(t *testing.T) {
+		assertE2ERefused(t, policyE2EDir(t, policy), args, deny)
+		if got := readConfigFileE2E(t, "automations.yaml"); got != shared {
+			t.Errorf("refused ref replace rewrote automations.yaml:\n%s", got)
+		}
+		reloadAutomationsE2E(t)
+		if got := haProdHeatingTriggerEntityE2E(t); got != oldID {
+			t.Errorf("HA reads the denied automation's trigger as %q after a refused rewrite, want %q", got, oldID)
+		}
+	})
+
+	t.Cleanup(func() { _ = putConfigFile(context.Background(), frag, "# emptied by the e2e cleanup\n") })
+	writeConfigFileE2E(t, frag, fmt.Sprintf("- platform: state\n  entity_id: %s\n", oldID))
+	included := strings.TrimRight(original, "\n") + fmt.Sprintf(`
+- id: pg_policy_prod_heating
+  alias: PG Policy Prod Heating
+  trigger: !include %s
+  action:
+    - delay: "00:00:01"
+`, frag)
+	writeConfigFileE2E(t, "automations.yaml", included)
+	reloadAutomationsE2E(t)
+	if got := haProdHeatingTriggerEntityE2E(t); got != oldID {
+		t.Fatalf("HA reads the included trigger of pg_policy_prod_heating as %q, want %q — the fixture proves nothing", got, oldID)
+	}
+	t.Run("fragment included by a denied automation", func(t *testing.T) {
+		assertE2ERefused(t, policyE2EDir(t, policy), args, deny)
+		if got := readConfigFileE2E(t, frag); !strings.Contains(got, oldID) || strings.Contains(got, newID) {
+			t.Errorf("refused ref replace rewrote %s:\n%s", frag, got)
+		}
+		reloadAutomationsE2E(t)
+		if got := haProdHeatingTriggerEntityE2E(t); got != oldID {
+			t.Errorf("HA reads the denied automation's trigger as %q after a refused rewrite, want %q", got, oldID)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // E-2 / D-73: the services hactl sends itself are checked like any service.
 // ---------------------------------------------------------------------------
 

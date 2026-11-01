@@ -37,6 +37,8 @@ func loadPolicy(t *testing.T, body string) (*policy.Policy, string) {
 // fakeFetcher answers from fixed data and counts the questions.
 type fakeFetcher struct {
 	live     []string
+	members  map[string][]string
+	autoIDs  map[string]string
 	liveErr  error
 	reach    map[string][]string // key: json of target
 	reachErr error
@@ -45,13 +47,17 @@ type fakeFetcher struct {
 	regErr   error
 	dash     map[string]reqmap.StoredDashboard
 	ids      map[string]string
+	where    policy.Live
 	asked    []string
 	closed   bool
 }
 
-func (f *fakeFetcher) LiveEntityIDs(context.Context) ([]string, error) {
+func (f *fakeFetcher) LiveStates(context.Context) (*reqmap.LiveStates, error) {
 	f.asked = append(f.asked, "live")
-	return f.live, f.liveErr
+	if f.liveErr != nil {
+		return nil, f.liveErr
+	}
+	return &reqmap.LiveStates{EntityIDs: f.live, Members: f.members, AutomationIDs: f.autoIDs}, nil
 }
 
 func (f *fakeFetcher) Reach(_ context.Context, target map[string]any) ([]string, error) {
@@ -82,7 +88,7 @@ func (f *fakeFetcher) DashboardIDs(context.Context) (map[string]string, error) {
 	return f.ids, nil
 }
 
-func (f *fakeFetcher) Live() policy.Live { return nil }
+func (f *fakeFetcher) Live() policy.Live { return f.where }
 func (f *fakeFetcher) Close()            { f.closed = true }
 
 func newSession(t *testing.T, body string, f enforce.Fetcher, opts ...func(*enforce.Options)) (*enforce.Session, string) {
@@ -555,12 +561,9 @@ func TestServiceCallChecksIsTheRequestLayersMapping(t *testing.T) {
 	if denial != nil {
 		t.Fatalf("denial %+v", denial)
 	}
-	got := make([]string, 0, len(checks))
-	for _, c := range checks {
-		got = append(got, c.String())
-	}
+	got := reqmap.Result{Checks: checks}.Strings()
 	want := []string{
-		"control entity:light.a", "control entity:script.wake", "control script:morning/run",
+		"control entity:light.a", "control entity:script.wake", "control script:morning (deny only)", "control script:morning/run",
 		"control service:homeassistant.turn_on", "control service:light.turn_on", "control service:script.turn_on",
 	}
 	if !slices.Equal(got, want) {

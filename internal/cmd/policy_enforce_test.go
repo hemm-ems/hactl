@@ -203,56 +203,120 @@ func TestNoProfileIsByteIdentical(t *testing.T) {
 
 // TestBrokenPolicyRefusesEveryCommand (D-60): walks the live cobra tree with a
 // broken policy.yaml — every runnable command outside the exempt list refuses
-// with policy_broken before it sends anything; the exempt ones run.
+// with policy_broken before it sends anything; the exempt ones run. What is
+// exempt is written here from the contract, never asked of policyExempt (the
+// function under test): D-60's six (`policy show`, `policy lint`, `version`,
+// `help`, `completion`, `rtfm`), every `completion <shell>`, the root, and a
+// bare family group, which only prints its help (D-87) — `hactl log`, a group
+// whose bare form reads the log, is not one.
 func TestBrokenPolicyRefusesEveryCommand(t *testing.T) {
 	url, hits := countingHA(t)
 	dir := policyInstance(t, url, "version: 1\nactive: nobody\n")
+	brokenPrefix := "policy_broken: " + filepath.Join(dir, policy.FileName) + ":"
+
+	// Named by the contract, run first (the completion subtree is added by
+	// cobra on the first run): each exempt one runs.
+	if _, err := runPolicyCLI(t, dir, "completion", "bash"); err != nil {
+		t.Errorf("completion bash on a broken file: %v", err)
+	}
+	if _, err := runPolicyCLI(t, dir, "ent"); err != nil {
+		t.Errorf("the bare group `ent` on a broken file: %v", err)
+	}
+	out, err := runPolicyCLI(t, dir, "policy", "check", "entity:light.x", "control")
+	if policyErrorClass(err) != enforce.ClassBroken || !strings.HasPrefix(err.Error(), brokenPrefix) || out != "" {
+		t.Errorf("policy check on a broken file: %v, stdout %q — want the policy_broken refusal, not an answer", err, out)
+	}
+
 	var walk func(c *cobra.Command)
-	var ran int
+	var ran, completions, groups int
 	walk = func(c *cobra.Command) {
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}
-		if !c.Runnable() || c.Hidden {
+		// `hactl mcp` starts a server on stdin: TestMCPServerStartsOnABrokenPolicy.
+		if !c.Runnable() || c.Hidden || c.CommandPath() == "hactl mcp" {
 			return
 		}
-		path := c.CommandPath()
-		if path == "hactl mcp" {
-			return // starts a server on stdin; TestMCPRefusesEachCallOnABrokenPolicy covers it
-		}
-		args := validArgs(c)
-		if args == nil {
-			t.Errorf("%s: no positional count from 0 to 4 satisfies its Args", path)
-			return
-		}
-		full := append(strings.Fields(strings.TrimPrefix(path, "hactl ")), args...)
-		if path == "hactl" {
-			full = nil
-		}
-		before := hits.Load()
-		_, err := runPolicyCLI(t, dir, full...)
 		ran++
-		exempt := policyExempt(c)
-		switch {
-		case exempt && policyErrorClass(err) == enforce.ClassBroken:
-			t.Errorf("%s: an exempt command was refused as policy_broken", path)
-		case !exempt && policyErrorClass(err) != enforce.ClassBroken:
-			t.Errorf("%s: not refused as policy_broken: %v", path, err)
-		case !exempt && hits.Load() != before:
-			t.Errorf("%s: refused, but contacted Home Assistant first", path)
+		exempt := contractExemptOnABrokenPolicy(c)
+		if exempt && strings.HasPrefix(c.CommandPath(), "hactl completion ") {
+			completions++
 		}
-		if !exempt && err != nil && !strings.HasPrefix(err.Error(), "policy_broken: "+filepath.Join(dir, policy.FileName)+":") {
-			t.Errorf("%s: refusal %q does not name file:line", path, err)
+		if exempt && c.HasSubCommands() && c.HasParent() {
+			groups++
 		}
+		assertBrokenPolicyRun(t, dir, c, exempt, hits.Load, brokenPrefix)
 	}
 	walk(rootCmd)
-	if ran < 60 {
-		t.Errorf("walked %d commands; the tree walk has stopped finding them", ran)
+	if ran < 60 || completions == 0 || groups < 10 {
+		t.Errorf("walked %d commands (%d completion shells, %d bare groups); the tree walk has stopped finding them", ran, completions, groups)
 	}
-	for _, p := range []string{"hactl policy show", "hactl policy lint", "hactl version", "hactl help", "hactl completion", "hactl rtfm"} {
-		if !policyExemptPaths[p] {
-			t.Errorf("%s is missing from D-60's exempt list", p)
-		}
+}
+
+// contractExemptOnABrokenPolicy is what still runs on a broken policy.yaml,
+// written from D-60 and D-87 rather than asked of policyExempt: the six named
+// commands, every `completion <shell>`, the root, and every bare family group
+// — a command with subcommands, which only prints its help — except `hactl
+// log`, whose bare form reads the log.
+func contractExemptOnABrokenPolicy(c *cobra.Command) bool {
+	path := c.CommandPath()
+	switch {
+	case slices.Contains([]string{"hactl policy show", "hactl policy lint", "hactl version", "hactl help", "hactl completion", "hactl rtfm"}, path),
+		strings.HasPrefix(path, "hactl completion "), path == "hactl":
+		return true
+	case c.HasSubCommands() && path != "hactl log":
+		return true
+	}
+	return false
+}
+
+// assertBrokenPolicyRun runs c on the broken policy in dir: an exempt command
+// runs; any other refuses with policy_broken naming file:line before it
+// contacts Home Assistant (hits counts its requests).
+func assertBrokenPolicyRun(t *testing.T, dir string, c *cobra.Command, exempt bool, hits func() int64, brokenPrefix string) {
+	t.Helper()
+	path := c.CommandPath()
+	args := validArgs(c)
+	if args == nil {
+		t.Errorf("%s: no positional count from 0 to 4 satisfies its Args", path)
+		return
+	}
+	full := append(strings.Fields(strings.TrimPrefix(path, "hactl ")), args...)
+	if path == "hactl" {
+		full = nil
+	}
+	before := hits()
+	_, err := runPolicyCLI(t, dir, full...)
+	switch {
+	case exempt && policyErrorClass(err) == enforce.ClassBroken:
+		t.Errorf("%s: an exempt command was refused as policy_broken", path)
+	case !exempt && policyErrorClass(err) != enforce.ClassBroken:
+		t.Errorf("%s: not refused as policy_broken: %v", path, err)
+	case !exempt && hits() != before:
+		t.Errorf("%s: refused, but contacted Home Assistant first", path)
+	case !exempt && !strings.HasPrefix(err.Error(), brokenPrefix):
+		t.Errorf("%s: refusal %q does not name file:line", path, err)
+	}
+}
+
+// TestMCPServerStartsOnABrokenPolicy (D-60 as refined, D-87): `hactl mcp`
+// starts on a broken policy.yaml — it refuses each tool call instead (so
+// `policy show` stays usable over MCP) — run through the CLI entry point with
+// its stdin closed, it serves nothing and exits cleanly, never policy_broken.
+func TestMCPServerStartsOnABrokenPolicy(t *testing.T) {
+	url, _ := countingHA(t)
+	dir := policyInstance(t, url, "version: 1\nactive: nobody\n")
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	oldIn := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldIn; _ = r.Close() }()
+	_, err = runPolicyCLI(t, dir, "mcp")
+	if policyErrorClass(err) != "" || err != nil {
+		t.Errorf("hactl mcp on a broken policy: %v, want the server to start and end with its input", err)
 	}
 }
 
@@ -640,11 +704,10 @@ func TestAddServiceCallPlansTheReach(t *testing.T) {
 	policySession = sess
 	defer func() { policySession = nil; sess.Close() }()
 	plan = newWritePlan("call service").addServiceCall(context.Background(), "light", "turn_on", map[string]any{"area_id": "hall"})
-	got := make([]string, 0, len(plan.checks))
-	for _, c := range plan.checks {
-		got = append(got, c.String())
-	}
-	if !slices.Equal(got, []string{"control entity:light.a", "control service:light.turn_on"}) {
+	got := reqmap.Result{Checks: plan.checks}.Strings()
+	// The rig answers no entity registry: which reached entity is a template
+	// cannot be read, so the typed check is kind-wide, denies only (D-107).
+	if !slices.Equal(got, []string{"control entity:light.a", "control service:light.turn_on", "control template:* (deny only)"}) {
 		t.Errorf("plan = %q (an entity service: the lock outside its domain is not reached)", got)
 	}
 	var out strings.Builder

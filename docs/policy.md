@@ -248,8 +248,19 @@ A few things worth knowing:
   you have. `homeassistant.turn_on` also needs each domain's own service
   (`light.turn_on`, `script.turn_on`, …), and anything that starts a script
   needs that script's `run`. Entity ids anywhere in `--data` count too, so
-  `scene.apply` with a lock in it needs `control` on the lock. If Home
-  Assistant cannot tell hactl what a call would reach, the call is refused.
+  `scene.apply` with a lock in it needs `control` on the lock. A light group
+  and a scene pass the call on to what they hold: turning on a light group
+  needs `control` on every light in it, and turning on a scene needs `control`
+  on every entity the scene sets — hactl reads them from the group's or scene's
+  own state, since Home Assistant's answer names the group or scene alone. If
+  Home Assistant cannot tell hactl what a call would reach, the call is
+  refused.
+- **Switching an automation, a script, a helper or a template entity also asks
+  its own address.** `deny "automation:prod_*": [write]` refuses turning
+  `prod_heating` off, not just editing it; the same goes for
+  `script:<id>`, `helper:<domain>/<id>` and `template:<unique_id>`. Only a deny
+  decides this: allowing the entity (`entity:automation.*`) and the service is
+  enough to switch it, even under `default: deny`.
 - **The service itself is always checked**, also for services without any
   target such as `homeassistant.restart` — even when every entity is allowed.
   With `default: deny`, allow the services you want
@@ -276,9 +287,12 @@ A few things worth knowing:
   script or template entity every change lies in, and needs `edit` on that
   entry's config as well as on the file. If hactl cannot read the file, or
   cannot find the change in it, the rewrite is refused rather than checked as
-  the file alone. A change hactl cannot place in such an entry — an
-  automation without an `id:`, a template entity without a `unique_id` — is
-  checked as its file only.
+  the file alone. A change in a part of the file that other entries share —
+  a YAML anchor (`&x`) another automation refers to with `*x` or `<<: *x` —
+  lies in every entry sharing it, and a change in a file that an automation,
+  script or template pulls in with `!include` lies in that entry too. A change
+  hactl cannot place in such an entry — an automation without an `id:`, a
+  template entity without a `unique_id` — is checked as its file only.
 - **Partly denied means denied.** If an entity is allowed but its
   `registry/entity_id` is denied, a command that would change the whole entity
   is refused. hactl writes at the finest level it can — `ent set-label` checks

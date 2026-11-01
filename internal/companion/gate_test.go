@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -99,5 +100,39 @@ func TestRefusedCompanionRequestIsNeverSent(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Errorf("the companion saw %d requests", hits.Load())
+	}
+}
+
+// hopAllowingGate allows every request and every hop: what is left to refuse a
+// redirect is the transport's own prefix rule.
+type hopAllowingGate struct{ countingGate }
+
+func (*hopAllowingGate) CheckHop(context.Context, reqmap.Request, reqmap.Request) error { return nil }
+
+// TestRedirectOutOfTheIngressPrefixIsRefused (D-74): a same-origin redirect
+// from the companion's Ingress path to a path outside it maps the same logical
+// route, but it leaves the companion — it would land on Home Assistant itself.
+// The shared transport refuses it before it is sent, whatever the gate says
+// of the hop.
+func TestRedirectOutOfTheIngressPrefixIsRefused(t *testing.T) {
+	prefix := "/api/hassio_ingress/" + testIngressToken
+	var outside atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == prefix+"/v1/config/files" {
+			http.Redirect(w, r, "/v1/config/files", http.StatusFound)
+			return
+		}
+		outside.Add(1)
+		_, _ = io.WriteString(w, `{"files":[]}`)
+	}))
+	defer srv.Close()
+	defer reqgate.Install(&hopAllowingGate{})()
+
+	_, err := New(srv.URL+prefix, "tok").ListConfigFiles(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "a redirect left the companion client's own path") {
+		t.Errorf("a redirect out of the Ingress prefix: %v", err)
+	}
+	if outside.Load() != 0 {
+		t.Errorf("the redirect reached %d request(s) outside the companion's path", outside.Load())
 	}
 }
