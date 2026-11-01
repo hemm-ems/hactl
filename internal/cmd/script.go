@@ -617,6 +617,19 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 			asPreview(!flagScriptConfirm).
 			render(w)
 	}
+
+	// The policy plan (H-29's command layer), checked before the diff is
+	// printed and before the companion's dry-run PUT, which the request layer
+	// maps like the real write (D-74): the write itself, and the script.reload
+	// hactl sends on its own after it (D-73) — so a profile that may edit the
+	// script but not reload scripts is refused up front, never after a write
+	// that HA then does not activate. Same plan in the preview and under
+	// --confirm; nothing with no profile in effect (D-58).
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptApplyPlan(ctx, candidate.ID))
+	if err != nil {
+		return err
+	}
+
 	if !flagJSON {
 		_, _ = fmt.Fprintln(w, "diff:")
 		for _, line := range diff {
@@ -651,6 +664,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 		return dryRun("apply script").
 			with("script", candidate.ID).
 			with("validation", scriptValidation).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -664,7 +678,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	reloaded := false
-	if _, reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
+	if _, reloadErr := client.CallService(ctx, scriptReloadDomain, scriptReloadService, nil); reloadErr != nil {
 		slog.Warn("script reload failed, config was written but not activated", "error", reloadErr)
 	} else {
 		reloaded = true
@@ -836,21 +850,30 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 
 	// Verify the script entity exists before calling the service (also in
 	// dry-run, so the preview is truthful about what would run).
-	if _, err := client.GetState(ctx, entityID); err != nil {
+	if _, stateErr := client.GetState(ctx, entityID); stateErr != nil {
 		return fmt.Errorf("script not found: %s", entityID)
+	}
+
+	// The policy plan (H-29's command layer): the script.turn_on call this
+	// command sends, mapped as the request layer maps it — the service, the
+	// script entity and its run, script:<config key>/run (D-73, D-84) —
+	// checked in the preview and again before the call. Nothing with no
+	// profile in effect (D-58).
+	note, err := checkWritePlan(w, !flagScriptConfirm, newWritePlan("execute "+entityID).addScriptRun(ctx, entityID))
+	if err != nil {
+		return err
 	}
 
 	if !flagScriptConfirm {
 		return dryRun("execute "+entityID).
 			with("entity_id", entityID).
 			with("via", "script.turn_on").
+			withPolicy(note).
 			withHint("use --confirm to run it").
 			render(w)
 	}
 
-	if _, err := client.CallService(ctx, "script", "turn_on", map[string]any{
-		"entity_id": entityID,
-	}); err != nil {
+	if _, err := client.CallService(ctx, "script", "turn_on", scriptRunData(entityID)); err != nil {
 		return fmt.Errorf("running script %s: %w", entityID, err)
 	}
 

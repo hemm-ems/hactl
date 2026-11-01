@@ -1309,8 +1309,8 @@ stderr: `policy_denied: delete automation:prod_heating — deny "automation:prod
 | command | checks |
 |---|---|
 | `svc call <d>.<s>` | `control service:<d>.<s>`, always (E-2) + `control` on every entity the call reaches and every entity named in `--data` (E-1, below); `homeassistant.turn_on`/`turn_off`/`toggle` + `control service:<domain>.<s>` for each domain they reach; a call that starts scripts (`script.<x>`, `script.turn_on`, `script.toggle`, `homeassistant.turn_on`/`toggle`) + `control script:{x}/run` for each |
-| `script run <x>` | `control script:{x}/run` + `control service:script.turn_on` + `control entity:script.{x}` |
-| `script apply <x>` | `edit script:{x}/config` + `control service:script.reload` (hactl reloads scripts itself after the write) |
+| `script run <x>` | `control script:{x}/run` + `control service:script.turn_on` + `control entity:script.{x}` — `{x}` is the script's config key from the entity registry; when hactl cannot read it, the run of every script (`script:*/run`) is checked instead |
+| `script apply <x>` | `edit script:{x}/config` + `control service:script.reload` (hactl reloads scripts itself after the write), checked before the diff is shown; an apply with no changes writes nothing and checks nothing |
 | `script create`, `auto create`, `helper create <d>`, `tpl create` | `create` on the id the file declares: `script:{key}`, `automation:{id}`, `helper:<d>/{key}`, `template:{unique_id}` for every unique_id in the file — a template entity without `unique_id` has no address, so `tpl create` refuses it (`fail-closed: template entity without unique_id`) |
 | `auto apply <x>` | `edit automation:{x}/config`; + `create automation:{id}` when the file's `id:` differs (a rename, E-5); a file with no `id:` (or a non-string one) is refused |
 | `auto rollback [x]`, `rollback [x]` | `edit automation:{x}/config` (the target from the backup's name when no `x`); + `create` on the backup's own `id:` when it differs; a backup with no `id:` is refused |
