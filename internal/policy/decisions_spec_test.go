@@ -345,8 +345,10 @@ profiles:
 // TestPartialVerdict — D-66 (finding 7): every write verb treats a partial as
 // denied, naming the FIRST descendant deny (file order) and listing all of
 // them; read stays allowed by its allow and lists the read denies; a resource
-// with no descendant deny for the verb is whole. Red today: the parent is
-// allowed outright and Verdict has no Partial/PartialDenies.
+// with no descendant deny for the verb is whole. Refined by D-110 (live test
+// 2026-11-01, F-1): `write` on a registry field means edit and on an
+// attribute nothing, so only edit is partial here — control, create and
+// delete on the entity are whole.
 func TestPartialVerdict(t *testing.T) {
 	p := mustLoad(t, writePolicy(t, `version: 1
 active: agent
@@ -362,22 +364,23 @@ profiles:
 	first := `deny "entity:*/registry/entity_id" [write]`
 	second := `deny "entity:*/attr/secret" [write read]`
 	r := mustResource(t, "entity:light.x")
-	for _, v := range []policy.Verb{policy.Control, policy.Edit, policy.Create, policy.Delete} {
-		got := p.Decide(r, v, nil)
-		if got.Allowed || got.Rule != first || got.Line != 9 {
-			t.Errorf("%s %s = allowed=%v rule %q line %d, want denied by the first descendant deny %q (line 9)", r, v, got.Allowed, got.Rule, got.Line, first)
-		}
-		partial, denies, ok, why := verdictPartial(got)
-		if !ok {
-			t.Errorf("%s %s: %s", r, v, why)
-			continue
-		}
-		want := []ruleRefExpect{{first, 9}, {second, 10}}
-		if !partial || !slices.Equal(denies, want) {
-			t.Errorf("%s %s: partial=%v denies=%+v, want true %+v", r, v, partial, denies, want)
+	got := p.Decide(r, policy.Edit, nil)
+	if got.Allowed || got.Rule != first || got.Line != 9 {
+		t.Errorf("%s edit = allowed=%v rule %q line %d, want denied by the first descendant deny %q (line 9)", r, got.Allowed, got.Rule, got.Line, first)
+	}
+	if partial, denies, ok, why := verdictPartial(got); !ok {
+		t.Errorf("%s edit: %s", r, why)
+	} else if want := []ruleRefExpect{{first, 9}}; !partial || !slices.Equal(denies, want) {
+		t.Errorf("%s edit: partial=%v denies=%+v, want true %+v", r, partial, denies, want)
+	}
+	for _, v := range []policy.Verb{policy.Control, policy.Create, policy.Delete} {
+		whole := p.Decide(r, v, nil)
+		if !whole.Allowed || whole.Rule != `allow "entity:*" [read write]` || whole.Partial {
+			t.Errorf("%s %s = allowed=%v rule %q partial %v, want allowed whole by the allow on line 7 (D-110: %s applies at neither deny)",
+				r, v, whole.Allowed, whole.Rule, whole.Partial, v)
 		}
 	}
-	got := p.Decide(r, policy.Read, nil)
+	got = p.Decide(r, policy.Read, nil)
 	if !got.Allowed || got.Rule != `allow "entity:*" [read write]` || got.Line != 7 {
 		t.Errorf("%s read = %+v, want allowed by the allow on line 7", r, got)
 	}

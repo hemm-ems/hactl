@@ -754,7 +754,9 @@ profiles:
 		{"automation:prod_heating", false, `deny "automation:prod_*" [write]`, 9, false},
 		{"automation:kitchen", true, RuleNoDeny, 0, false}, // default: deny does not decide
 		{"automation:pg_test", true, RuleNoDeny, 0, false}, // nor does an allow
-		{"helper:input_boolean/alarm_armed", false, `deny "helper:input_boolean/alarm_armed/config" [control]`, 10, true},
+		// D-110: control does not apply at a helper's config, so the deny
+		// there makes nothing partial.
+		{"helper:input_boolean/alarm_armed", true, RuleNoDeny, 0, false},
 	} {
 		v := p.DecideDenyOnly(mustResource(t, c.resource), Control)
 		if v.Allowed != c.allowed || v.Rule != c.rule || v.Line != c.line || v.Partial != c.partial || v.Profile != "agent" {
@@ -774,7 +776,7 @@ profiles:
 	}{
 		{KindAutomation, false, `deny "automation:prod_*" [write]`},
 		{KindTemplate, true, RuleNoDeny},
-		{KindHelper, false, `deny "helper:input_boolean/alarm_armed/config" [control]`}, // a descendant deny: partial
+		{KindHelper, true, RuleNoDeny}, // a descendant deny whose verb does not apply there (D-110)
 	} {
 		v := p.DecideKindWideDenyOnly(c.kind, "", Control)
 		if v.Allowed != c.allowed || v.Rule != c.rule {

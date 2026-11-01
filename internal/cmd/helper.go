@@ -607,9 +607,10 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 	// `source: storage` rows in `helper ls`) has no companion definition and
 	// this is where the caller finds that out.
 	//
-	// One confirm-time failure this cannot predict: the same slug may exist in
-	// two domains, where the companion's GET returns the first match but its
-	// DELETE refuses with a 409 listing the candidates.
+	// The same slug may exist in two domains: the companion's GET returns the
+	// first match, and the confirmed DELETE names that match's domain, so it
+	// removes exactly the helper the preview named rather than ending in the
+	// 409 a domain-less DELETE gets for an ambiguous slug (D-123).
 	remote, err := cc.GetHelper(ctx, helperID)
 	if err != nil {
 		return fmt.Errorf("helper %q not found among the YAML helpers "+
@@ -662,15 +663,10 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 			render(w)
 	}
 
-	// While a profile is in effect the delete names the domain the plan
-	// checked, so the companion acts on exactly helper:<domain>/<id> (the
-	// request layer cannot map a domain-less helper delete). Without one the
-	// request is sent as it always was (D-58).
-	deleteDomain := ""
-	if policyInEffect() {
-		deleteDomain = remote.Domain
-	}
-	if _, err := cc.DeleteHelper(ctx, helperID, deleteDomain); err != nil {
+	// The delete always names the domain the preview resolved (and the plan
+	// checked), with or without a policy, so the companion acts on exactly
+	// helper:<domain>/<id> (D-123, superseding D-92's profile-only domain).
+	if _, err := cc.DeleteHelper(ctx, helperID, remote.Domain); err != nil {
 		return fmt.Errorf("deleting helper: %w", err)
 	}
 

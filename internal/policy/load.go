@@ -450,8 +450,9 @@ func (w *walker) rules(eff Effect, what string, n *yaml.Node) []Rule {
 			w.addf(kv.val.Line, "verbs for %q: %v", pat, err)
 			continue
 		}
-		out = append(out, Rule{Effect: eff, Pattern: pat, Written: written, Verbs: verbs,
-			Line: kv.key.Line, Column: kv.key.Column, addr: addr})
+		applicable := applicableUnder(addr)
+		out = append(out, Rule{Effect: eff, Pattern: pat, Written: written, Verbs: narrowWrite(written, verbs, applicable),
+			Line: kv.key.Line, Column: kv.key.Column, addr: addr, applicable: applicable})
 	}
 	return out
 }

@@ -178,7 +178,7 @@ profiles:
     deny:
       "dashboard:main/views/*": [read]
       "dashboard:/views/*": [edit]
-      "system:reload/*": [control]
+      "system:reload/*": [read]
       "entity:device_tracker.*/attr/*": [read]
 `
 	ts := policyRig(t, clean)

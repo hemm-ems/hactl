@@ -203,19 +203,25 @@ func TestRefReplaceRefusedByItsPlan(t *testing.T) {
 	wantField(t, "refusal", m, "action", `rename "sensor.old" to "sensor.new"`)
 }
 
-// TestRefReplaceChecksFileAndDashboardParts (D-66 as refined, E-7): a deny on a
-// block of the rewritten file denies the file edit — the change is addressable
-// only at the file, so any denied part refuses it — and a deny on a view of a
-// rewritten dashboard refuses through the per-view diff. Every denial is
-// listed, not only the first.
+// TestRefReplaceChecksFileAndDashboardParts (E-7): a deny on the rewritten
+// file refuses the file edit, and a deny on a view of a rewritten dashboard
+// refuses through the per-view diff. Every denial is listed, not only the
+// first. A deny on a block of the file no longer refuses it (D-110, refining
+// D-66): no command edits a block on its own, so edit does not apply where
+// that deny sits — deny the file or the typed entry instead.
 func TestRefReplaceChecksFileAndDashboardParts(t *testing.T) {
-	r := refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml/block/other\": [edit]\n      \"dashboard:\": [edit]\n"))
+	r := refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml\": [edit]\n      \"dashboard:\": [edit]\n"))
 	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
 	assertRefused(t, "preview", out, err,
-		`edit file:automations.yaml — deny "file:automations.yaml/block/other" [edit] (line 6) — a part of it is denied, so all of it is (D-66)`,
+		`edit file:automations.yaml — deny "file:automations.yaml" [edit] (line 6)`,
 		`edit dashboard: — deny "dashboard:" [edit] (line 7)`)
 	if !strings.Contains(out, "checked: 3 resources, 2 denied") {
 		t.Errorf("both denials are reported:\n%s", out)
+	}
+
+	r = refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml/block/other\": [edit]\n"))
+	if out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new"); err != nil {
+		t.Errorf("a block deny refused the file edit (D-110: edit does not apply at a block): %v\n%s", err, out)
 	}
 }
 

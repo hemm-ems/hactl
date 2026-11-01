@@ -266,8 +266,9 @@ type Rule struct {
 	// Written is the verb list exactly as written, in the file's order, with
 	// `write` unexpanded — what the rule text shows.
 	Written []string
-	// Verbs is Written parsed by ParseVerbs: expanded, de-duplicated,
-	// canonical order — what evaluation uses.
+	// Verbs is Written parsed by ParseVerbs — de-duplicated, canonical order
+	// — with `write` expanded to the write verbs that apply at the pattern
+	// (D-110) and every verb written by name kept: what evaluation uses.
 	Verbs []Verb
 	// Where is the selector narrowing this allow, nil when none. Always nil on
 	// a deny rule (`where:` narrows allows only).
@@ -280,6 +281,9 @@ type Rule struct {
 	Column int
 
 	addr address
+	// applicable are the write verbs that apply at the pattern — at its
+	// address or below it (D-110).
+	applicable []Verb
 }
 
 // Text renders the rule as a Verdict names it and `policy show` lists it:
@@ -398,6 +402,23 @@ type Verdict struct {
 	// PartialDenies are the descendant denies of a Partial verdict, in file
 	// order (Line, then Column). Empty, never nil.
 	PartialDenies []RuleRef
+	// UnmetWhere records every narrowed allow that matched the resource and
+	// verb, was tried, and whose `where:` evaluated to false (D-112), in the
+	// order tried. Non-empty only when no allow granted — the profile default
+	// decided. A selector that could not be evaluated is a Notes entry
+	// instead; one never tried is in neither. Empty, never nil.
+	UnmetWhere []UnmetWhere
+}
+
+// UnmetWhere is one narrowed allow whose selector did not hold (D-112): the
+// allow's Text() with its selector, its line, and the first key that failed,
+// area before label — `light.kitchen has no label pg_core_label`,
+// `light.kitchen is in area kitchen_id, not wohnzimmer or buero`,
+// `device_tracker.jan has no area`.
+type UnmetWhere struct {
+	Rule   string `json:"rule"`
+	Line   int    `json:"line"`
+	Reason string `json:"reason"`
 }
 
 // RuleRef names one rule: its Text() and its line.
@@ -445,9 +466,10 @@ type Live interface {
 //     verdict or the rule named — none after an allow that already grants.
 //  4. Else the profile default: RuleDefaultDeny or RuleDefaultAllow.
 //  5. If 3 or 4 allowed r but a deny for v covers a strict descendant of r
-//     (same kind and id, one or more further sub-resource segments), the
-//     verdict is Partial: a write verb is denied, naming the first such deny;
-//     Read stays allowed and lists them.
+//     (same kind and id, one or more further sub-resource segments) and v
+//     applies where that deny sits (D-110), the verdict is Partial: a write
+//     verb is denied, naming the first such deny; Read stays allowed and
+//     lists them.
 //
 // Rule order in the file carries no meaning for the verdict. When several
 // rules of the deciding effect match, the one named is the first in the file
@@ -460,7 +482,7 @@ type Live interface {
 // Decide never errors and never panics: r is assumed valid (ParseResource's
 // output), and a live failure is a non-match recorded in Notes.
 func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
-	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	out := newVerdict(p.WhatIf())
 	switch p.selection {
 	case SelectedByNoFile:
 		out.Allowed, out.Rule = true, RuleNoFile
@@ -488,12 +510,13 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 			continue
 		}
 		if rule.Where != nil {
-			holds, reason := rule.Where.holds(rule.addr.kind, r.ID, live)
+			unmet, reason := rule.Where.holds(rule.addr.kind, r.ID, live)
 			if reason != "" {
 				out.Notes = append(out.Notes, "where not evaluated for "+rule.headText()+": "+reason)
 				continue
 			}
-			if !holds {
+			if unmet != "" {
+				out.UnmetWhere = append(out.UnmetWhere, UnmetWhere{Rule: rule.Text(), Line: rule.Line, Reason: unmet})
 				continue
 			}
 		}
@@ -502,6 +525,7 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 	}
 	switch {
 	case granted != nil:
+		out.UnmetWhere = []UnmetWhere{}
 		out.Allowed, out.Rule, out.Line = true, granted.Text(), granted.Line
 	case pr.deflt == Deny:
 		out.Rule = RuleDefaultDeny
@@ -512,7 +536,7 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && rule.addr.coversDescendant(r) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}
@@ -528,13 +552,14 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 
 // DecideDenyOnly answers verb v on r for its denies only (D-107): denied when a
 // deny of the effective profile for v covers r, or — for a write verb — a
-// strict descendant of r (D-66's partial); otherwise allowed with RuleNoDeny.
+// strict descendant of r where v applies (D-66's partial, D-110); otherwise
+// allowed with RuleNoDeny.
 // The profile default and the allows never decide: a deny-only check is how a
 // service call consults a typed address it reaches (an automation, a script,
 // a helper, a template entity) whose grant is decided on the entity. The
 // AllowAll views answer as Decide.
 func (p *Policy) DecideDenyOnly(r Resource, v Verb) Verdict {
-	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	out := newVerdict(p.WhatIf())
 	switch p.selection {
 	case SelectedByNoFile:
 		out.Allowed, out.Rule = true, RuleNoFile
@@ -555,7 +580,7 @@ func (p *Policy) DecideDenyOnly(r Resource, v Verb) Verdict {
 	out.Allowed, out.Rule = true, RuleNoDeny
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && rule.addr.coversDescendant(r) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}
@@ -575,7 +600,7 @@ func (p *Policy) DecideDenyOnly(r Resource, v Verb) Verdict {
 // It is the check on a typed address a service call reaches but whose id this
 // invocation could not read.
 func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
-	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	out := newVerdict(p.WhatIf())
 	switch p.selection {
 	case SelectedByNoFile:
 		out.Allowed, out.Rule = true, RuleNoFile
@@ -600,7 +625,7 @@ func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
 	out.Allowed, out.Rule = true, RuleNoDeny
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && !rule.addr.any && rule.addr.kind == k &&
 			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
@@ -629,13 +654,13 @@ func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
 //     order. A narrower allow covers some ids, not all, and grants nothing here.
 //  4. Else the profile default.
 //  5. If 3 or 4 allowed, a deny for v on a strict descendant of sub on kind k
-//     (any id) makes the verdict partial: a write verb is denied naming the
-//     first such deny, read lists them (D-66).
+//     (any id), where v applies (D-110), makes the verdict partial: a write
+//     verb is denied naming the first such deny, read lists them (D-66).
 //
 // sub is the `/`-joined sub path below each id ("" = the resource itself). The
 // verdict never consults a where: selector, so it needs no Live.
 func (p *Policy) DecideKindWide(k Kind, sub string, v Verb) Verdict {
-	out := Verdict{Level: Level, WhatIf: p.WhatIf(), Notes: []string{}, PartialDenies: []RuleRef{}}
+	out := newVerdict(p.WhatIf())
 	switch p.selection {
 	case SelectedByNoFile:
 		out.Allowed, out.Rule = true, RuleNoFile
@@ -680,7 +705,7 @@ func (p *Policy) DecideKindWide(k Kind, sub string, v Verb) Verdict {
 	}
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && !rule.addr.any && rule.addr.kind == k &&
 			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
@@ -695,6 +720,12 @@ func (p *Policy) DecideKindWide(k Kind, sub string, v Verb) Verdict {
 	return out
 }
 
+// newVerdict is a verdict before any rule decided: level A, the what-if mark,
+// and every list empty, never nil.
+func newVerdict(whatIf bool) Verdict {
+	return Verdict{Level: Level, WhatIf: whatIf, Notes: []string{}, PartialDenies: []RuleRef{}, UnmetWhere: []UnmetWhere{}}
+}
+
 // profile returns the declared profile name, or nil.
 func (p *Policy) profile(name string) *profile {
 	for _, pr := range p.profiles {
@@ -705,11 +736,13 @@ func (p *Policy) profile(name string) *profile {
 	return nil
 }
 
-// holds evaluates the selector for the resource id of kind k. A non-empty
-// reason means it could not be evaluated, which never grants (fail closed).
-func (w Where) holds(k Kind, id string, live Live) (bool, string) {
+// holds evaluates the selector for the resource id of kind k. It returns why
+// the selector does not hold ("" when it holds) — the first key that failed,
+// area before label (D-112) — and, apart from that, a non-empty reason when it
+// could not be evaluated, which never grants either (fail closed).
+func (w Where) holds(k Kind, id string, live Live) (unmet, reason string) {
 	if live == nil {
-		return false, "no live instance to evaluate it against"
+		return "", "no live instance to evaluate it against"
 	}
 	if len(w.Area) > 0 {
 		var area Ref
@@ -720,11 +753,13 @@ func (w Where) holds(k Kind, id string, live Live) (bool, string) {
 		} else {
 			area, ok, err = live.EntityArea(id)
 		}
-		if err != nil {
-			return false, err.Error()
-		}
-		if !ok || !anyRefMatches([]Ref{area}, w.Area) {
-			return false, ""
+		switch {
+		case err != nil:
+			return "", err.Error()
+		case !ok:
+			return id + " has no area", ""
+		case !anyRefMatches([]Ref{area}, w.Area):
+			return id + " is in area " + area.ID + ", not " + strings.Join(w.Area, " or "), ""
 		}
 	}
 	if len(w.Label) > 0 {
@@ -736,13 +771,13 @@ func (w Where) holds(k Kind, id string, live Live) (bool, string) {
 			labels, err = live.EntityLabels(id)
 		}
 		if err != nil {
-			return false, err.Error()
+			return "", err.Error()
 		}
 		if !anyRefMatches(labels, w.Label) {
-			return false, ""
+			return id + " has no label " + strings.Join(w.Label, " or "), ""
 		}
 	}
-	return true, ""
+	return "", ""
 }
 
 // anyRefMatches: one of refs matches one of values, by id or by name.

@@ -196,20 +196,20 @@ func TestLintCountsAllWildcardFreeSegmentsAsChecked(t *testing.T) {
 		"    deny:\n"+
 		"      \"dashboard:main/views/*\": [read]\n"+ // 7: checked
 		"      \"dashboard:*/views/**\": [edit]\n"+ // 8: checked
-		"      \"system:reload/*\": [control]\n"+ // 9: checked
+		"      \"system:reload/*\": [read]\n"+ // 9: checked
 		"      \"system:*/**\": [read]\n"+ // 10: checked
-		"      \"file:x.yaml/block/*\": [edit]\n"+ // 11: checked (file itself not enumerated)
+		"      \"file:x.yaml/block/*\": [read]\n"+ // 11: checked (file itself not enumerated)
 		"      \"entity:light.*/attr/*\": [read]\n"+ // 12: checked, no attribute lookup
-		"      \"entity:light.*/attr/**\": [edit]\n"+ // 13: checked
+		"      \"entity:light.*/attr/**\": [read]\n"+ // 13: checked
 		"      \"dashboard:main/views/?\": [create]\n"+ // 14: a ? is not only *
-		"      \"system:reload/auto*\": [edit]\n"+ // 15: a literal
+		"      \"system:reload/auto*\": [read]\n"+ // 15: a literal
 		"      \"file:y.yaml/block/*x*\": [read]\n") // 16: a literal
 	rep := Lint(p, inv) // a plain Inventory: attributes cannot be listed
 	want := []Unchecked{
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:main/views/?" [create]`, Line: 14},
 		{Kind: KindFile, Reason: ReasonNotEnumerated},
 		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:y.yaml/block/*x*" [read]`, Line: 16},
-		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/auto*" [edit]`, Line: 15},
+		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/auto*" [read]`, Line: 15},
 	}
 	if !reflect.DeepEqual(rep.Unchecked, want) {
 		t.Errorf("unchecked =\n%+v\nwant\n%+v", rep.Unchecked, want)
@@ -344,7 +344,10 @@ func TestPartialVerdictImpl(t *testing.T) {
 		{"entity:device_tracker.jan/attr", Read, true, true, 7, []int{11, 12}},
 		{"entity:device_tracker.jan/attr/latitude", Read, false, false, 11, nil},
 		{"file:pkgs", Edit, true, false, 8, nil}, // a path is not a descendant of another path
-		{"file:a.yaml", Edit, false, true, 14, []int{14}},
+		// D-110: no command edits a block on its own, so a block deny makes
+		// nothing partial; it still decides a check of the block itself.
+		{"file:a.yaml", Edit, true, false, 8, nil},
+		{"file:a.yaml/block/b", Edit, false, false, 14, nil},
 	}
 	for _, c := range cases {
 		v := p.Decide(mustResource(t, c.res), c.verb, nil)
@@ -468,9 +471,9 @@ func TestLintListsEveryOtherFreeSubSegmentAsUnchecked(t *testing.T) {
 	}}
 	p := mustLoad(t, profileHead+
 		"    deny:\n"+
-		"      \"system:reload/automaton\": [control]\n"+ // 7
+		"      \"system:reload/automaton\": [read]\n"+ // 7
 		"      \"dashboard:main/views/secrte\": [read]\n"+ // 8
-		"      \"file:x.yaml/block/clmate\": [edit]\n"+ // 9
+		"      \"file:x.yaml/block/clmate\": [read]\n"+ // 9
 		"      \"dashboard:main/views\": [edit]\n"+ // 10: no free segment
 		"      \"dashboard:*/views/a\": [edit]\n"+ // 11
 		"      \"file:y.yaml\": [edit]\n") // 12
@@ -479,8 +482,8 @@ func TestLintListsEveryOtherFreeSubSegmentAsUnchecked(t *testing.T) {
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:main/views/secrte" [read]`, Line: 8},
 		{Kind: KindDashboard, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "dashboard:*/views/a" [edit]`, Line: 11},
 		{Kind: KindFile, Reason: ReasonNotEnumerated},
-		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:x.yaml/block/clmate" [edit]`, Line: 9},
-		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/automaton" [control]`, Line: 7},
+		{Kind: KindFile, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "file:x.yaml/block/clmate" [read]`, Line: 9},
+		{Kind: KindSystem, Reason: ReasonSubNotChecked, Profile: "p", Rule: `deny "system:reload/automaton" [read]`, Line: 7},
 	}
 	if !reflect.DeepEqual(rep.Unchecked, want) {
 		t.Errorf("unchecked =\n%+v\nwant\n%+v", rep.Unchecked, want)

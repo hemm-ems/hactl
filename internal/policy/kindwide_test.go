@@ -76,13 +76,20 @@ profiles:
     allow:
       "helper:*/*": [create]
 `, KindHelper, "", Create, true, `allow "helper:*/*" [create]`, 7, false},
-		{"a descendant create-deny makes a new config entry partial", `version: 1
+		{"a descendant edit-deny makes editing every config entry partial", `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "config_entry:*/options": [edit]
+`, KindConfigEntry, "", Edit, false, `deny "config_entry:*/options" [edit]`, 6, true},
+		{"a descendant deny whose verb does not apply there makes nothing partial (D-110)", `version: 1
 active: a
 profiles:
   a:
     deny:
       "config_entry:*/options": [create]
-`, KindConfigEntry, "", Create, false, `deny "config_entry:*/options" [create]`, 6, true},
+`, KindConfigEntry, "", Create, true, RuleDefaultAllow, 0, false},
 		{"a sub-scoped kind-wide check is covered by a deny on that sub", `version: 1
 active: a
 profiles:

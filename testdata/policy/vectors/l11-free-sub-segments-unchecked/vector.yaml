@@ -8,5 +8,5 @@ lint:
     - {kind: dashboard, reason: sub-resource not checked, profile: agent, rule: 'deny "dashboard:main/views/secrte" [read]', line: 7}
     - {kind: dashboard, reason: sub-resource not checked, profile: other, rule: 'deny "dashboard:/views/home" [edit]', line: 13}
     - {kind: file, reason: not enumerated, profile: "", rule: "", line: 0}
-    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clmate" [edit]', line: 9}
-    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/automaton" [control]', line: 8}
+    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clmate" [read]', line: 9}
+    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/automaton" [read]', line: 8}

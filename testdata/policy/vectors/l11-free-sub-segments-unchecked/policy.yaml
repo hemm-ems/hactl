@@ -5,9 +5,9 @@ profiles:
     default: deny
     deny:
       "dashboard:main/views/secrte": [read]
-      "system:reload/automaton": [control]
-      "file:x.yaml/block/clmate": [edit]
-      "dashboard:main/resources": [edit]
+      "system:reload/automaton": [read]
+      "file:x.yaml/block/clmate": [read]
+      "dashboard:main/resources": [read]
   other:
     deny:
       "dashboard:/views/home": [edit]

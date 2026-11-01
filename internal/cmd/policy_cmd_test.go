@@ -259,7 +259,8 @@ func TestPolicyShowJSONForTheManualExample(t *testing.T) {
 	want := []ruleJSON{
 		{"deny", "entity:lock.*", []string{"read", "write"}, all, json.RawMessage(`null`), 16},
 		{"deny", "entity:device_tracker.*/attr/latitude", []string{"read"}, []string{"read"}, json.RawMessage(`null`), 17},
-		{"deny", "file:**", []string{"write"}, []string{"control", "edit", "create", "delete"}, json.RawMessage(`null`), 18},
+		// D-110: `write` on a file is edit, the one write verb that applies there.
+		{"deny", "file:**", []string{"write"}, []string{"edit"}, json.RawMessage(`null`), 18},
 		{"allow", "entity:*", []string{"read"}, []string{"read"}, json.RawMessage(`null`), 11},
 		{"allow", "entity:light.*", []string{"control"}, []string{"control"}, json.RawMessage(`{"area":["wohnzimmer"],"label":[]}`), 12},
 		{"allow", "automation:pg_*", []string{"read", "edit", "create"}, []string{"read", "edit", "create"}, json.RawMessage(`null`), 13},
@@ -602,7 +603,8 @@ func TestPolicyCheckRefusesWithoutAVerdict(t *testing.T) {
 		{"unknown kind", good, []string{"entiy:lock.front_door", "read"}, "", true},
 		{"wildcard resource", good, []string{"entity:lock.*", "read"}, "", true},
 		{"unknown sub-resource", good, []string{"entity:lock.front_door/attrs/x", "read"}, "", false},
-		{"write is not a verb to check", good, []string{"entity:lock.front_door", "write"}, "", true},
+		// D-120: write is answered per verb, and refused where none applies.
+		{"write where no write verb applies", good, []string{"entity:lock.front_door/attr/x", "write"}, "write applies to nothing", true},
 		{"unknown verb", good, []string{"entity:lock.front_door", "wirte"}, "", false},
 		{"uppercase verb", good, []string{"entity:lock.front_door", "Read"}, "", false},
 		{"one argument", good, []string{"entity:lock.front_door"}, "", false},
@@ -871,7 +873,9 @@ func TestPolicyLintAllowPartialNeverHidesAFinding(t *testing.T) {
 // nothing unchecked, and an allow every live match of which is denied is
 // reported unreachable.
 func TestPolicyLintSystemIsItsFixedSet(t *testing.T) {
-	body := "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"system:reload\": [control]\n    deny:\n      \"system:re*\": [control]\n"
+	// read: no write verb applies at system:reload, and a written one would be
+	// a verb-not-applicable finding of its own (D-110).
+	body := "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"system:reload\": [read]\n    deny:\n      \"system:re*\": [read]\n"
 	dir := policyInstance(t, closedHAURL(t), body)
 	out, err := runPolicyCLI(t, dir, "policy", "lint", "--json")
 	if cliExitCode(err) != 1 {
@@ -884,8 +888,8 @@ func TestPolicyLintSystemIsItsFixedSet(t *testing.T) {
 		t.Fatalf("findings %v, want one unreachable", m["findings"])
 	}
 	f, _ := findings[0].(map[string]any)
-	if f["code"] != policy.CodeUnreachable || f["rule"] != `allow "system:reload" [control]` || f["line"] != float64(7) {
-		t.Errorf("finding = %v, want unreachable on allow \"system:reload\" [control] line 7", f)
+	if f["code"] != policy.CodeUnreachable || f["rule"] != `allow "system:reload" [read]` || f["line"] != float64(7) {
+		t.Errorf("finding = %v, want unreachable on allow \"system:reload\" [read] line 7", f)
 	}
 }
 

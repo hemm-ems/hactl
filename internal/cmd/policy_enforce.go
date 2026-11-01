@@ -323,6 +323,7 @@ type policyRefusalDetails struct {
 //
 //	policy_denied: would <action> — refused by policy, nothing was written
 //	  denied: <verb> <resource> — <rule> (line <n>)
+//	    where not met: <rule> (line <n>) — <reason>
 //	  checked: <n> resources, <m> denied
 //	  profile: <p> (selected by <how>)
 func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
@@ -352,6 +353,9 @@ func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
 			line += " — a part of it is denied, so all of it is (D-66)"
 		}
 		b.WriteString(line + "\n")
+		for _, u := range d.UnmetWhere {
+			b.WriteString("    " + unmetWhereText(u) + "\n")
+		}
 	}
 	fmt.Fprintf(&b, "  checked: %d resources, %d denied\n", r.Checked, len(r.Denied))
 	fmt.Fprintf(&b, "  profile: %s (selected by %s)\n", r.Profile, r.SelectedBy)
@@ -360,4 +364,10 @@ func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// unmetWhereText is the line a verdict's unmet selector renders as (D-112):
+// `where not met: <rule> (line <n>) — <reason>`.
+func unmetWhereText(u policy.UnmetWhere) string {
+	return fmt.Sprintf("where not met: %s (line %d) — %s", u.Rule, u.Line, u.Reason)
 }

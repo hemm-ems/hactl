@@ -50,6 +50,9 @@ type Denial struct {
 	Partial bool `json:"partial"`
 	// KindWide marks a check on every id of a kind (D-75).
 	KindWide bool `json:"kind_wide,omitempty"`
+	// UnmetWhere are the narrowed allows tried whose selector did not hold
+	// (D-112), present only when there are any.
+	UnmetWhere []policy.UnmetWhere `json:"unmet_where,omitempty"`
 }
 
 // Text renders `<verb> <resource> — <rule> (line <n>)`, the form of the

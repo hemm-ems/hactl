@@ -450,7 +450,7 @@ deleted helper "guest_mode"
 <nil>
 -- http
 GET /v1/config/helper?id=guest_mode
-DELETE /v1/config/helper?id=guest_mode
+DELETE /v1/config/helper?domain=input_boolean&id=guest_mode
 -- ws
 config/entity_registry/list ×1
 config/entity_registry/remove ×1

@@ -286,9 +286,11 @@ func registryCases() []registryCase {
 		},
 		{
 			name: "config flow-start", args: []string{"config", "flow-start", "hue"}, confirm: true,
-			plan:   []string{"create config_entry:*"},
-			deny:   `"config_entry:*/options": [create]`, // a part of every id: partly denied is denied
-			denied: `create config_entry:* — deny "config_entry:*/options" [create] (line 6)`,
+			plan: []string{"create config_entry:*"},
+			// a deny on one id refuses a check on every id (D-75); create applies
+			// at no part of an entry, so a deny there would decide nothing (D-110)
+			deny:   `"config_entry:e2": [create]`,
+			denied: `create config_entry:* — deny "config_entry:e2" [create] (line 6)`,
 			write:  "POST /api/config/config_entries/flow",
 		},
 		{
