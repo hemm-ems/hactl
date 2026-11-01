@@ -273,6 +273,24 @@ reported too, which is why it says "logged during this run"; and an instance
 whose `logger:` is set above `warning` logs nothing, so there is nothing to
 report. The dry run runs nothing and cannot know.
 
+Home Assistant's log groups these lines. Every missing reference is logged
+from one place, so the log keeps them as one entry with one time — the latest
+— and up to five different sentences, and a repeated sentence does not move
+within it. When that entry holds one sentence, the run passes it through as
+above. When it holds several, the log says that one of them was logged during
+the run but not which, and the run says exactly that, naming them all:
+
+```
+warning: Home Assistant logged during this run one of these lines, and its log does not say which: Referenced entities input_boolean.a are missing or not currently available; Referenced entities input_boolean.b are missing or not currently available
+```
+
+"During this run" is measured on Home Assistant's clock: from HA's own time
+stamp on the script's state in its answer to the call. If that answer carries
+no state of the script, there is no start to measure from, and the run says
+`warning: could not check Home Assistant's log for missing targets: its answer
+to the call carries no state of script.<id> to time the run by` instead of
+guessing.
+
 ### Scripts — create & delete
 
 ```bash
