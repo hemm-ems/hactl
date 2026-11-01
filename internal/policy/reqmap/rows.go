@@ -54,7 +54,7 @@ func exempt(r *row, why string) *row {
 var (
 	wsRows = indexWS(
 		exempt(wsRow("auth", Exempt, nil), "the session handshake carries the token and no Home Assistant resource"),
-		exempt(wsRow("extract_from_target", Exempt, nil), "the policy check's own oracle for a service call's reach (D-59): it reads the target's references and changes nothing, and it must never be gated by the call it serves"),
+		exempt(wsRow("extract_from_target", Exempt, nil), "the policy check's own oracle for a service call's reach: it reads the target's references and changes nothing, and it must never be gated by the call it serves"),
 
 		wsRow("config/entity_registry/update", Write, mapEntityRegistryUpdate),
 		wsRow("config/entity_registry/remove", Write, mapEntityRegistryRemove),

@@ -181,7 +181,7 @@ func (t *gatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if marked {
 		path, inside := strings.CutPrefix(wirePath(req.URL), mark.Prefix)
 		if !inside || !strings.HasPrefix(path, "/") {
-			return nil, fmt.Errorf("policy: a redirect left the %s client's own path %q (fail closed, D-74)", mark.Request.Transport, mark.Prefix)
+			return nil, fmt.Errorf("policy: a redirect left the %s client's own path %q (fail closed)", mark.Request.Transport, mark.Prefix)
 		}
 		if mark.Prefix == "" {
 			path = wirePath(req.URL)

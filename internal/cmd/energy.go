@@ -18,7 +18,7 @@ var energyCmd = family(&cobra.Command{
 	Use:   "energy",
 	Short: "Inspect the Energy dashboard configuration",
 	Long: "Read what HA's Energy dashboard measures — which statistics feed which card. " +
-		"Curated read of the energy/get_prefs WebSocket API (D-12: no generic WS passthrough).",
+		"Curated read of the energy/get_prefs WebSocket API (no generic WS passthrough).",
 })
 
 var energyShowCmd = &cobra.Command{

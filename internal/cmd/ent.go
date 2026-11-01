@@ -1450,7 +1450,7 @@ var entRenameCmd = &cobra.Command{
 	Short: "Rename an entity and rewrite every reference (dry-run by default)",
 	Long: "Rename a registry entity (config/entity_registry/update with new_entity_id), then rewrite " +
 		"every literal reference across YAML config files and dashboards — the ref replace pass — in " +
-		"one command (D-11: registry first, it is the authoritative object). Dry-run by default: the " +
+		"one command (registry first, it is the authoritative object). Dry-run by default: the " +
 		"preview resolves the old id against the registry, pre-checks the new id for collisions, and " +
 		"counts the references a confirmed run would rewrite. Requires hactl-companion (it rewrites " +
 		"the config half). A dashboard that cannot be scanned refuses the run unless --allow-partial.",
