@@ -77,3 +77,16 @@ func FamilyText(family string, skip map[string]bool) (string, []string) {
 	}
 	return strings.Join(parts, "\n\n"), headings
 }
+
+// ReferenceText returns the blank-line-joined reference sections of a family
+// (ReferenceSections), or "" when it has none.
+func ReferenceText(family string) string {
+	s := Sections()
+	var parts []string
+	for _, h := range ReferenceSections[family] {
+		if text, ok := s[h]; ok {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}

@@ -86,6 +86,16 @@ var FamilySections = map[string][]string{
 	"policy":    {"### Policy (permission guardrail)"},
 }
 
+// ReferenceSections maps a family to its reference sections: the full
+// contract a caller working under the family does not need on every session,
+// so no command delivers it — `rtfm --reference <family>` prints it, and plain
+// `rtfm` prints it as part of the whole manual (D-121). No heading here may
+// also be a core or family heading. tools.py maps none either: its delivery
+// sends the how-to only, exactly as FamilySections does.
+var ReferenceSections = map[string][]string{
+	"policy": {"### Policy reference"},
+}
+
 // Aliases maps top-level commands onto the family whose sections cover them.
 // rollback is CLI-only (tools.py has no wrapper for it). tools.py also
 // aliases setup→health, but on the CLI setup is the interactive bootstrap and
