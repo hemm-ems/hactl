@@ -461,6 +461,9 @@ type confirmedCoverageCase struct {
 	args []string // after `hactl`, --confirm included
 	ws   map[string]any
 	http map[string]http.HandlerFunc
+	// setup, when set, prepares the rig before the run (points .env at the
+	// rig as the companion, writes an input file) and returns the args to run.
+	setup func(t *testing.T, ts *cmdTestServer, args []string) []string
 }
 
 var confirmedCoverageCases = []confirmedCoverageCase{
@@ -511,7 +514,11 @@ func TestEveryConfirmedRequestIsInThePlan(t *testing.T) {
 			rec := &coverageRecorder{}
 			policyRecorder = rec
 			defer func() { policyRecorder = nil }()
-			out, err := runPolicyCLI(t, ts.dir, tc.args...)
+			args := tc.args
+			if tc.setup != nil {
+				args = tc.setup(t, ts, slices.Clone(args))
+			}
+			out, err := runPolicyCLI(t, ts.dir, args...)
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}

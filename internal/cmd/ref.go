@@ -239,8 +239,11 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 
 // dashReplacePlan is one dashboard's pending rewrite for `ref replace`.
 type dashReplacePlan struct {
-	label    string
-	urlPath  string
+	label   string
+	urlPath string
+	// stored is the config as read, result the config to save; their diff is
+	// the policy plan's dashboard part (D-66).
+	stored   any
 	result   any
 	changed  []jsonwalk.Path
 	writable bool
@@ -250,6 +253,15 @@ type dashReplacePlan struct {
 // switches as explicit parameters, so a composing command (`ent rename`) can
 // drive the rewrite half without mutating another command's flag globals.
 func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal string, confirm, allowPartial bool) error {
+	return refReplaceRun(ctx, w, oldVal, newVal, confirm, allowPartial, nil)
+}
+
+// refReplaceRun is ref replace. checked is the plan a composing command (`ent
+// rename`) already checked in this invocation, before its own first write; nil
+// when the rewrite checks its own plan (D-77): under a profile a confirmed run
+// first asks the companion for the rewrite as a dry run, checks it, and only
+// then sends the real one.
+func refReplaceRun(ctx context.Context, w io.Writer, oldVal, newVal string, confirm, allowPartial bool, checked *refCheckedPlan) error {
 	// Both sides before anything is contacted: `ref replace . X` planned 2747
 	// rewrites of real config files on the reference instance, because `\b.\b`
 	// matches the dot inside every id. The client refuses this too — this is the
@@ -296,6 +308,20 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 	// API. A confirmed run that proceeded anyway would leave them dangling, so
 	// it refuses up front — before the companion writes the config half.
 	skippedHits, skippedLabels := unwritableHits(plans)
+
+	// The plan, under a profile (D-77): a confirmed run checks the companion's
+	// dry run of the same {old, new} before its first write. With no profile
+	// nothing is asked or checked (D-58).
+	if confirm && checked == nil && policySession != nil {
+		dry, dryErr := src.cc.RefReplace(ctx, oldVal, newVal, true)
+		if dryErr != nil {
+			return fmt.Errorf("companion ref replace (use `hactl dash replace` for dashboard-only renames): %w", dryErr)
+		}
+		if checked, err = checkRefReplacePlan(ctx, w, src.cc, oldVal, newVal, dry.Changes, plans, false); err != nil {
+			return err
+		}
+	}
+
 	if confirm && skippedHits > 0 && !allowPartial {
 		return yamlHitsError(skippedHits, skippedLabels, oldVal)
 	}
@@ -307,6 +333,42 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 	if err != nil {
 		return fmt.Errorf("companion ref replace (use `hactl dash replace` for dashboard-only renames): %w", err)
 	}
+
+	// The preview checks the plan its answer describes before it prints it
+	// (H-29's command layer), exactly as --confirm checks it above.
+	var note *planPolicyNote
+	if !confirm && policySession != nil {
+		var plan *refCheckedPlan
+		if plan, err = checkRefReplacePlan(ctx, w, src.cc, oldVal, newVal, cfgResp.Changes, plans, true); err != nil {
+			return err
+		}
+		note = plan.note
+	}
+
+	return finishRefReplace(ctx, w, src, refReplaceOutcome{
+		oldVal: oldVal, newVal: newVal, confirm: confirm, allowPartial: allowPartial,
+		plans: plans, skippedHits: skippedHits, skippedLabels: skippedLabels,
+		cfgResp: cfgResp, note: note, checked: checked,
+	})
+}
+
+// refReplaceOutcome is what ref replace knows once the companion answered.
+type refReplaceOutcome struct {
+	oldVal, newVal        string
+	confirm, allowPartial bool
+	plans                 []dashReplacePlan
+	skippedHits           int
+	skippedLabels         []string
+	cfgResp               *companion.RefReplaceResponse
+	note                  *planPolicyNote
+	checked               *refCheckedPlan
+}
+
+// finishRefReplace reports the rewrite: it refuses a preview over unread
+// config files, saves the dashboards of a confirmed run, renders the report and
+// names what the run could not do.
+func finishRefReplace(ctx context.Context, w io.Writer, src *refSources, o refReplaceOutcome) error {
+	oldVal, newVal, confirm, allowPartial, cfgResp := o.oldVal, o.newVal, o.confirm, o.allowPartial, o.cfgResp
 	// The same failure one level in: the companion answers 200 and names, in
 	// `skipped`, each file the walk could not read. A file that keeps the old id
 	// is a dangling pointer left behind a success message — the companion's own
@@ -326,7 +388,7 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 	}
 
 	total := len(cfgResp.Changes)
-	for _, p := range plans {
+	for _, p := range o.plans {
 		total += len(p.changed)
 	}
 	if total == 0 {
@@ -338,23 +400,34 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 			_, _ = fmt.Fprintf(w, "renamed %q → %q (%d occurrence(s))\n", oldVal, newVal, total)
 		} else {
 			_, _ = fmt.Fprintf(w, "dry-run: would rename %q → %q (%d occurrence(s))\n", oldVal, newVal, total)
+			writePolicyNoteLine(w, o.note)
 		}
 	}
 
-	rows, saveErrs := buildReplaceRows(ctx, src.ws, cfgResp.Changes, plans, confirm)
+	rows, saveErrs := buildReplaceRows(ctx, src.ws, cfgResp.Changes, o.plans, confirm)
 
-	if err := renderReplaceReport(w, rows, oldVal, newVal, total, confirm); err != nil {
+	// A confirmed write that changed a file its checked plan did not list is
+	// reported after the fact (D-77, A-7): under --json the refusal is the
+	// run's one document, in text it follows the report.
+	outside := writtenOutsidePlan(refReplaceAction(oldVal, newVal), o.checked, cfgResp.Changes)
+	if outside != nil && flagJSON {
+		return renderWrittenOutsidePlan(w, outside)
+	}
+	if err := renderReplaceReport(w, rows, oldVal, newVal, total, confirm, o.note); err != nil {
 		return err
 	}
 	if !flagJSON {
 		noteReformattedFiles(w, cfgResp.Changes, confirm)
 	}
+	if outside != nil {
+		return renderWrittenOutsidePlan(w, outside)
+	}
 
 	// The preview fails exactly where the confirmed run would (H-2): yaml-mode
 	// hits made the confirmed run refuse above, so the dry run reports the
 	// same refusal — after rendering the plan, so the caller sees what is stuck.
-	if !confirm && skippedHits > 0 && !allowPartial {
-		return yamlHitsError(skippedHits, skippedLabels, oldVal)
+	if !confirm && o.skippedHits > 0 && !allowPartial {
+		return yamlHitsError(o.skippedHits, o.skippedLabels, oldVal)
 	}
 	// A confirmed run over a config half with an unread file is a partial rename
 	// that already happened. It cannot be undone by refusing, so the report
@@ -378,7 +451,7 @@ func refReplaceWithOptions(ctx context.Context, w io.Writer, oldVal, newVal stri
 
 // renderReplaceReport renders the merged rows as a table, a dry-run plan
 // object under --json, or the plain table for a confirmed run.
-func renderReplaceReport(w io.Writer, rows [][]string, oldVal, newVal string, total int, confirm bool) error {
+func renderReplaceReport(w io.Writer, rows [][]string, oldVal, newVal string, total int, confirm bool, note *planPolicyNote) error {
 	// Under --json a preview and a completed rename used to return structurally
 	// identical documents, differing only in a `status` cell reading "pending"
 	// rather than "applied". A caller must be able to tell a plan from a result
@@ -390,6 +463,7 @@ func renderReplaceReport(w io.Writer, rows [][]string, oldVal, newVal string, to
 			with("to", newVal).
 			with("occurrences", total).
 			with("rows", rows).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -460,6 +534,7 @@ func planDashboardReplacements(ctx context.Context, ws *haapi.WSClient, dashboar
 		plans = append(plans, dashReplacePlan{
 			label:    t.label,
 			urlPath:  t.urlPath,
+			stored:   root,
 			result:   result,
 			changed:  changed,
 			writable: t.urlPath == "" || modeByPath[t.urlPath] == dashboardStorageMode,

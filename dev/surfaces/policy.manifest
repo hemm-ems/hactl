@@ -710,17 +710,19 @@ cmd hactl label delete = debt: the preview checks nothing yet — phase 2 comman
 # dashboard:{u}/views/{path}, edit dashboard:{u} for non-view keys and
 # path-less views; no stored config -> edit dashboard:{u}, which any view
 # deny for edit refuses (D-66 as refined). `lovelace` and "" are dashboard:.
-cmd hactl dash save = debt: the preview does not diff views or check anything yet
+# Built (stage 2b): the stored config is read in the preview too, only while
+# a profile is in effect; an unreadable one is checked whole.
+cmd hactl dash save = proven: TestDashSaveRefusedByItsPlan
 
 # map: edit dashboard:{u}/views/{path} for each view holding a changed path;
 # edit dashboard:{u} for changes outside views or in a path-less view.
-cmd hactl dash replace = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl dash replace = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
 
 # map: create dashboard:{--url-path}.
-cmd hactl dash create = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl dash create = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
 
 # map: delete dashboard:{url_path}.
-cmd hactl dash delete = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl dash delete = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
 
 # map: edit file:{location} for every distinct location of a companion
 # ref/replace dry run + the typed owner of every change its path names, with
@@ -730,12 +732,20 @@ cmd hactl dash delete = debt: the preview checks nothing yet — phase 2 command
 # confirm; --allow-partial never overrides a denial. The confirmed run issues
 # the dry run first, checks, then writes, in one invocation; a location
 # written outside the checked plan is reported after the fact (D-77).
-cmd hactl ref replace = debt: the confirmed run writes without a checked plan today — phase 2 command layer
+# Built (stage 2b): each change is placed in its typed owner by reading the
+# file it lies in (reqmap.RefChangeOwners — by the entry's shape, a superset
+# where the path is ambiguous); a file it cannot read or place refuses the
+# plan (`fail-closed: typed owner unknown`). The placed plan is recorded with
+# the session, so the request layer maps the confirmed write through it.
+cmd hactl ref replace = proven: TestRefReplaceRefusedByItsPlan
 
 # map: edit entity:{old}/registry/entity_id + create entity:{new} (E-5) + every
 # resource of the ref replace plan above (E-7) — all before the registry
 # update, which is the first write. The preview lists them (today it counts).
-cmd hactl ent rename = debt: the preview counts references and checks nothing yet — phase 2
+# Built (stage 2b): the preview and --confirm both ask the companion for the
+# rewrite's dry run under a profile; the confirmed rewrite after the registry
+# update is sent through that checked plan, without a second dry run.
+cmd hactl ent rename = proven: TestEntRenameRefusedByItsPlan
 
 # map: edit entity:{entity_id}/registry/labels. Assigning a label is not
 # editing label:{id}.
