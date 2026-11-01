@@ -21,7 +21,7 @@ internal/cmd/witness.go:saveWitness = exempt: preview bookkeeping, tmp+rename; a
 
 # --- not a destroyer in practice -------------------------------------------
 internal/instancelock/lock.go:Acquire = exempt: opens the lock file without O_TRUNC and never writes to it; the file carries no content to destroy
-internal/cmd/setup.go:runSetup = exempt: `hactl setup` exists to write this instance's .env; replacing it is the command the caller ran, not a side effect of one
+internal/cmd/setup.go:writeInstanceEnv = exempt: `hactl setup` exists to write this instance's .env; replacing it is the command the caller ran, not a side effect of one
 
 # --- the test rig owns its own directory ------------------------------------
 internal/hatest/hatest.go:copyTree = exempt: writes a fixture into a t.TempDir() the rig created for this run; no other caller can be holding those paths

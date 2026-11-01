@@ -101,6 +101,6 @@ func TestDashboardSaveMapping(t *testing.T) {
 			disp: reqmap.Unmappable, row: "ws lovelace/config/save", refused: "fail-closed: unmappable request",
 		},
 	} {
-		v.run(t)
+		checkVector(t, v)
 	}
 }

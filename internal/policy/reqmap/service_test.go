@@ -178,7 +178,7 @@ var serviceVectors = []vector{
 // script the call starts.
 func TestServiceCallMapping(t *testing.T) {
 	for _, v := range serviceVectors {
-		v.run(t)
+		checkVector(t, v)
 	}
 }
 

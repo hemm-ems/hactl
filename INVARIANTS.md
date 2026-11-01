@@ -2243,7 +2243,13 @@ cited below):**
   derived from the live cobra tree (every `--confirm` command, plus every
   entrypoint that reaches a mapped write request or a `system:cache` write
   without one — derived, never listed). Unclassified, stale and phantom rows
-  fail as on every surface.
+  fail as on every surface. BUILT in stage 2a (see "Enforced by" below): the
+  request set is derived from the hactl binary's own packages (test rigs are
+  not product), every `http.NewRequest` outside the request builders is an
+  extractor error, and the command set is the `--confirm` commands plus every
+  Run that reaches a write sink over the product's SSA call graph; the
+  request lines are also held in lockstep with the classifier's row table
+  (`internal/policy/reqmap`) and with `companion.Endpoints`.
 - `TestEveryWriteRequestHasAMapping`: table-driven, one case per mapped write
   row — the request in, the `(resource, verb)` set out; plus the whole-path
   vectors (a dot segment, `%2F`, a placeholder absorbing two segments →
@@ -2278,6 +2284,13 @@ exactly that command; drop one resource from one command's plan (the orphan
 registry remove, `script.reload`) — `TestEveryConfirmedRequestIsInThePlan`
 must go red on exactly that command.
 
-- Enforced by: nothing yet — DRAFT. Phase 2 builds the hook, the mapping, the
-  gate and the tests named above, and lists here only those that were watched
-  to fail.
+- Enforced by: DRAFT — the gate and the mapping exist; the hooks and the
+  command layer do not (stage 2b), so no request is refused yet. Built in
+  stage 2a and watched to fail on 2026-11-01 (a websocket type added to
+  `haapi` without a line went red as unclassified; a read command made to
+  reach a registry remove went red as a new write command; a manifest line
+  removed went red as a classifier row without a line):
+  TestPolicySurfaceIsClosed. The request mapping, row by row:
+  TestClassifyWriteRequests, TestServiceCallMapping, TestDashboardSaveMapping,
+  TestDiffDashboard, TestWholePathRule, TestUnmappedRequests,
+  TestEveryRowHasAVector.

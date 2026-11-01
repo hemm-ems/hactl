@@ -82,13 +82,8 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 	}
 	_, _ = fmt.Fprintf(out, " OK\n")
 
-	// Write .env
-	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
-		return fmt.Errorf("cannot create config directory: %w", mkErr)
-	}
-	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=%s\n", haURL, haToken)
-	if writeErr := os.WriteFile(envPath, []byte(envContent), 0o600); writeErr != nil {
-		return fmt.Errorf("cannot write .env: %w", writeErr)
+	if err := writeInstanceEnv(dir, envPath, haURL, haToken); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintf(out, "Config written to %s\n", envPath)
 
@@ -117,6 +112,21 @@ func runSetup(ctx context.Context, out io.Writer, in io.Reader) error {
 	}
 
 	_, _ = fmt.Fprintf(out, "\nSetup complete. Run 'hactl health' to verify.\n")
+	return nil
+}
+
+// writeInstanceEnv writes the instance's .env — setup's bootstrap write. It is
+// a function of its own because the permission policy's command census
+// (internal/surfaceaudit, H-29) names it as a write sink: a command that reaches
+// it is a write command, whatever it is called.
+func writeInstanceEnv(dir, envPath, haURL, haToken string) error {
+	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+		return fmt.Errorf("cannot create config directory: %w", mkErr)
+	}
+	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=%s\n", haURL, haToken)
+	if writeErr := os.WriteFile(envPath, []byte(envContent), 0o600); writeErr != nil {
+		return fmt.Errorf("cannot write .env: %w", writeErr)
+	}
 	return nil
 }
 

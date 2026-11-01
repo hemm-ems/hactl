@@ -48,4 +48,4 @@ H-25 = proven: TestFlagContractSurfaceIsClosed
 H-26 = proven: TestSharedStateSurfaceIsClosed
 H-27 = proven: TestUnmakeSurfaceIsClosed
 H-28 = proven: TestAttributedSurfaceIsClosed
-H-29 = debt: DRAFT — the policy request-mapping law is stated, its surface gate and hook are phase-2 work and nothing quantifies over the set yet
+H-29 = debt: DRAFT — TestPolicySurfaceIsClosed derives the request and command sets and the classifier maps every request, but no hook applies the mapping to a live request yet (stage 2b)

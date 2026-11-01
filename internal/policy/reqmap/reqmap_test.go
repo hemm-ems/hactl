@@ -33,7 +33,7 @@ type vector struct {
 	refused string
 }
 
-func (v vector) run(t *testing.T) reqmap.Result {
+func checkVector(t *testing.T, v vector) {
 	t.Helper()
 	got := reqmap.Classify(v.req, v.facts)
 	if got.Disposition != v.disp {
@@ -57,7 +57,6 @@ func (v vector) run(t *testing.T) reqmap.Result {
 	} else if got.Refused() {
 		t.Errorf("%s: refused (%s: %s), want not refused", v.name, got.Rule, got.Detail)
 	}
-	return got
 }
 
 var registries = &reqmap.Registries{
@@ -517,7 +516,7 @@ var writeVectors = []vector{
 // (resource, verb) set the manifest's `map:` comment states.
 func TestClassifyWriteRequests(t *testing.T) {
 	for _, v := range writeVectors {
-		v.run(t)
+		checkVector(t, v)
 	}
 }
 
@@ -587,8 +586,8 @@ var readVectors = []vector{
 // mutating.
 func TestClassifyReadAndExemptRequests(t *testing.T) {
 	for _, v := range readVectors {
-		got := v.run(t)
-		if got.Mutating {
+		checkVector(t, v)
+		if got := reqmap.Classify(v.req, v.facts); got.Mutating {
 			t.Errorf("%s: a %s row reported mutating", v.name, got.Disposition)
 		}
 	}
@@ -648,7 +647,7 @@ func TestUnmappedRequests(t *testing.T) {
 		{name: "a companion helper PUT hactl never calls", req: comp("PUT", "/v1/config/helper?id=x", "{}"), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request"},
 		{name: "an unknown transport", req: reqmap.Request{Transport: "smoke-signal"}, disp: reqmap.Unmapped, refused: "fail-closed: unmapped request"},
 	} {
-		v.run(t)
+		checkVector(t, v)
 	}
 	got := reqmap.Classify(rest("GET", "/api/events", ""), nil)
 	if got.Disposition != reqmap.Unmapped || got.Mutating || got.Refused() {
@@ -684,7 +683,7 @@ func TestWholePathRule(t *testing.T) {
 		{name: "a supervisor endpoint with a dot-dot slug", req: ws("supervisor/api", map[string]any{"endpoint": "/addons/../info", "method": "get"}), disp: reqmap.Unmappable, row: "ws supervisor/api GET /addons/{slug}/info", refused: "fail-closed: unmappable request"},
 		{name: "a path without a leading slash", req: rest("POST", "api/services/light/turn_on", "{}"), disp: reqmap.Unmappable, row: "rest POST /api/services/{domain}/{service}", refused: "fail-closed: unmappable request"},
 	} {
-		v.run(t)
+		checkVector(t, v)
 	}
 	// An unmappable read is not refused in phase 2 (reads are not enforced),
 	// but it is still unmappable.

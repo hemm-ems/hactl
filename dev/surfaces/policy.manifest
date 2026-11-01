@@ -2,10 +2,17 @@
 # command checks its whole plan before the first write (INVARIANTS.md H-29,
 # DRAFT; SPEC-permissions.md §4).
 #
-# STATUS: CONTRACT ONLY. No extractor and no gate read this file yet — phase 2
-# builds both (internal/surfaceaudit.PolicySurface + TestPolicySurfaceIsClosed).
-# Until then `make test-surface` does not load it, so nothing here can turn a
-# gate red. The gate, once built, must fail when the extractor returns nothing.
+# STATUS: GATED (stage 2a). TestPolicySurfaceIsClosed (internal/cmd) derives
+# both halves below from the source and the live cobra tree and fails on an
+# unclassified, stale or phantom line, as every surface does; it also holds
+# the request lines in lockstep with the classifier's row table
+# (internal/policy/reqmap.Rows: same keys, same kind of row as the `map:`
+# comment says) and the companion lines with companion.Endpoints. It fails when
+# either half derives empty. A request line is `proven` once a named test
+# asserts its mapping — the classifier exists; the hooks that apply it to a
+# live request (sendCommand, the shared RoundTripper, companion.Client) are
+# stage 2b and are proven by H-29's planned enforcement tests, not by these
+# lines. Command lines stay debt until the command layer checks its plan.
 #
 # --- what a site is ----------------------------------------------------------
 #
@@ -55,6 +62,13 @@
 #                                     probe, config flow-inspect, cache
 #                                     clear|refresh), and the two that
 #                                     dispatch or bootstrap (mcp, setup).
+#                                     Reachability is over the product's SSA
+#                                     call graph from each command's Run
+#                                     (surfaceaudit.PolicyCommandSites); the
+#                                     sinks are the client methods sending a
+#                                     write row's request plus the declared
+#                                     system:cache, dispatch and bootstrap
+#                                     APIs — named as APIs, never as commands.
 #
 # Test infrastructure is not product and is left out on purpose:
 # internal/hatest (auth, auth/long_lived_access_token, onboarding) and
@@ -113,7 +127,7 @@
 # write row (map: control|edit|create|delete) and every cmd row is proven;
 # what may remain is read-deferred-phase3. The ceiling may fall without
 # ceremony and may only rise by editing this line on purpose.
-#ceiling 121
+#ceiling 86
 
 # =============================================================================
 # WS — Home Assistant websocket
@@ -137,14 +151,14 @@ ws supervisor/api GET /addons/{slug}/info = exempt: companion transport discover
 # included, and again on a 401 retry. Never counts as a write in preview parity.
 ws supervisor/api POST /ingress/session = exempt: an Ingress auth session is transport plumbing — a mutating method that changes no Home Assistant resource
 
-# map: exempt (policy oracle). PLANNED, not yet in production code (today only
-# internal/integration/oracle_target_expansion_test.go). Asked by svc call's
-# check with expand_group: true (D-59); never with entity_id: all (in any
-# case). No answer, or an error answer, is `fail-closed: reach unknown`. It is
-# the check's own question, so it must never be gated by the call it serves.
-# Until the method exists this line is stale for the gate — add it with the
-# method.
-ws extract_from_target = exempt: the policy check's own oracle for E-1 — it computes the entity set a service call reaches and changes nothing
+# (ws extract_from_target — the policy check's own oracle for E-1, mapped
+# exempt (policy oracle): asked by svc call's check with expand_group: true
+# (D-59), never with entity_id: all; no answer or an error answer is
+# `fail-closed: reach unknown`; it must never be gated by the call it serves.
+# PLANNED: no product code sends it yet (only
+# internal/integration/oracle_target_expansion_test.go), so it is no site and
+# has no line. Stage 2b adds the method, its classifier row and this line
+# together.)
 
 # --- writes ----------------------------------------------------------------------
 
@@ -154,44 +168,44 @@ ws extract_from_target = exempt: the policy check's own oracle for E-1 — it co
 # create entity:{new_entity_id} (E-5). Any other key (hidden_by, aliases,
 # options, device_class, …) has no grammar field: unmapped, refused.
 # Callers: ent set-label, ent set-area, ent rename.
-ws config/entity_registry/update = debt: mapped field by field, not enforced — phase 2 builds the hook and its test
+ws config/entity_registry/update = proven: TestClassifyWriteRequests
 
 # map: delete entity:{entity_id}. The orphan cleanup after auto|script|helper|tpl
 # delete (orphan.go). Today best-effort and slog.Warn-only: a refusal here must
 # be an error, never a log line — the command layer pre-checks it (see the cmd
 # rows), so a refusal at this layer means the preview was wrong.
-ws config/entity_registry/remove = debt: mapped, not enforced; the swallowed-error path must surface a refusal first
+ws config/entity_registry/remove = proven: TestClassifyWriteRequests
 
 # map: edit device:{device_id}/registry/{field} for each changed key: area_id,
 # labels, name_by_user. Any other key: unmapped, refused.
-ws config/device_registry/update = debt: mapped field by field, not enforced — phase 2 builds the hook and its test
+ws config/device_registry/update = proven: TestClassifyWriteRequests
 
 # map: create on EVERY label id (kind-wide check, D-75; reported as `label:*`
 # with kind_wide). The request carries only a name; the label_id is minted by
 # Home Assistant.
-ws config/label_registry/create = debt: mapped as a kind-wide create, not enforced — phase 2
+ws config/label_registry/create = proven: TestClassifyWriteRequests
 
 # map: delete label:{label_id} + the cascade as a deliberate superset (D-76):
 # edit entity:{e}/registry/labels and edit device:{d}/registry/labels for
 # every current holder, edit area:{a} for every area holding it — enumerated
 # from the registry lists, never from a claim about what HA strips.
-ws config/label_registry/delete = debt: mapped with its cascade, not enforced — phase 2 builds the hook and its test
+ws config/label_registry/delete = proven: TestClassifyWriteRequests
 
 # map: create on EVERY area id (kind-wide, D-75). floor_id placement is the new
 # area's own field; floor:{floor_id} is not checked.
-ws config/area_registry/create = debt: mapped as a kind-wide create, not enforced — phase 2
+ws config/area_registry/create = proven: TestClassifyWriteRequests
 
 # map: delete area:{area_id} + the cascade as a deliberate superset (D-76):
 # edit entity:{e}/registry/area_id and edit device:{d}/registry/area_id for
 # every entity and device whose own area_id is it.
-ws config/area_registry/delete = debt: mapped with its cascade, not enforced — phase 2 builds the hook and its test
+ws config/area_registry/delete = proven: TestClassifyWriteRequests
 
 # map: create on EVERY floor id (kind-wide, D-75).
-ws config/floor_registry/create = debt: mapped as a kind-wide create, not enforced — phase 2
+ws config/floor_registry/create = proven: TestClassifyWriteRequests
 
 # map: delete floor:{floor_id} + edit area:{a} for every area on that floor
 # (the cascade as a deliberate superset, D-76).
-ws config/floor_registry/delete = debt: mapped with its cascade, not enforced — phase 2 builds the hook and its test
+ws config/floor_registry/delete = proven: TestClassifyWriteRequests
 
 # map: edit dashboard:{url_path}/views/{path} per changed view, create per added
 # view, delete per removed view, edit dashboard:{url_path} for changed non-view
@@ -200,15 +214,15 @@ ws config/floor_registry/delete = debt: mapped with its cascade, not enforced �
 # without a `path`, or no prior read: edit dashboard:{url_path} as a whole
 # (D-66 as refined: any view deny for edit makes that denied). url_path absent
 # or `lovelace` canonicalises to the default dashboard, `dashboard:`.
-ws lovelace/config/save = debt: mapped per view, not enforced — phase 2 builds the diff, the hook and its test
+ws lovelace/config/save = proven: TestDashboardSaveMapping
 
 # map: create dashboard:{url_path} (url_path is sent explicitly).
-ws lovelace/dashboards/create = debt: mapped, not enforced — phase 2 builds the hook and its test
+ws lovelace/dashboards/create = proven: TestClassifyWriteRequests
 
 # map: delete dashboard:{url_path}, url_path resolved from the wire's
 # dashboard_id through the lovelace/dashboards/list the same invocation read
 # (D-72). No such read in this invocation: unmappable, refused.
-ws lovelace/dashboards/delete = debt: mapped through the id-to-url_path lookup, not enforced — phase 2
+ws lovelace/dashboards/delete = proven: TestClassifyWriteRequests
 
 # --- reads (phase 3) ---------------------------------------------------------------
 
@@ -311,13 +325,13 @@ ws energy/get_prefs = debt: read-deferred-phase3 — no kind fits the energy pre
 # (?return_response=true) does not make it a read. Callers: svc call, script
 # run (script.turn_on), script apply (script.reload) — hactl's own service
 # calls are checked like any (D-73).
-rest POST /api/services/{domain}/{service} = debt: mapped with E-1 fan-out, E-2 and the derived script and per-domain checks, not enforced — phase 2
+rest POST /api/services/{domain}/{service} = proven: TestServiceCallMapping
 
 # map: delete config_entry:{entry_id} + delete entity:{e} and device:{d} for
 # every registry row naming this entry — the cascade as a deliberate superset
 # (D-76; a device with other entries too is still checked). DELETE is retried
 # on 5xx: one verdict per logical request, not per attempt.
-rest DELETE /api/config/config_entries/entry/{entry_id} = debt: mapped with its cascade, not enforced — phase 2
+rest DELETE /api/config/config_entries/entry/{entry_id} = proven: TestClassifyWriteRequests
 
 # map: edit config_entry:{body.handler}/options. Starting an options flow can
 # already persist (a flow that answers create_entry without a form), so start
@@ -325,7 +339,7 @@ rest DELETE /api/config/config_entries/entry/{entry_id} = debt: mapped with its 
 # request; the probe checks first and skips itself when denied (cmd row,
 # D-79). Two client functions (StartOptionsFlow, StartOptionsFlowOnce) share
 # the row.
-rest POST /api/config/config_entries/options/flow = debt: mapped, body-decoded, not enforced — phase 2
+rest POST /api/config/config_entries/options/flow = proven: TestClassifyWriteRequests
 
 # map: edit config_entry:{handler}/options, handler read from the start
 # response this invocation holds; without one, edit on every config_entry
@@ -335,23 +349,23 @@ rest POST /api/config/config_entries/options/flow = debt: mapped, body-decoded, 
 # options/flow/{flow_id} and in a step's create_entry answer (oracle: D-83,
 # TestOracleOptionsFlowHandlerIsEntryID), so it is the address for this row
 # and the two that share it below.
-rest POST /api/config/config_entries/options/flow/{flow_id} = debt: mapped through the flow's handler, not enforced — phase 2
+rest POST /api/config/config_entries/options/flow/{flow_id} = proven: TestClassifyWriteRequests
 
 # map: edit config_entry:{handler}/options — the same verb as the start that
 # created the flow; it aborts config show's probe. Not delete: a read-only
 # probe must not leave dangling flows behind.
-rest DELETE /api/config/config_entries/options/flow/{flow_id} = debt: mapped as the start's verb, not enforced — phase 2
+rest DELETE /api/config/config_entries/options/flow/{flow_id} = proven: TestClassifyWriteRequests
 
 # map: create on EVERY config_entry id (kind-wide, D-75; a new entry has no id
 # until HA answers). The domain is body.handler. StartConfigFlowOnce is the
 # caller; the retrying StartConfigFlow had none and is deleted (D-81).
-rest POST /api/config/config_entries/flow = debt: mapped as a kind-wide create, not enforced — phase 2
+rest POST /api/config/config_entries/flow = proven: TestClassifyWriteRequests
 
 # map: create AND edit on EVERY config_entry id (kind-wide). The flow may be a
 # user/discovery flow (create) or a reauth/reconfigure flow of an existing
 # entry (edit), and the request carries only flow_id; the superset needs no
 # knowledge of the flow's source (D-75).
-rest POST /api/config/config_entries/flow/{flow_id} = debt: mapped as kind-wide create and edit, not enforced — phase 2
+rest POST /api/config/config_entries/flow/{flow_id} = proven: TestClassifyWriteRequests
 
 # map: create AND edit on EVERY config_entry id (kind-wide) — the matching
 # write of the POST step, not a read (D-74, R-5): HA's GET handler runs the
@@ -359,13 +373,13 @@ rest POST /api/config/config_entries/flow/{flow_id} = debt: mapped as kind-wide 
 # review's reading of HA's FlowManagerResourceView.get), so a GET can finish a
 # flow. Sent by config flow-inspect and by config flow-step's preview; both
 # check it before sending.
-rest GET /api/config/config_entries/flow/{flow_id} = debt: mapped as the step's write, not enforced — phase 2
+rest GET /api/config/config_entries/flow/{flow_id} = proven: TestClassifyWriteRequests
 
 # map: edit config_entry:{handler}/options, handler as for the options step
 # above (start response this invocation holds, else kind-wide on every
 # entry's options) — the matching write, not a read (D-74, R-5). The handler
 # is the entry_id here too (D-83).
-rest GET /api/config/config_entries/options/flow/{flow_id} = debt: mapped as the options step's write, not enforced — phase 2
+rest GET /api/config/config_entries/options/flow/{flow_id} = proven: TestClassifyWriteRequests
 
 # map: read-deferred-phase3, no resource (integration catalog). Sent only by
 # flow-start's dry run, so it must never be stricter than the confirm.
@@ -439,26 +453,26 @@ companion GET /v1/config/wiring = exempt: a layout probe answering where a helpe
 # the confirmed response outside the checked plan is reported after the fact
 # — exit 1, policy_denied, rule `fail-closed: written outside the checked
 # plan`, listed in `written`.
-companion POST /v1/ref/replace = debt: mapped through the same-invocation dry-run plan and its typed owners, not enforced — phase 2
+companion POST /v1/ref/replace = proven: TestClassifyWriteRequests
 
 # map: create template:{uid} for every unique_id the YAML body declares (bare
 # item or full block). An entity in the block without unique_id has no
 # address: refused while a profile is in effect (D-78, `fail-closed: template
 # entity without unique_id`).
-companion POST /v1/config/template = debt: mapped from the body, not enforced — phase 2
+companion POST /v1/config/template = proven: TestClassifyWriteRequests
 
 # map: delete template:{id}.
-companion DELETE /v1/config/template = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion DELETE /v1/config/template = proven: TestClassifyWriteRequests
 
 # map: edit script:{id}/config. The companion pins the body to ?id (a different
 # wrapper key is a 400), so no hidden rename. dry_run variant checked the same.
-companion PUT /v1/config/script = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion PUT /v1/config/script = proven: TestClassifyWriteRequests
 
 # map: create script:{the body's single top-level key}.
-companion POST /v1/config/script = debt: mapped from the body, not enforced — phase 2
+companion POST /v1/config/script = proven: TestClassifyWriteRequests
 
 # map: delete script:{id} (exact key match, no alias fallback).
-companion DELETE /v1/config/script = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion DELETE /v1/config/script = proven: TestClassifyWriteRequests
 
 # map: edit automation:{id}/config + create automation:{body.id} when the
 # body's id differs (put_automation replaces the entry verbatim and never
@@ -466,25 +480,25 @@ companion DELETE /v1/config/script = debt: mapped, not enforced — phase 2 buil
 # is unmappable and refused while a profile is in effect (D-78, R-6): it
 # would leave an automation no deny on automation:{id} matches. dry_run
 # variant checked the same.
-companion PUT /v1/config/automation = debt: mapped from query and body, not enforced — phase 2
+companion PUT /v1/config/automation = proven: TestClassifyWriteRequests
 
 # map: create automation:{body.id} (the companion 400s without an id).
-companion POST /v1/config/automation = debt: mapped from the body, not enforced — phase 2
+companion POST /v1/config/automation = proven: TestClassifyWriteRequests
 
 # map: delete automation:{id} ONLY when {id} was verified as a config id by a
 # GET /v1/config/automation in the same invocation, directly before the delete
 # (D-72). delete_automation falls back to the alias and then a live
 # entity_id, so an unverified ?id= may name another automation: unmappable,
 # refused (an automation without a config id: D-78).
-companion DELETE /v1/config/automation = debt: mapped through a verified config id, not enforced — phase 2
+companion DELETE /v1/config/automation = proven: TestClassifyWriteRequests
 
 # map: create helper:{?domain}/{the body's single top-level key}.
-companion POST /v1/config/helper = debt: mapped from query and body, not enforced — phase 2
+companion POST /v1/config/helper = proven: TestClassifyWriteRequests
 
 # map: delete helper:{domain}/{id}. hactl must send the &domain= it resolved
 # (it does not today); a domain-less mutating helper request is unmapped,
 # refused.
-companion DELETE /v1/config/helper = debt: mapped once hactl sends the domain, not enforced — phase 2
+companion DELETE /v1/config/helper = proven: TestClassifyWriteRequests
 
 # (PUT /v1/config/helper, PUT /v1/config/file, PUT /v1/config/template,
 # POST /v1/ha/reload/{domain}, GET /v1/config/templates|scripts|automations:
@@ -493,13 +507,13 @@ companion DELETE /v1/config/helper = debt: mapped once hactl sends the domain, n
 # is not a request hactl sends and is not checked; documented.)
 
 # map: edit system:wireguard (the tunnel is not addressable).
-companion POST /v1/wireguard/config = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion POST /v1/wireguard/config = proven: TestClassifyWriteRequests
 
 # map: control system:wireguard.
-companion POST /v1/wireguard/start = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion POST /v1/wireguard/start = proven: TestClassifyWriteRequests
 
 # map: control system:wireguard.
-companion POST /v1/wireguard/stop = debt: mapped, not enforced — phase 2 builds the hook and its test
+companion POST /v1/wireguard/stop = proven: TestClassifyWriteRequests
 
 # map: read-deferred-phase3 system:check_config (D-74). A POST that changes
 # nothing (it runs HA's config check); sent by `health --check-config`, a read
