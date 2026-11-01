@@ -326,6 +326,10 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 			// machine gets the boolean (finding #59, one command over).
 			tbl.SetMachine(i, restoredColumn, r.restored)
 		}
+		// The config id is what a policy's automation: rules name (D-115),
+		// and it differs from the `id` column for every UI-made automation.
+		// A JSON key only: the text table keeps its columns.
+		tbl.SetMachine(i, "config_id", r.configID)
 		tbl.Rows[i] = row
 	}
 
