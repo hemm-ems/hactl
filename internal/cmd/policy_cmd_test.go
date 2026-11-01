@@ -259,7 +259,8 @@ func TestPolicyShowJSONForTheManualExample(t *testing.T) {
 	want := []ruleJSON{
 		{"deny", "entity:lock.*", []string{"read", "write"}, all, json.RawMessage(`null`), 16},
 		{"deny", "entity:device_tracker.*/attr/latitude", []string{"read"}, []string{"read"}, json.RawMessage(`null`), 17},
-		{"deny", "file:**", []string{"write"}, []string{"control", "edit", "create", "delete"}, json.RawMessage(`null`), 18},
+		// D-110: `write` on a file is edit, the one write verb that applies there.
+		{"deny", "file:**", []string{"write"}, []string{"edit"}, json.RawMessage(`null`), 18},
 		{"allow", "entity:*", []string{"read"}, []string{"read"}, json.RawMessage(`null`), 11},
 		{"allow", "entity:light.*", []string{"control"}, []string{"control"}, json.RawMessage(`{"area":["wohnzimmer"],"label":[]}`), 12},
 		{"allow", "automation:pg_*", []string{"read", "edit", "create"}, []string{"read", "edit", "create"}, json.RawMessage(`null`), 13},
@@ -871,7 +872,9 @@ func TestPolicyLintAllowPartialNeverHidesAFinding(t *testing.T) {
 // nothing unchecked, and an allow every live match of which is denied is
 // reported unreachable.
 func TestPolicyLintSystemIsItsFixedSet(t *testing.T) {
-	body := "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"system:reload\": [control]\n    deny:\n      \"system:re*\": [control]\n"
+	// read: no write verb applies at system:reload, and a written one would be
+	// a verb-not-applicable finding of its own (D-110).
+	body := "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"system:reload\": [read]\n    deny:\n      \"system:re*\": [read]\n"
 	dir := policyInstance(t, closedHAURL(t), body)
 	out, err := runPolicyCLI(t, dir, "policy", "lint", "--json")
 	if cliExitCode(err) != 1 {
@@ -884,8 +887,8 @@ func TestPolicyLintSystemIsItsFixedSet(t *testing.T) {
 		t.Fatalf("findings %v, want one unreachable", m["findings"])
 	}
 	f, _ := findings[0].(map[string]any)
-	if f["code"] != policy.CodeUnreachable || f["rule"] != `allow "system:reload" [control]` || f["line"] != float64(7) {
-		t.Errorf("finding = %v, want unreachable on allow \"system:reload\" [control] line 7", f)
+	if f["code"] != policy.CodeUnreachable || f["rule"] != `allow "system:reload" [read]` || f["line"] != float64(7) {
+		t.Errorf("finding = %v, want unreachable on allow \"system:reload\" [read] line 7", f)
 	}
 }
 

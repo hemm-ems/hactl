@@ -356,11 +356,11 @@ func TestRulesListDenyFirstThenAllowInFileOrder(t *testing.T) {
 		t.Errorf("Profiles() = %q, want [agent default]", got)
 	}
 	all := policy.AllVerbs()
-	write := []policy.Verb{policy.Control, policy.Edit, policy.Create, policy.Delete}
 	want := []policy.Rule{
 		{Effect: policy.Deny, Pattern: "entity:lock.*", Written: []string{"read", "write"}, Verbs: all, Line: 16},
 		{Effect: policy.Deny, Pattern: "entity:device_tracker.*/attr/latitude", Written: []string{"read"}, Verbs: []policy.Verb{policy.Read}, Line: 17},
-		{Effect: policy.Deny, Pattern: "file:**", Written: []string{"write"}, Verbs: write, Line: 18},
+		// D-110: `write` on a file means edit — the one write verb that applies there.
+		{Effect: policy.Deny, Pattern: "file:**", Written: []string{"write"}, Verbs: []policy.Verb{policy.Edit}, Line: 18},
 		{Effect: policy.Allow, Pattern: "entity:*", Written: []string{"read"}, Verbs: []policy.Verb{policy.Read}, Line: 11},
 		{Effect: policy.Allow, Pattern: "entity:light.*", Written: []string{"control"}, Verbs: []policy.Verb{policy.Control},
 			Where: &policy.Where{Area: []string{"wohnzimmer"}}, Line: 12},

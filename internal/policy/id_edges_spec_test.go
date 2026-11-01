@@ -418,7 +418,7 @@ profiles:
     deny:
       "dashboard:main/views/*": [read]
       "dashboard:/views/*": [edit]
-      "system:reload/*": [control]
+      "system:reload/*": [read]
       "entity:*/attr/*": [read]
 `
 	rep := policy.Lint(mustLoad(t, writePolicy(t, clean)), lintInventory())

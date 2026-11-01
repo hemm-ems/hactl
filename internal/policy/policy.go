@@ -266,8 +266,9 @@ type Rule struct {
 	// Written is the verb list exactly as written, in the file's order, with
 	// `write` unexpanded — what the rule text shows.
 	Written []string
-	// Verbs is Written parsed by ParseVerbs: expanded, de-duplicated,
-	// canonical order — what evaluation uses.
+	// Verbs is Written parsed by ParseVerbs — de-duplicated, canonical order
+	// — with `write` expanded to the write verbs that apply at the pattern
+	// (D-110) and every verb written by name kept: what evaluation uses.
 	Verbs []Verb
 	// Where is the selector narrowing this allow, nil when none. Always nil on
 	// a deny rule (`where:` narrows allows only).
@@ -280,6 +281,9 @@ type Rule struct {
 	Column int
 
 	addr address
+	// applicable are the write verbs that apply at the pattern — at its
+	// address or below it (D-110).
+	applicable []Verb
 }
 
 // Text renders the rule as a Verdict names it and `policy show` lists it:
@@ -445,9 +449,10 @@ type Live interface {
 //     verdict or the rule named — none after an allow that already grants.
 //  4. Else the profile default: RuleDefaultDeny or RuleDefaultAllow.
 //  5. If 3 or 4 allowed r but a deny for v covers a strict descendant of r
-//     (same kind and id, one or more further sub-resource segments), the
-//     verdict is Partial: a write verb is denied, naming the first such deny;
-//     Read stays allowed and lists them.
+//     (same kind and id, one or more further sub-resource segments) and v
+//     applies where that deny sits (D-110), the verdict is Partial: a write
+//     verb is denied, naming the first such deny; Read stays allowed and
+//     lists them.
 //
 // Rule order in the file carries no meaning for the verdict. When several
 // rules of the deciding effect match, the one named is the first in the file
@@ -512,7 +517,7 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && rule.addr.coversDescendant(r) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}
@@ -528,7 +533,8 @@ func (p *Policy) Decide(r Resource, v Verb, live Live) Verdict {
 
 // DecideDenyOnly answers verb v on r for its denies only (D-107): denied when a
 // deny of the effective profile for v covers r, or — for a write verb — a
-// strict descendant of r (D-66's partial); otherwise allowed with RuleNoDeny.
+// strict descendant of r where v applies (D-66's partial, D-110); otherwise
+// allowed with RuleNoDeny.
 // The profile default and the allows never decide: a deny-only check is how a
 // service call consults a typed address it reaches (an automation, a script,
 // a helper, a template entity) whose grant is decided on the entity. The
@@ -555,7 +561,7 @@ func (p *Policy) DecideDenyOnly(r Resource, v Verb) Verdict {
 	out.Allowed, out.Rule = true, RuleNoDeny
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.addr.coversDescendant(r) {
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && rule.addr.coversDescendant(r) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
 	}
@@ -600,7 +606,7 @@ func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
 	out.Allowed, out.Rule = true, RuleNoDeny
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && !rule.addr.any && rule.addr.kind == k &&
 			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}
@@ -629,8 +635,8 @@ func (p *Policy) DecideKindWideDenyOnly(k Kind, sub string, v Verb) Verdict {
 //     order. A narrower allow covers some ids, not all, and grants nothing here.
 //  4. Else the profile default.
 //  5. If 3 or 4 allowed, a deny for v on a strict descendant of sub on kind k
-//     (any id) makes the verdict partial: a write verb is denied naming the
-//     first such deny, read lists them (D-66).
+//     (any id), where v applies (D-110), makes the verdict partial: a write
+//     verb is denied naming the first such deny, read lists them (D-66).
 //
 // sub is the `/`-joined sub path below each id ("" = the resource itself). The
 // verdict never consults a where: selector, so it needs no Live.
@@ -680,7 +686,7 @@ func (p *Policy) DecideKindWide(k Kind, sub string, v Verb) Verdict {
 	}
 	for i := range pr.rules {
 		rule := &pr.rules[i]
-		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && !rule.addr.any && rule.addr.kind == k &&
+		if rule.Effect == Deny && slices.Contains(rule.Verbs, v) && rule.appliesHere(v) && !rule.addr.any && rule.addr.kind == k &&
 			len(rule.addr.sub) > len(subSegs) && matchSubPrefix(rule.addr.sub[:len(subSegs)], subSegs) {
 			out.PartialDenies = append(out.PartialDenies, RuleRef{Rule: rule.Text(), Line: rule.Line})
 		}

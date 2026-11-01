@@ -24,6 +24,7 @@ internal/companion/discovery.go DiscoveryReasons  # harness: the closed set of d
 internal/policy/reqmap/rows.go MatchTemplate    # harness: keys a source path built by concatenation by its classifier row, for the H-29 closure gate (internal/surfaceaudit)
 internal/policy/reqmap/rows.go Rows             # harness: the classifier's row table, which the H-29 gate holds in lockstep with dev/surfaces/policy.manifest
 internal/policy/reqmap/types.go Disposition.String  # harness: names a disposition in the classifier's tests and the gate's reports
+internal/policy/applicability.go ApplicableVerbs  # harness: the applicability table exactly at one address, which the D-110 lockstep gates (internal/policy/applicabilitygate) hold against the emitted triples and the manual
 
 # --- orphan ------------------------------------------------------------------
 # The trace/log disk cache (internal/cache.Store) is written and read by nothing

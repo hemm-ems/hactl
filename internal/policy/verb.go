@@ -27,10 +27,11 @@ const (
 	Delete
 )
 
-// WriteAlias is the rule-only spelling for {Control, Edit, Create, Delete}.
-// It is accepted in a rule's verb list (ParseVerbs) and refused where one
-// concrete verb is asked about (ParseVerb, `policy check`), because a verdict
-// is per verb.
+// WriteAlias is the spelling for the write verbs {Control, Edit, Create,
+// Delete}. It is accepted in a rule's verb list (ParseVerbs; Load keeps only
+// the ones that apply at the rule's pattern, D-110) and refused by ParseVerb,
+// because a verdict is per verb — `policy check … write` answers one verdict
+// per applicable verb (D-120).
 const WriteAlias = "write"
 
 // AllVerbs returns the five verbs in canonical order.
@@ -73,7 +74,8 @@ func ParseVerb(s string) (Verb, error) {
 }
 
 // ParseVerbs parses a rule's verb list. "write" expands to Control, Edit,
-// Create, Delete. The result is de-duplicated and in canonical order. An empty
+// Create, Delete (Load then narrows it to the verbs that apply at the rule's
+// pattern, D-110). The result is de-duplicated and in canonical order. An empty
 // list, or any unknown verb, is an error naming the offending value — the
 // caller (Load) turns it into a D-60 problem at the list's file:line.
 func ParseVerbs(ss []string) ([]Verb, error) {

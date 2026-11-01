@@ -139,6 +139,9 @@ type AttributeInventory interface {
 //     path is no longer than the allow's, each literal allow segment matches
 //     the deny's segment, and each wildcard allow segment faces a deny
 //     segment of only `*`. `where:` is ignored here: a deny wins regardless.
+//   - CodeVerbNotApplicable (applicability.go) for every write verb a rule
+//     names that applies nowhere its pattern reaches, and every `write` that
+//     applies to nothing there (D-110); no live instance needed.
 //   - Unchecked for every kind that some rule names and inv cannot list
 //     (inv nil: every such kind, ReasonNoLive), and for every rule holding a
 //     free sub-resource segment other than `attr/<name>` that holds a literal
@@ -165,6 +168,7 @@ func Lint(p *Policy, inv Inventory) LintReport {
 		l.profile(pr)
 	}
 	rep.Findings = append(rep.Findings, l.findings...)
+	rep.Findings = append(rep.Findings, verbNotApplicable(p)...)
 	sortFindings(rep.Findings)
 	rep.Unchecked = append(rep.Unchecked, l.sortedUnchecked()...)
 	return rep

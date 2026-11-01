@@ -15,7 +15,9 @@ cases:
   - {resource: "entity:switch.kaffee", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}
   - {resource: "file:configuration.yaml", verb: edit, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
   - {resource: "file:packages/heating.yaml/block/climate", verb: edit, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
-  - {resource: "file:packages/new.yaml", verb: create, allowed: false, rule: 'deny "file:**" [write]', line: 18, profile: agent}
+  # D-110: no command creates a file, so `write` on file:** means [edit]; the
+  # default still denies the create no command asks for.
+  - {resource: "file:packages/new.yaml", verb: create, allowed: false, rule: "default: deny", line: 0, profile: agent}
   - {resource: "file:configuration.yaml", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}
   # story 2
   - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:pg_*" [read edit create]', line: 11, profile: agent}

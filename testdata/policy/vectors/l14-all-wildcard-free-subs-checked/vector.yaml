@@ -8,5 +8,5 @@ lint:
   unchecked:
     - {kind: dashboard, reason: sub-resource not checked, profile: agent, rule: 'deny "dashboard:main/views/a*" [read]', line: 10}
     - {kind: file, reason: not enumerated, profile: "", rule: "", line: 0}
-    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clim*" [edit]', line: 14}
-    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/auto*" [control]', line: 11}
+    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clim*" [read]', line: 14}
+    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/auto*" [read]', line: 11}

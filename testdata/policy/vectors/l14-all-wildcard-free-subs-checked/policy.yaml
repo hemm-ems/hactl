@@ -5,10 +5,10 @@ profiles:
     default: deny
     deny:
       "dashboard:main/views/*": [read]
-      "system:reload/*": [control]
+      "system:reload/*": [read]
       "dashboard:*/views/*": [edit]
       "dashboard:main/views/a*": [read]
-      "system:reload/auto*": [control]
+      "system:reload/auto*": [read]
       "entity:*/attr/*": [read]
-      "file:x.yaml/block/*": [edit]
-      "file:x.yaml/block/clim*": [edit]
+      "file:x.yaml/block/*": [read]
+      "file:x.yaml/block/clim*": [read]
