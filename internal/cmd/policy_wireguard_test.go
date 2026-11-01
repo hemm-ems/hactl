@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"io"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +22,7 @@ import (
 // every POST to the companion's wireguard routes.
 type wireguardRig struct {
 	*cmdTestServer
+
 	conf string // a .conf file to push
 
 	postMu sync.Mutex
@@ -45,7 +46,7 @@ func wireguardHandlers(record func(*http.Request)) map[string]http.HandlerFunc {
 			if record != nil {
 				record(r)
 			}
-			_, _ = io.WriteString(w, `{"tunnel":"`+r.URL.Query().Get("tunnel")+`","status":"ok"}`)
+			_ = json.NewEncoder(w).Encode(map[string]string{"tunnel": r.URL.Query().Get("tunnel"), "status": "ok"})
 		}
 	}
 	return h
@@ -94,25 +95,9 @@ func TestWireguardRefusedByItsPlan(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := startWireguardRig(t)
 			writePolicyFile(t, rig.dir, denyPolicy(`"system:wireguard": [`+tc.verb+`]`))
-			want := tc.verb + ` system:wireguard — deny "system:wireguard" [` + tc.verb + `] (line 6)`
 			preview := tc.args(rig)
 			for _, args := range [][]string{preview, append(slices.Clone(preview), "--confirm")} {
-				out, err := runPolicyCLI(t, rig.dir, args...)
-				if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
-					t.Fatalf("%v: exit %d class %q (%v), want 1 policy_denied\n%s", args, cliExitCode(err), policyErrorClass(err), err, out)
-				}
-				if err.Error() != "policy_denied: "+want {
-					t.Errorf("%v: stderr line\n got: %q\nwant: %q", args, err.Error(), "policy_denied: "+want)
-				}
-				for _, line := range []string{
-					"policy_denied: would " + tc.action + " — refused by policy, nothing was written",
-					"  denied: " + want,
-					"  checked: 1 resources, 1 denied",
-				} {
-					if !strings.Contains(out, line+"\n") {
-						t.Errorf("%v: the report lacks %q:\n%s", args, line, out)
-					}
-				}
+				assertWireguardRefused(t, rig.dir, tc, args)
 			}
 			if got := rig.posted(); len(got) != 0 {
 				t.Errorf("a refused plan posted to the companion: %q", got)
@@ -120,26 +105,56 @@ func TestWireguardRefusedByItsPlan(t *testing.T) {
 			if audit := readAudit(t, rig.dir); len(audit) != 2 {
 				t.Errorf("audit lines for a refused preview and a refused run: %d, want 2", len(audit))
 			}
-
-			other := "control"
-			if tc.verb == "control" {
-				other = "edit"
-			}
-			for _, rule := range []string{`"system:wireguard": [` + other + `]`, `"system:cache": [` + tc.verb + `]`} {
-				writePolicyFile(t, rig.dir, denyPolicy(rule))
-				out, err := runPolicyCLI(t, rig.dir, preview...)
-				if err != nil {
-					t.Errorf("deny %s refused %v: %v\n%s", rule, preview, err, out)
-					continue
-				}
-				if !strings.Contains(out, "policy: 1 checked, allowed (profile agent)") {
-					t.Errorf("deny %s: the allowed preview does not say what it checked:\n%s", rule, out)
-				}
-			}
-			if got := rig.posted(); len(got) != 0 {
-				t.Errorf("a preview posted to the companion: %q", got)
-			}
+			assertWireguardAllowedBesides(t, rig, tc, preview)
 		})
+	}
+}
+
+// assertWireguardRefused runs args under a deny on the command's verb:
+// exit 1, policy_denied, the rule and its line named, the one-pair plan
+// counted.
+func assertWireguardRefused(t *testing.T, dir string, tc wireguardCase, args []string) {
+	t.Helper()
+	want := tc.verb + ` system:wireguard — deny "system:wireguard" [` + tc.verb + `] (line 6)`
+	out, err := runPolicyCLI(t, dir, args...)
+	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
+		t.Fatalf("%v: exit %d class %q (%v), want 1 policy_denied\n%s", args, cliExitCode(err), policyErrorClass(err), err, out)
+	}
+	if err.Error() != "policy_denied: "+want {
+		t.Errorf("%v: stderr line\n got: %q\nwant: %q", args, err.Error(), "policy_denied: "+want)
+	}
+	for _, line := range []string{
+		"policy_denied: would " + tc.action + " — refused by policy, nothing was written",
+		"  denied: " + want,
+		"  checked: 1 resources, 1 denied",
+	} {
+		if !strings.Contains(out, line+"\n") {
+			t.Errorf("%v: the report lacks %q:\n%s", args, line, out)
+		}
+	}
+}
+
+// assertWireguardAllowedBesides: a deny on the other verb, or on another
+// system id, leaves the preview allowed, and it says what it checked.
+func assertWireguardAllowedBesides(t *testing.T, rig *wireguardRig, tc wireguardCase, preview []string) {
+	t.Helper()
+	other := "control"
+	if tc.verb == "control" {
+		other = "edit"
+	}
+	for _, rule := range []string{`"system:wireguard": [` + other + `]`, `"system:cache": [` + tc.verb + `]`} {
+		writePolicyFile(t, rig.dir, denyPolicy(rule))
+		out, err := runPolicyCLI(t, rig.dir, preview...)
+		if err != nil {
+			t.Errorf("deny %s refused %v: %v\n%s", rule, preview, err, out)
+			continue
+		}
+		if !strings.Contains(out, "\n  policy: 1 checked, allowed (profile agent)\n") {
+			t.Errorf("deny %s: the allowed preview does not say what it checked:\n%s", rule, out)
+		}
+	}
+	if got := rig.posted(); len(got) != 0 {
+		t.Errorf("a preview posted to the companion: %q", got)
 	}
 }
 
