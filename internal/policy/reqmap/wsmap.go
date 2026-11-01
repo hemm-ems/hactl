@@ -252,7 +252,13 @@ func mapDashboardSave(c *call) (mapping, error) {
 		whole, cerr := check(policy.Edit, policy.KindDashboard, u, "")
 		return mapping{checks: []Check{whole}}, cerr
 	}
-	checks, err := DiffDashboard(u, stored.Config, proposed)
+	// Read, and Home Assistant holds no config: "nothing is stored" is an
+	// empty config, not an unknown (D-126).
+	prev := stored.Config
+	if prev == nil {
+		prev = EmptyDashboard
+	}
+	checks, err := DiffDashboard(u, prev, proposed)
 	return mapping{checks: checks}, err
 }
 

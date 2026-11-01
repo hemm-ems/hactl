@@ -19,6 +19,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/jsonwalk"
 	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 var flagDashView string
@@ -600,11 +601,15 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 
 	// The plan (D-66 as refined), checked in the preview and again before the
 	// save: per view against the stored config, the dashboard itself for the
-	// rest — or for all of it when nothing is stored. With no profile nothing
+	// rest — against an empty config when Home Assistant holds none (D-126),
+	// for all of it when the config cannot be read. With no profile nothing
 	// is read or checked (D-58).
 	var note *planPolicyNote
 	if policySession != nil {
-		_, stored, _ := classifyDashboardConfig(ctx, ws, urlPath) // absent or unreadable: nil, checked whole
+		state, stored, _ := classifyDashboardConfig(ctx, ws, urlPath) // unreadable: nil, checked whole
+		if state == dashConfigAbsent {
+			stored = reqmap.EmptyDashboard
+		}
 		plan := newWritePlan("save dashboard config").addDashboardSave(urlPath, stored, data)
 		if note, err = checkWritePlan(w, !flagDashConfirm, plan); err != nil {
 			return err

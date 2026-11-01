@@ -255,7 +255,8 @@ type RegistryArea struct {
 }
 
 // StoredDashboard is a dashboard config as read in this invocation. A nil
-// Config means Home Assistant holds no stored config for the dashboard.
+// Config means Home Assistant holds no stored config for the dashboard
+// (`config_not_found`): a save is diffed against EmptyDashboard (D-126).
 type StoredDashboard struct {
 	Config json.RawMessage
 }

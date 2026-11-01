@@ -526,9 +526,10 @@ func writeDashFile(t *testing.T, cfg any) string {
 // view against the stored config — a change to one view needs edit on that
 // view only, so a deny on another view does not refuse it; a change to the
 // denied view does; a change outside views (the title) is addressable only at
-// the dashboard, which the view deny makes partial, hence denied; and with no
-// stored config the whole save is checked at the dashboard. Preview and
-// --confirm refuse alike, and nothing is saved.
+// the dashboard, which the view deny makes partial, hence denied — also on a
+// dashboard Home Assistant holds no config for, whose first save is diffed
+// against an empty config (D-126). Preview and --confirm refuse alike, and
+// nothing is saved.
 func TestDashSaveRefusedByItsPlan(t *testing.T) {
 	stored := map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a"), dashView("secret", "lock.door")}}
 	r := dashRig(t, stored)
@@ -558,6 +559,42 @@ func TestDashSaveRefusedByItsPlan(t *testing.T) {
 	writePolicyFile(t, none.ts.dir, agentPolicy("    deny:\n      \"dashboard:wall-panel/views/secret\": [edit]\n"))
 	out, err = runPolicyCLI(t, none.ts.dir, "dash", "save", "wall-panel", "-f", homeOnly)
 	assertRefused(t, "no stored config", out, err, "edit dashboard:wall-panel — "+viewDeny+" — a part of it is denied")
+}
+
+// TestDashSaveCreatesFirstViewsWhenNothingIsStored (D-126): Home Assistant's
+// config_not_found is "nothing is stored", so the first save after `dash
+// create` is diffed against an empty config — each view is a create, which an
+// allow of create on the dashboard grants and a view deny [edit] does not
+// refuse — in the preview and under --confirm, at the plan and at the request
+// layer, and the save is sent. A key outside the views is still the whole
+// dashboard, and an unreadable stored config is still checked whole.
+func TestDashSaveCreatesFirstViewsWhenNothingIsStored(t *testing.T) {
+	body := agentPolicy("    default: deny\n    allow:\n      \"dashboard:wall-panel\": [create, delete]\n" +
+		"    deny:\n      \"dashboard:wall-panel/views/secret\": [edit]\n")
+	views := writeDashFile(t, map[string]any{"views": []any{dashView("home", "light.a"), dashView("secret", "lock.door")}})
+
+	none := dashRig(t, wsErrorResponse{Code: "config_not_found", Message: "No config found."})
+	writePolicyFile(t, none.ts.dir, body)
+	out, err := runPolicyCLI(t, none.ts.dir, "dash", "save", "wall-panel", "-f", views)
+	if err != nil || !strings.Contains(out, " 2 checked, allowed (profile agent)\n") {
+		t.Fatalf("the first save's preview: %v\n%s", err, out)
+	}
+	out, err = runPolicyCLI(t, none.ts.dir, "dash", "save", "wall-panel", "-f", views, "--confirm")
+	if err != nil {
+		t.Fatalf("the first save, confirmed: %v\n%s", err, out)
+	}
+	if n := none.ts.commandCount("lovelace/config/save"); n != 1 {
+		t.Errorf("the confirmed first save sent %d lovelace/config/save, want 1", n)
+	}
+
+	titled := writeDashFile(t, map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a")}})
+	out, err = runPolicyCLI(t, none.ts.dir, "dash", "save", "wall-panel", "-f", titled)
+	assertRefused(t, "a title on the first save", out, err, "edit dashboard:wall-panel — default: deny")
+
+	unreadable := dashRig(t, wsErrorResponse{Code: "unknown_error", Message: "boom"})
+	writePolicyFile(t, unreadable.ts.dir, body)
+	out, err = runPolicyCLI(t, unreadable.ts.dir, "dash", "save", "wall-panel", "-f", views)
+	assertRefused(t, "an unreadable stored config", out, err, "edit dashboard:wall-panel — default: deny")
 }
 
 // TestDashSaveUnmappableViewFailsClosed (D-68, D-69, D-101): a view whose

@@ -46,6 +46,17 @@ func TestDiffDashboard(t *testing.T) {
 			[]string{"edit dashboard:"}, false},
 		{"a null stored config is the whole dashboard", "", "null", `{"views":[]}`,
 			[]string{"edit dashboard:"}, false},
+		// D-126: Home Assistant's "nothing is stored" is an empty config, so a
+		// first save creates its views; anything outside them is the whole.
+		{"nothing stored: each view is a create", "d-a", string(reqmap.EmptyDashboard),
+			`{"views":[{"path":"one","cards":[]},{"path":"two","cards":[]}]}`,
+			[]string{"create dashboard:d-a/views/one", "create dashboard:d-a/views/two"}, false},
+		{"nothing stored: a title is the whole dashboard", "d-a", string(reqmap.EmptyDashboard),
+			`{"title":"New","views":[{"path":"one"}]}`,
+			[]string{"edit dashboard:d-a", "create dashboard:d-a/views/one"}, false},
+		{"nothing stored: a path-less view is the whole dashboard", "d-a", string(reqmap.EmptyDashboard),
+			`{"views":[{"title":"no path"}]}`,
+			[]string{"edit dashboard:d-a"}, false},
 		{"a view change on the default dashboard", "lovelace",
 			`{"views":[{"path":"a","x":1}]}`, `{"views":[{"path":"a","x":2}]}`,
 			[]string{"edit dashboard:/views/a"}, false},
@@ -91,8 +102,15 @@ func TestDashboardSaveMapping(t *testing.T) {
 			disp: reqmap.Write, row: "ws lovelace/config/save", checks: []string{"edit dashboard:d-b"},
 		},
 		{
-			name: "a dashboard HA holds no config for is the whole dashboard", facts: facts,
-			req:  ws("lovelace/config/save", map[string]any{"config": map[string]any{"views": []any{}}}),
+			// D-126: read, and nothing is stored — diffed against an empty
+			// config, so the first save's views are creates.
+			name: "a dashboard HA holds no config for is diffed against an empty config", facts: facts,
+			req:  ws("lovelace/config/save", map[string]any{"config": map[string]any{"views": []any{map[string]any{"path": "home"}}}}),
+			disp: reqmap.Write, row: "ws lovelace/config/save", checks: []string{"create dashboard:/views/home"},
+		},
+		{
+			name: "a dashboard HA holds no config for, saved with a title", facts: facts,
+			req:  ws("lovelace/config/save", map[string]any{"config": map[string]any{"title": "Home", "views": []any{}}}),
 			disp: reqmap.Write, row: "ws lovelace/config/save", checks: []string{"edit dashboard:"},
 		},
 		{

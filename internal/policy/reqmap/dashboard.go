@@ -21,8 +21,9 @@ import (
 //     views sharing a path: edit dashboard:<u> as a whole — which any view
 //     deny for edit makes partial, hence denied (D-66). Path-less views are
 //     never addressed by index (a view whose path is `0` would collide);
-//   - stored == nil (Home Assistant holds no stored config, or none was
-//     read): edit dashboard:<u>.
+//   - stored == nil (none was read, or it could not be): edit
+//     dashboard:<u>. A dashboard Home Assistant holds no config for is not
+//     this case: its caller passes EmptyDashboard (D-126).
 //
 // urlPath is canonicalised first (`lovelace` is the default dashboard,
 // `dashboard:`). A view path the policy grammar refuses is an error: the
@@ -86,6 +87,13 @@ func DiffDashboard(urlPath string, stored, proposed json.RawMessage) ([]Check, e
 	}
 	return set.list(), nil
 }
+
+// EmptyDashboard is the stored config of a dashboard Home Assistant answers
+// `config_not_found` for — its authoritative "nothing is stored" (D-126): a
+// save is diffed against it, so each view the first save brings is a create
+// and any other top-level key is an edit of the dashboard. An unreadable
+// config is never this: it is nil, and the save is checked whole.
+var EmptyDashboard = json.RawMessage(`{}`)
 
 func addView(set *checkSet, v policy.Verb, u, path string) error {
 	ch, err := check(v, policy.KindDashboard, u, "views/"+path)

@@ -58,8 +58,9 @@ func policyDashboardID(urlPath string) string {
 // addDashboardSave declares a dashboard save the way the request layer maps
 // it (reqmap.DiffDashboard): per view against the stored config — edit, create
 // or delete dashboard:<u>/views/<path> — and edit dashboard:<u> for the rest,
-// or for the whole save when there is no stored config to compare against
-// (stored nil). A save hactl cannot address (a view path the grammar refuses,
+// or for the whole save when the stored config could not be read (stored
+// nil); a dashboard Home Assistant holds no config for comes as
+// reqmap.EmptyDashboard (D-126). A save hactl cannot address (a view path the grammar refuses,
 // a config that is not an object) is refused, never canonicalised.
 func (p *writePlan) addDashboardSave(urlPath string, stored, proposed json.RawMessage) *writePlan {
 	checks, err := reqmap.DiffDashboard(urlPath, stored, proposed)
