@@ -2,6 +2,8 @@ package enforce
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -94,15 +96,15 @@ type DeniedError struct {
 	PlanAllowed bool
 }
 
-// Error is the one stderr line (D-70): `policy_denied: <verb> <resource> —
-// <rule> (line <n>)` for the first denial; a request-layer refusal adds what
-// was already written.
+// Error is the one stderr line, a count that repeats no denial — the report
+// on stdout names them (D-119): `policy_denied: <m> of <n> resources denied
+// (profile <p>)`; a request-layer refusal adds what was already written.
 func (r *DeniedError) Error() string {
-	first := "refused"
-	if len(r.Denied) > 0 {
-		first = r.Denied[0].Text()
-	}
-	s := ClassDenied + ": " + first
+	// A request refused whole — unmapped, unmappable, a redirect hop that
+	// maps differently — checked no (resource, verb) pair; it counts as the
+	// one thing checked, so the line never reads "1 of 0".
+	checked := max(r.Checked, len(r.Denied))
+	s := fmt.Sprintf("%s: %d of %d resources denied (profile %s)", ClassDenied, len(r.Denied), checked, r.Profile)
 	if r.Layer == LayerRequest {
 		written := "nothing"
 		if len(r.Written) > 0 {
@@ -118,36 +120,110 @@ func (r *DeniedError) Error() string {
 	return s
 }
 
+// FirstDenial is `policy_denied: <verb> <resource> — <rule> (line <n>)` for
+// the first denial: the note a read command that skips a denied probe quotes
+// (D-94), where no report names the denial.
+func (r *DeniedError) FirstDenial() string {
+	if len(r.Denied) == 0 {
+		return ClassDenied + ": refused"
+	}
+	return ClassDenied + ": " + r.Denied[0].Text()
+}
+
 // ExitCode is 1 (D-70: no new exit code).
 func (r *DeniedError) ExitCode() int { return 1 }
 
 // PolicyClass is the error class, ClassDenied.
 func (r *DeniedError) PolicyClass() string { return ClassDenied }
 
-// Hint is the refusal's closing line: never "use --confirm" — the policy is
-// the owner's, and a denial is to be reported (D-70).
+// previewPassedHint leads the hint of a refused --confirm whose preview had
+// passed (D-80).
+const previewPassedHint = "the preview had passed, and something it depends on changed since " +
+	"(the policy, an area or label, a service call's reach)"
+
+// Hint is the refusal's closing line, built from the denials' causes (D-118):
+// whether the preview had passed, the lines of the deny rules that decided,
+// what nothing allows, what hactl could not check, and how much of the plan
+// was allowed — joined by "; ". It never suggests --confirm: the policy is the
+// owner's, and a denial is to be reported (D-70).
 func (r *DeniedError) Hint() string {
-	s := "refused by the owner's policy.yaml (profile " + r.Profile + ") — report it; do not edit the policy"
-	if r.PreviewPassed {
-		s = "the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach); " + s
+	if r.Layer == LayerRequest && r.PlanAllowed {
+		return "hactl's own plan missed this request — a hactl bug to report; do not edit policy.yaml"
 	}
-	return s
+	var parts []string
+	if r.PreviewPassed {
+		parts = append(parts, previewPassedHint)
+	}
+	var lines []int
+	var defaults []Denial
+	var failClosed *Denial
+	for i, d := range r.Denied {
+		switch {
+		case d.Rule == policy.RuleDefaultDeny:
+			defaults = append(defaults, d)
+		case strings.HasPrefix(d.Rule, failClosedPrefix):
+			if failClosed == nil {
+				failClosed = &r.Denied[i]
+			}
+		case d.Line > 0 && !slices.Contains(lines, d.Line):
+			lines = append(lines, d.Line)
+		}
+	}
+	if len(lines) > 0 {
+		slices.Sort(lines)
+		nums := make([]string, len(lines))
+		for i, n := range lines {
+			nums[i] = strconv.Itoa(n)
+		}
+		parts = append(parts, "the owner would change the rule on line "+strings.Join(nums, ", "))
+	}
+	if len(defaults) > 0 {
+		s := "nothing allows " + defaults[0].Resource
+		if more := len(defaults) - 1; more > 0 {
+			s += fmt.Sprintf(" (and %d more)", more)
+		}
+		parts = append(parts, s+"; the owner would add an allow")
+	}
+	if failClosed != nil {
+		reason := strings.TrimPrefix(failClosed.Rule, failClosedPrefix)
+		parts = append(parts, fmt.Sprintf("hactl could not check %s (%s), so it refused", failClosed.Resource, reason))
+	}
+	if denied := len(r.Denied); denied > 0 && denied < r.Checked {
+		parts = append(parts, fmt.Sprintf("allowed: %d of %d checked resources, but the command is refused as a whole",
+			r.Checked-denied, r.Checked))
+	}
+	if len(parts) == 0 {
+		// Every refusal carries a denial; this only keeps the line whole.
+		parts = append(parts, "refused by the owner's policy.yaml (profile "+r.Profile+")")
+	}
+	return strings.Join(parts, "; ") + " — report it; do not edit policy.yaml"
+}
+
+// failClosedPrefix starts the rule of every denial hactl makes without a rule.
+const failClosedPrefix = "fail-closed: "
+
+// BrokenHint is the sentence every broken-file output closes with (D-117):
+// the file is the owner's, so the caller reports it and does not fix it.
+const BrokenHint = "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"
+
+// BrokenReport is a broken file in the one wording every output uses (D-117):
+// `policy_broken: <file>:<line>: <message>` per problem, then the closing
+// `policy_broken: <BrokenHint>` line, newline-joined.
+func BrokenReport(le *policy.LoadError) string {
+	lines := strings.Split(le.Error(), "\n")
+	for i, l := range lines {
+		lines[i] = ClassBroken + ": " + l
+	}
+	return strings.Join(append(lines, ClassBroken+": "+BrokenHint), "\n")
 }
 
 // BrokenError is the D-60 refusal: policy.yaml cannot be read as a policy, so
-// every command but the exempt ones refuses, naming each problem as
-// `policy_broken: <file>:<line>: <message>`.
+// every command but the exempt ones refuses with the BrokenReport on stderr.
 type BrokenError struct {
 	Err *policy.LoadError
 }
 
-func (e *BrokenError) Error() string {
-	lines := strings.Split(e.Err.Error(), "\n")
-	for i, l := range lines {
-		lines[i] = ClassBroken + ": " + l
-	}
-	return strings.Join(lines, "\n")
-}
+func (e *BrokenError) Error() string { return BrokenReport(e.Err) }
 
 // Unwrap exposes the *policy.LoadError.
 func (e *BrokenError) Unwrap() error { return e.Err }

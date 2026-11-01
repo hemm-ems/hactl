@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -148,23 +149,28 @@ func agentPolicy(rules string) string {
 }
 
 // assertRefused checks a refusal: exit 1, class policy_denied, the stderr line
-// naming want (the first denial), and the report naming every denial in
-// alsoDenied.
+// a count that repeats no denial (D-119), and the report naming every denial
+// in want and alsoDenied and closing with its hint (D-118).
 func assertRefused(t *testing.T, what, out string, err error, want string, alsoDenied ...string) {
 	t.Helper()
 	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 		t.Fatalf("%s: exit %d class %q (%v), want 1 policy_denied\n%s", what, cliExitCode(err), policyErrorClass(err), err, out)
 	}
-	line, _, _ := strings.Cut(want, " — a part of it is denied")
-	if !strings.HasPrefix(err.Error(), "policy_denied: "+line) {
-		t.Errorf("%s: stderr line %q, want it to start %q", what, err.Error(), "policy_denied: "+line)
+	if !refusalCountLine.MatchString(err.Error()) {
+		t.Errorf("%s: stderr line %q, want the count summary", what, err.Error())
 	}
 	for _, d := range append([]string{want}, alsoDenied...) {
 		if !strings.Contains(out, "  denied: "+d) {
 			t.Errorf("%s: the report does not name %q:\n%s", what, d, out)
 		}
 	}
+	if !strings.HasPrefix(lastLine(out), "  hint: ") {
+		t.Errorf("%s: the report does not close with its hint:\n%s", what, out)
+	}
 }
+
+// refusalCountLine is a refusal's stderr line (D-119).
+var refusalCountLine = regexp.MustCompile(`^policy_denied: \d+ of \d+ resources denied \(profile [^)]+\)`)
 
 // TestRefReplaceRefusedByItsPlan (D-77, R-3, E-7): a change inside an
 // automation is checked as that automation's config as well as its file, so a
@@ -212,7 +218,7 @@ func TestRefReplaceChecksFileAndDashboardParts(t *testing.T) {
 	r := refRig(t, agentPolicy("    deny:\n      \"file:automations.yaml/block/other\": [edit]\n      \"dashboard:\": [edit]\n"))
 	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
 	assertRefused(t, "preview", out, err,
-		`edit file:automations.yaml — deny "file:automations.yaml/block/other" [edit] (line 6) — a part of it is denied, so all of it is (D-66)`,
+		`edit file:automations.yaml — deny "file:automations.yaml/block/other" [edit] (line 6) — a part of it is denied, so all of it is`,
 		`edit dashboard: — deny "dashboard:" [edit] (line 7)`)
 	if !strings.Contains(out, "checked: 3 resources, 2 denied") {
 		t.Errorf("both denials are reported:\n%s", out)
@@ -536,7 +542,7 @@ func TestDashSaveRefusedByItsPlan(t *testing.T) {
 
 	title := writeDashFile(t, map[string]any{"title": "Renamed", "views": stored["views"]})
 	out, err = runPolicyCLI(t, r.ts.dir, "dash", "save", "wall-panel", "-f", title)
-	assertRefused(t, "a non-view key", out, err, "edit dashboard:wall-panel — "+viewDeny+" — a part of it is denied, so all of it is (D-66)")
+	assertRefused(t, "a non-view key", out, err, "edit dashboard:wall-panel — "+viewDeny+" — a part of it is denied, so all of it is")
 	if n := r.ts.commandCount("lovelace/config/save"); n != 0 {
 		t.Errorf("refused saves sent %d lovelace/config/save", n)
 	}

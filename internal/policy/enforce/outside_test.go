@@ -31,7 +31,7 @@ func TestWrittenOutsidePlanIsDeniedAuditedAndListed(t *testing.T) {
 	if !slices.Equal(ref.Written, []string{"edit file:packages/a.yaml", "edit file:b.yaml"}) {
 		t.Errorf("written = %q", ref.Written)
 	}
-	if ref.Error() != "policy_denied: edit file:packages/a.yaml — "+enforce.RuleWrittenOutsidePlan {
+	if ref.Error() != "policy_denied: 2 of 2 resources denied (profile a)" {
 		t.Errorf("stderr line = %q", ref.Error())
 	}
 	f, err := os.Open(filepath.Clean(filepath.Join(dir, "cache", enforce.AuditFileName)))

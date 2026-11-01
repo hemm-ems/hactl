@@ -276,7 +276,7 @@ func TestWhereSelectorDecidesAWriteLive(t *testing.T) {
 	rig.registry.set(inArea("kueche"))
 	out, err = runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
 	wantRefused(t, "moved out of the area", out, err, "control entity:light.sofa — default: deny")
-	if !strings.Contains(out, "note: the preview had passed") {
+	if !strings.Contains(out, "  hint: the preview had passed") {
 		t.Errorf("the refused --confirm does not say its preview had passed:\n%s", out)
 	}
 	if got := rig.sent(); len(got) != 0 {

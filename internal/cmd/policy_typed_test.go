@@ -69,13 +69,16 @@ func runTypedRefusal(t *testing.T, tc typedRefusal) {
 			extra = []string{"--confirm"}
 		}
 		out, err := runPolicyCLI(t, r.ts.dir, tc.cmd.argsIn(t, r, extra...)...)
-		if out != want.String() {
-			t.Errorf("confirm %v: stdout\n got: %q\nwant: %q", confirm, out, want.String())
+		// The report, then its one hint line (D-118, built from the causes;
+		// its wording is TestRefusalHintNamesTheCauseAndTheWayForward's).
+		report, hint, _ := strings.Cut(out, "  hint: ")
+		if report != want.String() || !strings.HasSuffix(hint, " — report it; do not edit policy.yaml\n") || strings.Count(hint, "\n") != 1 {
+			t.Errorf("confirm %v: stdout\n got: %q\nwant: %q + one hint line", confirm, out, want.String())
 		}
 		if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 			t.Fatalf("confirm %v: exit %d class %q (%v), want 1 policy_denied", confirm, cliExitCode(err), policyErrorClass(err), err)
 		}
-		if wantErr := "policy_denied: " + tc.denied[0]; err.Error() != wantErr {
+		if wantErr := fmt.Sprintf("policy_denied: %d of %d resources denied (profile agent)", len(tc.denied), tc.checks); err.Error() != wantErr {
 			t.Errorf("confirm %v: stderr line %q, want %q", confirm, err.Error(), wantErr)
 		}
 		if confirm && out != previewOut {

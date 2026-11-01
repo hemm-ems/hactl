@@ -77,14 +77,15 @@ func TestLabelCreateRefusedByItsPlan(t *testing.T) {
 	want := "policy_denied: would create label — refused by policy, nothing was written\n" +
 		"  denied: create label:* — deny \"label:secret\" [create] (line 6)\n" +
 		"  checked: 1 resources, 1 denied\n" +
-		"  profile: agent (selected by active)\n"
+		"  profile: agent (selected by active)\n" +
+		"  hint: the owner would change the rule on line 6 — report it; do not edit policy.yaml\n"
 	if out != want {
 		t.Errorf("refused preview stdout\n got: %q\nwant: %q", out, want)
 	}
 	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 		t.Fatalf("exit %d class %q (%v), want 1 policy_denied", cliExitCode(err), policyErrorClass(err), err)
 	}
-	if err.Error() != `policy_denied: create label:* — deny "label:secret" [create] (line 6)` {
+	if err.Error() != `policy_denied: 1 of 1 resources denied (profile agent)` {
 		t.Errorf("stderr line = %q", err.Error())
 	}
 
@@ -353,7 +354,7 @@ func TestMCPRefusesEachCallOnABrokenPolicy(t *testing.T) {
 	if text, isErr := call("label create Garden"); !isErr || strings.Contains(text, "policy_broken") || !strings.Contains(text, "allow-writes") {
 		t.Errorf("a write on a read-only server must be refused by --allow-writes first (D-72): error %v\n%s", isErr, text)
 	}
-	if text, _ := call("policy show"); !strings.Contains(text, "BROKEN") {
+	if text, _ := call("policy show"); !strings.Contains(text, "policy_broken: "+enforce.BrokenHint) {
 		t.Errorf("policy show does not report the broken file over MCP:\n%s", text)
 	}
 	writePolicyFile(t, ts.dir, policyAllowEverything)

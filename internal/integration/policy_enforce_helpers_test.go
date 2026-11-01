@@ -287,10 +287,11 @@ func assertPolicyRefused(t *testing.T, dir string, args []string, want ...pgDeni
 			t.Errorf("hactl %v: denied = %v, want it to hold %v", jsonArgs, preview.Details.Policy.Denied, w)
 		}
 	}
-	// The one stderr line (D-70) names a denial of the plan: the first, in
-	// plan order — the order details.policy.denied keeps.
-	if len(preview.Details.Policy.Denied) > 0 {
-		assertSummaryLine(t, args, summary, preview.Details.Policy.Denied[0])
+	// The one stderr line counts the plan's denials and repeats none of them
+	// (D-119); the report on stdout closes with its hint (D-118).
+	assertSummaryLine(t, args, summary, len(preview.Details.Policy.Denied), preview.Details.Policy.Checked, preview.Details.Policy.Profile)
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "  hint: "+preview.Hint {
+		t.Errorf("hactl %v: the text report does not close with the --json hint %q:\n%s", args, preview.Hint, out)
 	}
 
 	// --- 3. --json --confirm: same refusal, same rules, nothing sent ---
@@ -313,21 +314,13 @@ func assertPolicyRefused(t *testing.T, dir string, args []string, want ...pgDeni
 
 // assertSummaryLine checks the refusal's one-line summary — on the CLI the
 // stderr line, in process the error's first line (Execute prints exactly the
-// error): `policy_denied: <verb> <resource> — <rule> (line <n>)` (D-70). A
-// denial no rule line decided (default: deny, fail-closed) is checked up to
-// its rule.
-func assertSummaryLine(t *testing.T, args []string, summary string, d pgDenied) {
+// error): `policy_denied: <m> of <n> resources denied (profile <p>)`, a count
+// that repeats no denial (D-119).
+func assertSummaryLine(t *testing.T, args []string, summary string, denied, checked int, profile string) {
 	t.Helper()
-	want := "policy_denied: " + d.Verb + " " + d.Resource + " — " + d.Rule
-	if d.Line > 0 {
-		want += fmt.Sprintf(" (line %d)", d.Line)
-		if summary != want {
-			t.Errorf("hactl %v: summary line = %q, want %q (D-70)", args, summary, want)
-		}
-		return
-	}
-	if !strings.HasPrefix(summary, want) {
-		t.Errorf("hactl %v: summary line = %q, want it to start %q (D-70)", args, summary, want)
+	want := fmt.Sprintf("policy_denied: %d of %d resources denied (profile %s)", denied, checked, profile)
+	if summary != want {
+		t.Errorf("hactl %v: summary line = %q, want %q (D-119)", args, summary, want)
 	}
 }
 
@@ -622,8 +615,8 @@ func pgCreateDashboard(t *testing.T, inst *hatest.Instance, urlPath string, conf
 // pgRig is what the enforcement tests act on, chosen from HA's own registry
 // so a fixture change fails loudly instead of skipping a case.
 type pgRig struct {
-	Lights  []string          // available demo lights with a device, sorted
-	DevOf   map[string]string // light → its device
+	Lights []string          // available demo lights with a device, sorted
+	DevOf  map[string]string // light → its device
 	// Lock is a registered lock in state locked or unlocked (it is placed in
 	// an area, so it needs a registry entry). Observed on HA 2026.10 (stable,
 	// 2026-11-01): the demo integration's locks have no registry entry (no

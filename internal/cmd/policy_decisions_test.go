@@ -218,7 +218,7 @@ func TestPolicyCheckRefusesIDsTheGrammarRefusesImpl(t *testing.T) {
 	}
 	broken := policyInstance(t, closedHAURL(t), "version: 1\nprofiles:\n  p:\n    deny:\n      \"entity:front_door\": [read]\n")
 	out, err := runPolicyCLI(t, broken, "policy", "lint")
-	if cliExitCode(err) != 1 || !strings.Contains(out, filepath.Join(broken, policy.FileName)+":5: ") || !strings.Contains(out, "D-63") {
+	if cliExitCode(err) != 1 || !strings.Contains(out, "policy_broken: "+filepath.Join(broken, policy.FileName)+":5: ") || !strings.Contains(out, "never the part after the domain") {
 		t.Errorf("lint on a domain-less literal: exit %d\n%s", cliExitCode(err), out)
 	}
 }
