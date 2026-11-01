@@ -337,7 +337,10 @@ reports:
 - `blocked-by-part`: an allow whose `create` or `delete` (or another verb) a
   deny on a part always refuses — such as `allow "entity:automation.pg_*":
   [delete]` with `deny "entity:*/registry/entity_id": [write]`; the message
-  names both rules and, where it helps, the narrower deny (`[edit]`);
+  names both rules and, where it helps, the narrower deny (`[edit]`). A
+  deliberate exception ("every light except one") is written as a deny on
+  the entity itself, `deny "entity:light.x": [control]`, not on its `state`,
+  and draws no finding;
 - `self-grant`: a `where:` allow the agent could satisfy itself;
 - `half-protected`: a deny on an automation's config without its entity, or
   the other way round.
