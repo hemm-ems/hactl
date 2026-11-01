@@ -65,7 +65,10 @@ enforced: a write command refuses what this verdict denies
 ```
 
 It answers each write verb that can apply to that resource and exits `0` only
-if all of them are allowed.
+if all of them are allowed. One exception: `control` on an automation, script,
+helper or template address is shown, but a denial there by `default: deny`
+alone does not count, because no command enforces it (see [Switching typed
+entries](#switching-typed-entries)).
 
 Finally, run `hactl policy lint` against your live instance to catch typos (see
 [Checking a policy](#checking-a-policy)).
@@ -122,6 +125,15 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 `disabled_by` or `entity_id`. The full table is in the
 [manual](manual.md#resources).
 
+The pattern `"*"` on its own matches every resource of every kind:
+`"*": [read]` lets the agent read everything, `"*": [write]` under `deny:`
+makes a read-only profile.
+
+A `template:` is a template entity from YAML, addressed by its `unique_id`. A
+template helper made in the UI (Settings → Helpers) is a config entry, not a
+`template:` — address its entity (`entity:sensor.x`) or its config entry
+(`config_entry:<entry_id>`).
+
 ### Verbs
 
 | verb | means | e.g. |
@@ -132,11 +144,15 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 | `create` | make something new | `auto create`, `area create` |
 | `delete` | remove it | `auto delete` |
 
+Helpers have no edit command: `helper create` and `helper delete` are all
+hactl does to a helper's config, so `edit` on `helper:` decides nothing.
+Switching a helper (`input_boolean.turn_on`) is `control` on its entity
+(`entity:input_boolean.guest_mode`) and on the service.
+
 `write` is shorthand for `control, edit, create, delete` — **as far as they
 can change what the rule points at.** Nothing ever "switches" a registry
-field, so `"entity:*/registry/entity_id": [write]` — the natural "no renames"
-rule — never covers `control`, and leaves switching lights alone, while
-`"entity:lock.*": [write]` covers everything you can do to a lock.
+field, so `"entity:*/registry/entity_id": [write]` never covers `control`,
+while `"entity:lock.*": [write]` covers everything you can do to a lock.
 
 A deny on a part also stops whatever would change that part from above:
 deleting or creating the whole thing, a service call on an entity (it changes
@@ -145,9 +161,15 @@ file's `block/…`). So `deny "automation:x/config": [write]` also refuses
 deleting automation `x`, and a deny on `entity:lock.*/state` refuses switching
 a lock. An allow on a part grants only the part.
 
-`hactl policy show` prints what each rule ends up meaning (`expanded` in
-`--json`), and the manual's reference has the full table of which verbs apply
-where. If you write a verb that can change nothing where you put it
+**The no-renames rule is `deny "entity:*/registry/entity_id": [edit]`.**
+With `[write]` it also refuses deleting and creating every entity, because
+deleting an entity deletes its entity_id: `auto delete` and `helper delete`
+are then refused, whatever you allow. `policy lint` reports each allow such a
+deny overrides as `blocked-by-part`.
+
+`hactl policy show` prints what each rule ends up meaning (after a `write`,
+`→ [edit create delete]`; `expanded` in `--json`), and the manual's reference
+has the full table of which verbs apply where. If you write a verb that can change nothing where you put it
 (`"entity:*/registry/labels": [control]`), the file still loads, and
 `policy lint` tells you (`verb-not-applicable`).
 
@@ -257,6 +279,28 @@ With only one of the two, `policy lint` warns (`half-protected`) and names the
 address you are missing. Scripts, helpers and template entities work the same
 way.
 
+### Protecting one dashboard view
+
+`dash save` checks each view it changes: editing view `secret` of dashboard
+`main` is `edit dashboard:main/views/secret`, adding it `create`, removing it
+`delete`. A change outside the views, such as the title, is checked on the
+dashboard as a whole, so any view deny refuses it. Choose the verbs by what
+you want to keep:
+
+- `deny "dashboard:main/views/secret": [edit]` stops changes to the view, but
+  not removing it (or adding it back) when the profile allows `create` or
+  `delete` on `dashboard:main` — those grant the views too.
+- `deny "dashboard:main/views/secret": [write]` stops that as well, but a deny
+  that holds `create` and `delete` on a view also holds them on the dashboard
+  (deleting the dashboard deletes the view), so `main` can then be neither
+  deleted nor created. `policy lint` says so (`blocked-by-part`).
+
+The first `dash save` on a dashboard nothing is stored for yet (right after
+`dash create`) creates the views it brings, so `create` on those views is what
+it needs; anything else in it, such as a title, needs `edit` on the dashboard.
+
+### Switching typed entries
+
 **`control` on an automation, script, helper or template address itself is
 only ever denied, never granted.** `allow "automation:pg_*": [control]` lets
 nothing be switched: switching is allowed on the entity
@@ -287,6 +331,10 @@ reports:
 - `verb-not-applicable`: a verb that cannot apply where the rule points;
 - `no-effect`: an allow of `control` on an automation, helper or template
   address, which never grants anything;
+- `blocked-by-part`: an allow whose `create` or `delete` (or another verb) a
+  deny on a part always refuses — such as `allow "entity:automation.pg_*":
+  [delete]` with `deny "entity:*/registry/entity_id": [write]`; the message
+  names both rules and, where it helps, the narrower deny (`[edit]`);
 - `self-grant`: a `where:` allow the agent could satisfy itself;
 - `half-protected`: a deny on an automation's config without its entity, or
   the other way round.
@@ -384,7 +432,8 @@ A few things worth knowing:
 - **A rewritten file is also checked as what is in it.** `ref replace` (and
   `ent rename`) reads each file it would rewrite to see which automation,
   script or template entity every change lies in, and needs `edit` on that
-  entry's config as well as on the file. If hactl cannot read the file, or
+  entry's config as well as on the file, so one denied entry in the file
+  refuses the whole replace. If hactl cannot read the file, or
   cannot find the change in it, the rewrite is refused rather than checked as
   the file alone. A change in a part of the file that other entries share —
   a YAML anchor (`&x`) another automation refers to with `*x` or `<<: *x` —
