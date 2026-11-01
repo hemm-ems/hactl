@@ -525,16 +525,18 @@ companion DELETE /v1/config/automation = proven: TestEveryWriteRequestHasAMappin
 # map: create helper:{?domain}/{the body's single top-level key}.
 companion POST /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 
-# map: delete helper:{domain}/{id}. While a profile is in effect `helper
-# delete` sends the &domain= its plan checked (the domain the companion's GET
-# resolved); without one the request stays domain-less, as before (D-58). A
+# map: delete helper:{domain}/{id}. `helper delete` sends the &domain= its
+# plan checked (the domain the companion's GET resolved) — always, with or
+# without a profile (D-123, which supersedes D-92's profile-only domain). A
 # domain-less mutating helper request is unmapped, refused.
 companion DELETE /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 
 # (PUT /v1/config/helper, PUT /v1/config/file, PUT /v1/config/template,
 # POST /v1/ha/reload/{domain}, GET /v1/config/templates|scripts|automations:
 # no rows — their client methods have no product caller and are deleted in
-# phase 2, D-81. The companion's implicit reload inside its own write routes
+# phase 2, D-81. GET /v1/config/templates comes back with `policy lint`'s
+# template enumeration (D-116): its row — read-deferred-phase3, a listing —
+# its classifier row and its vector arrive in the same change as the call. The companion's implicit reload inside its own write routes
 # is not a request hactl sends and is not checked; documented.)
 
 # map: edit system:wireguard (the tunnel is not addressable).

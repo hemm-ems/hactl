@@ -51,7 +51,21 @@ profile: agent (selected by active)
 ```
 
 The exit code is the answer: `0` allowed, `1` denied. Every answer names the
-rule that decided it.
+rule that decided it. To ask about every kind of change at once, use `write`:
+
+```console
+$ hactl policy check entity:light.sofa write
+denied: entity:light.sofa write
+control: allowed — allow "entity:light.*" [control] (line 8)
+edit: denied — default: deny
+create: denied — default: deny
+delete: denied — default: deny
+profile: agent (selected by active)
+enforced: a write command refuses what this verdict denies
+```
+
+It answers each write verb that can apply to that resource and exits `0` only
+if all of them are allowed.
 
 Finally, run `hactl policy lint` against your live instance to catch typos (see
 [Checking a policy](#checking-a-policy)).
@@ -118,7 +132,22 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 | `create` | make something new | `auto create`, `area create` |
 | `delete` | remove it | `auto delete` |
 
-`write` is shorthand for `control, edit, create, delete`.
+`write` is shorthand for `control, edit, create, delete` — **as far as they
+apply where the rule points.** A verb applies to a resource only if some hactl
+command can ask for it there: nothing ever "switches" a registry field or
+creates an attribute. So `"entity:*/registry/entity_id": [write]` — the natural
+"no renames" rule — means `edit` only, and leaves switching lights alone, while
+`"entity:lock.*": [write]` covers everything you can do to a lock.
+`hactl policy show` prints what each rule ends up meaning (`expanded` in
+`--json`), and the manual's reference has the full table of which verbs apply
+where.
+
+A few addresses take no write at all — an entity's `state` and `attr/…`, a
+file's `block/…`, a dashboard's `resources`. A deny there protects nothing from
+changes: to stop switching a lock, deny `entity:lock.*` itself, not
+`entity:lock.*/state`. If you write a verb that cannot apply where you put it
+(`"entity:*/registry/labels": [control]`), the file still loads, and
+`policy lint` tells you (`verb-not-applicable`).
 
 ### Matching
 
@@ -152,7 +181,8 @@ else about the entity.
 denied, like the latitude attribute in the example above. Then:
 
 - **changing** the whole entity is denied, because it would touch the denied
-  part;
+  part — counting only denies whose verb can apply where they sit, so a deny
+  on a registry field never blocks switching the entity;
 - **reading** it is allowed, and the answer lists the denied part:
 
 ```console
@@ -179,6 +209,60 @@ The check runs against the live instance every time. If you move a lamp into
 the living room, the allow applies to it at once. If Home Assistant cannot be
 reached, the narrowed allow does not apply.
 
+When a narrowed allow matched but its area or label did not hold, a denial says
+so instead of just `default: deny`:
+
+```console
+$ hactl policy check entity:input_boolean.pg_guest control
+denied: entity:input_boolean.pg_guest control
+rule: default: deny
+where not met: allow "entity:*.pg_*" [control] where label=pg_core_label (line 9) — input_boolean.pg_guest has no label pg_core_label
+profile: agent (selected by active)
+```
+
+Two things to watch:
+
+- **A misspelt area or label denies everything the allow was meant to grant.**
+  `policy lint` looks every `where:` value up in your areas and labels and
+  reports one that matches nothing.
+- **Don't let the agent satisfy its own `where:`.** If the same profile lets it
+  edit labels (`"entity:*/registry/labels": [edit]`) on the entities a
+  `where: {label: …}` allow covers, it can add the label and then use the
+  allow. The same goes for areas, including a device's area. `policy lint`
+  reports this as `self-grant` and names both rules. The policy is a guardrail
+  and does not stop it; close it by denying that field edit on those entities.
+
+`where:` cannot exclude anything: there is no "everything except". To keep one
+domain out of a wildcard allow such as `entity:*.pg_*`, list the domains you
+mean (`entity:light.pg_*`, `entity:switch.pg_*`, …).
+
+### Protecting one automation
+
+An automation has two addresses: its config (`automation:<config id>`, what
+`auto apply`, `auto delete` and switching it check) and its entity
+(`entity:automation.<object id>`, what renaming, relabelling, moving and
+disabling it check). For an automation made in the UI the two ids differ.
+`hactl auto ls --json` shows both: `id` is the entity's object id, `config_id`
+the config id.
+
+```yaml
+    deny:
+      "automation:pg_v9_auto_1":               [write]   # its config
+      "entity:automation.pg_v9_verify_auto":   [write]   # its entity
+```
+
+With only one of the two, `policy lint` warns (`half-protected`) and names the
+address you are missing. Scripts, helpers and template entities work the same
+way.
+
+**`control` on an automation, script, helper or template address itself is
+only ever denied, never granted.** `allow "automation:pg_*": [control]` lets
+nothing be switched: switching is allowed on the entity
+(`entity:automation.pg_*`) and the service. `policy lint` reports such an allow
+as `no-effect` (a `script:<id>` allow is the exception: it also grants the
+script's `run`), and `policy check` adds a note when an allow decided `control`
+on one of these addresses.
+
 ## Checking a policy
 
 | Command | What it tells you |
@@ -197,12 +281,21 @@ reports:
 - `unreachable`: an allow that a deny always overrides;
 - `redundant-allow`: an allow in a profile without `default: deny`, where it
   changes nothing;
-- `implicit-allow-all`: profiles exist, but none is in effect.
+- `implicit-allow-all`: profiles exist, but none is in effect;
+- `verb-not-applicable`: a verb that cannot apply where the rule points;
+- `no-effect`: an allow of `control` on an automation, helper or template
+  address, which never grants anything;
+- `self-grant`: a `where:` allow the agent could satisfy itself;
+- `half-protected`: a deny on an automation's config without its entity, or
+  the other way round.
 
-Some things lint cannot check yet: template, helper, config_entry and file ids,
-and dashboard view paths. It lists them as **unchecked** and exits 1, so a
-partial check never passes as clean. `--allow-partial` accepts the unchecked
-entries but still lists them.
+Lint checks ids against your instance: entities, devices, areas, floors,
+labels, automations, scripts, dashboards, services, helpers (YAML and the ones
+made in the UI), template entities and config entries, and every `where:`
+value against your areas and labels. Some things it cannot check: file paths,
+dashboard view paths and file blocks. It lists them as **unchecked** and exits
+1, so a partial check never passes as clean. `--allow-partial` accepts the
+unchecked entries but still lists them.
 
 All three commands support `--json`.
 
@@ -222,9 +315,13 @@ policy_denied: would rename "light.old" to "light.new" — refused by policy, no
   denied: edit dashboard:security — deny "dashboard:security" [write] (line 16)
   checked: 41 resources, 2 denied
   profile: agent (selected by active)
+  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
 ```
 
-The exit code is `1`. With `--json` you get the same as one object: the usual
+The exit code is `1`, and stderr gets a one-line count,
+`policy_denied: 2 of 41 resources denied (profile agent)`. The `hint:` line
+says what kind of refusal it is: a rule you wrote (and which line), nothing
+allowing it under `default: deny`, or something hactl could not check. With `--json` you get the same as one object: the usual
 preview object with `"ok": false`, `"error": "policy_denied"`, and the denied
 list under `details.policy.denied`. If one of 40 files is denied, none of the
 40 is written. (One narrow gap: a file that starts containing the old name in
@@ -299,8 +396,9 @@ A few things worth knowing:
   only `registry/labels`, `dash save` checks each changed view. But a change
   hactl can only address as a whole is refused by any denied part, even one it
   does not touch: with one view of a dashboard denied, changing the
-  dashboard's title is refused, and with one block of a file denied,
-  `ref replace` cannot edit that file at all.
+  dashboard's title is refused. A file's `block/…` is never written on its
+  own, so a deny there does not stop `ref replace` from editing the file —
+  deny the file, or the automation, script or template in it.
 - **Looking at a config flow counts as stepping it.** Asking Home Assistant
   for a flow's current state runs its current step, which can finish the flow,
   so `config flow-inspect` is checked like `config flow-step`.
@@ -333,8 +431,12 @@ with its line:
 
 ```console
 $ hactl policy check entity:light.sofa control
-policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write)
+policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?
+policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it
 ```
+
+The same lines appear in `policy show`, `policy lint` and every refused
+command, and the last one tells an agent that the fix is yours.
 
 `policy show` and `policy lint` still run and list every problem. **Every
 other command refuses until the file is fixed**, reads and `setup` included,
@@ -354,5 +456,6 @@ hactl never writes `policy.yaml`. There is no command for it. The file is yours.
 ---
 
 For the exact rules, every `--json` field and edge cases, see the
-[manual](manual.md#policy-permission-guardrail). For why each choice was made,
-see `docs/decisions.md`, rows D-51 to D-82.
+[manual's reference](manual.md#policy-reference) (`hactl rtfm --reference
+policy` prints it). For why each choice was made,
+see `docs/decisions.md`, rows D-51 onward.
