@@ -8,7 +8,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/surfaceaudit"
 )
 
-func policyKeys(t *testing.T, files map[string]string) []string {
+func sourceRequestKeys(t *testing.T, files map[string]string) []string {
 	t.Helper()
 	sites, err := surfaceaudit.PolicyRequestsFromSource(files)
 	if err != nil {
@@ -28,7 +28,7 @@ func policyKeys(t *testing.T, files map[string]string) []string {
 // see each shape, including the five direct WriteJSON sends a hook in
 // sendCommand alone would miss.
 func TestPolicyRequestExtractorSeesEverySendShape(t *testing.T) {
-	got := policyKeys(t, map[string]string{
+	got := sourceRequestKeys(t, map[string]string{
 		"internal/haapi/ws.go": `package haapi
 func (ws *WSClient) Remove(ctx context.Context, id string) error {
 	_, err := ws.sendCommand(ctx, "config/entity_registry/remove", map[string]any{"entity_id": id})
@@ -95,10 +95,32 @@ func (c *Client) Del(ctx context.Context, id string) {
 	}
 }
 
+// TestPolicyRequestExtractorFollowsABuildersHelper — a request builder may
+// delegate to a helper (`doGet` → `send` → http.NewRequest): a helper only the
+// builders call builds no request of its own, so the builders' callers stay the
+// sites and the extractor does not refuse.
+func TestPolicyRequestExtractorFollowsABuildersHelper(t *testing.T) {
+	sites, err := surfaceaudit.PolicyRequestsFromSource(map[string]string{"internal/companion/x.go": `package companion
+func (c *Client) Health(ctx context.Context) ([]byte, error) { return c.doGet(ctx, "/v1/health", nil) }
+func (c *Client) doGet(ctx context.Context, path string, q url.Values) ([]byte, error) { return c.send(ctx, "GET", path) }
+func (c *Client) send(ctx context.Context, method, path string) ([]byte, error) {
+	_, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	return nil, err
+}
+`})
+	if err != nil {
+		t.Fatalf("a builder's own helper was refused: %v", err)
+	}
+	if len(sites) != 1 || sites[0].Key != "companion GET /v1/health" {
+		t.Errorf("sites %v, want exactly companion GET /v1/health", sites)
+	}
+}
+
 // TestPolicyRequestExtractorRefusesWhatItCannotName — a send whose request no
 // site can name is an error, never a silent omission: a dynamic websocket type
-// outside the generic sender, a direct WriteJSON of no literal type, and an
-// HTTP request built outside the request builders.
+// outside the generic sender, a direct WriteJSON of no literal type, an HTTP
+// request built outside the request builders, and one built in a builder's
+// helper that a non-builder calls too.
 func TestPolicyRequestExtractorRefusesWhatItCannotName(t *testing.T) {
 	for name, src := range map[string]map[string]string{
 		"a dynamic websocket type": {"internal/haapi/x.go": `package haapi
@@ -109,6 +131,14 @@ func (ws *WSClient) Raw(t string) error { return ws.conn.WriteJSON(map[string]an
 `},
 		"an HTTP request built outside the builders": {"internal/cmd/x.go": `package cmd
 func sneak(ctx context.Context) { http.NewRequestWithContext(ctx, "POST", "http://ha/api/services/lock/unlock", nil) }
+`},
+		"a builder's helper that a non-builder also calls": {"internal/companion/x.go": `package companion
+func (c *Client) doGet(ctx context.Context, path string, q url.Values) ([]byte, error) { return c.send(ctx, "GET", path) }
+func (c *Client) Bypass(ctx context.Context) ([]byte, error) { return c.send(ctx, "POST", "/v1/anything") }
+func (c *Client) send(ctx context.Context, method, path string) ([]byte, error) {
+	_, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	return nil, err
+}
 `},
 	} {
 		_, err := surfaceaudit.PolicyRequestsFromSource(src)

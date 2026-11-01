@@ -1,10 +1,10 @@
-//go:build p2a_contract
-
 // Stage-2a: the H-29 closure gate over dev/surfaces/policy.manifest, and the
 // derived write-command census it is fed (D-80, R-17), written from the
 // contract before either exists.
 //
-// WIRING. Built only with `-tags p2a_contract`. It needs two things the
+// WIRING (integrated 2026-11-01). Untagged now: surfaceaudit.PolicySurface
+// and the derived policyCommandCensus (surface_policy_test.go) are real.
+// History: built only with `-tags p2a_contract`. It needs two things the
 // integrator builds: surfaceaudit.PolicySurface (stubbed in
 // internal/surfaceaudit/policy_stub_p2a.go) and policyCommandCensus (stubbed in
 // surface_policy_stub_p2a_test.go). Until then:

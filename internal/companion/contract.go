@@ -58,3 +58,18 @@ var Endpoints = []Endpoint{
 	{"GET", "/v1/wireguard/status", &WireGuardStatusResponse{}},
 	{"GET", "/v1/logs", &LogsResponse{}},
 }
+
+// NeverCalledSpecPaths are the vendored spec's routes hactl deliberately never
+// calls (D-81). Their client methods had no product caller and were deleted in
+// phase 2 of the permission policy: a method nobody calls is a policy mapping
+// nobody exercises. The routes stay in the companion and in the vendored spec,
+// so H-3's spec drift is unaffected. A path listed here that the client calls
+// again, or that leaves the spec, fails TestEndpointsCoverSpecPaths. It sits
+// beside Endpoints so the unit tier and the companion tier
+// (TestSpecPathCountMatchesClient) read one list, never two (TC-7).
+var NeverCalledSpecPaths = map[string]string{
+	"/v1/config/templates":   "no command lists the companion's template definitions; one is read with GET /v1/config/template",
+	"/v1/config/scripts":     "no command lists the companion's script definitions; one is read with GET /v1/config/script",
+	"/v1/config/automations": "no command lists the companion's automation definitions; one is read with GET /v1/config/automation",
+	"/v1/ha/reload/{domain}": "the companion reloads inside its own write routes, and the reloads hactl sends itself are HA service calls",
+}

@@ -1,10 +1,9 @@
-//go:build p2a_contract
-
 // Stage-2a tests for the H-29 closure gate's extractor (PolicySurface), written
 // from the contract (dev/surfaces/policy.manifest header, INVARIANTS.md H-29,
 // D-80, D-81) before the extractor exists.
 //
-// WIRING. Built only with `-tags p2a_contract`; until the extractor lands they
+// WIRING (integrated 2026-11-01). Untagged now, against the real
+// surfaceaudit.PolicySurface. History: built only with `-tags p2a_contract`; until the extractor lands they
 // compile against internal/surfaceaudit/policy_stub_p2a.go (`-tags p2a_stub`)
 // and fail:
 //

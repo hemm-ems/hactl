@@ -2249,11 +2249,18 @@ cited below):**
   extractor error, and the command set is the `--confirm` commands plus every
   Run that reaches a write sink over the product's SSA call graph; the
   request lines are also held in lockstep with the classifier's row table
-  (`internal/policy/reqmap`) and with `companion.Endpoints`.
+  (`internal/policy/reqmap`) and with `companion.Endpoints`
+  (`TestPolicyManifestIsInLockstepWithTheClassifier`), and the command census
+  is checked to hold every `--confirm` command plus config show, config
+  flow-inspect, cache clear|refresh, mcp and setup, and none of six read
+  commands (`TestPolicyCommandCensusFindsEveryWriter`).
 - `TestEveryWriteRequestHasAMapping`: table-driven, one case per mapped write
   row — the request in, the `(resource, verb)` set out; plus the whole-path
   vectors (a dot segment, `%2F`, a placeholder absorbing two segments →
-  refused).
+  refused). BUILT in stage 2a: the vectors
+  (`testdata/policy/requests/vectors.json`, `dashboard_diff.json`) were
+  written from the contract before the classifier existed, and
+  `TestEveryPolicyRequestRowHasAVector` holds them to the manifest both ways.
 - `TestUnmappedMutatingRequestIsRefused`: under a named profile, a websocket
   type and a POST no row names are refused at the hook, with nothing sent;
   with no profile the same requests are sent unchanged (D-58).
@@ -2290,7 +2297,15 @@ must go red on exactly that command.
   `haapi` without a line went red as unclassified; a read command made to
   reach a registry remove went red as a new write command; a manifest line
   removed went red as a classifier row without a line):
-  TestPolicySurfaceIsClosed. The request mapping, row by row:
-  TestClassifyWriteRequests, TestServiceCallMapping, TestDashboardSaveMapping,
-  TestDiffDashboard, TestWholePathRule, TestUnmappedRequests,
-  TestEveryRowHasAVector.
+  TestPolicySurfaceIsClosed, TestPolicyManifestIsInLockstepWithTheClassifier,
+  TestPolicyCommandCensusFindsEveryWriter; the extractor on fixture trees
+  (each family injected goes red as exactly one unclassified site; a deleted
+  site goes red as stale; test rigs stay out): TestPolicyGateFailsOnANewSite,
+  TestPolicyGateFailsOnAStaleRow, TestPolicyExtractorLeavesOutTestInfrastructure,
+  TestPolicyExtractorFindsEveryFamily. The request mapping, row by row, from
+  vectors written before the classifier (watched to fail against a stub, and
+  against the classifier with the D-72 policy-hash check removed):
+  TestEveryWriteRequestHasAMapping, TestRedirectHopIsMappedAgain,
+  TestDashboardViewDiff; and the implementer's own: TestClassifyWriteRequests,
+  TestServiceCallMapping, TestDashboardSaveMapping, TestDiffDashboard,
+  TestWholePathRule, TestUnmappedRequests, TestEveryRowHasAVector.

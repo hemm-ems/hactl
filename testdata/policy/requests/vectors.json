@@ -275,7 +275,7 @@
   },
   {
    "id": "ws-extract-from-target",
-   "why": "the policy check's own oracle (D-59)",
+   "why": "the policy check's own oracle (D-59). PLANNED for stage 2b: no product code sends it yet, so the manifest has no line for it (its header: the line lands with the method) and the classifier no row; until then it is unmapped and refused like any websocket type no row names. Stage 2b adds the method, the row and the line, and flips this vector to exempt / row ws extract_from_target",
    "request": {
     "transport": "ws",
     "message": {
@@ -289,8 +289,9 @@
     }
    },
    "expect": {
-    "disposition": "exempt",
-    "row": "ws extract_from_target"
+    "disposition": "unmapped",
+    "row": "",
+    "refused": true
    },
    "facts_ref": "house"
   },

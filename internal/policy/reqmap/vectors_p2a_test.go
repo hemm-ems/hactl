@@ -1,5 +1,3 @@
-//go:build p2a_contract
-
 // Stage-2a request-mapping tests for H-29, written from the contract only
 // (dev/surfaces/policy.manifest, INVARIANTS.md H-29, docs/manual.md
 // "#### Enforcement (writes)", D-59, D-66, D-72..D-84) before any classifier
@@ -7,7 +5,10 @@
 // more per ws/rest/companion manifest row, plus negative vectors) and
 // testdata/policy/requests/dashboard_diff.json.
 //
-// WIRING. This file is built only with `-tags p2a_contract`. Until the
+// WIRING (integrated 2026-11-01). The build tag and the contract stub are gone;
+// the ADAPTER section below translates the vectors to the real API
+// (reqmap.Classify(Request, *Facts), reqmap.DiffDashboard) and nothing else.
+// History: this file was built only with `-tags p2a_contract`. Until the
 // classifier lands it compiles against the contract stub
 // (internal/policy/reqmap/contract_stub_p2a.go, `-tags p2a_stub`):
 //
@@ -21,6 +22,7 @@ package reqmap_test
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"os"
@@ -47,26 +49,56 @@ type got struct {
 	Reason      string
 }
 
+// The five dispositions, in the vectors' spelling.
+const (
+	dWrite        = "write"
+	dReadDeferred = "read-deferred"
+	dExempt       = "exempt"
+	dUnmapped     = "unmapped"
+	dUnmappable   = "unmappable"
+)
+
+func dispositionName(d reqmap.Disposition) string {
+	switch d {
+	case reqmap.Write:
+		return dWrite
+	case reqmap.ReadDeferred:
+		return dReadDeferred
+	case reqmap.Exempt:
+		return dExempt
+	case reqmap.Unmapped:
+		return dUnmapped
+	case reqmap.Unmappable:
+		return dUnmappable
+	}
+	return d.String()
+}
+
 func classify(t *testing.T, r vecRequest, f vecFacts) got {
 	t.Helper()
-	res := reqmap.Classify(r.build(t), f.build(t))
+	facts := f.build(t)
+	res := reqmap.Classify(r.build(t), &facts)
+	reason := res.Rule
+	if res.Detail != "" {
+		reason += ": " + res.Detail
+	}
 	return got{
 		Row:         res.Row,
-		Disposition: string(res.Disposition),
+		Disposition: dispositionName(res.Disposition),
 		Checks:      normChecks(res.Checks),
-		Reason:      res.Reason,
+		Reason:      reason,
 	}
 }
 
 func dashboardDiff(urlPath string, stored, updated json.RawMessage) ([]string, error) {
-	cs, err := reqmap.DashboardDiff(urlPath, stored, updated)
+	cs, err := reqmap.DiffDashboard(urlPath, stored, updated)
 	return normChecks(cs), err
 }
 
 func normChecks(cs []reqmap.Check) []string {
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
-		s := c.Verb.String() + " " + c.Resource.String()
+		s := c.String()
 		if c.KindWide {
 			s += " kind_wide"
 		}
@@ -78,7 +110,21 @@ func normChecks(cs []reqmap.Check) []string {
 
 func (r vecRequest) build(t *testing.T) reqmap.Request {
 	t.Helper()
-	req := reqmap.Request{Transport: reqmap.Transport(r.Transport), Method: r.Method, Path: r.Path, Message: r.Message}
+	req := reqmap.Request{Transport: reqmap.Transport(r.Transport), Method: r.Method, Path: r.Path}
+	if r.Message != nil {
+		req.Params = map[string]any{}
+		for k, v := range r.Message {
+			if k == "type" {
+				typ, ok := v.(string)
+				if !ok {
+					t.Fatalf("vector request: message type %v is not a string", v)
+				}
+				req.Type = typ
+				continue
+			}
+			req.Params[k] = v
+		}
+	}
 	switch {
 	case r.JSON != nil:
 		req.Body = []byte(r.JSON)
@@ -91,46 +137,98 @@ func (r vecRequest) build(t *testing.T) reqmap.Request {
 func (f vecFacts) build(t *testing.T) reqmap.Facts {
 	t.Helper()
 	out := reqmap.Facts{
-		PolicyHash:            f.PolicyHash,
-		LiveEntities:          f.LiveEntities,
-		DashboardConfigs:      f.DashboardConfigs,
-		DashboardIDs:          f.DashboardIDs,
-		VerifiedAutomationIDs: f.VerifiedAutomationIDs,
-		OptionsFlowHandlers:   f.OptionsFlowHandlers,
+		PolicyHash:          f.PolicyHash,
+		DashboardIDs:        f.DashboardIDs,
+		OptionsFlowHandlers: f.OptionsFlowHandlers,
 	}
-	for _, e := range f.Registry.Entities {
-		out.Registry.Entities = append(out.Registry.Entities, reqmap.RegistryEntity{
-			EntityID: e.EntityID, UniqueID: e.UniqueID, Platform: e.Platform, DeviceID: e.DeviceID,
+	if f.LiveEntities != nil {
+		out.Live = &reqmap.LiveStates{EntityIDs: f.LiveEntities}
+	}
+	if f.DashboardConfigs != nil {
+		out.Dashboards = map[string]reqmap.StoredDashboard{}
+		for u, cfg := range f.DashboardConfigs {
+			sd := reqmap.StoredDashboard{}
+			if len(cfg) > 0 && string(cfg) != "null" {
+				sd.Config = cfg
+			}
+			out.Dashboards[u] = sd
+		}
+	}
+	if f.VerifiedAutomationIDs != nil {
+		out.VerifiedAutomationIDs = map[string]bool{}
+		for _, id := range f.VerifiedAutomationIDs {
+			out.VerifiedAutomationIDs[id] = true
+		}
+	}
+	reg := f.Registry
+	if reg.Entities != nil || reg.Devices != nil || reg.Areas != nil {
+		out.Registries = &reqmap.Registries{}
+	}
+	for _, e := range reg.Entities {
+		out.Registries.Entities = append(out.Registries.Entities, reqmap.RegistryEntity{
+			EntityID: e.EntityID, UniqueID: e.UniqueID,
 			AreaID: deref(e.AreaID), Labels: e.Labels, ConfigEntryID: e.ConfigEntryID,
 		})
 	}
-	for _, d := range f.Registry.Devices {
-		out.Registry.Devices = append(out.Registry.Devices, reqmap.RegistryDevice{
+	for _, d := range reg.Devices {
+		out.Registries.Devices = append(out.Registries.Devices, reqmap.RegistryDevice{
 			ID: d.ID, AreaID: deref(d.AreaID), Labels: d.Labels, ConfigEntries: d.ConfigEntries,
 		})
 	}
-	for _, a := range f.Registry.Areas {
-		out.Registry.Areas = append(out.Registry.Areas, reqmap.RegistryArea{
-			AreaID: a.AreaID, FloorID: a.FloorID, Labels: a.Labels,
+	for _, a := range reg.Areas {
+		out.Registries.Areas = append(out.Registries.Areas, reqmap.RegistryArea{
+			ID: a.AreaID, FloorID: a.FloorID, Labels: a.Labels,
 		})
 	}
 	if f.Reach != nil {
-		out.Reach = &reqmap.Reach{Entities: f.Reach.Entities, Err: f.Reach.Error}
+		out.Reach = &reqmap.Reach{EntityIDs: f.Reach.Entities}
+		if f.Reach.Error != "" {
+			out.Reach.Err = errors.New(f.Reach.Error)
+		}
 	}
 	for _, p := range f.RefReplacePlans {
-		plan := reqmap.RefReplacePlan{Old: p.Old, New: p.New, PolicyHash: p.PolicyHash}
-		for _, c := range p.Checks {
-			r, err := policy.ParseResource(c.Resource)
-			if err != nil {
-				t.Fatalf("vector fact: plan resource %q: %v", c.Resource, err)
-			}
-			v, err := policy.ParseVerb(c.Verb)
-			if err != nil {
-				t.Fatalf("vector fact: plan verb %q: %v", c.Verb, err)
-			}
-			plan.Checks = append(plan.Checks, reqmap.Check{Resource: r, Verb: v})
+		out.RefReplacePlans = append(out.RefReplacePlans, reqmap.RefReplacePlan{
+			Old: p.Old, New: p.New, PolicyHash: p.PolicyHash, Changes: planChanges(t, p.Checks),
+		})
+	}
+	return out
+}
+
+// planChanges expresses a plan's checked (resource, verb) set as the changes
+// the real API takes: each `edit file:<path>` is a change in that file; each
+// `edit <automation|script|template>:<id>/config` is a change whose typed
+// owner is that entry, placed in the plan's first file. Any other check is a
+// vector this adapter cannot express.
+func planChanges(t *testing.T, checks []vecCheck) []reqmap.PlanChange {
+	t.Helper()
+	var files []string
+	var owners []policy.Resource
+	for _, c := range checks {
+		r, err := policy.ParseResource(c.Resource)
+		if err != nil {
+			t.Fatalf("vector fact: plan resource %q: %v", c.Resource, err)
 		}
-		out.RefReplacePlans = append(out.RefReplacePlans, plan)
+		if c.Verb != "edit" || c.KindWide {
+			t.Fatalf("vector fact: plan check %v is not an edit the adapter can express", c)
+		}
+		switch {
+		case r.Kind == policy.KindFile:
+			files = append(files, r.ID)
+		case (r.Kind == policy.KindAutomation || r.Kind == policy.KindScript || r.Kind == policy.KindTemplate) && r.Sub == "config":
+			owners = append(owners, r)
+		default:
+			t.Fatalf("vector fact: plan check %v is not an edit the adapter can express", c)
+		}
+	}
+	out := make([]reqmap.PlanChange, 0, len(files)+len(owners))
+	for _, f := range files {
+		out = append(out, reqmap.PlanChange{Location: f})
+	}
+	for _, o := range owners {
+		if len(files) == 0 {
+			t.Fatalf("vector fact: plan owner %v without a file", o)
+		}
+		out = append(out, reqmap.PlanChange{Location: files[0], Owner: &reqmap.TypedOwner{Kind: o.Kind, ID: o.ID}})
 	}
 	return out
 }
@@ -324,9 +422,9 @@ func (vf requestVectorFile) factsFor(t *testing.T, ref string, own map[string]js
 // unmapped GET is still sent in phase 2.
 func refusedInPhase2(g got, r vecRequest) bool {
 	switch g.Disposition {
-	case string(reqmap.Unmappable):
+	case dUnmappable:
 		return true
-	case string(reqmap.Unmapped):
+	case dUnmapped:
 		return r.Transport == "ws" || r.Method != http.MethodGet
 	}
 	return false
@@ -379,7 +477,7 @@ func assertExpectation(t *testing.T, v requestVector, g got) {
 	if e.Row != nil && g.Row != *e.Row {
 		t.Errorf("%s:\n row %q, want %q", v.Why, g.Row, *e.Row)
 	}
-	if e.Disposition == string(reqmap.Write) {
+	if e.Disposition == dWrite {
 		if want := wantChecks(e.Checks); !slices.Equal(g.Checks, want) {
 			t.Errorf("%s:\n checks\n  %s\n want\n  %s\n missing %v\n extra   %v", v.Why,
 				strings.Join(g.Checks, "\n  "), strings.Join(want, "\n  "),
@@ -401,26 +499,26 @@ func assertExpectation(t *testing.T, v requestVector, g got) {
 func assertShape(t *testing.T, g got) {
 	t.Helper()
 	switch g.Disposition {
-	case string(reqmap.Unmapped):
+	case dUnmapped:
 		if g.Row != "" {
 			t.Errorf("an unmapped request names row %q", g.Row)
 		}
-	case string(reqmap.Write), string(reqmap.ReadDeferred), string(reqmap.Exempt):
+	case dWrite, dReadDeferred, dExempt:
 		if g.Row == "" {
 			t.Errorf("a %s answer names no manifest row", g.Disposition)
 		}
-	case string(reqmap.Unmappable):
+	case dUnmappable:
 	default:
 		t.Errorf("disposition %q is none of the five", g.Disposition)
 	}
-	if g.Disposition == string(reqmap.ReadDeferred) {
+	if g.Disposition == dReadDeferred {
 		for _, c := range g.Checks {
 			if !strings.HasPrefix(c, "read ") {
 				t.Errorf("read row %q carries a write check %q", g.Row, c)
 			}
 		}
 	}
-	if g.Disposition == string(reqmap.Exempt) && len(g.Checks) > 0 {
+	if g.Disposition == dExempt && len(g.Checks) > 0 {
 		t.Errorf("exempt row %q carries checks %v", g.Row, g.Checks)
 	}
 }
@@ -443,7 +541,7 @@ func TestRedirectHopIsMappedAgain(t *testing.T) {
 			if same != v.Same {
 				t.Errorf("%s:\n from %+v\n   to %+v\n maps the same = %v, want %v", v.Why, from, to, same, v.Same)
 			}
-			if v.Same && from.Disposition != string(reqmap.Write) {
+			if v.Same && from.Disposition != dWrite {
 				t.Errorf("%s: the pair is meant to be a mapped write, got %q", v.Why, from.Disposition)
 			}
 		})

@@ -6,9 +6,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"golang.org/x/tools/go/packages"
 
@@ -125,6 +128,62 @@ func PolicyRequestSites(root string) ([]Site, error) {
 	return requestSitesOf(reqs), nil
 }
 
+// testInfraDirs are the trees a source walk leaves out: test infrastructure,
+// never product, and imported by no non-test file (policy.manifest header).
+// Only [PolicySurface]'s fallback walk needs them; the binary's import closure
+// leaves them out by construction.
+var testInfraDirs = []string{"internal/hatest/", "internal/companiontest_discovery/"}
+
+// PolicySurface is H-29's whole site set over root: the request half derived
+// from the source and the command half handed in, one Site per write command
+// keyed by its cobra command path (`hactl area create`, the `cmd ` prefix
+// added when absent) — the census [PolicyCommandSites] derives. An empty census
+// is an error: it means the cobra walk or the call graph stopped matching, and
+// a surface built on it would pass forever proving nothing.
+//
+// The request half is [PolicyRequestSites] — the hactl binary's own import
+// closure — whenever root holds the binary (./cmd/hactl). A tree without it (a
+// fixture) is read by a walk of its non-test sources minus [testInfraDirs].
+func PolicySurface(root string, commands []Site) (Surface, error) {
+	if len(commands) == 0 {
+		return Surface{}, errors.New("the write-command census is empty — the cobra walk or the call graph has stopped matching")
+	}
+	var reqs []Site
+	if fi, err := os.Stat(filepath.Join(root, "cmd", "hactl")); err == nil && fi.IsDir() {
+		if reqs, err = PolicyRequestSites(root); err != nil {
+			return Surface{}, err
+		}
+	} else {
+		files, werr := scanSources(root)
+		if werr != nil {
+			return Surface{}, werr
+		}
+		files = slices.DeleteFunc(files, func(f srcFile) bool {
+			return slices.ContainsFunc(testInfraDirs, func(d string) bool { return strings.HasPrefix(f.rel, d) })
+		})
+		derived, derr := policyRequests(files)
+		if derr != nil {
+			return Surface{}, derr
+		}
+		reqs = requestSitesOf(derived)
+	}
+	if len(reqs) == 0 {
+		return Surface{}, errors.New("the request half is empty — the extractor has stopped matching the clients")
+	}
+	sites := slices.Clone(reqs)
+	for _, c := range commands {
+		if !strings.HasPrefix(c.Key, "cmd ") {
+			c.Key = "cmd " + c.Key
+		}
+		sites = append(sites, c)
+	}
+	return Surface{
+		Name:  "policy",
+		Rule:  "every request hactl sends carries a policy verdict, and every write command checks its whole plan before its first write (H-29)",
+		Sites: sites,
+	}, nil
+}
+
 // requestSitesOf collapses derived requests into one site per key, the note
 // naming every function that sends it.
 func requestSitesOf(reqs []requestSite) []Site {
@@ -164,6 +223,7 @@ func uniqueSorted(ss []string) []string {
 // send — a websocket type, a Supervisor endpoint or an HTTP request built where
 // no site can be named — is an error, never a silent omission.
 func policyRequests(files []srcFile) ([]requestSite, error) {
+	helpers := builderHelpers(files)
 	var out []requestSite
 	var errs []string
 	for _, f := range files {
@@ -181,6 +241,9 @@ func policyRequests(files []srcFile) ([]requestSite, error) {
 				}
 				line := f.fset.Position(call.Pos()).Line
 				where := fmt.Sprintf("%s:%d (%s)", f.rel, line, name)
+				if helpers[dir+"|"+name] && isHTTPConstructor(call) {
+					return true // a builder's own helper: the builder's callers are the sites
+				}
 				reqs, err := requestsOfCall(call, fn, name, dir)
 				if err != nil {
 					errs = append(errs, where+": "+err.Error())
@@ -243,6 +306,136 @@ func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string) ([]s
 		}
 	}
 	return nil, nil
+}
+
+// isHTTPConstructor reports whether a call is one of the net/http calls that
+// build or send a request.
+func isHTTPConstructor(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || pkg.Name != "http" {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "NewRequest", "NewRequestWithContext", "Get", "Post", "PostForm", "Head":
+		return true
+	}
+	return false
+}
+
+// builderHelpers returns the functions of the two client directories that a
+// request builder delegates to (`doGet` → `send` → http.NewRequest): every
+// function there whose callers — at least one — are all builders or such
+// helpers. A request built in one is sent only through a builder, whose callers
+// are the sites, so it names nothing new. A helper with any other caller is no
+// helper: a request it builds is refused like any other unnamed send. Keys are
+// `<dir>|<funcName>`; callers are matched by the called name within the same
+// directory.
+func builderHelpers(files []srcFile) map[string]bool {
+	declared := clientFuncs(files)
+	callers := clientCallers(files, declared)
+	allowed := map[string]bool{}
+	for dir, names := range declared {
+		for _, full := range names {
+			if isBuilder(dir, full) {
+				allowed[dir+"|"+full] = true
+			}
+		}
+	}
+	helpers := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for k, cs := range callers {
+			if !allowed[k] && onlyCalledBy(k, cs, allowed) {
+				allowed[k], helpers[k], changed = true, true, true
+			}
+		}
+	}
+	return helpers
+}
+
+// clientDirFuncs yields each function declaration with a body in the two
+// client directories, with its directory.
+func clientDirFuncs(files []srcFile, visit func(dir string, fn *ast.FuncDecl)) {
+	for _, f := range files {
+		dir := filepath.ToSlash(filepath.Dir(f.rel))
+		if dir != haapiDir && dir != companionDir {
+			continue
+		}
+		for _, decl := range f.ast.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+				visit(dir, fn)
+			}
+		}
+	}
+}
+
+// clientFuncs maps each client directory's bare function names to their
+// enclosingFunc spelling.
+func clientFuncs(files []srcFile) map[string]map[string]string {
+	declared := map[string]map[string]string{}
+	clientDirFuncs(files, func(dir string, fn *ast.FuncDecl) {
+		if declared[dir] == nil {
+			declared[dir] = map[string]string{}
+		}
+		declared[dir][fn.Name.Name] = funcName(fn)
+	})
+	return declared
+}
+
+// clientCallers maps `<dir>|<funcName>` to the functions of the same directory
+// that call it by name.
+func clientCallers(files []srcFile, declared map[string]map[string]string) map[string]map[string]bool {
+	callers := map[string]map[string]bool{}
+	clientDirFuncs(files, func(dir string, fn *ast.FuncDecl) {
+		caller := funcName(fn)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, isCall := n.(*ast.CallExpr)
+			if !isCall {
+				return true
+			}
+			callee, ok := declared[dir][calledName(call)]
+			if !ok || callee == caller {
+				return true
+			}
+			k := dir + "|" + callee
+			if callers[k] == nil {
+				callers[k] = map[string]bool{}
+			}
+			callers[k][caller] = true
+			return true
+		})
+	})
+	return callers
+}
+
+// calledName is the bare name a call names: `f(…)` or `x.f(…)`.
+func calledName(call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	}
+	return ""
+}
+
+// onlyCalledBy reports whether a function has callers and every one of them is
+// allowed.
+func onlyCalledBy(key string, callers, allowed map[string]bool) bool {
+	if len(callers) == 0 {
+		return false
+	}
+	dir, _, _ := strings.Cut(key, "|")
+	for c := range callers {
+		if !allowed[dir+"|"+c] {
+			return false
+		}
+	}
+	return true
 }
 
 // isBuilder reports whether a function is one of the request builders.
@@ -328,11 +521,38 @@ func httpKeys(tr reqmap.Transport, method string, call *ast.CallExpr, fn *ast.Fu
 		tmpl, _, _ = strings.Cut(tmpl, "?")
 		key, ok := reqmap.MatchTemplate(tr, method, tmpl)
 		if !ok {
-			key = string(tr) + " " + method + " " + tmpl
+			key = string(tr) + " " + method + " " + snakePlaceholders(tmpl)
 		}
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// snakePlaceholders spells every `{name}` of a template the way the manifest's
+// key grammar does — snake_case (`{thingID}` → `{thing_id}`) — so a site no row
+// names yet is reported in the grammar its new line has to use.
+func snakePlaceholders(tmpl string) string {
+	var b strings.Builder
+	inside := false
+	runes := []rune(tmpl)
+	for i, r := range runes {
+		switch {
+		case r == '{':
+			inside = true
+		case r == '}':
+			inside = false
+		case inside && unicode.IsUpper(r):
+			prevLower := i > 0 && (unicode.IsLower(runes[i-1]) || unicode.IsDigit(runes[i-1]))
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			prevUpper := i > 0 && unicode.IsUpper(runes[i-1])
+			if prevLower || (prevUpper && nextLower) {
+				b.WriteByte('_')
+			}
+			r = unicode.ToLower(r)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // exprTemplates renders a path expression as the templates it can take: a

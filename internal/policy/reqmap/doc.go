@@ -43,9 +43,12 @@
 // [Rows] is the row table. Its keys are exactly the request keys of
 // dev/surfaces/policy.manifest (`ws <type>`, `ws supervisor/api <METHOD>
 // <endpoint>`, `rest <METHOD> <template>`, `companion <METHOD> <route>`), and
-// TestPolicySurfaceIsClosed holds the two in lockstep with the requests the
-// source sends. A row added here without a manifest line, or the reverse, is a
-// red gate.
+// TestPolicyManifestIsInLockstepWithTheClassifier holds the two in lockstep,
+// and TestPolicySurfaceIsClosed holds the manifest to the requests the source
+// sends. A row added here without a manifest line, or the reverse, is a red
+// gate. TestEveryWriteRequestHasAMapping maps the request vectors
+// (testdata/policy/requests), written from the contract before this package
+// existed, one or more per row.
 //
 // Phase 2a builds the classifier only. Nothing calls it on a live request yet:
 // the hooks in sendCommand, the shared RoundTripper and companion.Client, the

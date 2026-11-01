@@ -153,6 +153,10 @@ func (r Result) Strings() []string {
 // loaded policy (D-72), that a mapping may rely on. Every field is optional;
 // a nil field means "not read in this invocation", never "empty".
 type Facts struct {
+	// PolicyHash is the content hash of the policy loaded for this
+	// invocation. A fact that carries its own hash (a checked ref/replace
+	// plan) authorises nothing under another hash (D-72, R-7).
+	PolicyHash string
 	// Live is the live entity set (GET /api/states). It classifies a service
 	// as one domain's entity service, expands `entity_id: all`, and decides
 	// which strings of a service call's data name an entity.
@@ -234,7 +238,11 @@ type StoredDashboard struct {
 // asked for and the changes it answered with.
 type RefReplacePlan struct {
 	Old, New string
-	Changes  []PlanChange
+	// PolicyHash is the content hash of the policy the plan was checked
+	// under; a plan checked under another hash than [Facts.PolicyHash]
+	// authorises nothing (D-72, R-7).
+	PolicyHash string
+	Changes    []PlanChange
 }
 
 // PlanChange is one change of a ref/replace plan.

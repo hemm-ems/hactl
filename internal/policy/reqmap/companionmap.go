@@ -243,7 +243,7 @@ func mapRefReplace(c *call) (mapping, error) {
 	if body.Old == nil || body.New == nil {
 		return mapping{}, errors.New("body needs both old and new")
 	}
-	plan := findPlan(c.fact().RefReplacePlans, *body.Old, *body.New)
+	plan := findPlan(c.fact().RefReplacePlans, c.fact().PolicyHash, *body.Old, *body.New)
 	if body.DryRun == nil || *body.DryRun {
 		m := mapping{fromResponse: true}
 		if plan != nil {
@@ -263,9 +263,12 @@ func mapRefReplace(c *call) (mapping, error) {
 	return mapping{checks: checks}, err
 }
 
-func findPlan(plans []RefReplacePlan, oldVal, newVal string) *RefReplacePlan {
+// findPlan returns the latest plan of {oldVal, newVal} checked under the
+// loaded policy's hash; a plan checked under another policy is no plan
+// (D-72, R-7).
+func findPlan(plans []RefReplacePlan, policyHash, oldVal, newVal string) *RefReplacePlan {
 	for i := len(plans) - 1; i >= 0; i-- {
-		if plans[i].Old == oldVal && plans[i].New == newVal {
+		if plans[i].Old == oldVal && plans[i].New == newVal && plans[i].PolicyHash == policyHash {
 			return &plans[i]
 		}
 	}

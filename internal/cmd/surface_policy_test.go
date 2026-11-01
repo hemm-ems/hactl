@@ -14,7 +14,6 @@ import (
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 	"github.com/hemm-ems/hactl/internal/surfaceaudit"
-	"github.com/hemm-ems/hactl/internal/testaudit"
 )
 
 // policyCommands walks the live cobra tree: every command, whether it carries
@@ -52,32 +51,22 @@ func policyCommands(t *testing.T) []surfaceaudit.PolicyCommand {
 	return out
 }
 
-// policySurface is H-29's whole site set: the requests the product's source
-// can send and the write commands of the live tree.
-func policySurface(t *testing.T, root string) surfaceaudit.Surface {
+// policyCommandCensus is the command half of H-29's surface, derived — never
+// hand-listed (D-80, R-17): every --confirm command of the live tree plus every
+// command whose Run reaches a write sink over the product's call graph
+// (surfaceaudit.PolicyCommandSites). One Site per write command, keyed by its
+// cobra command path (`hactl area create`); surfaceaudit.PolicySurface adds the
+// `cmd ` prefix.
+func policyCommandCensus(t *testing.T) []surfaceaudit.Site {
 	t.Helper()
-	reqs, err := surfaceaudit.PolicyRequestSites(root)
+	sites, err := surfaceaudit.PolicyCommandSites(surfaceRepoRoot(t), policyCommands(t))
 	if err != nil {
-		t.Fatalf("deriving the request half: %v", err)
+		t.Fatalf("deriving the policy command census: %v", err)
 	}
-	cmds, err := surfaceaudit.PolicyCommandSites(root, policyCommands(t))
-	if err != nil {
-		t.Fatalf("deriving the command half: %v", err)
+	for i := range sites {
+		sites[i].Key = strings.TrimPrefix(sites[i].Key, "cmd ")
 	}
-	// Both halves are censuses: in any tree that still contains the product
-	// neither can be empty, so an empty one means an extractor stopped
-	// matching and the gate would pass forever proving nothing.
-	if len(reqs) == 0 {
-		t.Fatal("the policy surface's request half is empty — the extractor has stopped matching the clients")
-	}
-	if len(cmds) == 0 {
-		t.Fatal("the policy surface's command half is empty — the cobra walk or the call graph has stopped matching")
-	}
-	return surfaceaudit.Surface{
-		Name:  "policy",
-		Rule:  "every request hactl sends carries a policy verdict, and every write command checks its whole plan before its first write (H-29)",
-		Sites: append(reqs, cmds...),
-	}
+	return sites
 }
 
 // manifestMaps reads the `# map:` comment above each manifest line: the
@@ -110,25 +99,23 @@ func manifestMaps(t *testing.T, path string) map[string]string {
 	return out
 }
 
-// TestPolicySurfaceIsClosed — H-29's closure gate over
-// dev/surfaces/policy.manifest.
-//
-// Every request the product can send — each sendCommand type and direct
-// conn.WriteJSON, each Supervisor (method, endpoint), each haapi request
-// builder call, each companion.Client route — and every write command — each
-// --confirm command and each command whose Run reaches a write without one —
-// has a manifest line, and the manifest names nothing that is gone. On top of
-// the shared closure check the request half is held in lockstep twice more:
-// with the classifier's row table (a manifest row the classifier does not know
-// is a request refused at runtime as unmapped; a classifier row the manifest
-// does not list is a mapping nobody reviews), including what kind of row it
-// is; and with companion.Endpoints, the client's own table of the routes it
-// calls.
-func TestPolicySurfaceIsClosed(t *testing.T) {
+// TestPolicyManifestIsInLockstepWithTheClassifier — the request half of
+// dev/surfaces/policy.manifest is held in lockstep twice beyond the closure
+// gate (TestPolicySurfaceIsClosed): with the classifier's row table (a manifest
+// row the classifier does not know is a request refused at runtime as
+// unmapped; a classifier row the manifest does not list is a mapping nobody
+// reviews), including what kind of row it is; and with companion.Endpoints,
+// the client's own table of the routes it calls.
+func TestPolicyManifestIsInLockstepWithTheClassifier(t *testing.T) {
 	root := surfaceRepoRoot(t)
-	s := policySurface(t, root)
-
-	m, err := surfaceaudit.LoadManifest(root, s.Name)
+	reqs, err := surfaceaudit.PolicyRequestSites(root)
+	if err != nil {
+		t.Fatalf("deriving the request half: %v", err)
+	}
+	if len(reqs) == 0 {
+		t.Fatal("the policy surface's request half is empty — the extractor has stopped matching the clients")
+	}
+	m, err := surfaceaudit.LoadManifest(root, "policy")
 	if err != nil {
 		t.Fatalf("loading the policy manifest: %v", err)
 	}
@@ -164,7 +151,7 @@ func TestPolicySurfaceIsClosed(t *testing.T) {
 
 	// The companion half agrees with the client's own route table, both ways.
 	derived := map[string]bool{}
-	for _, site := range s.Sites {
+	for _, site := range reqs {
 		if strings.HasPrefix(site.Key, "companion ") {
 			derived[site.Key] = true
 		}
@@ -179,19 +166,4 @@ func TestPolicySurfaceIsClosed(t *testing.T) {
 	for key := range derived {
 		t.Errorf("companion.Client sends %s, which companion.Endpoints does not list", key)
 	}
-
-	tests, err := testaudit.ScanRepo(root)
-	if err != nil {
-		t.Fatalf("indexing the test corpus: %v", err)
-	}
-	byName := make(map[string]bool, len(tests))
-	for _, tc := range tests {
-		byName[tc.Name] = true
-	}
-	res := surfaceaudit.Check(s, m, func(name string) bool { return byName[name] })
-	if res.Failed() {
-		t.Error(res.Report())
-		return
-	}
-	t.Log(res.Report())
 }
