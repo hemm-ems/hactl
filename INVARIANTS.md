@@ -2330,7 +2330,14 @@ must go red on exactly that command.
   TestUncoveredChecksCatchesAPlanOneResourceShort; D-60's half —
   TestBrokenPolicyRefusesEveryCommand, TestMCPRefusesEachCallOnABrokenPolicy;
   the request half derived for every release target (A-9) —
-  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in
+  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in stage 2b svc
+  (2026-11-01): `svc call`, `script run` and `script apply` check their plans
+  — every service call through the request layer's own mapping, hactl's own
+  script.turn_on and script.reload included (D-73, D-90) —
+  TestSvcCallRefusedByItsReach, TestScriptRunPlan,
+  TestScriptApplyPlanChecksTheReload, TestServiceFamilyNoProfileIsByteIdentical;
+  watched to fail: `script.reload` dropped from `script apply`'s plan went red
+  in TestEveryConfirmedRequestIsInThePlan on exactly `script apply`. Built in
   stage 2a and watched to fail on 2026-11-01 (a websocket type added to
   `haapi` without a line went red as unclassified; a read command made to
   reach a registry remove went red as a new write command; a manifest line

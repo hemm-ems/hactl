@@ -616,19 +616,38 @@ companion GET /v1/logs = debt: read-deferred-phase3 — mapping row only, enforc
 # entity in the reach, x is its entity-registry unique_id, which is the config
 # key, also for a renamed entity (oracle: D-84,
 # TestOracleYAMLScriptUniqueIDIsConfigKey).
-cmd hactl svc call = debt: the preview computes no reach today; phase 2 adds the fan-out and the check
+# Built (stage 2b svc): the plan is addServiceCall, the request layer's own
+# mapping of the request --confirm sends, checked before the preview renders
+# and again before the call; reach unknown -> fail-closed: reach unknown.
+# Request verdicts ⊆ plan: TestEveryConfirmedRequestIsInThePlan (area, fan-out
+# with a script, platform service with all, --data entities, per-script
+# service, --return). Also TestSvcCallChecksTheServiceAlways (E-2, R-10),
+# TestSvcCallReachOfOtherServices (R-1), TestSvcCallFanOutAndScriptRuns (R-2,
+# D-84), TestSvcCallScansDataForEntities, TestSvcCallPerScriptServiceChecksItsRun,
+# TestSvcCallReachUnknownIsRefused, TestSvcCallConfirmAfterAPassingPreviewSaysSo
+# and TestServiceFamilyNoProfileIsByteIdentical (D-58).
+cmd hactl svc call = proven: TestSvcCallRefusedByItsReach
 
 # map: control script:{config id}/run + control service:script.turn_on +
 # control entity:script.{id}. All three in the preview (existence read today).
 # The argument is an entity id (the command prefixes `script.` and reads the
 # state), so the config id is that entity's entity-registry unique_id — the
 # config key, also after a registry rename (D-84), as for svc call above.
-cmd hactl script run = debt: the preview checks nothing yet — phase 2 command layer
+# Built (stage 2b svc): addScriptRun — the script.turn_on call as the request
+# layer maps it, plus control entity:script.{x} and, when the reach names no
+# script entity whose key could be read, control script:*/run (kind-wide, a
+# superset; D-90). Also TestScriptRunPlanWithoutAReachAnswerStillChecksTheRun
+# and TestEveryConfirmedRequestIsInThePlan.
+cmd hactl script run = proven: TestScriptRunPlan
 
 # map: edit script:{id}/config + control service:script.reload (hactl sends the
 # reload itself after the write; checked like any service, D-73). Both before
 # the companion PUT.
-cmd hactl script apply = debt: the reload is not in the plan yet; a late refusal would be a partial apply
+# Built (stage 2b svc): scriptApplyPlan, checked before the diff is printed
+# and before the companion's dry-run PUT (preview) or the backup and write
+# (--confirm); a no-op apply writes nothing and checks no plan (D-90). Also
+# TestEveryConfirmedRequestIsInThePlan.
+cmd hactl script apply = proven: TestScriptApplyPlanChecksTheReload
 
 # map: create script:{the file's single top-level key} (the preview already
 # extracts it).

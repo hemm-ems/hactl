@@ -91,6 +91,21 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 		}
 	}
 
+	// The policy plan (H-29's command layer, manual "Service calls"): the
+	// request layer's own mapping of exactly the request --confirm sends —
+	// control on the service always (E-2, R-10), on every entity its target
+	// reaches (asked of Home Assistant, D-59, R-1) and every entity --data
+	// names (D-73), the per-domain services homeassistant.* fans out into and
+	// every script it starts (R-2, D-84). Decided here, in the preview and
+	// again under --confirm, before the call. With no profile in effect it
+	// asks nothing and adds nothing (D-58).
+	policyPlan := newWritePlan(fmt.Sprintf("call %s.%s", domain, service)).
+		addServiceCall(ctx, domain, service, data)
+	note, err := checkWritePlan(w, !flagSvcConfirm, policyPlan)
+	if err != nil {
+		return err
+	}
+
 	if !flagSvcConfirm {
 		plan := dryRun(fmt.Sprintf("call %s.%s", domain, service)).
 			with("domain", domain).
@@ -100,6 +115,7 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 			plan = plan.with("targets", reach)
 		}
 		return plan.
+			withPolicy(note).
 			withHint("re-run with --confirm after the user explicitly confirms this exact action").
 			render(w)
 	}
