@@ -59,9 +59,9 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 		return err
 	}
 
-	var data map[string]any
-	if unmarshalErr := json.Unmarshal(jsonData, &data); unmarshalErr != nil {
-		return fmt.Errorf("invalid --data JSON: %w", unmarshalErr)
+	data, err := parseServiceData(jsonData)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -233,4 +233,38 @@ func resolveData(s string) ([]byte, error) {
 		return bytes.TrimSpace(data), nil
 	}
 	return []byte(s), nil
+}
+
+// parseServiceData reads --data (D-122): a JSON object, with or without a
+// policy. Any other JSON value — null, a list, a string, a number, a boolean —
+// is refused before anything is asked or sent: Home Assistant's service data
+// is an object, and `null` used to preview as a call that "would reach
+// nothing" while a profile refused it as unmappable.
+func parseServiceData(raw []byte) (map[string]any, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("invalid --data JSON: %w", err)
+	}
+	data, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid --data: want a JSON object ({…}), got %s", jsonValueKind(v))
+	}
+	return data, nil
+}
+
+// jsonValueKind names a decoded JSON value that is not an object.
+func jsonValueKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case []any:
+		return "a list"
+	case string:
+		return "a string"
+	case float64:
+		return "a number"
+	case bool:
+		return "a boolean"
+	}
+	return fmt.Sprintf("%T", v)
 }

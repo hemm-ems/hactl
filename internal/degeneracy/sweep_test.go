@@ -158,8 +158,8 @@ var uncheckedDecodeSites = map[string]string{
 	"internal/haapi/lovelace.go:LovelaceStrategyType:doc": "an ABSENT strategy is the answer for " +
 		"every ordinary dashboard, so a zero decode here is the common case rather than a " +
 		"degenerate one — the caller has already parsed the same document for its views",
-	"internal/cmd/dash.go:showSingleView:v": "decodes one raw view into any, for YAML re-encoding",
-	"internal/cmd/svc.go:runSvcCall:data":   "decodes the user's own --data argument",
+	"internal/cmd/dash.go:showSingleView:v":  "decodes one raw view into any, for YAML re-encoding",
+	"internal/cmd/svc.go:parseServiceData:v": "decodes the user's own --data argument",
 	"internal/cmd/witness.go:loadWitness:loaded": "a witness file that is missing, truncated or " +
 		"corrupt must read as NO previews recorded — the direction that REFUSES. A zero decode " +
 		"here cannot render as an answer because it renders as `--confirm refused`, naming the " +
