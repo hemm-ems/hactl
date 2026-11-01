@@ -597,6 +597,43 @@ func TestDashSaveCreatesFirstViewsWhenNothingIsStored(t *testing.T) {
 	assertRefused(t, "an unreadable stored config", out, err, "edit dashboard:wall-panel — default: deny")
 }
 
+// TestDashSaveWithNoViewOnNothingStoredIsTheWholeDashboard (D-126, corrected): a
+// first save that brings no addressable view — `{}`, an empty or null views
+// list — still turns "nothing stored" into a stored, empty dashboard (on the
+// auto-generated default dashboard it replaces what users see), so it is
+// `edit dashboard:<u>` and any deny on the dashboard refuses it, preview and
+// --confirm alike, nothing saved.
+func TestDashSaveWithNoViewOnNothingStoredIsTheWholeDashboard(t *testing.T) {
+	for _, c := range []struct {
+		name, rules string
+		args        []string
+		want        string
+	}{
+		{"a deny on the dashboard", "    deny:\n      \"dashboard:wall-panel\": [write]\n",
+			[]string{"wall-panel"}, `edit dashboard:wall-panel — deny "dashboard:wall-panel" [write] (line 6)`},
+		{"a deny on the default dashboard", "    deny:\n      \"dashboard:\": [write]\n",
+			nil, `edit dashboard: — deny "dashboard:" [write] (line 6)`},
+		{"a deny on every dashboard", "    deny:\n      \"dashboard:*\": [write]\n",
+			[]string{"lovelace"}, `edit dashboard: — deny "dashboard:*" [write] (line 6)`},
+		{"default deny alone", "    default: deny\n",
+			nil, "edit dashboard: — default: deny"},
+	} {
+		for _, cfg := range []any{map[string]any{}, map[string]any{"views": []any{}}, map[string]any{"views": nil}} {
+			r := dashRig(t, wsErrorResponse{Code: "config_not_found", Message: "No config found."})
+			writePolicyFile(t, r.ts.dir, agentPolicy(c.rules))
+			f := writeDashFile(t, cfg)
+			for _, extra := range [][]string{{}, {"--confirm"}} {
+				args := append(append(append([]string{"dash", "save"}, c.args...), "-f", f), extra...)
+				out, err := runPolicyCLI(t, r.ts.dir, args...)
+				assertRefused(t, fmt.Sprintf("%s, %v: %s", c.name, cfg, strings.Join(args, " ")), out, err, c.want)
+			}
+			if n := r.ts.commandCount("lovelace/config/save"); n != 0 {
+				t.Errorf("%s, %v: a refused save sent %d lovelace/config/save", c.name, cfg, n)
+			}
+		}
+	}
+}
+
 // TestDashSaveUnmappableViewFailsClosed (D-68, D-69, D-101): a view whose
 // path the policy grammar refuses (a zero-width character, a trailing space)
 // cannot be addressed, so the save is refused — never dropped from the plan,

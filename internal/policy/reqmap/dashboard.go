@@ -23,11 +23,16 @@ import (
 //     never addressed by index (a view whose path is `0` would collide);
 //   - stored == nil (none was read, or it could not be): edit
 //     dashboard:<u>. A dashboard Home Assistant holds no config for is not
-//     this case: its caller passes EmptyDashboard (D-126).
+//     this case: its caller passes EmptyDashboard (D-126);
+//   - a stored config with no key (EmptyDashboard, or an empty object Home
+//     Assistant holds — the two cannot be told apart here) and a proposal
+//     that otherwise needs no check (`{}`, an empty or null `views`): edit
+//     dashboard:<u> — storing a config where none was is a change (D-126).
 //
 // urlPath is canonicalised first (`lovelace` is the default dashboard,
 // `dashboard:`). A view path the policy grammar refuses is an error: the
-// request is unmappable, never canonicalised. Identical configs need no check.
+// request is unmappable, never canonicalised. Otherwise identical configs need
+// no check.
 func DiffDashboard(urlPath string, stored, proposed json.RawMessage) ([]Check, error) {
 	u := canonicalDashboard(urlPath)
 	whole, err := check(policy.Edit, policy.KindDashboard, u, "")
@@ -84,6 +89,13 @@ func DiffDashboard(urlPath string, stored, proposed json.RawMessage) ([]Check, e
 				return nil, err
 			}
 		}
+	}
+	if len(prev) == 0 && len(set.m) == 0 {
+		// Nothing stored, and the proposal brings no view to create: the
+		// save still turns "nothing stored" into a stored dashboard (on the
+		// auto-generated default dashboard it replaces what users see), so
+		// it is the whole dashboard, never zero checks (D-126).
+		set.add(whole)
 	}
 	return set.list(), nil
 }

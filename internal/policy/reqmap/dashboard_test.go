@@ -57,6 +57,14 @@ func TestDiffDashboard(t *testing.T) {
 		{"nothing stored: a path-less view is the whole dashboard", "d-a", string(reqmap.EmptyDashboard),
 			`{"views":[{"title":"no path"}]}`,
 			[]string{"edit dashboard:d-a"}, false},
+		// D-126 (corrected): turning "nothing stored" into a stored config is a
+		// change of the dashboard even when the proposal brings no view.
+		{"nothing stored: an empty object is the whole dashboard", "d-a", string(reqmap.EmptyDashboard),
+			`{}`, []string{"edit dashboard:d-a"}, false},
+		{"nothing stored: an empty views list is the whole dashboard", "d-a", string(reqmap.EmptyDashboard),
+			`{"views":[]}`, []string{"edit dashboard:d-a"}, false},
+		{"nothing stored: null views is the whole dashboard", "lovelace", string(reqmap.EmptyDashboard),
+			`{"views":null}`, []string{"edit dashboard:"}, false},
 		{"a view change on the default dashboard", "lovelace",
 			`{"views":[{"path":"a","x":1}]}`, `{"views":[{"path":"a","x":2}]}`,
 			[]string{"edit dashboard:/views/a"}, false},
@@ -111,6 +119,12 @@ func TestDashboardSaveMapping(t *testing.T) {
 		{
 			name: "a dashboard HA holds no config for, saved with a title", facts: facts,
 			req:  ws("lovelace/config/save", map[string]any{"config": map[string]any{"title": "Home", "views": []any{}}}),
+			disp: reqmap.Write, row: "ws lovelace/config/save", checks: []string{"edit dashboard:"},
+		},
+		{
+			// D-126 (corrected): an empty first save still replaces what users see.
+			name: "a dashboard HA holds no config for, saved with no view", facts: facts,
+			req:  ws("lovelace/config/save", map[string]any{"config": map[string]any{"views": []any{}}}),
 			disp: reqmap.Write, row: "ws lovelace/config/save", checks: []string{"edit dashboard:"},
 		},
 		{
