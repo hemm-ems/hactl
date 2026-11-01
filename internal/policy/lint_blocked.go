@@ -76,22 +76,28 @@ func partOf(a, d address) bool {
 	return true
 }
 
-// idsOverlap reports whether some id could match both patterns' id parts. A
-// `**` file segment overlaps anything; otherwise the segments pair up one to
-// one.
+// idsOverlap reports whether some id could match both patterns' id parts:
+// the segments pair up one to one, except that a `**` file segment stands for
+// zero or more whole segments of the other side — as matchSegments reads it —
+// so the literal segments around it must still pair up (D-127):
+// `packages/**` overlaps `packages/x.yaml`, never `automations.yaml`.
 func idsOverlap(a, d address) bool {
-	if slices.Contains(a.id, "**") || slices.Contains(d.id, "**") {
-		return true
+	return segsOverlap(a.id, d.id)
+}
+
+// segsOverlap reports whether some segment list could match both x and y,
+// where a segment that is exactly `**` matches zero or more whole segments.
+func segsOverlap(x, y []string) bool {
+	switch {
+	case len(x) > 0 && x[0] == "**":
+		// `**` matches nothing more, or swallows y's next segment.
+		return segsOverlap(x[1:], y) || (len(y) > 0 && segsOverlap(x, y[1:]))
+	case len(y) > 0 && y[0] == "**":
+		return segsOverlap(y, x)
+	case len(x) == 0 || len(y) == 0:
+		return len(x) == len(y)
 	}
-	if len(a.id) != len(d.id) {
-		return false
-	}
-	for i := range a.id {
-		if !globsOverlap(a.id[i], d.id[i]) {
-			return false
-		}
-	}
-	return true
+	return globsOverlap(x[0], y[0]) && segsOverlap(x[1:], y[1:])
 }
 
 // globsOverlap reports whether some text could match both globs, case-

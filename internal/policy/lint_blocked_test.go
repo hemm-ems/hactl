@@ -133,6 +133,24 @@ func TestLintBlockedByPart(t *testing.T) {
 				`a part of it is denied, so all of it is`}},
 		},
 		{
+			// D-127 (corrected): `**` matches whole segments, so a literal segment
+			// before it must still pair up with the other side's.
+			name: "a ** allow and a block deny in a file it cannot match",
+			body: agent("    default: deny\n    allow:\n      \"file:packages/**\": [edit]\n    deny:\n      \"file:automations.yaml/block/b\": [edit]\n      \"file:scripts/x.yaml/block/b\": [edit]\n"),
+		},
+		{
+			name: "a ** allow and a block deny in a file it matches",
+			body: agent("    default: deny\n    allow:\n      \"file:packages/**\": [edit]\n    deny:\n      \"file:packages/sub/x.yaml/block/b\": [edit]\n"),
+			want: []want{{`"file:packages/**"`, `never grants edit where deny "file:packages/sub/x.yaml/block/b" [edit] (line 9) covers a part: ` +
+				`a part of it is denied, so all of it is`}},
+		},
+		{
+			name: "a bare ** allow overlaps every block deny",
+			body: agent("    default: deny\n    allow:\n      \"file:**\": [edit]\n    deny:\n      \"file:automations.yaml/block/b\": [edit]\n"),
+			want: []want{{`"file:**"`, `never grants edit where deny "file:automations.yaml/block/b" [edit] (line 9) covers a part: ` +
+				`a part of it is denied, so all of it is`}},
+		},
+		{
 			name: "a deny on other ids overlaps nothing",
 			body: agent("    default: deny\n    allow:\n      \"entity:light.*\": [delete]\n    deny:\n      \"entity:cover.*/registry/entity_id\": [write]\n"),
 		},
