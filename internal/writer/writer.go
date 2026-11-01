@@ -444,7 +444,10 @@ func (w *Writer) backup(ctx context.Context, automationID string) (string, error
 		return "", err
 	}
 
-	slog.Info("backup created", "path", backupPath)
+	// Debug, not Info: the caller's result names the backup (`backup: <path>`),
+	// and `auto apply` is this path's only caller, so at the default level this
+	// line only repeated the result on the stream callers read for refusals (N-14).
+	slog.Debug("backup created", "path", backupPath)
 	return backupPath, nil
 }
 
