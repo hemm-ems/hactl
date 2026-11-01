@@ -140,7 +140,7 @@ profiles:
 // and adds a note, in text and in --json `notes`.
 func TestPolicyCheckNotesAVerbThatAppliesNowhereThere(t *testing.T) {
 	dir := policyInstance(t, closedHAURL(t), policyAllowEverything)
-	const note = "control does not apply at entity:light.x/state: no command asks for it there"
+	const note = "control does not apply at entity:light.x/state: no command asks for it there, so this verdict decides no command"
 	out, _ := runPolicyCLI(t, dir, "policy", "check", "entity:light.x/state", "control")
 	if !strings.Contains(out, "note: "+note) {
 		t.Errorf("text answer lacks `note: %s`:\n%s", note, out)
@@ -159,8 +159,9 @@ func TestPolicyCheckNotesAVerbThatAppliesNowhereThere(t *testing.T) {
 // --- B-3 (D-111) -----------------------------------------------------------------
 
 // TestPolicyCheckNotesThatATypedControlAllowGrantsNothing — D-111: control on
-// an automation, script, helper or template address decided by an allow adds
-// the note; the verdict and `enforced` are unchanged.
+// an automation, helper or template address decided by an allow adds the
+// note; the verdict and `enforced` are unchanged. A script allow also grants
+// its `run`, so it gets none (D-128).
 func TestPolicyCheckNotesThatATypedControlAllowGrantsNothing(t *testing.T) {
 	body := `version: 1
 active: agent
@@ -180,6 +181,12 @@ profiles:
 			out, err := runPolicyCLI(t, dir, "policy", "check", res, "control")
 			if cliExitCode(err) != 0 || !strings.HasPrefix(out, "allowed: "+res+" control") {
 				t.Errorf("the verdict changed: exit %d\n%s", cliExitCode(err), out)
+			}
+			if strings.HasPrefix(res, "script:") {
+				if strings.Contains(out, "this allow grants nothing") {
+					t.Errorf("a script allow grants its run, yet the answer says it grants nothing:\n%s", out)
+				}
+				return
 			}
 			if !strings.Contains(out, "note: "+note) {
 				t.Errorf("text answer lacks `note: %s`:\n%s", note, out)

@@ -252,11 +252,21 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 	} else {
 		_, _ = fmt.Fprintln(w, "rules:")
 		for _, r := range pol.Rules() {
-			_, _ = fmt.Fprintf(w, "  line %-4d %s\n", r.Line, r.Text())
+			_, _ = fmt.Fprintf(w, "  line %-4d %s%s\n", r.Line, r.Text(), expansionText(r))
 		}
 	}
 	_, _ = fmt.Fprintf(w, "profiles: %s\n", strings.Join(pol.Profiles(), ", "))
 	return nil
+}
+
+// expansionText is what a rule holding `write` expands to at its address,
+// ` → [<verbs>]`, "" for a list without `write`, which means what it says
+// (D-128).
+func expansionText(r policy.Rule) string {
+	if !slices.Contains(r.Written, policy.WriteAlias) {
+		return ""
+	}
+	return " → [" + strings.Join(verbNames(r.Verbs), " ") + "]"
 }
 
 func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
@@ -488,15 +498,16 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 		doc.PartialDenies = append(doc.PartialDenies, policyPartialDeny{Rule: d.Rule, Line: d.Line})
 	}
 	// An allow reads like a grant there, but enforcement never consults it
-	// (D-111): the verdict stands, the note says what it is worth.
-	if denyOnlyControl(res, v) && verdict.Allowed && verdict.Line > 0 && strings.HasPrefix(verdict.Rule, string(policy.Allow)+" ") {
+	// (D-111): the verdict stands, the note says what it is worth. A script
+	// allow is the exception: it also grants the script's run (D-128).
+	if denyOnlyControl(res, v) && res.Kind != policy.KindScript && verdict.Allowed && verdict.Line > 0 && strings.HasPrefix(verdict.Rule, string(policy.Allow)+" ") {
 		doc.Notes = append(doc.Notes, "control on "+doc.Resource+
 			" is checked for its denies only — this allow grants nothing; a service call is decided by the entity's own verdict")
 	}
 	// A write verb no command asks for at or below the resource answers as
 	// any other, and says so (D-110).
 	if v != policy.Read && !slices.Contains(policy.ApplicableAtOrBelow(res), v) {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("%s does not apply at %s: no command asks for it there", v, res))
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%s does not apply at %s: no command asks for it there, so this verdict decides no command", v, res))
 	}
 	return doc
 }
@@ -504,7 +515,8 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 // renderPolicyCheckWrite answers `policy check <resource> write` (D-120): the
 // overall verdict, one line per applicable verb with its partial, where-not-met
 // and note lines indented below it, then the profile and the enforced line.
-// Exit 0 only when every verb is allowed.
+// Exit 0 only when every verb a command enforces is allowed: a deny-only
+// control the default decided is shown and does not count (D-128).
 func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource, docs []policyCheckDoc) error {
 	enforced, _ := policyEnforcement(pol)
 	doc := policyCheckWriteDoc{
@@ -512,7 +524,7 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 		SelectedBy: docs[0].SelectedBy, WhatIf: docs[0].WhatIf, Level: docs[0].Level, Enforced: enforced, Verdicts: docs,
 	}
 	for _, d := range docs {
-		doc.Allowed = doc.Allowed && d.Allowed
+		doc.Allowed = doc.Allowed && (d.Allowed || d.denyOnlyDefault)
 	}
 	if flagJSON {
 		markStructuredOutput()
