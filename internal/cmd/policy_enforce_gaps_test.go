@@ -50,7 +50,7 @@ func TestExecuteStderrIsThePolicyLineAlone(t *testing.T) {
 	if cliExitCode(err) != 1 || policyErrorClass(err) != "policy_denied" {
 		t.Fatalf("exit %d (%v)", cliExitCode(err), err)
 	}
-	if want := "policy_denied: create label:* — deny \"label:secret\" [create] (line 6)\n"; stderr != want {
+	if want := "policy_denied: 1 of 1 resources denied (profile agent)\n"; stderr != want {
 		t.Errorf("denial stderr\n got: %q\nwant: %q", stderr, want)
 	}
 	if !strings.HasPrefix(stdout, "policy_denied: would create label") {
@@ -102,7 +102,7 @@ func TestMCPConfirmAfterItsDryRun(t *testing.T) {
 	}
 	writePolicyFile(t, ts.dir, policyDenySecretLabel)
 	text, isErr := call("label create Garden --confirm")
-	if !isErr || !strings.Contains(text, "policy_denied") || !strings.Contains(text, "note: the preview had passed") {
+	if !isErr || !strings.Contains(text, "policy_denied") || !strings.Contains(text, "hint: the preview had passed") {
 		t.Errorf("a --confirm refused after its preview passed, over MCP: error %v\n%s", isErr, text)
 	}
 }

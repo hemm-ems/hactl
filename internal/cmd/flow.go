@@ -337,7 +337,7 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 			refused := checkProbePlan(newWritePlan("probe the options flow of config entry").
 				add(policy.Edit, policy.KindConfigEntry, entryID, "options"))
 			if refused != nil {
-				result.Note = joinNote(reason, "options-flow probe skipped: "+refused.Error())
+				result.Note = joinNote(reason, "options-flow probe skipped: "+refused.FirstDenial())
 				break
 			}
 			opts, warning, note := readOptionsFlowValues(ctx, client, entryID)

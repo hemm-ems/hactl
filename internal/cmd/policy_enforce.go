@@ -326,6 +326,7 @@ type policyRefusalDetails struct {
 //	    where not met: <rule> (line <n>) — <reason>
 //	  checked: <n> resources, <m> denied
 //	  profile: <p> (selected by <how>)
+//	  hint: <what the causes leave the caller to do> (D-118)
 func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
 	written := r.Written
 	if written == nil {
@@ -350,7 +351,7 @@ func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
 	for _, d := range r.Denied {
 		line := "  denied: " + d.Text()
 		if d.Partial {
-			line += " — a part of it is denied, so all of it is (D-66)"
+			line += " — a part of it is denied, so all of it is"
 		}
 		b.WriteString(line + "\n")
 		for _, u := range d.UnmetWhere {
@@ -359,9 +360,7 @@ func renderPolicyRefusal(w io.Writer, r *enforce.DeniedError) error {
 	}
 	fmt.Fprintf(&b, "  checked: %d resources, %d denied\n", r.Checked, len(r.Denied))
 	fmt.Fprintf(&b, "  profile: %s (selected by %s)\n", r.Profile, r.SelectedBy)
-	if r.PreviewPassed {
-		b.WriteString("  note: the preview had passed — the policy, an area or label, or a service call's reach changed since (D-80)\n")
-	}
+	fmt.Fprintf(&b, "  hint: %s\n", r.Hint())
 	_, err := io.WriteString(w, b.String())
 	return err
 }

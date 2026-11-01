@@ -199,7 +199,7 @@ func matchPath(rows []*row, method, rawPath string, c *call, what string, defaul
 	if defaultMutating {
 		detail += "; every method other than GET counts as mutating (E-9)"
 	} else {
-		detail += "; an unmapped GET is allowed until phase 3 (D-74)"
+		detail += "; an unmapped GET is allowed until reads are enforced"
 	}
 	return Result{
 		Disposition: Unmapped,

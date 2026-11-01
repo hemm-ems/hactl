@@ -428,8 +428,8 @@ func assertRefusedNamingTheRule(t *testing.T, dir string, tc registryCase, args 
 	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 		t.Fatalf("%v: exit %d class %q (%v), want 1 policy_denied\n%s", args, cliExitCode(err), policyErrorClass(err), err, out)
 	}
-	if err.Error() != "policy_denied: "+tc.denied {
-		t.Errorf("%v: stderr line\n got: %q\nwant: %q", args, err.Error(), "policy_denied: "+tc.denied)
+	if want := fmt.Sprintf("policy_denied: 1 of %d resources denied (profile agent)", len(tc.plan)); err.Error() != want {
+		t.Errorf("%v: stderr line\n got: %q\nwant: %q", args, err.Error(), want)
 	}
 	if !strings.Contains(out, "  denied: "+tc.denied) || !strings.Contains(out, "refused by policy, nothing was written") {
 		t.Errorf("%v: the report does not name the denial:\n%s", args, out)

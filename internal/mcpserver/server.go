@@ -177,7 +177,7 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 		if opts.Dir != "" {
 			if other, found := foreignDir(tokens, opts.Dir); found {
 				return nil, nil, fmt.Errorf("this server is pinned to the instance at %s and answers from it only: "+
-					"--dir %s names another instance, and with it another policy (D-64). "+
+					"--dir %s names another instance, and with it another policy. "+
 					"Drop --dir; to use another instance, start a server pinned to it", opts.Dir, other)
 			}
 			tokens = append([]string{"--dir", opts.Dir}, tokens...)

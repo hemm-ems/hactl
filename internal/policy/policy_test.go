@@ -195,16 +195,16 @@ func TestBrokenFileProblemsNameTheirLine(t *testing.T) {
 		{"where unknown selector key", "version: 1\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n    where:\n      \"entity:*\": {floor: k}\n", 7, `unknown key "floor"`},
 		{"where empty list", "version: 1\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n    where:\n      \"entity:*\": {area: []}\n", 7, "empty list"},
 		// D-63: a dot-less, wildcard-free entity/service id can never match.
-		{"entity without domain", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:hallway\": [read]\n", 5, "D-63"},
-		{"service without domain", "version: 1\nprofiles:\n  a:\n    allow:\n      \"service:turn_on\": [control]\n", 5, "D-63"},
+		{"entity without domain", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:hallway\": [read]\n", 5, "never the part after the domain"},
+		{"service without domain", "version: 1\nprofiles:\n  a:\n    allow:\n      \"service:turn_on\": [control]\n", 5, "never the part after the domain"},
 		// D-67: file ids.
 		{"file dot segment", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:./secrets.yaml\": [read]\n", 5, `"." segment`},
 		{"file dotdot segment", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:packages/../secrets.yaml\": [read]\n", 5, `".." segment`},
 		{"file ambiguous block", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:a/block/b/c.yaml\": [read]\n", 5, "ambiguous with the block sub-resource"},
 		// D-68: the id charset.
-		{"entity trailing space", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:lock.* \": [read]\n", 5, "D-68"},
-		{"label dash", "version: 1\nprofiles:\n  a:\n    deny:\n      \"label:agent-ok\": [read]\n", 5, "D-68"},
-		{"file tab", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:a\\tb.yaml\": [read]\n", 5, "D-68"},
+		{"entity trailing space", "version: 1\nprofiles:\n  a:\n    deny:\n      \"entity:lock.* \": [read]\n", 5, "no entity id may hold white space"},
+		{"label dash", "version: 1\nprofiles:\n  a:\n    deny:\n      \"label:agent-ok\": [read]\n", 5, "a label id is ASCII letters, digits and _"},
+		{"file tab", "version: 1\nprofiles:\n  a:\n    deny:\n      \"file:a\\tb.yaml\": [read]\n", 5, "a control character"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -453,8 +453,8 @@ func TestMatching(t *testing.T) {
 func TestUnqualifiedLiteralIsABrokenFile(t *testing.T) {
 	for _, pat := range []string{"entity:front_door", "service:turn_on", "entity:Front_Door"} {
 		_, err := loadErr(t, "version: 1\nactive: p\nprofiles:\n  p:\n    allow:\n      \""+pat+"\": [control]\n")
-		if err == nil || !strings.Contains(err.Error(), ":6: ") || !strings.Contains(err.Error(), "D-63") {
-			t.Errorf("%s: err = %v, want a broken file naming line 6 and D-63", pat, err)
+		if err == nil || !strings.Contains(err.Error(), ":6: ") || !strings.Contains(err.Error(), "never the part after the domain") {
+			t.Errorf("%s: err = %v, want a broken file naming line 6 and why the id can never match", pat, err)
 		}
 	}
 	// With a wildcard or a dot it loads; the wildcard form is the cross-domain one.

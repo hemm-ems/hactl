@@ -216,11 +216,12 @@ func TestSvcCallRefusedByItsReach(t *testing.T) {
 	want := "policy_denied: would call light.turn_on — refused by policy, nothing was written\n" +
 		"  denied: control entity:light.a — deny \"entity:light.a\" [control] (line 6)\n" +
 		"  checked: 2 resources, 1 denied\n" +
-		"  profile: agent (selected by active)\n"
+		"  profile: agent (selected by active)\n" +
+		"  hint: the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml\n"
 	if out != want {
 		t.Errorf("refused preview\n got: %q\nwant: %q", out, want)
 	}
-	if err == nil || err.Error() != `policy_denied: control entity:light.a — deny "entity:light.a" [control] (line 6)` {
+	if err == nil || err.Error() != `policy_denied: 1 of 2 resources denied (profile agent)` {
 		t.Errorf("stderr line = %v", err)
 	}
 	out, err = runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
@@ -429,7 +430,7 @@ func TestSvcCallConfirmAfterAPassingPreviewSaysSo(t *testing.T) {
 	if perr.Error() != cerr.Error() {
 		t.Errorf("preview and --confirm name different rules:\n%s\n%s", perr, cerr)
 	}
-	if !strings.Contains(confirmed, "note: the preview had passed") {
+	if !strings.Contains(confirmed, "  hint: the preview had passed") || strings.Contains(preview, "the preview had passed") {
 		t.Errorf("the refused --confirm does not say its preview had passed:\n%s", confirmed)
 	}
 	if rig.posted("light/turn_on") != 0 {

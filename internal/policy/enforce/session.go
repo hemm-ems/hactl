@@ -73,7 +73,7 @@ type Session struct {
 // session may exist (D-58).
 func New(opts Options) (*Session, error) {
 	if opts.Policy == nil || !opts.Policy.InEffect() {
-		return nil, errors.New("enforce: no profile is in effect — there is nothing to enforce (D-58)")
+		return nil, errors.New("enforce: no profile is in effect — there is nothing to enforce")
 	}
 	now := opts.Now
 	if now == nil {

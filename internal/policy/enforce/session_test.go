@@ -197,14 +197,18 @@ func TestCheckPlanRefusesEveryDeniedPairInPlanOrder(t *testing.T) {
 	if !reflect.DeepEqual(ref.Denied, want) {
 		t.Errorf("denied\n  got  %+v\n  want %+v", ref.Denied, want)
 	}
-	if got := ref.Error(); got != `policy_denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 7)` {
+	if got := ref.Error(); got != `policy_denied: 2 of 3 resources denied (profile agent)` {
 		t.Errorf("stderr line = %q", got)
+	}
+	if got := ref.FirstDenial(); got != `policy_denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 7)` {
+		t.Errorf("first denial = %q", got)
 	}
 	if ref.ExitCode() != 1 || ref.PolicyClass() != enforce.ClassDenied {
 		t.Errorf("exit %d class %q", ref.ExitCode(), ref.PolicyClass())
 	}
-	if strings.Contains(ref.Hint(), "--confirm") || !strings.Contains(ref.Hint(), "do not edit the policy") {
-		t.Errorf("hint = %q", ref.Hint())
+	const hint = "the owner would change the rule on line 6, 7; allowed: 1 of 3 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml"
+	if got := ref.Hint(); got != hint {
+		t.Errorf("hint = %q, want %q", got, hint)
 	}
 	lines := auditLines(t, dir)
 	if len(lines) != 3 {
@@ -520,7 +524,7 @@ func (r *recorder) RequestChecked(_ reqmap.Request, cs []reqmap.Check) {
 }
 
 // TestBrokenErrorNamesEveryProblem: D-60's refusal — one `policy_broken:
-// <file>:<line>: <message>` per problem, exit 1.
+// <file>:<line>: <message>` per problem, then the owner line (D-117), exit 1.
 func TestBrokenErrorNamesEveryProblem(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, policy.FileName), []byte("version: 2\nfoo: 1\n"), 0o600); err != nil {
@@ -533,10 +537,13 @@ func TestBrokenErrorNamesEveryProblem(t *testing.T) {
 	}
 	be := &enforce.BrokenError{Err: le}
 	lines := strings.Split(be.Error(), "\n")
-	if len(lines) != len(le.Problems) || len(lines) < 2 {
-		t.Fatalf("%d lines for %d problems:\n%s", len(lines), len(le.Problems), be.Error())
+	if len(lines) != len(le.Problems)+1 || len(lines) < 3 {
+		t.Fatalf("%d lines for %d problems and the owner line:\n%s", len(lines), len(le.Problems), be.Error())
 	}
-	for _, l := range lines {
+	if last := lines[len(lines)-1]; last != "policy_broken: "+enforce.BrokenHint {
+		t.Errorf("last line %q, want the owner line", last)
+	}
+	for _, l := range lines[:len(lines)-1] {
 		if !strings.HasPrefix(l, "policy_broken: "+filepath.Join(dir, policy.FileName)+":") {
 			t.Errorf("line %q is not policy_broken: <file>:<line>: …", l)
 		}

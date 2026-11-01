@@ -68,8 +68,8 @@ func TestIDCharsetPerKind(t *testing.T) {
 				addr = "helper:input_boolean/gu" + ch + "est"
 			}
 			_, err := ParseResource(addr)
-			if err == nil || !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "D-68") {
-				t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %s", addr, err, named)
+			if err == nil || !strings.Contains(err.Error(), named) || strings.Contains(err.Error(), "D-68") {
+				t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %s (and no decision id, D-124)", addr, err, named)
 			}
 		}
 	}
@@ -108,8 +108,8 @@ func TestIDCharsetPerKind(t *testing.T) {
 		"device:abc\u2060def":     "U+2060, an invisible format character",
 	} {
 		_, err := ParseResource(addr)
-		if err == nil || !strings.Contains(err.Error(), named) || (named != "unknown kind" && !strings.Contains(err.Error(), "D-68")) {
-			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q", addr, err, named)
+		if err == nil || !strings.Contains(err.Error(), named) || strings.Contains(err.Error(), "D-68") {
+			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q (and no decision id, D-124)", addr, err, named)
 		}
 	}
 	// Free sub segments take no charset, only the same text rule.
@@ -156,8 +156,8 @@ func TestFreeSubSegmentText(t *testing.T) {
 	}
 	for addr, named := range bad {
 		_, err := ParseResource(addr)
-		if err == nil || !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "D-68") {
-			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q", addr, err, named)
+		if err == nil || !strings.Contains(err.Error(), named) || strings.Contains(err.Error(), "D-68") {
+			t.Errorf("ParseResource(%q) = %v, want a D-68 refusal naming %q (and no decision id, D-124)", addr, err, named)
 		}
 	}
 	// Closed values are refused by their vocabulary first, never accepted.

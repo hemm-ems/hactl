@@ -207,18 +207,15 @@ func assertE2ERefused(t *testing.T, dir string, args []string, want ...e2eDenied
 			t.Errorf("hactl %v: denied = %+v, want it to hold %+v", jsonArgs, preview.Details.Policy.Denied, w)
 		}
 	}
-	if len(preview.Details.Policy.Denied) > 0 {
-		first := preview.Details.Policy.Denied[0]
-		summary := "policy_denied: " + strings.TrimPrefix(first.textLine(), "denied: ")
-		found := slices.ContainsFunc(strings.Split(stderr, "\n"), func(l string) bool {
-			if first.Line > 0 {
-				return l == summary
-			}
-			return strings.HasPrefix(l, summary)
-		})
-		if !found {
-			t.Errorf("hactl %v: stderr has no summary line %q (D-70):\n%s", args, summary, stderr)
-		}
+	// The one stderr line counts the plan's denials and repeats none of them
+	// (D-119); the report on stdout closes with the --json hint (D-118).
+	summary := fmt.Sprintf("policy_denied: %d of %d resources denied (profile %s)",
+		len(preview.Details.Policy.Denied), preview.Details.Policy.Checked, preview.Details.Policy.Profile)
+	if !slices.Contains(strings.Split(stderr, "\n"), summary) {
+		t.Errorf("hactl %v: stderr has no summary line %q (D-119):\n%s", args, summary, stderr)
+	}
+	if lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n"); lines[len(lines)-1] != "  hint: "+preview.Hint {
+		t.Errorf("hactl %v: the text report does not close with the --json hint %q:\n%s", args, preview.Hint, stdout)
 	}
 
 	confirmArgs := append(slices.Clone(args), "--confirm", "--json")

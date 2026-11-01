@@ -120,8 +120,8 @@ func assertWireguardRefused(t *testing.T, dir string, tc wireguardCase, args []s
 	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 		t.Fatalf("%v: exit %d class %q (%v), want 1 policy_denied\n%s", args, cliExitCode(err), policyErrorClass(err), err, out)
 	}
-	if err.Error() != "policy_denied: "+want {
-		t.Errorf("%v: stderr line\n got: %q\nwant: %q", args, err.Error(), "policy_denied: "+want)
+	if err.Error() != "policy_denied: 1 of 1 resources denied (profile agent)" {
+		t.Errorf("%v: stderr line\n got: %q\nwant: the count summary", args, err.Error())
 	}
 	for _, line := range []string{
 		"policy_denied: would " + tc.action + " — refused by policy, nothing was written",

@@ -114,13 +114,18 @@ func loadPolicyView(dir, as string, asSet bool) (*policy.Policy, error) {
 }
 
 // policyBrokenError is the exit-1 error of a show/lint that reported a broken
-// file: the report is on stdout, the summary on stderr.
-type policyBrokenError struct{ n int }
-
-func (e *policyBrokenError) Error() string {
-	return fmt.Sprintf("policy file is broken: %d problem(s) — hactl refuses to read it as a policy (D-60)", e.n)
+// file: the report is on stdout, the one-line summary on stderr (D-117).
+type policyBrokenError struct {
+	n    int
+	file string
 }
 
+func (e *policyBrokenError) Error() string {
+	return fmt.Sprintf("%s: %d problem(s) in %s", enforce.ClassBroken, e.n, e.file)
+}
+
+// ExitCode is 1. It has no PolicyClass: show and lint report a broken file,
+// they are not refused by it (D-60).
 func (e *policyBrokenError) ExitCode() int { return 1 }
 
 // --- policy show -------------------------------------------------------------
@@ -163,6 +168,8 @@ type policyShowDoc struct {
 	Default       string           `json:"default"`
 	Profiles      []string         `json:"profiles"`
 	Rules         []policyShowRule `json:"rules"`
+	// Hint is the owner sentence, only on a broken file (D-117).
+	Hint string `json:"hint,omitempty"`
 }
 
 func runPolicyShow(w io.Writer, as string, asSet bool) error {
@@ -198,8 +205,10 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 		doc.Rules = append(doc.Rules, row)
 	}
 
+	// The report is a document, never capped: a cut would hide rules (manual
+	// "Output conventions").
+	markStructuredOutput()
 	if flagJSON {
-		markStructuredOutput()
 		return writeJSON(w, doc)
 	}
 
@@ -255,22 +264,22 @@ func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
 	for i, p := range le.Problems {
 		problems[i] = policyProblem{Line: p.Line, Message: p.Message}
 	}
+	markStructuredOutput()
+	brokenErr := &policyBrokenError{n: len(problems), file: le.File}
 	if flagJSON {
-		markStructuredOutput()
 		if err := writeJSON(w, policyShowDoc{
 			File: le.File, Exists: true, Valid: false, Problems: problems,
 			Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: false, EnforcedVerbs: []string{},
-			Profiles: []string{}, Rules: []policyShowRule{},
+			Profiles: []string{}, Rules: []policyShowRule{}, Hint: enforce.BrokenHint,
 		}); err != nil {
 			return err
 		}
-		return &policyBrokenError{n: len(problems)}
+		return brokenErr
 	}
 	_, _ = fmt.Fprintf(w, "file: %s\n", le.File)
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
-	_, _ = fmt.Fprintln(w, "BROKEN: hactl refuses to read this file as a policy (D-60); fix every problem below:")
-	_, _ = fmt.Fprintln(w, le.Error())
-	return &policyBrokenError{n: len(problems)}
+	_, _ = fmt.Fprintln(w, enforce.BrokenReport(le))
+	return brokenErr
 }
 
 // policyEnforcement is what commands enforce under pol's EFFECTIVE profile —
@@ -400,7 +409,7 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 	if err != nil {
 		var le *policy.LoadError
 		if errors.As(err, &le) {
-			return fmt.Errorf("policy file is broken — hactl refuses to answer from it (D-60):\n%w", err)
+			return &enforce.BrokenError{Err: le}
 		}
 		return err
 	}
@@ -565,7 +574,7 @@ func checkProfileText(profile, selectedBy string) string {
 // denyOnlyDefaultText says that a default-deny verdict on a deny-only address
 // (D-107) is not enforced.
 func denyOnlyDefaultText(res policy.Resource) string {
-	return fmt.Sprintf("not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches (D-107)", res.Kind)
+	return fmt.Sprintf("not enforced: control on %s:<id> is checked for its denies only — the default decides on the entity a service call reaches", res.Kind)
 }
 
 // --- policy lint -------------------------------------------------------------
@@ -593,6 +602,8 @@ type policyLintDoc struct {
 	Level     string                `json:"level"`
 	Findings  []policyLintFinding   `json:"findings"`
 	Unchecked []policyLintUnchecked `json:"unchecked"`
+	// Hint is the owner sentence, only on a broken file (D-117).
+	Hint string `json:"hint,omitempty"`
 }
 
 // policyLintError is lint's exit 1: findings, or unchecked kinds without
@@ -615,7 +626,7 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 	var le *policy.LoadError
 	switch {
 	case errors.As(err, &le):
-		doc.File, doc.Exists, doc.Valid = le.File, true, false
+		doc.File, doc.Exists, doc.Valid, doc.Hint = le.File, true, false, enforce.BrokenHint
 		for _, p := range le.Problems {
 			doc.Findings = append(doc.Findings, policyLintFinding{Code: policy.CodeBroken, Line: p.Line, Message: p.Message})
 		}
@@ -646,7 +657,10 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 			return err
 		}
 	} else {
-		renderPolicyLint(w, doc, allowPartial)
+		renderPolicyLint(w, doc, le, allowPartial)
+	}
+	if le != nil {
+		return &policyBrokenError{n: len(le.Problems), file: le.File}
 	}
 	if len(doc.Findings) > 0 || (len(doc.Unchecked) > 0 && !allowPartial) {
 		return &policyLintError{findings: len(doc.Findings), unchecked: len(doc.Unchecked)}
@@ -654,24 +668,16 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 	return nil
 }
 
-func renderPolicyLint(w io.Writer, doc policyLintDoc, allowPartial bool) {
+func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allowPartial bool) {
 	if !doc.Exists {
 		_, _ = fmt.Fprintf(w, "no policy file (looked for %s): nothing to lint\n", doc.File)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "file: %s\n", doc.File)
-	if !doc.Valid {
-		// A broken file's findings are its problems, each named as
-		// `<file>:<line>: <message>` exactly as policy show and the refusal
-		// name them (D-60).
-		_, _ = fmt.Fprintln(w, "BROKEN: hactl refuses to read this file as a policy (D-60); no live checks ran. Fix every problem below:")
-		for _, f := range doc.Findings {
-			loc := doc.File
-			if f.Line > 0 {
-				loc += ":" + strconv.Itoa(f.Line)
-			}
-			_, _ = fmt.Fprintf(w, "  %s  %s: %s\n", f.Code, loc, f.Message)
-		}
+	if le != nil {
+		// A broken file's findings are its problems, in the one wording policy
+		// show and every refusal use (D-117).
+		_, _ = fmt.Fprintln(w, enforce.BrokenReport(le))
 		return
 	}
 	if len(doc.Findings) == 0 {
