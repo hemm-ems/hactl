@@ -23,6 +23,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/glob"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var (
@@ -1646,8 +1647,17 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	currentLabels := entry.Labels
 	final, removed := applyLabelDelta(currentLabels, toAdd, toRemove)
 
+	// The plan (H-29), at the finest address the write has: the entity's
+	// labels field — never the entity as a whole, and never label:<id>
+	// (assigning a label does not edit it). --remove writes the same field.
+	plan := newWritePlan("set entity labels").add(policy.Edit, policy.KindEntity, entityID, "registry/labels")
+	note, err := checkWritePlan(w, !flagEntConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagEntConfirm {
-		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).render(w)
+		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).withPolicy(note).render(w)
 	}
 
 	// An empty `final` is sent as `labels: []`, which clears every label rather
@@ -1731,11 +1741,22 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
 
+	// The plan (H-29): the entity's own area_id field, for a set and a
+	// --clear alike.
+	action := "set entity area"
+	if flagEntAreaClear {
+		action = "clear entity area"
+	}
+	note, err := checkWritePlan(w, !flagEntConfirm, newWritePlan(action).add(policy.Edit, policy.KindEntity, entityID, "registry/area_id"))
+	if err != nil {
+		return err
+	}
+
 	if !flagEntConfirm {
 		if flagEntAreaClear {
-			return dryRunEntClearAreaSummary(entityEntry, areas).render(w)
+			return dryRunEntClearAreaSummary(entityEntry, areas).withPolicy(note).render(w)
 		}
-		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).render(w)
+		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).withPolicy(note).render(w)
 	}
 
 	if err := ws.EntityRegistryUpdate(ctx, entityID,
