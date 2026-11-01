@@ -484,25 +484,33 @@ func TestCreateHelper(t *testing.T) {
 	}
 }
 
+// TestDeleteHelper: the id always; the domain only when one is given — an
+// empty domain leaves the parameter out, as the request was before the policy
+// needed it (D-58), and a given one is sent for the companion to act on.
 func TestDeleteHelper(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("method = %q, want DELETE", r.Method)
-		}
-		if got := r.URL.Query().Get("id"); got != "guest_mode" {
-			t.Errorf("id = %q, want guest_mode", got)
-		}
-		_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "deleted"})
-	}))
-	defer srv.Close()
+	for _, tc := range []struct{ domain, wantQuery string }{
+		{"", "id=guest_mode"},
+		{"input_boolean", "domain=input_boolean&id=guest_mode"},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				t.Errorf("method = %q, want DELETE", r.Method)
+			}
+			if got := r.URL.RawQuery; got != tc.wantQuery {
+				t.Errorf("query = %q, want %q", got, tc.wantQuery)
+			}
+			_ = json.NewEncoder(w).Encode(ConfigDeleteResponse{Status: "deleted"})
+		}))
 
-	c := New(srv.URL, "test-token")
-	r, err := c.DeleteHelper(context.Background(), "guest_mode")
-	if err != nil {
-		t.Fatalf("DeleteHelper: %v", err)
-	}
-	if r.Status != "deleted" {
-		t.Errorf("status = %q, want deleted", r.Status)
+		c := New(srv.URL, "test-token")
+		r, err := c.DeleteHelper(context.Background(), "guest_mode", tc.domain)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("DeleteHelper: %v", err)
+		}
+		if r.Status != "deleted" {
+			t.Errorf("status = %q, want deleted", r.Status)
+		}
 	}
 }
 

@@ -47,137 +47,26 @@ const (
 func newTypedRig(t *testing.T) *typedRig {
 	t.Helper()
 	r := &typedRig{}
-	automations := map[string]string{"heating": typedHeatingEntry}
-	scripts := map[string]string{"wakeup": typedWakeupEntry}
-	templates := map[string]string{"room_temp": typedRoomTemp}
-
-	jsonOut := func(w http.ResponseWriter, status int, v any) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(v)
-	}
-	bodyKey := func(req *http.Request) (string, string) {
-		raw, _ := io.ReadAll(req.Body)
-		var m map[string]any
-		_ = yaml.Unmarshal(raw, &m)
-		if id, ok := m["id"].(string); ok {
-			return id, string(raw)
-		}
-		if id, ok := m["unique_id"].(string); ok {
-			return id, string(raw)
-		}
-		for k := range m {
-			return k, string(raw)
-		}
-		return "", string(raw)
-	}
-
 	handlers := map[string]http.HandlerFunc{
 		"/api/states": func(w http.ResponseWriter, _ *http.Request) {
-			jsonOut(w, http.StatusOK, []map[string]any{
+			typedJSON(w, http.StatusOK, []map[string]any{
 				{"entity_id": "automation.heating", "state": "on", "attributes": map[string]any{"id": "heating", "friendly_name": "Heating"}},
 				{"entity_id": "automation.legacy", "state": "on", "attributes": map[string]any{"friendly_name": "Legacy"}},
 				{"entity_id": "script.wakeup", "state": "off", "attributes": map[string]any{"friendly_name": "Wake Up"}},
 			})
 		},
 		"/api/states/script.wakeup": func(w http.ResponseWriter, _ *http.Request) {
-			jsonOut(w, http.StatusOK, map[string]any{"entity_id": "script.wakeup", "state": "off", "attributes": map[string]any{}})
+			typedJSON(w, http.StatusOK, map[string]any{"entity_id": "script.wakeup", "state": "off", "attributes": map[string]any{}})
 		},
 		"/api/services/script/reload": func(w http.ResponseWriter, _ *http.Request) {
-			jsonOut(w, http.StatusOK, []any{})
+			typedJSON(w, http.StatusOK, []any{})
 		},
-		"/v1/config/automation": func(w http.ResponseWriter, req *http.Request) {
-			id := req.URL.Query().Get("id")
-			switch req.Method {
-			case http.MethodGet:
-				if c, ok := automations[id]; ok {
-					jsonOut(w, http.StatusOK, map[string]string{"id": id, "content": c})
-					return
-				}
-				http.Error(w, "Automation not found: "+id, http.StatusNotFound)
-			case http.MethodPut:
-				if _, ok := automations[id]; !ok {
-					http.Error(w, "Automation not found: "+id, http.StatusNotFound)
-					return
-				}
-				_, _ = io.Copy(io.Discard, req.Body)
-				if req.URL.Query().Get("dry_run") == "true" {
-					jsonOut(w, http.StatusOK, map[string]any{"status": "dry_run", "diff": ""})
-					return
-				}
-				jsonOut(w, http.StatusOK, map[string]any{"status": "applied", "reloaded": true})
-			case http.MethodPost:
-				id, _ := bodyKey(req)
-				jsonOut(w, http.StatusCreated, map[string]any{"status": "created", "id": id, "entity_id": "automation." + id, "reloaded": true})
-			case http.MethodDelete:
-				// The companion falls back to the alias and then a live
-				// entity_id, so an id-less YAML automation is deletable by
-				// either — the fallback the policy refuses to rely on (D-78).
-				if _, ok := automations[id]; ok || id == "automation.legacy" || id == "Legacy" {
-					jsonOut(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
-					return
-				}
-				http.Error(w, "Automation not found: "+id, http.StatusNotFound)
-			}
-		},
-		"/v1/config/script": func(w http.ResponseWriter, req *http.Request) {
-			id := req.URL.Query().Get("id")
-			switch req.Method {
-			case http.MethodGet:
-				if c, ok := scripts[id]; ok {
-					jsonOut(w, http.StatusOK, map[string]string{"id": id, "content": c})
-					return
-				}
-				http.Error(w, "Script not found: "+id, http.StatusNotFound)
-			case http.MethodPut:
-				_, _ = io.Copy(io.Discard, req.Body)
-				if req.URL.Query().Get("dry_run") == "true" {
-					jsonOut(w, http.StatusOK, map[string]any{"status": "dry_run", "diff": ""})
-					return
-				}
-				jsonOut(w, http.StatusOK, map[string]any{"status": "applied", "reloaded": true})
-			case http.MethodPost:
-				id, _ := bodyKey(req)
-				jsonOut(w, http.StatusCreated, map[string]any{"status": "created", "id": id, "entity_id": "script." + id, "reloaded": true, "entity_created": true})
-			case http.MethodDelete:
-				jsonOut(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
-			}
-		},
-		"/v1/config/template": func(w http.ResponseWriter, req *http.Request) {
-			id := req.URL.Query().Get("id")
-			switch req.Method {
-			case http.MethodGet:
-				if c, ok := templates[id]; ok {
-					jsonOut(w, http.StatusOK, map[string]string{"unique_id": id, "content": c})
-					return
-				}
-				http.Error(w, "Template not found: "+id, http.StatusNotFound)
-			case http.MethodPost:
-				id, _ := bodyKey(req)
-				jsonOut(w, http.StatusCreated, map[string]any{"status": "created", "unique_id": id, "reloaded": true})
-			case http.MethodDelete:
-				jsonOut(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
-			}
-		},
-		"/v1/config/helper": func(w http.ResponseWriter, req *http.Request) {
-			id := req.URL.Query().Get("id")
-			switch req.Method {
-			case http.MethodGet:
-				if id == "guest_mode" {
-					jsonOut(w, http.StatusOK, map[string]string{"id": id, "domain": "input_boolean", "content": typedGuestMode, "source": "yaml"})
-					return
-				}
-				http.Error(w, "Helper not found: "+id, http.StatusNotFound)
-			case http.MethodPost:
-				id, _ := bodyKey(req)
-				d := req.URL.Query().Get("domain")
-				jsonOut(w, http.StatusCreated, map[string]any{"status": "created", "id": id, "entity_id": d + "." + id, "reloaded": true, "entity_created": true})
-			case http.MethodDelete:
-				jsonOut(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
-			}
-		},
+		"/v1/config/automation": typedAutomationRoute(map[string]string{"heating": typedHeatingEntry}),
+		"/v1/config/script":     typedScriptRoute(map[string]string{"wakeup": typedWakeupEntry}),
+		"/v1/config/template":   typedTemplateRoute(map[string]string{"room_temp": typedRoomTemp}),
+		"/v1/config/helper":     typedHelperRoute,
 		"/v1/config/wiring": func(w http.ResponseWriter, req *http.Request) {
-			jsonOut(w, http.StatusOK, map[string]any{"domain": req.URL.Query().Get("domain"), "wired": true, "file": "helpers.yaml"})
+			typedJSON(w, http.StatusOK, map[string]any{"domain": req.URL.Query().Get("domain"), "wired": true, "file": "helpers.yaml"})
 		},
 	}
 	for path, h := range handlers {
@@ -202,6 +91,141 @@ func newTypedRig(t *testing.T) *typedRig {
 	pointAtCompanion(t, r.ts)
 	r.write(t, "backups/2026-11-01T09-00-00.000000_heating.yaml", typedHeatingEntry)
 	return r
+}
+
+func typedJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// typedBodyKey is the id a create body declares: its `id:`, its `unique_id:`,
+// a template block's first entity domain (in the companion's order), or its
+// first key. The fake must answer the same way every run, or its echo is noise
+// in the golden.
+func typedBodyKey(req *http.Request) string {
+	raw, _ := io.ReadAll(req.Body)
+	var m map[string]any
+	_ = yaml.Unmarshal(raw, &m)
+	if id, ok := m["id"].(string); ok {
+		return id
+	}
+	if id, ok := m["unique_id"].(string); ok {
+		return id
+	}
+	for _, d := range tplEntityDomains {
+		if _, ok := m[d]; ok {
+			return d
+		}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
+}
+
+// typedDryRunOr answers a PUT: the companion's dry run, or the applied write.
+func typedDryRunOr(w http.ResponseWriter, req *http.Request) {
+	_, _ = io.Copy(io.Discard, req.Body)
+	if req.URL.Query().Get("dry_run") == "true" {
+		typedJSON(w, http.StatusOK, map[string]any{"status": "dry_run", "diff": ""})
+		return
+	}
+	typedJSON(w, http.StatusOK, map[string]any{"status": "applied", "reloaded": true})
+}
+
+func typedAutomationRoute(entries map[string]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id := req.URL.Query().Get("id")
+		c, known := entries[id]
+		switch req.Method {
+		case http.MethodGet:
+			if known {
+				typedJSON(w, http.StatusOK, map[string]string{"id": id, "content": c})
+				return
+			}
+			http.Error(w, "Automation not found: "+id, http.StatusNotFound)
+		case http.MethodPut:
+			if !known {
+				http.Error(w, "Automation not found: "+id, http.StatusNotFound)
+				return
+			}
+			typedDryRunOr(w, req)
+		case http.MethodPost:
+			created := typedBodyKey(req)
+			typedJSON(w, http.StatusCreated, map[string]any{"status": "created", "id": created, "entity_id": "automation." + created, "reloaded": true})
+		case http.MethodDelete:
+			// The companion falls back to the alias and then a live
+			// entity_id, so an id-less YAML automation is deletable by either
+			// — the fallback the policy refuses to rely on (D-78).
+			if known || id == "automation.legacy" || id == "Legacy" {
+				typedJSON(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
+				return
+			}
+			http.Error(w, "Automation not found: "+id, http.StatusNotFound)
+		}
+	}
+}
+
+func typedScriptRoute(entries map[string]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id := req.URL.Query().Get("id")
+		switch req.Method {
+		case http.MethodGet:
+			if c, ok := entries[id]; ok {
+				typedJSON(w, http.StatusOK, map[string]string{"id": id, "content": c})
+				return
+			}
+			http.Error(w, "Script not found: "+id, http.StatusNotFound)
+		case http.MethodPut:
+			typedDryRunOr(w, req)
+		case http.MethodPost:
+			created := typedBodyKey(req)
+			typedJSON(w, http.StatusCreated, map[string]any{"status": "created", "id": created, "entity_id": "script." + created, "reloaded": true, "entity_created": true})
+		case http.MethodDelete:
+			typedJSON(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
+		}
+	}
+}
+
+func typedTemplateRoute(entries map[string]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id := req.URL.Query().Get("id")
+		switch req.Method {
+		case http.MethodGet:
+			if c, ok := entries[id]; ok {
+				typedJSON(w, http.StatusOK, map[string]string{"unique_id": id, "content": c})
+				return
+			}
+			http.Error(w, "Template not found: "+id, http.StatusNotFound)
+		case http.MethodPost:
+			typedJSON(w, http.StatusCreated, map[string]any{"status": "created", "unique_id": typedBodyKey(req), "reloaded": true})
+		case http.MethodDelete:
+			typedJSON(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
+		}
+	}
+}
+
+func typedHelperRoute(w http.ResponseWriter, req *http.Request) {
+	id := req.URL.Query().Get("id")
+	switch req.Method {
+	case http.MethodGet:
+		if id == "guest_mode" {
+			typedJSON(w, http.StatusOK, map[string]string{"id": id, "domain": "input_boolean", "content": typedGuestMode, "source": "yaml"})
+			return
+		}
+		http.Error(w, "Helper not found: "+id, http.StatusNotFound)
+	case http.MethodPost:
+		created, d := typedBodyKey(req), req.URL.Query().Get("domain")
+		typedJSON(w, http.StatusCreated, map[string]any{"status": "created", "id": created, "entity_id": d + "." + created, "reloaded": true, "entity_created": true})
+	case http.MethodDelete:
+		typedJSON(w, http.StatusOK, map[string]any{"status": "deleted", "reloaded": true})
+	}
 }
 
 // logged records a request as `METHOD /path?query` (query keys sorted).

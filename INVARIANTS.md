@@ -2330,7 +2330,23 @@ must go red on exactly that command.
   TestUncoveredChecksCatchesAPlanOneResourceShort; D-60's half —
   TestBrokenPolicyRefusesEveryCommand, TestMCPRefusesEachCallOnABrokenPolicy;
   the request half derived for every release target (A-9) —
-  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in
+  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in stage 2b, typed
+  family (2026-11-01): `auto|script|tpl|helper` apply, create, delete and
+  `auto rollback`/`rollback` check their plans (D-78, D-90, D-91) —
+  TestAutoApplyRefusedByItsPlan, TestAutoCreateRefusedByItsPlan,
+  TestAutoDeleteRefusedByItsPlan, TestAutoRollbackRefusedByItsPlan,
+  TestRollbackRefusedByItsPlan, TestScriptApplyRefusedByItsPlan,
+  TestScriptCreateRefusedByItsPlan, TestScriptDeleteRefusedByItsPlan,
+  TestTplCreateRefusedByItsPlan, TestTplDeleteRefusedByItsPlan,
+  TestHelperCreateRefusedByItsPlan, TestHelperDeleteRefusedByItsPlan; the
+  same plan in preview and --confirm (TestTypedPlansAreTheSameInPreviewAndConfirm);
+  the plan reads a body as the request layer does
+  (TestTypedPlansReadBodiesAsTheRequestLayerDoes); each registered in R-12's
+  harness; D-58 for the family against a transcript recorded before the
+  wiring (TestTypedWritesWithoutAProfileAreUnchanged). Watched to fail under
+  fourteen mutants (an orphan, the reload, the rename's create, a block's
+  later items, the delete's id proof, the preview's registry read, the
+  helper delete's domain, each dropped or widened). Built in
   stage 2a and watched to fail on 2026-11-01 (a websocket type added to
   `haapi` without a line went red as unclassified; a read command made to
   reach a registry remove went red as a new write command; a manifest line

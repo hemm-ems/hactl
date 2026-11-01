@@ -561,7 +561,7 @@ func TestE2EHelperWriteRoundTripCLI(t *testing.T) {
 	)
 
 	t.Cleanup(func() {
-		_, _ = testClient.DeleteHelper(ctx, id)
+		_, _ = testClient.DeleteHelper(ctx, id, "")
 	})
 
 	content := "" +

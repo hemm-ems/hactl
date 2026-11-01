@@ -21,7 +21,8 @@
 # TestUnmappedMutatingRequestIsRefused, not by these lines. A command line
 # stays debt until the command checks its plan through the plan API
 # (checkWritePlan, internal/cmd/policy_enforce.go) and registers its --confirm
-# run in TestEveryConfirmedRequestIsInThePlan; label create is the first.
+# run in TestEveryConfirmedRequestIsInThePlan; label create is the first, the
+# typed family (auto|script|tpl|helper apply, create, delete, rollback) next.
 #
 # --- what a site is ----------------------------------------------------------
 #
@@ -148,7 +149,7 @@
 # write row (map: control|edit|create|delete) and every cmd row is proven;
 # what may remain is read-deferred-phase3. The ceiling may fall without
 # ceremony and may only rise by editing this line on purpose.
-#ceiling 86
+#ceiling 74
 
 # =============================================================================
 # WS — Home Assistant websocket
@@ -514,9 +515,10 @@ companion DELETE /v1/config/automation = proven: TestEveryWriteRequestHasAMappin
 # map: create helper:{?domain}/{the body's single top-level key}.
 companion POST /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 
-# map: delete helper:{domain}/{id}. hactl must send the &domain= it resolved
-# (it does not today); a domain-less mutating helper request is unmapped,
-# refused.
+# map: delete helper:{domain}/{id}. While a profile is in effect `helper
+# delete` sends the &domain= its plan checked (the domain the companion's GET
+# resolved); without one the request stays domain-less, as before (D-58). A
+# domain-less mutating helper request is unmapped, refused.
 companion DELETE /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
 
 # (PUT /v1/config/helper, PUT /v1/config/file, PUT /v1/config/template,
@@ -628,57 +630,63 @@ cmd hactl script run = debt: the preview checks nothing yet — phase 2 command 
 # map: edit script:{id}/config + control service:script.reload (hactl sends the
 # reload itself after the write; checked like any service, D-73). Both before
 # the companion PUT.
-cmd hactl script apply = debt: the reload is not in the plan yet; a late refusal would be a partial apply
+cmd hactl script apply = proven: TestScriptApplyRefusedByItsPlan
 
 # map: create script:{the file's single top-level key} (the preview already
 # extracts it).
-cmd hactl script create = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl script create = proven: TestScriptCreateRefusedByItsPlan
 
 # map: delete script:{id} + delete entity:script.{id} when registered (the
-# orphan, computed today on the confirm path only: the preview must compute it).
-cmd hactl script delete = debt: the orphan entity is not in the preview yet — phase 2 command layer
+# orphan; the preview reads the registry for it while a profile is in effect,
+# the confirmed run always did).
+cmd hactl script delete = proven: TestScriptDeleteRefusedByItsPlan
 
 # map: edit automation:{config id}/config; + create automation:{candidate id}
 # when the file's id differs from the target (E-5, D-78). A candidate with no
 # `id:`, or a non-string one, is refused while a profile is in effect (D-78,
 # R-6). Refusing a mismatch outright, with or without a policy, is a separate
 # issue (D-58 keeps no-policy runs byte-identical).
-cmd hactl auto apply = debt: the preview checks nothing yet, and the candidate id is not compared
+cmd hactl auto apply = proven: TestAutoApplyRefusedByItsPlan
 
-# map: create automation:{candidate id} (the preview must parse it; today it
-# reports file and bytes only).
-cmd hactl auto create = debt: the preview does not extract the candidate id yet
+# map: create automation:{candidate id}, parsed from the file in the preview
+# and under --confirm; a file without a usable id is refused while a profile is
+# in effect (`fail-closed: automation without a config id`, D-78).
+cmd hactl auto create = proven: TestAutoCreateRefusedByItsPlan
 
 # map: delete automation:{config id} + delete entity:{live entity_id} (orphan).
-# Sends the companion the verified config id only. An automation without a
-# config id (a YAML entry resolved by alias or entity id) is refused while a
-# profile is in effect (`fail-closed: automation has no config id`, D-78).
-cmd hactl auto delete = debt: the preview checks nothing yet — phase 2 command layer
+# The id is a config id only when the companion's GET answered with that very
+# id (the request layer's own proof, D-72). An automation without a config id
+# (a YAML entry resolved by alias or entity id) is refused while a profile is
+# in effect (`fail-closed: automation has no config id`, D-78).
+cmd hactl auto delete = proven: TestAutoDeleteRefusedByItsPlan
 
 # map: edit automation:{config id | id from the newest backup's filename}/config,
 # + create automation:{backup bytes' id} when it differs; backup bytes with no
 # `id:` or a non-string one are refused while a profile is in effect (D-78).
-# PlanRollback is local: the check runs there.
-cmd hactl auto rollback = debt: the preview is local and checks nothing yet
+# PlanRollback is local: the check runs on what it finds, in the preview and,
+# while a profile is in effect, again under --confirm before the PUT.
+cmd hactl auto rollback = proven: TestAutoRollbackRefusedByItsPlan
 
 # map: as auto rollback (deprecated alias, a separate cobra node).
-cmd hactl rollback = debt: the preview is local and checks nothing yet
+cmd hactl rollback = proven: TestRollbackRefusedByItsPlan
 
-# map: create template:{uid} for every unique_id the file declares (the preview
-# must enumerate them); an entity without unique_id refuses the create while a
-# profile is in effect (D-78).
-cmd hactl tpl create = debt: the preview does not enumerate unique_ids yet
+# map: create template:{uid} for every unique_id the file declares (a bare item
+# or each item of each entity-domain list of a block, enumerated in the
+# preview); an entity without unique_id refuses the create while a profile is
+# in effect (`fail-closed: template entity without unique_id`, D-78).
+cmd hactl tpl create = proven: TestTplCreateRefusedByItsPlan
 
 # map: delete template:{uid} + delete entity:{e} for every registered entity of
 # that unique_id (already resolved before the preview).
-cmd hactl tpl delete = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl tpl delete = proven: TestTplDeleteRefusedByItsPlan
 
 # map: create helper:{domain}/{id}; checked before the wiring probe.
-cmd hactl helper create = debt: the preview checks nothing yet — phase 2 command layer
+cmd hactl helper create = proven: TestHelperCreateRefusedByItsPlan
 
 # map: delete helper:{domain}/{id} + delete entity:{domain}.{id} when registered
-# (orphan, computed on the confirm path today). Sends &domain=.
-cmd hactl helper delete = debt: the orphan entity is not in the preview yet — phase 2 command layer
+# (orphan; the preview reads the registry for it while a profile is in effect).
+# Sends &domain= while a profile is in effect (D-58 otherwise).
+cmd hactl helper delete = proven: TestHelperDeleteRefusedByItsPlan
 
 # map: create on every area id (kind-wide, D-75; reported as `area:*`).
 cmd hactl area create = debt: the preview contacts nothing and checks nothing yet

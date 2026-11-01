@@ -461,6 +461,10 @@ type confirmedCoverageCase struct {
 	args []string // after `hactl`, --confirm included
 	ws   map[string]any
 	http map[string]http.HandlerFunc
+	// start, when set, builds the instance instead of startCmdServer(ws,
+	// http) and returns its directory and the full args to run (a family's
+	// own rig: a companion beside Home Assistant, files to pass with -f).
+	start func(t *testing.T) (dir string, args []string)
 }
 
 var confirmedCoverageCases = []confirmedCoverageCase{
@@ -506,12 +510,18 @@ func uncoveredChecks(plan, requests []reqmap.Check) []string {
 func TestEveryConfirmedRequestIsInThePlan(t *testing.T) {
 	for _, tc := range confirmedCoverageCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := startCmdServer(t, tc.ws, tc.http)
-			writePolicyFile(t, ts.dir, policyAllowEverything)
+			var dir string
+			args := tc.args
+			if tc.start != nil {
+				dir, args = tc.start(t)
+			} else {
+				dir = startCmdServer(t, tc.ws, tc.http).dir
+			}
+			writePolicyFile(t, dir, policyAllowEverything)
 			rec := &coverageRecorder{}
 			policyRecorder = rec
 			defer func() { policyRecorder = nil }()
-			out, err := runPolicyCLI(t, ts.dir, tc.args...)
+			out, err := runPolicyCLI(t, dir, args...)
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
