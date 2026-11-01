@@ -20,3 +20,14 @@ oracle_script_broken:
       data:
         message: nope
   mode: single
+
+# B-16 (live test 2026-11-01, F-14): the service exists, the entity it targets
+# does not. Never run by the rig; TestOracleScriptRunMissingTarget runs it and
+# asks the run response, the trace and the log which of them says so.
+oracle_script_missing_target:
+  alias: Oracle Script Missing Target
+  sequence:
+    - service: input_boolean.toggle
+      target:
+        entity_id: input_boolean.oracle_no_such_flag
+  mode: single
