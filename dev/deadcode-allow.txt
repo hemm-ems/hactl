@@ -33,21 +33,6 @@ internal/cache/store.go Store.AppendLogs         # orphan: no caller in the bina
 internal/cache/store.go Store.ReadLogs           # orphan: no caller in the binary
 internal/cache/store.go Store.TrimLogs           # orphan: no caller in the binary
 
-# companion.Client methods with no command behind them. client_test.go and the
-# companion Docker tier exercise them against a real companion, so they are
-# known to work — they are simply not offered to a user by any subcommand.
-internal/companion/client.go Client.WriteConfigFile     # orphan: no command routes here
-internal/companion/client.go Client.ListTemplates       # orphan: no command routes here
-internal/companion/client.go Client.WriteTemplate       # orphan: no command routes here
-internal/companion/client.go Client.ListScriptDefs      # orphan: no command routes here
-internal/companion/client.go Client.ListAutomationDefs  # orphan: no command routes here
-internal/companion/client.go Client.UpdateHelper        # orphan: no command routes here
-internal/companion/client.go Client.ReloadDomain        # orphan: no command routes here
-
-internal/haapi/client.go Client.GetEvents        # orphan: no command lists HA event types
 internal/manual/state.go HowToPending             # orphan: a read-only "is this family's how-to still undelivered" predicate with no caller in the binary; nothing branches on it, so the manual is delivered without ever asking
-internal/haapi/flow.go Client.StartConfigFlow    # orphan: `flow start` routes to StartConfigFlowOnce; this variant has no caller
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
-internal/haapi/client.go Client.GetAutomationConfig  # gate: H-12's independent read path — the Docker tiers verify an automation write by reading it out of HA's OWN config API, which is the whole point ("reading back through hactl does not count"); no product command may route here, and since #128 none does
-internal/haapi/client.go Client.ServiceExists  # gate: the companion tier's rig setup probes whether a reload service exists before asserting a reload happened; a product command that branched on this would be guessing where it can ask

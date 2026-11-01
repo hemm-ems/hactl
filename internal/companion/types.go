@@ -34,17 +34,6 @@ type ConfigBlockResponse struct {
 	Content string `json:"content"`
 }
 
-// ConfigWriteResponse is the response from PUT /v1/config/file.
-type ConfigWriteResponse struct {
-	Status string `json:"status"`
-	Diff   string `json:"diff,omitempty"`
-	// Validated reports whether the companion re-validated HA's config after the
-	// write (false when validation was skipped or unavailable). Decoded so the
-	// field-conformance contract (T3) stays whole rather than ignore-listed.
-	Validated bool   `json:"validated,omitempty"`
-	Backup    string `json:"backup,omitempty"`
-}
-
 // RelatedEntityResponse is the response from GET /v1/related/entity.
 // Stale and StaleRefs are populated only when the request passes stale=true and
 // the entity is absent from the on-disk registry snapshot.
@@ -216,23 +205,6 @@ type RefChange struct {
 	Reformatted bool `json:"reformatted,omitempty"`
 }
 
-// TemplateDefinition represents a template sensor definition.
-type TemplateDefinition struct {
-	UniqueID          string `json:"unique_id"`
-	Name              string `json:"name"`
-	Domain            string `json:"domain"`
-	State             string `json:"state"`
-	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
-	DeviceClass       string `json:"device_class,omitempty"`
-	// Trigger is true when the entity lives in a trigger-based `template:` block.
-	Trigger bool `json:"trigger,omitempty"`
-}
-
-// TemplatesResponse is the response from GET /v1/config/templates.
-type TemplatesResponse struct {
-	Templates []TemplateDefinition `json:"templates"`
-}
-
 // TemplateResponse is the response from GET /v1/config/template.
 type TemplateResponse struct {
 	UniqueID string `json:"unique_id"`
@@ -283,19 +255,6 @@ type TemplateEntityResult struct {
 	Created  bool   `json:"created"`
 }
 
-// ScriptDefinition represents a script definition.
-type ScriptDefinition struct {
-	ID     string `json:"id"`
-	Alias  string `json:"alias"`
-	Mode   string `json:"mode"`
-	Fields []any  `json:"fields,omitempty"`
-}
-
-// ScriptsResponse is the response from GET /v1/config/scripts.
-type ScriptsResponse struct {
-	Scripts []ScriptDefinition `json:"scripts"`
-}
-
 // ScriptResponse is the response from GET /v1/config/script.
 type ScriptResponse struct {
 	ID      string `json:"id"`
@@ -337,19 +296,6 @@ type ScriptCreateResponse struct {
 	// rewrite that reads as a surgical one is the defect this field exists to
 	// make visible.
 	Reformatted bool `json:"reformatted,omitempty"`
-}
-
-// AutomationDefinition represents an automation definition.
-type AutomationDefinition struct {
-	ID          string `json:"id"`
-	Alias       string `json:"alias"`
-	Mode        string `json:"mode,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-// AutomationsResponse is the response from GET /v1/config/automations.
-type AutomationsResponse struct {
-	Automations []AutomationDefinition `json:"automations"`
 }
 
 // AutomationResponse is the response from GET /v1/config/automation.

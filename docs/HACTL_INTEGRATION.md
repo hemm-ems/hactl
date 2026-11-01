@@ -287,6 +287,11 @@ type AutomationResponse struct {
 
 ### 5.2 Client Methods (`client.go`)
 
+> As first designed. `WriteConfigFile`, `ListTemplates`, `WriteTemplate`,
+> `ListScriptDefs`, `ListAutomationDefs`, `UpdateHelper` and `ReloadDomain` had no
+> product caller and were deleted on 2026-11-01 (`docs/decisions.md` D-81); their
+> routes stay in the companion and its spec.
+
 ```go
 // Health
 func (c *Client) Health(ctx) (*HealthResponse, error)
@@ -405,18 +410,17 @@ networks:
 **Config file tests**:
 - TestHealth, TestListConfigFiles, TestReadConfigFile
 - TestSecretsYamlDenied, TestPathTraversal
-- TestDryRun, TestWriteNewFile
 
 **Template tests**:
-- TestListTemplates — verify seeded template sensor returned
-- TestCreateAndGetTemplate — create new sensor, get by unique_id, write dry-run, delete
+- TestSeededTemplateReadsBack — verify seeded template sensor reads back by unique_id
+- TestCreateAndGetTemplate — create new sensor, get by unique_id, delete
 
 **Script tests**:
-- TestListScriptDefs — verify seeded script returned
+- TestSeededScriptReadsBack — verify seeded script reads back by key
 - TestCreateAndGetScript — create with id key, get, write dry-run, delete
 
 **Automation tests**:
-- TestListAutomationDefs — verify seeded automation returned
+- TestSeededAutomationReadsBack — verify seeded automation reads back by id
 - TestCreateAndGetAutomation — create with id field, get, write dry-run, delete
 
 **Contract tests**:
