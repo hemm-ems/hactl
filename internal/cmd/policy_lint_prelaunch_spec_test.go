@@ -334,8 +334,20 @@ func TestPolicyLintReportsAHalfProtectedAutomation(t *testing.T) {
 // inventoryRig is policyRig's shape plus a companion (same server) serving the
 // YAML helpers and the template list, storage helpers in the states, and the
 // config-entry list `config entries` prints. companionUp=false leaves the
-// companion routes unanswered.
+// companion routes unanswered. Its registries are empty.
 func inventoryRig(t *testing.T, body string, companionUp bool) string {
+	t.Helper()
+	return inventoryRigWith(t, body, companionUp, map[string]any{
+		"config/entity_registry/list": []any{}, "config/device_registry/list": []any{},
+		"config/area_registry/list": []any{}, "config/label_registry/list": []any{}, "config/floor_registry/list": []any{},
+	})
+}
+
+// inventoryRigWith is inventoryRig with the websocket answers ws — the
+// registries lint resolves selectors and owners against. The companion lists
+// one YAML helper with an entity in the states (guest_mode) and one without
+// (yaml_only: renamed, or not loaded yet).
+func inventoryRigWith(t *testing.T, body string, companionUp bool, ws map[string]any) string {
 	t.Helper()
 	states := `[
 	 {"entity_id":"input_boolean.guest_mode","state":"off","attributes":{"friendly_name":"Guest Mode"}},
@@ -355,7 +367,8 @@ func inventoryRig(t *testing.T, body string, companionUp bool) string {
 	if companionUp {
 		handlers["/v1/config/helpers"] = func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"helpers":[{"id":"guest_mode","name":"Guest Mode","domain":"input_boolean"}]}`)
+			_, _ = fmt.Fprint(w, `{"helpers":[{"id":"guest_mode","name":"Guest Mode","domain":"input_boolean"},`+
+				`{"id":"yaml_only","name":"YAML Only","domain":"input_boolean"}]}`)
 		}
 		handlers["/v1/config/templates"] = func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -366,10 +379,7 @@ func inventoryRig(t *testing.T, body string, companionUp bool) string {
 		handlers["/v1/config/helpers"] = down
 		handlers["/v1/config/templates"] = down
 	}
-	ts := startCmdServer(t, map[string]any{
-		"config/entity_registry/list": []any{}, "config/device_registry/list": []any{},
-		"config/area_registry/list": []any{}, "config/label_registry/list": []any{}, "config/floor_registry/list": []any{},
-	}, handlers)
+	ts := startCmdServer(t, ws, handlers)
 	pointAtCompanion(t, ts)
 	if err := os.WriteFile(filepath.Join(ts.dir, policy.FileName), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
