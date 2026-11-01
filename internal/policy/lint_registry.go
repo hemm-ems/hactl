@@ -426,19 +426,9 @@ func (s *selfGrants) try(res Resource, matched string, onDevice bool) {
 	}
 }
 
-// findings renders the collected self-grants in file order of the granting
-// allow, then field.
+// findings renders the collected self-grants in the order they were found;
+// Lint orders every finding (sortFindings).
 func (s *selfGrants) findings(profile string) []Finding {
-	sort.SliceStable(s.order, func(i, j int) bool {
-		a, b := s.order[i], s.order[j]
-		if a.granting != b.granting {
-			return a.granting.before(*b.granting)
-		}
-		if a.field != b.field {
-			return a.field < b.field
-		}
-		return !a.onDevice && b.onDevice
-	})
 	n := s.narrowed
 	noun := "entities"
 	if n.addr.kind == KindDevice {
