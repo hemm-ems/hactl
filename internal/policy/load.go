@@ -80,7 +80,7 @@ func policyFileExists(path string) (bool, error) {
 		target, _ := os.Readlink(path)
 		return false, &LoadError{File: path, Problems: []Problem{{
 			Message: fmt.Sprintf("a symlink to %q, which does not exist: hactl cannot read the policy, "+
-				"and an unreadable policy never counts as an absent one (D-60)", target),
+				"and an unreadable policy never counts as an absent one", target),
 		}}}
 	}
 	if err != nil {
@@ -88,7 +88,7 @@ func policyFileExists(path string) (bool, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return false, &LoadError{File: path, Problems: []Problem{{
-			Message: "exists but is not a regular file (" + describeMode(info.Mode()) + "): hactl cannot read it as a policy (D-60)",
+			Message: "exists but is not a regular file (" + describeMode(info.Mode()) + "): hactl cannot read it as a policy",
 		}}}
 	}
 	return true, nil
@@ -102,7 +102,7 @@ func unreadable(path string, err error) *LoadError {
 		msg = pe.Op + ": " + pe.Err.Error()
 	}
 	return &LoadError{File: path, Problems: []Problem{{
-		Message: "exists but cannot be read (" + msg + "): an unreadable policy never counts as an absent one (D-60)",
+		Message: "exists but cannot be read (" + msg + "): an unreadable policy never counts as an absent one",
 	}}}
 }
 
@@ -320,7 +320,8 @@ func (w *walker) top(n *yaml.Node) *Policy {
 		case "profiles":
 			profiles = w.profiles(kv.val)
 		default:
-			w.addf(kv.key.Line, "unknown key %q (want version, active or profiles)", kv.key.Value)
+			w.addf(kv.key.Line, "unknown key %q (want version, active or profiles)%s", kv.key.Value,
+				didYouMean(kv.key.Value, []string{"version", "active", "profiles"}))
 		}
 	}
 	if !versionSeen {
@@ -410,7 +411,8 @@ func (w *walker) profile(name string, line int, n *yaml.Node) *profile {
 		case "where":
 			whereNode = kv.val
 		default:
-			w.addf(kv.key.Line, "unknown key %q in %s (want default, allow, deny or where)", kv.key.Value, what)
+			w.addf(kv.key.Line, "unknown key %q in %s (want default, allow, deny or where)%s", kv.key.Value, what,
+				didYouMean(kv.key.Value, []string{"default", "allow", "deny", "where"}))
 		}
 	}
 	if whereNode != nil {
@@ -530,7 +532,8 @@ func (w *walker) selector(n *yaml.Node, pat string) (*Where, bool) {
 			ok = ok && good
 			sel.Label = v
 		default:
-			w.addf(kv.key.Line, "unknown key %q in %s (want area or label)", kv.key.Value, what)
+			w.addf(kv.key.Line, "unknown key %q in %s (want area or label)%s", kv.key.Value, what,
+				didYouMean(kv.key.Value, []string{"area", "label"}))
 			ok = false
 		}
 	}

@@ -90,7 +90,8 @@ func ParseVerbs(ss []string) ([]Verb, error) {
 		}
 		v, err := ParseVerb(s)
 		if err != nil {
-			return nil, fmt.Errorf("unknown verb %q (want read, control, edit, create, delete or write)", s)
+			return nil, fmt.Errorf("unknown verb %q (want read, control, edit, create, delete or write)%s", s,
+				didYouMean(s, []string{"read", "control", "edit", "create", "delete", WriteAlias}))
 		}
 		set[v] = true
 	}

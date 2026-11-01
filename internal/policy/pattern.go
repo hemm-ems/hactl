@@ -37,12 +37,17 @@ func kindSpec(k string) (KindSpec, bool) {
 }
 
 func kindNames() string {
+	return strings.Join(kindWords(), ", ")
+}
+
+// kindWords are the kinds' spellings in the kinds table's order.
+func kindWords() []string {
 	ks := Kinds()
 	names := make([]string, len(ks))
 	for i, k := range ks {
 		names[i] = string(k)
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // parseAddress parses s by the manual's grammar. concrete is the resource
@@ -59,7 +64,7 @@ func parseAddress(s string, concrete bool) (address, error) {
 	}
 	spec, ok := kindSpec(kindStr)
 	if !ok {
-		return address{}, fmt.Errorf("unknown kind %q (want one of %s)", kindStr, kindNames())
+		return address{}, fmt.Errorf("unknown kind %q (want one of %s)%s", kindStr, kindNames(), didYouMean(kindStr, kindWords()))
 	}
 	a := address{kind: spec.Kind, spec: spec}
 	if err := a.splitIDAndSub(strings.Split(rest, "/"), rest); err != nil {
@@ -114,14 +119,14 @@ func (a *address) splitFile(segs []string) error {
 		isBlockSub := a.sub != nil && i == n-2
 		if !isBlockSub && strings.EqualFold(seg, fileBlockWord) {
 			return fmt.Errorf("segment %q in file address %q is ambiguous with the block sub-resource: "+
-				"only a trailing /block/<id> after the path is a block, so no path segment (and no block id) may be named block (D-67)",
+				"only a trailing /block/<id> after the path is a block, so no path segment (and no block id) may be named block",
 				seg, strings.Join(segs, "/"))
 		}
 	}
 	for _, seg := range a.id {
 		if seg == "." || seg == ".." {
 			return fmt.Errorf("file path %q holds a %q segment: a file path is written exactly as hactl prints it, "+
-				"never relative to itself, and is not canonicalised (D-67)", path, seg)
+				"never relative to itself, and is not canonicalised", path, seg)
 		}
 	}
 	return nil
@@ -149,7 +154,7 @@ func (a *address) checkID(concrete bool) error {
 		id := a.id[0]
 		if !strings.Contains(id, ".") && !glob.HasWildcard(id) {
 			return fmt.Errorf("%s id %q has neither a \".\" nor a wildcard, so it can never match: a policy pattern matches the full "+
-				"<domain>.<name> id, never the part after the domain (D-63) — write %s:*.%s to mean every domain",
+				"<domain>.<name> id, never the part after the domain — write %s:*.%s to mean every domain",
 				spec.Kind, id, spec.Kind, id)
 		}
 	}
@@ -180,7 +185,7 @@ func (a *address) checkCharset(concrete bool) error {
 	for _, seg := range a.id {
 		if allowed == nil {
 			if err := checkText(seg, interiorSpaceKind(a.spec.Kind)); err != "" {
-				return fmt.Errorf("%s id %q %s (D-68)", a.spec.Kind, id, err)
+				return fmt.Errorf("%s id %q %s", a.spec.Kind, id, err)
 			}
 			continue
 		}
@@ -189,10 +194,10 @@ func (a *address) checkCharset(concrete bool) error {
 			case !concrete && (r == '*' || r == '?'):
 				continue
 			case unicode.IsSpace(r) || unicode.IsControl(r):
-				return fmt.Errorf("%s id %q holds %s: no %s id may hold white space or a control character (D-68)",
+				return fmt.Errorf("%s id %q holds %s: no %s id may hold white space or a control character",
 					a.spec.Kind, id, describeRune(r), a.spec.Kind)
 			case !allowed(r):
-				return fmt.Errorf("%s id %q holds %s: a %s id is %s (D-68)",
+				return fmt.Errorf("%s id %q holds %s: a %s id is %s",
 					a.spec.Kind, id, describeRune(r), a.spec.Kind, desc)
 			}
 		}
@@ -301,7 +306,7 @@ func (a *address) checkSub(concrete bool) error {
 		if glob.HasWildcard(word) {
 			return fmt.Errorf("sub-resource word %q holds a wildcard: sub-resource words are literal (want one of %s)", word, subWords(spec))
 		}
-		return fmt.Errorf("unknown sub-resource %q for %s (want one of %s)", word, spec.Kind, subWords(spec))
+		return fmt.Errorf("unknown sub-resource %q for %s (want one of %s)%s", word, spec.Kind, subWords(spec), didYouMean(word, subWordList(spec)))
 	}
 	if len(a.sub) == 1 {
 		return nil
@@ -321,7 +326,8 @@ func (a *address) checkSub(concrete bool) error {
 			return fmt.Errorf("%s field %q holds a wildcard: the field names are literal (want one of %s; %s/%s alone covers every field)",
 				word, v, strings.Join(sub.ParamValues, ", "), spec.Kind, word)
 		}
-		return fmt.Errorf("unknown %s field %q for %s (want one of %s)", word, v, spec.Kind, strings.Join(sub.ParamValues, ", "))
+		return fmt.Errorf("unknown %s field %q for %s (want one of %s)%s", word, v, spec.Kind, strings.Join(sub.ParamValues, ", "),
+			didYouMean(v, sub.ParamValues))
 	}
 	return checkFreeSegment(a.sub[1])
 }
@@ -332,17 +338,22 @@ func (a *address) checkSub(concrete bool) error {
 // characters are not. No charset applies beyond that.
 func checkFreeSegment(seg string) error {
 	if p := checkText(seg, true); p != "" {
-		return fmt.Errorf("sub-resource segment %q %s (D-68)", seg, p)
+		return fmt.Errorf("sub-resource segment %q %s", seg, p)
 	}
 	return nil
 }
 
 func subWords(spec KindSpec) string {
+	return strings.Join(subWordList(spec), ", ")
+}
+
+// subWordList are spec's sub-resource words in the resources table's order.
+func subWordList(spec KindSpec) []string {
 	words := make([]string, len(spec.Subs))
 	for i, s := range spec.Subs {
 		words[i] = s.Word
 	}
-	return strings.Join(words, ", ")
+	return words
 }
 
 // matches reports whether the pattern a covers resource r (manual,
