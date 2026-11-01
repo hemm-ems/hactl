@@ -19,7 +19,9 @@ import (
 
 // ============================================================================
 // Policy addressing — the oracles behind the two NEEDS-ORACLE markers in
-// dev/surfaces/policy.manifest (permission policy, phase 2).
+// dev/surfaces/policy.manifest (permission policy, phase 2). Both answered
+// yes against HA 2026.10.4; the markers are resolved as D-83 and D-84 in
+// docs/decisions.md.
 //
 // A write is checked against the resource it touches, so the check is only as
 // right as the address the request is mapped to. Two rows map a request to an

@@ -301,9 +301,11 @@ ws energy/get_prefs = debt: read-deferred-phase3 — no kind fits the energy pre
 # every domain d in the reach (HA fans out per domain, D-59).
 # + every service that can start a script (script.turn_on, script.toggle,
 # script.{x}, homeassistant.turn_on|toggle): control script:{id}/run for every
-# script entity in the reach (script.{x}: for x itself), id the config id from
-# the entity registry — blocked by the script-unique_id oracle question on the
-# svc call cmd row below.
+# script entity in the reach, id that entity's entity-registry unique_id, which
+# is the script's config key and survives a registry rename and script.reload;
+# for script.{x}, x itself, since the per-script service stays named by the
+# config key after a rename (oracle: D-84,
+# TestOracleYAMLScriptUniqueIDIsConfigKey).
 # No selector and no entity in the data -> the service check alone. No
 # system:reload/{domain} for <domain>.reload (D-73). The query
 # (?return_response=true) does not make it a read. Callers: svc call, script
@@ -328,11 +330,11 @@ rest POST /api/config/config_entries/options/flow = debt: mapped, body-decoded, 
 # map: edit config_entry:{handler}/options, handler read from the start
 # response this invocation holds; without one, edit on every config_entry
 # id's options (kind-wide, D-75 shape — over-deny). The GET below is itself a
-# write now (D-74), so it is no lookup.
-# [NEEDS ORACLE: does an options flow's `handler` (start response and GET
-# options/flow/{flow_id}) equal the config entry's entry_id?] Blocks this row
-# and the two below: a different answer means the handler is not the address
-# and these requests must fail closed instead.
+# write now (D-74), so it is no lookup. An options flow's `handler` is the
+# config entry's entry_id, never its domain — in the start answer, in GET
+# options/flow/{flow_id} and in a step's create_entry answer (oracle: D-83,
+# TestOracleOptionsFlowHandlerIsEntryID), so it is the address for this row
+# and the two that share it below.
 rest POST /api/config/config_entries/options/flow/{flow_id} = debt: mapped through the flow's handler, not enforced — phase 2
 
 # map: edit config_entry:{handler}/options — the same verb as the start that
@@ -361,8 +363,8 @@ rest GET /api/config/config_entries/flow/{flow_id} = debt: mapped as the step's 
 
 # map: edit config_entry:{handler}/options, handler as for the options step
 # above (start response this invocation holds, else kind-wide on every
-# entry's options) — the matching write, not a read (D-74, R-5). Blocked by
-# the same handler oracle question.
+# entry's options) — the matching write, not a read (D-74, R-5). The handler
+# is the entry_id here too (D-83).
 rest GET /api/config/config_entries/options/flow/{flow_id} = debt: mapped as the options step's write, not enforced — phase 2
 
 # map: read-deferred-phase3, no resource (integration catalog). Sent only by
@@ -576,18 +578,18 @@ companion GET /v1/logs = debt: read-deferred-phase3 — mapping row only, enforc
 # unanswerable or an error answer -> refused (D-73).
 # svc call script.{x} | script.turn_on | script.toggle | homeassistant.turn_on
 # | homeassistant.toggle -> also control script:{x}/run for every script it
-# starts, x the script's config id from the entity registry
-# [NEEDS ORACLE: is a YAML script's entity-registry unique_id its config key, so
-# a script entity renamed in the registry maps back to script:<config key>?]
-# — blocks the derived script:<id>/run check only.
+# starts: for script.{x}, x is the service name itself (the per-script service
+# keeps the config key after a registry rename, so no lookup); for a script
+# entity in the reach, x is its entity-registry unique_id, which is the config
+# key, also for a renamed entity (oracle: D-84,
+# TestOracleYAMLScriptUniqueIDIsConfigKey).
 cmd hactl svc call = debt: the preview computes no reach today; phase 2 adds the fan-out and the check
 
 # map: control script:{config id}/run + control service:script.turn_on +
 # control entity:script.{id}. All three in the preview (existence read today).
 # The argument is an entity id (the command prefixes `script.` and reads the
-# state), so the config id depends on the same script-unique_id oracle
-# question as svc call above, and the derived script:{config id}/run check is
-# blocked by it too.
+# state), so the config id is that entity's entity-registry unique_id — the
+# config key, also after a registry rename (D-84), as for svc call above.
 cmd hactl script run = debt: the preview checks nothing yet — phase 2 command layer
 
 # map: edit script:{id}/config + control service:script.reload (hactl sends the
@@ -725,8 +727,8 @@ cmd hactl config options = debt: the preview checks nothing yet — phase 2 comm
 # id until HA answers).
 cmd hactl config flow-start = debt: the preview checks nothing yet — phase 2 command layer
 
-# map: --options: edit config_entry:{handler}/options (see the REST rows'
-# oracle question; kind-wide on every entry's options when this invocation
+# map: --options: edit config_entry:{handler}/options (the handler is the
+# entry_id, D-83; kind-wide on every entry's options when this invocation
 # holds no start response naming the handler); otherwise create and edit on
 # every config_entry id (D-75). The preview's own GET of the flow is that same
 # write (D-74), so the check runs before it.
