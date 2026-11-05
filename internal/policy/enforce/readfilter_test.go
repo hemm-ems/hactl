@@ -363,35 +363,45 @@ profiles:
 	}
 }
 
-// TestAMaskedValueIsNeverWrittenBack — D-154: once a read masked something,
-// a write carrying `<denied>` back is refused, so a command merging what it
-// read (a label list) never writes the mask over the real value.
-func TestAMaskedValueIsNeverWrittenBack(t *testing.T) {
-	s, _ := newSession(t, `version: 1
+// TestAWriteCommandsOwnReadsAreExempt — D-82: in a write command the reads
+// it makes before it writes are neither refused nor filtered (its plan decides
+// the write); the same reads in any other command are. An unmapped read is
+// refused in both (D-145).
+func TestAWriteCommandsOwnReadsAreExempt(t *testing.T) {
+	body := `version: 1
 active: a
 profiles:
   a:
-    deny:
-      "entity:light.x/registry/labels": [read]
-`, nil)
+    default: deny
+    allow:
+      "entity:light.a/registry/labels": [edit]
+`
 	ctx := context.Background()
-	update := reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/update", Params: map[string]any{"entity_id": "light.x", "labels": []any{"<denied>", "night"}}}
-	if err := s.Check(ctx, update); err != nil {
-		t.Fatalf("before anything was masked the write is decided as any: %v", err)
-	}
+	one := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states/light.a"}
 	list := reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/list"}
-	out, err := s.Filter(ctx, list, []byte(`[{"entity_id":"light.x","labels":["night"]}]`))
-	if err != nil || !strings.Contains(string(out), `["<denied>"]`) {
-		t.Fatalf("the labels were not masked: %s %v", out, err)
+	answer := []byte(`[{"entity_id":"light.a","labels":["x"]}]`)
+	unmapped := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/no_such_read"}
+
+	w, _ := newSession(t, body, nil, func(o *enforce.Options) { o.WriteCommand = true })
+	if err := w.Check(ctx, one); err != nil {
+		t.Errorf("a write command's own read was refused: %v", err)
 	}
-	err = s.Check(ctx, update)
-	var ref *enforce.DeniedError
-	if !errors.As(err, &ref) || ref.Denied[0].Rule != enforce.RuleMaskedWriteBack {
-		t.Fatalf("a write carrying <denied> back: %v, want %q", err, enforce.RuleMaskedWriteBack)
+	if out, err := w.Filter(ctx, list, answer); err != nil || string(out) != string(answer) {
+		t.Errorf("a write command's own read was filtered: %s %v", out, err)
 	}
-	clean := reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/update", Params: map[string]any{"entity_id": "light.x", "labels": []any{"night"}}}
-	if err := s.Check(ctx, clean); err != nil {
-		t.Errorf("a write without the mask: %v", err)
+	if h, m, r := w.ReadCounts(); h+m+r != 0 {
+		t.Errorf("a write command counted hidden %d masked %d refused %d", h, m, r)
+	}
+	if err := w.Check(ctx, unmapped); err == nil {
+		t.Error("an unmapped read in a write command was not refused (D-145)")
+	}
+
+	r, _ := newSession(t, body, nil)
+	if err := r.Check(ctx, one); err == nil {
+		t.Error("a read command's read of a denied entity was not refused")
+	}
+	if out, err := r.Filter(ctx, list, answer); err != nil || string(out) != "[]" {
+		t.Errorf("a read command's listing was not filtered: %s %v", out, err)
 	}
 }
 

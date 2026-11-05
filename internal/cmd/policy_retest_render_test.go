@@ -151,7 +151,7 @@ func TestPolicyCheckInapplicableVerbNoteSaysItDecidesNothing(t *testing.T) {
 func TestPolicyCheckWriteScriptCountsTheRunTheDefaultDenies(t *testing.T) {
 	const base = "    default: deny\n    allow:\n" +
 		"      \"script:morning\": [edit, create, delete]\n" +
-		"      \"entity:script.morning_renamed\": [control, read]\n" + // read: script run finds the script it runs (W-2)
+		"      \"entity:script.morning_renamed\": [control]\n" +
 		"      \"service:script.turn_on\": [control]\n"
 	rig := startSvcRig(t, reachOf("script.morning_renamed"))
 	writePolicyFile(t, rig.dir, agentPolicy(base))

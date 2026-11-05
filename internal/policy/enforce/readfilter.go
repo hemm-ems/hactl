@@ -208,8 +208,8 @@ func (s *Session) refuseRead(ref *DeniedError) error {
 
 // Filter implements reqgate.Gate: the answer to a read, filtered (D-138).
 func (s *Session) Filter(ctx context.Context, req reqmap.Request, resp []byte) ([]byte, error) {
-	if isOwn(ctx) {
-		return resp, nil
+	if isOwn(ctx) || s.writeCommand {
+		return resp, nil // the session's own question, or a write's own read (D-82)
 	}
 	// A read's mapping needs no fact (the row and the request decide it), so
 	// the answer is classified without asking anything: a write's answer is

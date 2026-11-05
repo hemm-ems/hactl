@@ -137,8 +137,10 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 		InstanceDir: dir,
 		Command:     strings.TrimSpace(cmd.CommandPath() + " " + strings.Join(args, " ")),
 		DryRun:      isPreview(cmd),
-		Fetcher:     fetcher,
-		Recorder:    policyRecorder,
+		// A write command's own reads are exempt (D-82): its plan decides.
+		WriteCommand: isWriteCommand(cmd),
+		Fetcher:      fetcher,
+		Recorder:     policyRecorder,
 	})
 	if err != nil {
 		return err
@@ -284,6 +286,25 @@ func policyConfigFileReader() func(ctx context.Context, location string) ([]byte
 // succeeded; the entry points end it on every other path.
 func rootPostRun(*cobra.Command, []string) error {
 	return finishPolicySession(nil)
+}
+
+// writesWithoutConfirm are the write commands that have no --confirm (the
+// policy write surface's cmd rows, dev/surfaces/policy.manifest): each writes
+// as it runs. `config show` is not one of them here — it is a read command
+// whose probe its plan checks — nor are `setup` and `mcp`, which no session
+// covers. TestWriteCommandsAreThePolicyWriteSurface holds this list and the
+// --confirm commands to the manifest.
+var writesWithoutConfirm = map[string]bool{
+	"hactl config flow-inspect": true,
+	"hactl cache clear":         true,
+	"hactl cache refresh":       true,
+}
+
+// isWriteCommand reports whether cmd is a write command, whose own reads are
+// exempt from read enforcement (D-82): every --confirm command, previewed or
+// confirmed, and the few that write without one.
+func isWriteCommand(cmd *cobra.Command) bool {
+	return cmd.Flags().Lookup("confirm") != nil || writesWithoutConfirm[cmd.CommandPath()]
 }
 
 // isPreview reports whether cmd runs as a preview: it has --confirm and it is

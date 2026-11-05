@@ -227,3 +227,53 @@ func TestPolicyCommandCensusSeesEveryHook(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteCommandsAreThePolicyWriteSurface — D-82's predicate (which
+// invocations' own reads are exempt) is the policy write surface, not a guess:
+// isWriteCommand holds for exactly the manifest's `cmd` rows, less `config
+// show` (a read command whose probe its plan checks), `setup` and `mcp` (no
+// session covers them).
+func TestWriteCommandsAreThePolicyWriteSurface(t *testing.T) {
+	root := surfaceRepoRoot(t)
+	m, err := surfaceaudit.LoadManifest(root, "policy")
+	if err != nil {
+		t.Fatalf("loading the policy manifest: %v", err)
+	}
+	notWrites := map[string]bool{"hactl config show": true, "hactl setup": true, "hactl mcp": true}
+	want := map[string]bool{}
+	for key := range m.Entries {
+		path, ok := strings.CutPrefix(key, "cmd ")
+		if ok && !notWrites[path] {
+			want[path] = true
+		}
+	}
+	if len(want) < 30 {
+		t.Fatalf("the manifest names %d write commands — the cmd rows have stopped matching", len(want))
+	}
+	got := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Runnable() && isWriteCommand(c) {
+			got[c.CommandPath()] = true
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+	for p := range want {
+		if !got[p] {
+			t.Errorf("%s is a write command in policy.manifest, but isWriteCommand says no — its own reads would be enforced (D-82)", p)
+		}
+	}
+	for p := range got {
+		if !want[p] {
+			t.Errorf("isWriteCommand says %s is a write command, but policy.manifest has no cmd row for it — its reads would go unenforced", p)
+		}
+	}
+	for p := range notWrites {
+		if got[p] {
+			t.Errorf("%s is exempted from read enforcement, but it is no write command", p)
+		}
+	}
+}

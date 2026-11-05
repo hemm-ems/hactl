@@ -1,7 +1,6 @@
 package enforce
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,6 +46,12 @@ type Options struct {
 	Recorder Recorder
 	// Now is the clock of the audit log's `time` (time.Now when nil).
 	Now func() time.Time
+	// WriteCommand marks the invocation as a write command (D-82): its own
+	// reads — what it resolves, looks up, validates and diffs before it
+	// writes — are neither refused nor filtered, because its plan, checked
+	// in the dry run and under --confirm, decides the write. An unmapped or
+	// unmappable request is still refused (D-145).
+	WriteCommand bool
 }
 
 // Session enforces one policy for one command invocation (H-29): it decides
@@ -54,13 +59,15 @@ type Options struct {
 // write command declares, and writes the audit log. Nothing it verifies
 // outlives the invocation or the policy's content hash (D-72, R-7).
 type Session struct {
-	pol      *policy.Policy
-	command  string
-	dryRun   bool
-	audit    *Audit
-	fetcher  Fetcher
-	recorder Recorder
-	now      func() time.Time
+	pol     *policy.Policy
+	command string
+	dryRun  bool
+	// writeCommand exempts the invocation's reads (D-82).
+	writeCommand bool
+	audit        *Audit
+	fetcher      Fetcher
+	recorder     Recorder
+	now          func() time.Time
 
 	mu      sync.Mutex
 	cache   *factCache
@@ -87,15 +94,16 @@ func New(opts Options) (*Session, error) {
 		now = time.Now
 	}
 	return &Session{
-		pol:      opts.Policy,
-		command:  opts.Command,
-		dryRun:   opts.DryRun,
-		audit:    NewAudit(opts.InstanceDir),
-		fetcher:  opts.Fetcher,
-		recorder: opts.Recorder,
-		now:      now,
-		cache:    newFactCache(opts.Policy.Hash()),
-		verdicts: map[string]cachedVerdict{},
+		pol:          opts.Policy,
+		command:      opts.Command,
+		dryRun:       opts.DryRun,
+		writeCommand: opts.WriteCommand,
+		audit:        NewAudit(opts.InstanceDir),
+		fetcher:      opts.Fetcher,
+		recorder:     opts.Recorder,
+		now:          now,
+		cache:        newFactCache(opts.Policy.Hash()),
+		verdicts:     map[string]cachedVerdict{},
 	}, nil
 }
 
@@ -259,18 +267,12 @@ func (s *Session) Check(ctx context.Context, req reqmap.Request) error {
 		_ = s.audit.Append([]AuditLine{line}) // refused either way
 		return s.refuse(ref)
 	case res.Disposition == reqmap.Read:
-		if isOwn(ctx) {
-			return nil
+		if isOwn(ctx) || s.writeCommand {
+			return nil // the session's own question, or a write's own read (D-82)
 		}
 		return s.checkRead(req, res)
 	case res.Disposition != reqmap.Write:
 		return nil
-	}
-	if s.writesBackMasked(req) {
-		ref := s.newDenial(LayerRequest, s.dryRun, describe(req))
-		ref.Denied = []Denial{{Resource: describe(req), Rule: RuleMaskedWriteBack}}
-		_ = s.audit.Append([]AuditLine{s.line(LayerRequest, s.dryRun, describe(req), "", false, RuleMaskedWriteBack, 0)})
-		return s.refuse(ref)
 	}
 	if s.recorder != nil {
 		s.recorder.RequestChecked(req, append([]reqmap.Check(nil), res.Checks...))
@@ -523,33 +525,6 @@ func (s *Session) decide(c reqmap.Check) policy.Verdict {
 		live = s.fetcher.Live()
 	}
 	return s.pol.Decide(c.Resource, c.Verb, live)
-}
-
-// RuleMaskedWriteBack refuses a write that carries a masked value back
-// (D-154).
-const RuleMaskedWriteBack = "fail-closed: the write carries a value the policy masked (<denied>) back to Home Assistant"
-
-// writesBackMasked reports whether a write request carries `<denied>` — a
-// value this invocation's reads masked — back to Home Assistant: a command
-// that merges what it read (a label list, an attribute) would otherwise write
-// the mask over the real value (D-154). Only once something was masked.
-func (s *Session) writesBackMasked(req reqmap.Request) bool {
-	s.mu.Lock()
-	masked := s.reads.masked
-	s.mu.Unlock()
-	if masked == 0 {
-		return false
-	}
-	needle := []byte(`"` + Denied + `"`)
-	if bytes.Contains(req.Body, needle) || bytes.Contains(req.Body, []byte(Denied)) {
-		return true
-	}
-	if req.Params != nil {
-		if b, err := json.Marshal(req.Params); err == nil && (bytes.Contains(b, needle) || bytes.Contains(b, []byte(`\u003cdenied\u003e`))) {
-			return true
-		}
-	}
-	return false
 }
 
 // RuleUnreadViewDelete refuses deleting a dashboard view the profile may not

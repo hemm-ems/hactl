@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -337,5 +338,68 @@ profiles:
 	env = ws.mustSucceed(t, map[string]any{"type": "lovelace/config", "url_path": urlPath})
 	if !strings.Contains(string(env.Result), "Secret view") {
 		t.Errorf("the refused save deleted the secret view: %s", env.Result)
+	}
+}
+
+// TestPolicyReadsWriteCommandsOwnReadsAreExempt — D-82: a profile that may
+// edit an entity's labels and read nothing at all still labels it — `ent
+// set-label` reads the entity and the label list before it writes, and those
+// reads are the write's own, decided by its plan — while a read command under
+// the same profile is refused (`ent show`) or filtered (`ent ls`, `label ls`).
+// HA's registry, read directly, is the oracle.
+func TestPolicyReadsWriteCommandsOwnReadsAreExempt(t *testing.T) {
+	inst := getPolicyEnforceHA(t)
+	rig := buildPGRig(t, inst)
+	light := rig.Lights[2]
+	ws := dialRawWS(t, inst.URL(), inst.Token())
+	before := slices.Clone(pgEntityRegistry(t, ws)[light].Labels)
+	if before == nil {
+		before = []string{}
+	}
+	label := pgCreateLabel(t, ws, "pg_policy_d82_label")
+	t.Cleanup(func() {
+		cleanup := dialRawWS(t, inst.URL(), inst.Token())
+		cleanup.send(t, map[string]any{"type": "config/entity_registry/update", "entity_id": light, "labels": before})
+		cleanup.send(t, map[string]any{"type": "config/label_registry/delete", "label_id": label})
+	})
+	policy := fmt.Sprintf(`version: 1
+active: %s
+profiles:
+  %s:
+    default: deny
+    allow:
+      "entity:%s/registry/labels": [edit]
+`, pgProfile, pgProfile, light)
+	dir := pgInstanceDir(t, inst.URL(), inst.Token(), policy)
+
+	// The write: preview and --confirm, no read allowed anywhere.
+	assertPolicyAllowedPreview(t, dir, "ent", "set-label", light, label)
+	if out, err := runHactlDirErr(t, dir, "ent", "set-label", light, label, "--confirm"); err != nil {
+		t.Fatalf("set-label --confirm with edit but no read was refused: %v\n%s", err, out)
+	} else if strings.Contains(out, "hidden by policy") {
+		t.Errorf("a write command's own reads were counted as hidden:\n%s", out)
+	}
+	if !slices.Contains(pgEntityRegistry(t, ws)[light].Labels, label) {
+		t.Fatalf("oracle: set-label --confirm did not label %s in HA's registry", light)
+	}
+
+	// The reads, under the same profile.
+	out, _, err := pgReads(t, dir, "ent", "show", light)
+	if pgExitCode(err) != 1 || !strings.Contains(out, "  denied: read entity:"+light+" — default: deny") {
+		t.Errorf("ent show under a profile that reads nothing: %v, want refused:\n%s", err, out)
+	}
+	out, _, err = pgReads(t, dir, "ent", "ls", "--domain", "light")
+	if err != nil {
+		t.Fatalf("ent ls: %v\n%s", err, out)
+	}
+	if strings.Contains(out, light) || !strings.HasPrefix(pgLastLine(out), "hidden by policy: ") {
+		t.Errorf("ent ls under a profile that reads nothing shows %s, or no trailer:\n%s", light, out)
+	}
+	out, _, err = pgReads(t, dir, "label", "ls")
+	if err != nil {
+		t.Fatalf("label ls: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "pg_policy_d82_label") || strings.Contains(out, label+" ") {
+		t.Errorf("label ls under a profile that reads nothing shows the label:\n%s", out)
 	}
 }

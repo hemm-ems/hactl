@@ -96,8 +96,6 @@ profiles:
 // TestPolicyEnforceEditVerb — edit: `ent set-label` checks only
 // entity:<x>/registry/labels (manual table), so a profile that allows exactly
 // that sub-resource lets one entity be labelled and refuses the denied one.
-// The profile allows reading entities and labels: from W-2 on, `default: deny`
-// hides what the command must read before it writes (D-138).
 func TestPolicyEnforceEditVerb(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	rig := buildPGRig(t, inst)
@@ -115,8 +113,6 @@ profiles:
     default: deny
     allow:
       "entity:*/registry/labels": [edit]
-      "entity:*": [read]
-      "label:*": [read]
     deny:
       "entity:%s/registry/labels": [edit]
 `, pgProfile, pgProfile, denied)

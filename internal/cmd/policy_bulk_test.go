@@ -569,10 +569,7 @@ func TestDashSaveRefusedByItsPlan(t *testing.T) {
 // layer, and the save is sent. A key outside the views is still the whole
 // dashboard, and an unreadable stored config is still checked whole.
 func TestDashSaveCreatesFirstViewsWhenNothingIsStored(t *testing.T) {
-	// read: the save finds its dashboard in the (filtered) dashboard list
-	// first — under default: deny a dashboard nothing lets the profile read
-	// is not there to save to (W-2).
-	body := agentPolicy("    default: deny\n    allow:\n      \"dashboard:wall-panel\": [create, delete, read]\n" +
+	body := agentPolicy("    default: deny\n    allow:\n      \"dashboard:wall-panel\": [create, delete]\n" +
 		"    deny:\n      \"dashboard:wall-panel/views/secret\": [edit]\n")
 	views := writeDashFile(t, map[string]any{"views": []any{dashView("home", "light.a"), dashView("secret", "lock.door")}})
 
