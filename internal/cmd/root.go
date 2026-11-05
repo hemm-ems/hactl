@@ -569,6 +569,7 @@ func resetSubcommandFlags() {
 	flagRtfmCore = false
 	flagRtfmFamily = nil
 	flagRtfmFamilies = false
+	flagRtfmSkill = ""
 	flagTplFile = ""
 	flagEntPattern = ""
 	flagEntDomain = ""

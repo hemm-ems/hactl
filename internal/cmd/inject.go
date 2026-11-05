@@ -99,6 +99,8 @@ func markRTFMDelivered() {
 	switch {
 	case flagRtfmFamilies:
 		return // listing only — no manual content was shown
+	case flagRtfmSkill != "":
+		return // a skill is not the manual — none of it was shown (D-165)
 	case flagRtfmCore || len(flagRtfmFamily) > 0:
 		if flagRtfmCore {
 			scopes = append(scopes, "core")

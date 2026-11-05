@@ -17,6 +17,7 @@ var (
 	flagRtfmFamily    []string
 	flagRtfmReference []string
 	flagRtfmFamilies  bool
+	flagRtfmSkill     string
 )
 
 var rtfmCmd = &cobra.Command{
@@ -25,7 +26,8 @@ var rtfmCmd = &cobra.Command{
 	Short: "Print the full hactl manual",
 	Long: "Display the embedded hactl manual. Intended for LLM self-teaching.\n" +
 		"Use --core / --family for a token-frugal subset, --families to see the split, " +
-		"--reference for a family's full contract that no command delivers on its own.",
+		"--reference for a family's full contract that no command delivers on its own, " +
+		"--skill for a step-by-step procedure for an agent (policy-setup).",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// rtfm IS the manual — cap it only when the user explicitly asks.
 		if !rootCmd.PersistentFlags().Changed("tokensmax") {
@@ -33,6 +35,8 @@ var rtfmCmd = &cobra.Command{
 		}
 		w := cmd.OutOrStdout()
 		switch {
+		case cmd.Flags().Changed("skill"):
+			return runRTFMSkill(w, flagRtfmSkill)
 		case flagRtfmFamilies:
 			return runRTFMFamilies(w)
 		case flagRtfmCore || len(flagRtfmFamily) > 0 || len(flagRtfmReference) > 0:
@@ -51,6 +55,11 @@ func init() {
 		"print only this command family's reference section, which no command delivers on its own (repeatable, alias-aware)")
 	rtfmCmd.Flags().BoolVar(&flagRtfmFamilies, "families", false,
 		"list command families, their aliases and section sizes")
+	rtfmCmd.Flags().StringVar(&flagRtfmSkill, "skill", "",
+		"print this skill — a step-by-step procedure for an agent, shipped in the binary (e.g. policy-setup); alone")
+	for _, other := range []string{"core", "family", "reference", "families"} {
+		rtfmCmd.MarkFlagsMutuallyExclusive("skill", other)
+	}
 	rtfmCmd.MarkFlagsMutuallyExclusive("families", "core")
 	rtfmCmd.MarkFlagsMutuallyExclusive("families", "family")
 	rtfmCmd.MarkFlagsMutuallyExclusive("families", "reference")
@@ -59,6 +68,17 @@ func init() {
 
 func runRTFM(w io.Writer) error {
 	_, err := fmt.Fprint(w, docs.Manual)
+	return err
+}
+
+// runRTFMSkill prints one embedded skill verbatim (D-165); an unknown name is
+// refused with the list.
+func runRTFMSkill(w io.Writer, name string) error {
+	text, ok := docs.Skill(name)
+	if !ok {
+		return fmt.Errorf("unknown skill %q; valid: %s", name, strings.Join(docs.SkillNames(), ", "))
+	}
+	_, err := fmt.Fprint(w, text)
 	return err
 }
 
