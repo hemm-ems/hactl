@@ -1979,11 +1979,19 @@ and the backup overwrote it and printed that path to its caller as a recovery
 point (#101). The defect is not that a clock repeats. It is that nothing asked
 whether the name was free.
 
+The lock is held **per Home Assistant, not per directory** (D-152, D-168): it
+lives in the user's cache directory, keyed by the instance's `HA_URL`, because
+one directory per agent (D-151) made the directory the wrong unit — two agents'
+directories on one Home Assistant took two different locks, and their writes
+interleaved exactly as #100's did. Spellings of one URL that differ only in the
+case of scheme and host, a default port or a trailing `/` are one instance.
+
 **What this law does not claim.** A writer that is not this hactl — Home
-Assistant's own UI, a second machine, a hactl pointed at a different directory
-carrying the same URL — is not excluded by a lock on a local file. H-26 makes
-hactl consistent with itself; H-12's read-back is what catches everybody else.
-Stated here rather than discovered later.
+Assistant's own UI, a second machine, a hactl whose `HA_URL` names the same
+instance another way (an IP for a host name, a proxy) — is not excluded by a
+lock on a local file. H-26 makes hactl consistent with itself; H-12's
+read-back is what catches everybody else. Stated here rather than discovered
+later.
 
 - Enforced by: `internal/instancelock/lock_test.go`
   (`TestLockIsExclusiveAcrossProcesses`, which asks `flock(1)` rather than
@@ -1993,7 +2001,9 @@ Stated here rather than discovered later.
   `TestAcquireGivesUpAndSaysWhoHasIt`, because an unbounded wait on a peer that
   may itself be blocked is a hang, and a hang is the one failure an agent
   cannot report; `TestAcquireHonoursContextCancellation`;
-  `TestUnresolvableCacheDirFailsOpenVisibly`), `internal/backupfile/backupfile_test.go`
+  `TestUnresolvableCacheDirFailsOpenVisibly`; `TestDirForURLIsOneLockPerInstance`
+  for the key, and `TestWriteLockIsKeyedByTheHAURL` in `internal/cmd` for two
+  directories that must share it), `internal/backupfile/backupfile_test.go`
   (`TestWriteNeverOverwritesAnExistingBackup`, which freezes the clock so the
   collision happens by construction — two live writes landed 2.1 s apart
   however hard they were launched together, so a test that waits for one second
