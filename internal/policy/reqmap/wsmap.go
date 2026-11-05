@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/hemm-ems/hactl/internal/policy"
 )
@@ -291,107 +290,6 @@ func mapDashboardDelete(c *call) (mapping, error) {
 	}
 	ch, err := check(policy.Delete, policy.KindDashboard, canonicalDashboard(u), "")
 	return mapping{checks: []Check{ch}}, err
-}
-
-// --- reads (phase 3; informational now) -------------------------------------
-
-func readSystem(id string) mapper {
-	return func(*call) (mapping, error) {
-		ch, err := check(policy.Read, policy.KindSystem, id, "")
-		return mapping{checks: []Check{ch}}, err
-	}
-}
-
-// readListing is a listing of a kind: phase 3 filters its rows; the row's
-// read is every id of the kind.
-func readListing(kind policy.Kind, sub string) mapper {
-	return func(*call) (mapping, error) {
-		return mapping{checks: []Check{kindWide(policy.Read, kind, sub)}}, nil
-	}
-}
-
-func readTraceList(c *call) (mapping, error) {
-	domain, _, err := c.param("domain")
-	if err != nil {
-		return mapping{}, err
-	}
-	switch domain {
-	case "automation", "script":
-		return mapping{checks: []Check{kindWide(policy.Read, policy.Kind(domain), "trace")}}, nil
-	case "":
-		return mapping{checks: []Check{
-			kindWide(policy.Read, policy.KindAutomation, "trace"),
-			kindWide(policy.Read, policy.KindScript, "trace"),
-		}}, nil
-	}
-	return mapping{}, fmt.Errorf("trace domain %q is neither automation nor script", domain)
-}
-
-func readTraceGet(c *call) (mapping, error) {
-	domain, err := c.requiredParam("domain")
-	if err != nil {
-		return mapping{}, err
-	}
-	item, err := c.requiredParam("item_id")
-	if err != nil {
-		return mapping{}, err
-	}
-	if domain != "automation" && domain != "script" {
-		return mapping{}, fmt.Errorf("trace domain %q is neither automation nor script", domain)
-	}
-	ch, err := check(policy.Read, policy.Kind(domain), item, "trace")
-	return mapping{checks: []Check{ch}}, err
-}
-
-func readDashboardConfig(c *call) (mapping, error) {
-	u, _, err := c.param("url_path")
-	if err != nil {
-		return mapping{}, err
-	}
-	ch, err := check(policy.Read, policy.KindDashboard, canonicalDashboard(u), "")
-	return mapping{checks: []Check{ch}}, err
-}
-
-// readDashboardResources: resources are one global list; the grammar hangs
-// them under a dashboard, and the manifest proposes the default's.
-func readDashboardResources(*call) (mapping, error) {
-	ch, err := check(policy.Read, policy.KindDashboard, "", "resources")
-	return mapping{checks: []Check{ch}}, err
-}
-
-// readStatistics reads entity:<id>/stats for every statistic the request
-// names; an external statistic (`domain:name`) has no address and is skipped.
-func readStatistics(c *call) (mapping, error) {
-	raw, ok := c.req.Params["statistic_ids"]
-	if !ok {
-		return mapping{checks: []Check{kindWide(policy.Read, policy.KindEntity, "stats")}}, nil
-	}
-	list, isList := raw.([]any)
-	if !isList {
-		if ss, isStrs := raw.([]string); isStrs {
-			for _, s := range ss {
-				list = append(list, s)
-			}
-		} else {
-			return mapping{}, fmt.Errorf("statistic_ids is a %T, not a list", raw)
-		}
-	}
-	var out []Check
-	for _, v := range list {
-		s, isStr := v.(string)
-		if !isStr {
-			return mapping{}, fmt.Errorf("a statistic id is a %T, not a string", v)
-		}
-		if strings.Contains(s, ":") {
-			continue
-		}
-		ch, err := check(policy.Read, policy.KindEntity, s, "stats")
-		if err != nil {
-			return mapping{}, err
-		}
-		out = append(out, ch)
-	}
-	return mapping{checks: out}, nil
 }
 
 // refuseOwnerOnly maps a request only the owner sends, from a command that

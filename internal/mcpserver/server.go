@@ -193,9 +193,16 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 
 		runMu.Lock()
 		defer runMu.Unlock()
-		var buf bytes.Buffer
-		runErr := opts.Runner(ctx, append([]string{"hactl"}, tokens...), &buf)
+		var buf, errBuf bytes.Buffer
+		runErr := opts.Runner(WithStderr(ctx, &errBuf), append([]string{"hactl"}, tokens...), &buf)
 		out := buf.String()
+		// What the command wrote to stderr in-process — the `hidden by
+		// policy` trailer of a --json answer (D-139) — is its own content
+		// item, so the answer itself keeps its shape.
+		var extra []mcp.Content
+		if errBuf.Len() > 0 {
+			extra = append(extra, &mcp.TextContent{Text: errBuf.String()})
+		}
 		if !manualDelivered {
 			// First result of the session: prepend the manual (unless the
 			// call was rtfm — its output already is the manual). Injected
@@ -215,11 +222,11 @@ func toolHandler(opts Options) mcp.ToolHandlerFor[toolInput, any] {
 			}
 			return &mcp.CallToolResult{
 				IsError: true,
-				Content: []mcp.Content{&mcp.TextContent{Text: out + "error: " + runErr.Error()}},
+				Content: append([]mcp.Content{&mcp.TextContent{Text: out + "error: " + runErr.Error()}}, extra...),
 			}, nil, nil
 		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: out}},
+			Content: append([]mcp.Content{&mcp.TextContent{Text: out}}, extra...),
 		}, nil, nil
 	}
 }

@@ -77,6 +77,9 @@ func (c *call) fact() *Facts {
 type mapping struct {
 	checks       []Check
 	fromResponse bool
+	// filter and whole are a read's answer handling (W-2).
+	filter ReadFilter
+	whole  bool
 }
 
 type mapper func(c *call) (mapping, error)
@@ -199,7 +202,7 @@ func matchPath(rows []*row, method, rawPath string, c *call, what string, defaul
 	if defaultMutating {
 		detail += "; every method other than GET counts as mutating (E-9)"
 	} else {
-		detail += "; an unmapped GET is allowed until reads are enforced"
+		detail += "; an unmapped read is refused like a write"
 	}
 	return Result{
 		Disposition: Unmapped,
@@ -238,6 +241,7 @@ func (r *row) apply(c *call) Result {
 	set.addAll(m.checks)
 	res.Checks = set.list()
 	res.PlanFromResponse = m.fromResponse
+	res.Filter, res.Whole = m.filter, m.whole
 	return res
 }
 

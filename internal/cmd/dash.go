@@ -240,6 +240,26 @@ func classifyDashboardConfig(ctx context.Context, ws *haapi.WSClient, urlPath st
 	return dashConfigUnclassifiable, nil, err
 }
 
+// storedDashboardConfig classifies a dashboard's stored config for a write's
+// plan and its snapshot. While a profile is in effect it is the session's own
+// read (W-2): unfiltered, the config the request layer diffs the save against,
+// so the plan sees a view the profile may not read (D-153) and the snapshot
+// backs up all of it. With no profile it is classifyDashboardConfig (D-58).
+func storedDashboardConfig(ctx context.Context, ws *haapi.WSClient, urlPath string) (dashboardConfigState, json.RawMessage, error) {
+	sess := policySession
+	if sess == nil {
+		return classifyDashboardConfig(ctx, ws, urlPath)
+	}
+	raw, found, err := sess.StoredDashboard(ctx, urlPath)
+	switch {
+	case err != nil:
+		return dashConfigUnclassifiable, nil, err
+	case !found:
+		return dashConfigAbsent, nil, nil
+	}
+	return dashConfigStored, raw, nil
+}
+
 func runDashLs(ctx context.Context, w io.Writer) error {
 	ws, err := connectWS(ctx)
 	if err != nil {
@@ -606,7 +626,7 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 	// is read or checked (D-58).
 	var note *planPolicyNote
 	if policySession != nil {
-		state, stored, _ := classifyDashboardConfig(ctx, ws, urlPath) // unreadable: nil, checked whole
+		state, stored, _ := storedDashboardConfig(ctx, ws, urlPath) // unreadable: nil, checked whole
 		if state == dashConfigAbsent {
 			stored = reqmap.EmptyDashboard
 		}
@@ -953,6 +973,13 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 	// save. With no profile nothing is checked (D-58).
 	var note *planPolicyNote
 	if policySession != nil {
+		// Diffed against the stored config as the request layer sees it, not
+		// the read the rewrite was made from: a view the profile may not read
+		// was dropped from that one (D-140), and saving without it deletes it
+		// — which the plan must show, and D-153 refuses.
+		if state, raw, _ := storedDashboardConfig(ctx, ws, urlPath); state == dashConfigStored {
+			stored = raw
+		}
 		plan := newWritePlan("replace in dashboard "+dashDisplayPath(urlPath)).addDashboardSave(urlPath, stored, out)
 		if note, err = checkWritePlan(w, !flagDashConfirm, plan); err != nil {
 			return err

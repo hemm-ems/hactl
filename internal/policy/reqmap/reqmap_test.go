@@ -28,7 +28,9 @@ type vector struct {
 	facts  *reqmap.Facts
 	disp   reqmap.Disposition
 	row    string   // expected row key ("" for unmapped)
-	checks []string // expected `<verb> <target>` lines, in order (Write and ReadDeferred)
+	checks []string // expected `<verb> <target>` lines, in order (Write and Read)
+	// filter is the read filter the answer passes (Read only).
+	filter reqmap.FilterKind
 	// refused, when set, expects Refused() and a Rule with this prefix.
 	refused string
 }
@@ -42,10 +44,13 @@ func checkVector(t *testing.T, v vector) {
 	if got.Row != v.row {
 		t.Errorf("%s: row %q, want %q", v.name, got.Row, v.row)
 	}
-	if v.disp == reqmap.Write || v.disp == reqmap.ReadDeferred {
+	if v.disp == reqmap.Write || v.disp == reqmap.Read {
 		if s := got.Strings(); !slices.Equal(s, v.checks) {
 			t.Errorf("%s: checks\n  got  %q\n  want %q", v.name, s, v.checks)
 		}
+	}
+	if v.disp == reqmap.Read && got.Filter.Kind != v.filter {
+		t.Errorf("%s: filter %q, want %q", v.name, got.Filter.Kind, v.filter)
 	}
 	if v.refused != "" {
 		if !got.Refused() {
@@ -544,7 +549,7 @@ func TestClassifyWriteRequests(t *testing.T) {
 	}
 }
 
-// readVectors cover every read-deferred and exempt row.
+// readVectors cover every read and exempt row.
 var readVectors = []vector{
 	{name: "ws auth is exempt", req: ws("auth", map[string]any{"access_token": "x"}), disp: reqmap.Exempt, row: "ws auth"},
 	{name: "the reach question is exempt", req: ws("extract_from_target", map[string]any{"target": map[string]any{"area_id": []any{"office"}}, "expand_group": true}), disp: reqmap.Exempt, row: "ws extract_from_target"},
@@ -553,58 +558,58 @@ var readVectors = []vector{
 	{name: "supervisor method defaults to get", req: ws("supervisor/api", map[string]any{"endpoint": "/addons"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons"},
 	{name: "ingress session is transport", req: ws("supervisor/api", map[string]any{"endpoint": "/ingress/session", "method": "post"}), disp: reqmap.Exempt, row: "ws supervisor/api POST /ingress/session"},
 
-	{name: "trace list of a domain", req: ws("trace/list", map[string]any{"domain": "automation"}), disp: reqmap.ReadDeferred, row: "ws trace/list", checks: []string{"read automation:*/trace"}},
-	{name: "trace get", req: ws("trace/get", map[string]any{"domain": "script", "item_id": "morning", "run_id": "r"}), disp: reqmap.ReadDeferred, row: "ws trace/get", checks: []string{"read script:morning/trace"}},
-	{name: "validate_config is read system:check_config", req: ws("validate_config", map[string]any{"triggers": []any{}}), disp: reqmap.ReadDeferred, row: "ws validate_config", checks: []string{"read system:check_config"}},
-	{name: "system log", req: ws("system_log/list", nil), disp: reqmap.ReadDeferred, row: "ws system_log/list", checks: []string{"read system:logs"}},
-	{name: "repairs", req: ws("repairs/list_issues", nil), disp: reqmap.ReadDeferred, row: "ws repairs/list_issues", checks: []string{"read system:logs"}},
-	{name: "entity registry list", req: ws("config/entity_registry/list", nil), disp: reqmap.ReadDeferred, row: "ws config/entity_registry/list", checks: []string{"read entity:*/registry"}},
-	{name: "area list", req: ws("config/area_registry/list", nil), disp: reqmap.ReadDeferred, row: "ws config/area_registry/list", checks: []string{"read area:*"}},
-	{name: "label list", req: ws("config/label_registry/list", nil), disp: reqmap.ReadDeferred, row: "ws config/label_registry/list", checks: []string{"read label:*"}},
-	{name: "floor list", req: ws("config/floor_registry/list", nil), disp: reqmap.ReadDeferred, row: "ws config/floor_registry/list", checks: []string{"read floor:*"}},
-	{name: "users", req: ws("config/auth/list", nil), disp: reqmap.ReadDeferred, row: "ws config/auth/list"},
-	{name: "device list", req: ws("config/device_registry/list", nil), disp: reqmap.ReadDeferred, row: "ws config/device_registry/list", checks: []string{"read device:*/registry"}},
-	{name: "dashboard list", req: ws("lovelace/dashboards/list", nil), disp: reqmap.ReadDeferred, row: "ws lovelace/dashboards/list", checks: []string{"read dashboard:*"}},
-	{name: "dashboard config of the default", req: ws("lovelace/config", map[string]any{}), disp: reqmap.ReadDeferred, row: "ws lovelace/config", checks: []string{"read dashboard:"}},
-	{name: "manifests", req: ws("manifest/list", nil), disp: reqmap.ReadDeferred, row: "ws manifest/list"},
-	{name: "resources", req: ws("lovelace/resources", nil), disp: reqmap.ReadDeferred, row: "ws lovelace/resources", checks: []string{"read dashboard:/resources"}},
-	{name: "statistics metadata skips external statistics", req: ws("recorder/get_statistics_metadata", map[string]any{"statistic_ids": []any{"sensor.power", "tibber:price"}}), disp: reqmap.ReadDeferred, row: "ws recorder/get_statistics_metadata", checks: []string{"read entity:sensor.power/stats"}},
-	{name: "statistics during period", req: ws("recorder/statistics_during_period", map[string]any{"statistic_ids": []any{"sensor.power"}}), disp: reqmap.ReadDeferred, row: "ws recorder/statistics_during_period", checks: []string{"read entity:sensor.power/stats"}},
-	{name: "statistic ids", req: ws("recorder/list_statistic_ids", nil), disp: reqmap.ReadDeferred, row: "ws recorder/list_statistic_ids", checks: []string{"read entity:*/stats"}},
-	{name: "energy prefs", req: ws("energy/get_prefs", nil), disp: reqmap.ReadDeferred, row: "ws energy/get_prefs"},
+	{name: "trace list of a domain", req: ws("trace/list", map[string]any{"domain": "automation"}), disp: reqmap.Read, row: "ws trace/list", filter: reqmap.FilterTraces},
+	{name: "trace get", req: ws("trace/get", map[string]any{"domain": "script", "item_id": "morning", "run_id": "r"}), disp: reqmap.Read, row: "ws trace/get", checks: []string{"read script:morning/trace"}},
+	{name: "validate_config is read system:check_config", req: ws("validate_config", map[string]any{"triggers": []any{}}), disp: reqmap.Read, row: "ws validate_config", checks: []string{"read system:check_config"}},
+	{name: "system log", req: ws("system_log/list", nil), disp: reqmap.Read, row: "ws system_log/list", checks: []string{"read system:logs"}},
+	{name: "repairs", req: ws("repairs/list_issues", nil), disp: reqmap.Read, row: "ws repairs/list_issues", checks: []string{"read system:logs"}},
+	{name: "entity registry list", req: ws("config/entity_registry/list", nil), disp: reqmap.Read, row: "ws config/entity_registry/list", filter: reqmap.FilterEntityRegistry},
+	{name: "area list", req: ws("config/area_registry/list", nil), disp: reqmap.Read, row: "ws config/area_registry/list", filter: reqmap.FilterAreas},
+	{name: "label list", req: ws("config/label_registry/list", nil), disp: reqmap.Read, row: "ws config/label_registry/list", filter: reqmap.FilterLabels},
+	{name: "floor list", req: ws("config/floor_registry/list", nil), disp: reqmap.Read, row: "ws config/floor_registry/list", filter: reqmap.FilterFloors},
+	{name: "users", req: ws("config/auth/list", nil), disp: reqmap.Exempt, row: "ws config/auth/list"},
+	{name: "device list", req: ws("config/device_registry/list", nil), disp: reqmap.Read, row: "ws config/device_registry/list", filter: reqmap.FilterDeviceRegistry},
+	{name: "dashboard list", req: ws("lovelace/dashboards/list", nil), disp: reqmap.Read, row: "ws lovelace/dashboards/list", filter: reqmap.FilterDashboards},
+	{name: "dashboard config of the default", req: ws("lovelace/config", map[string]any{}), disp: reqmap.Read, row: "ws lovelace/config", checks: []string{"read dashboard:"}, filter: reqmap.FilterDashboardConfig},
+	{name: "manifests", req: ws("manifest/list", nil), disp: reqmap.Exempt, row: "ws manifest/list"},
+	{name: "resources", req: ws("lovelace/resources", nil), disp: reqmap.Exempt, row: "ws lovelace/resources"},
+	{name: "statistics metadata skips external statistics", req: ws("recorder/get_statistics_metadata", map[string]any{"statistic_ids": []any{"sensor.power", "tibber:price"}}), disp: reqmap.Read, row: "ws recorder/get_statistics_metadata", checks: []string{"read entity:sensor.power/stats"}, filter: reqmap.FilterStatisticIDs},
+	{name: "statistics during period", req: ws("recorder/statistics_during_period", map[string]any{"statistic_ids": []any{"sensor.power"}}), disp: reqmap.Read, row: "ws recorder/statistics_during_period", checks: []string{"read entity:sensor.power/stats"}, filter: reqmap.FilterStatistics},
+	{name: "statistic ids", req: ws("recorder/list_statistic_ids", nil), disp: reqmap.Read, row: "ws recorder/list_statistic_ids", filter: reqmap.FilterStatisticIDs},
+	{name: "energy prefs", req: ws("energy/get_prefs", nil), disp: reqmap.Read, row: "ws energy/get_prefs", filter: reqmap.FilterEnergyPrefs},
 
-	{name: "flow handlers", req: rest("GET", "/api/config/config_entries/flow_handlers", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/config/config_entries/flow_handlers"},
-	{name: "config entries", req: rest("GET", "/api/config/config_entries/entry", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/config/config_entries/entry", checks: []string{"read config_entry:*"}},
-	{name: "diagnostics", req: rest("GET", "/api/diagnostics/config_entry/E1", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/diagnostics/config_entry/{entry_id}", checks: []string{"read config_entry:E1"}},
-	{name: "states", req: rest("GET", "/api/states", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/states", checks: []string{"read entity:*/state"}},
-	{name: "one state", req: rest("GET", "/api/states/light.kitchen", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/states/{entity_id}", checks: []string{"read entity:light.kitchen/attr", "read entity:light.kitchen/state"}},
-	{name: "history", req: rest("GET", "/api/history/period/2026-11-01T00%3A00%3A00Z?filter_entity_id=sensor.a&end_time=x", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/history/period/{start}", checks: []string{"read entity:sensor.a/history"}},
-	{name: "logbook of every entity", req: rest("GET", "/api/logbook/2026-11-01", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/logbook/{start}", checks: []string{"read entity:*/history"}},
-	{name: "error log", req: rest("GET", "/api/error_log", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/error_log", checks: []string{"read system:logs"}},
-	{name: "services", req: rest("GET", "/api/services", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/services", checks: []string{"read service:*"}},
-	{name: "tpl eval is a POST that reads (E-6)", req: rest("POST", "/api/template", `{"template":"{{ 1 }}"}`), disp: reqmap.ReadDeferred, row: "rest POST /api/template"},
-	{name: "core config", req: rest("GET", "/api/config", ""), disp: reqmap.ReadDeferred, row: "rest GET /api/config"},
+	{name: "flow handlers", req: rest("GET", "/api/config/config_entries/flow_handlers", ""), disp: reqmap.Exempt, row: "rest GET /api/config/config_entries/flow_handlers"},
+	{name: "config entries", req: rest("GET", "/api/config/config_entries/entry", ""), disp: reqmap.Read, row: "rest GET /api/config/config_entries/entry", filter: reqmap.FilterConfigEntries},
+	{name: "diagnostics", req: rest("GET", "/api/diagnostics/config_entry/E1", ""), disp: reqmap.Read, row: "rest GET /api/diagnostics/config_entry/{entry_id}", checks: []string{"read config_entry:E1"}},
+	{name: "states", req: rest("GET", "/api/states", ""), disp: reqmap.Read, row: "rest GET /api/states", filter: reqmap.FilterStates},
+	{name: "one state", req: rest("GET", "/api/states/light.kitchen", ""), disp: reqmap.Read, row: "rest GET /api/states/{entity_id}", checks: []string{"read entity:light.kitchen"}, filter: reqmap.FilterState},
+	{name: "history", req: rest("GET", "/api/history/period/2026-11-01T00%3A00%3A00Z?filter_entity_id=sensor.a&end_time=x", ""), disp: reqmap.Read, row: "rest GET /api/history/period/{start}", checks: []string{"read entity:sensor.a/history"}, filter: reqmap.FilterHistory},
+	{name: "logbook of every entity", req: rest("GET", "/api/logbook/2026-11-01", ""), disp: reqmap.Read, row: "rest GET /api/logbook/{start}", filter: reqmap.FilterLogbook},
+	{name: "error log", req: rest("GET", "/api/error_log", ""), disp: reqmap.Read, row: "rest GET /api/error_log", checks: []string{"read system:logs"}},
+	{name: "services", req: rest("GET", "/api/services", ""), disp: reqmap.Read, row: "rest GET /api/services", filter: reqmap.FilterServices},
+	{name: "tpl eval is a POST that reads (E-6)", req: rest("POST", "/api/template", `{"template":"{{ 1 }}"}`), disp: reqmap.Read, row: "rest POST /api/template", checks: []string{"read system:template"}},
+	{name: "core config", req: rest("GET", "/api/config", ""), disp: reqmap.Read, row: "rest GET /api/config", filter: reqmap.FilterCoreConfig},
 	{name: "API probe", req: rest("GET", "/api/", ""), disp: reqmap.Exempt, row: "rest GET /api/"},
 
 	{name: "companion health", req: comp("GET", "/v1/health", ""), disp: reqmap.Exempt, row: "companion GET /v1/health"},
 	{name: "companion status", req: comp("get", "/v1/status", ""), disp: reqmap.Exempt, row: "companion GET /v1/status"},
 	{name: "companion wiring", req: comp("GET", "/v1/config/wiring?domain=input_boolean", ""), disp: reqmap.Exempt, row: "companion GET /v1/config/wiring"},
-	{name: "check-config is a POST that reads", req: comp("POST", "/v1/ha/check-config", ""), disp: reqmap.ReadDeferred, row: "companion POST /v1/ha/check-config", checks: []string{"read system:check_config"}},
-	{name: "file list", req: comp("GET", "/v1/config/files", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/files", checks: []string{"read file:*"}},
-	{name: "one file", req: comp("GET", "/v1/config/file?path=packages/x.yaml", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/file", checks: []string{"read file:packages/x.yaml"}},
-	{name: "one block", req: comp("GET", "/v1/config/block?path=automations.yaml&id=a1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/block", checks: []string{"read file:automations.yaml/block/a1"}},
-	{name: "related", req: comp("GET", "/v1/related/entity?entity_id=light.kitchen", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/related/entity", checks: []string{"read entity:light.kitchen"}},
-	{name: "ref scan", req: comp("GET", "/v1/ref/scan?target=light.kitchen", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/scan", checks: []string{"read file:*"}},
-	{name: "ref grep", req: comp("GET", "/v1/ref/grep?term=x", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/grep", checks: []string{"read file:*"}},
-	{name: "ref entities", req: comp("GET", "/v1/ref/entities", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/ref/entities", checks: []string{"read file:*"}},
-	{name: "template list", req: comp("GET", "/v1/config/templates", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/templates", checks: []string{"read template:*"}},
-	{name: "template read", req: comp("GET", "/v1/config/template?id=t1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/template", checks: []string{"read template:t1/config"}},
-	{name: "script read", req: comp("GET", "/v1/config/script?id=s1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/script", checks: []string{"read script:s1/config"}},
-	{name: "automation read", req: comp("GET", "/v1/config/automation?id=a1", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/automation", checks: []string{"read automation:a1/config"}},
-	{name: "helpers", req: comp("GET", "/v1/config/helpers?domain=input_boolean", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/helpers", checks: []string{"read helper:*"}},
-	{name: "helper read is response-side", req: comp("GET", "/v1/config/helper?id=x", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/config/helper"},
-	{name: "wireguard status", req: comp("GET", "/v1/wireguard/status?tunnel=wg0", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/wireguard/status", checks: []string{"read system:wireguard"}},
-	{name: "companion logs", req: comp("GET", "/v1/logs", ""), disp: reqmap.ReadDeferred, row: "companion GET /v1/logs", checks: []string{"read system:logs"}},
+	{name: "check-config is a POST that reads", req: comp("POST", "/v1/ha/check-config", ""), disp: reqmap.Read, row: "companion POST /v1/ha/check-config", checks: []string{"read system:check_config"}},
+	{name: "file list", req: comp("GET", "/v1/config/files", ""), disp: reqmap.Read, row: "companion GET /v1/config/files", filter: reqmap.FilterFiles},
+	{name: "one file", req: comp("GET", "/v1/config/file?path=packages/x.yaml", ""), disp: reqmap.Read, row: "companion GET /v1/config/file", checks: []string{"read file:packages/x.yaml"}},
+	{name: "one block", req: comp("GET", "/v1/config/block?path=automations.yaml&id=a1", ""), disp: reqmap.Read, row: "companion GET /v1/config/block", checks: []string{"read file:automations.yaml/block/a1"}, filter: reqmap.FilterConfigBlock},
+	{name: "related", req: comp("GET", "/v1/related/entity?entity_id=light.kitchen", ""), disp: reqmap.Read, row: "companion GET /v1/related/entity", checks: []string{"read entity:light.kitchen"}, filter: reqmap.FilterRelated},
+	{name: "ref scan", req: comp("GET", "/v1/ref/scan?target=light.kitchen", ""), disp: reqmap.Read, row: "companion GET /v1/ref/scan", filter: reqmap.FilterRefHits},
+	{name: "ref grep", req: comp("GET", "/v1/ref/grep?term=x", ""), disp: reqmap.Read, row: "companion GET /v1/ref/grep", filter: reqmap.FilterRefHits},
+	{name: "ref entities", req: comp("GET", "/v1/ref/entities", ""), disp: reqmap.Read, row: "companion GET /v1/ref/entities", filter: reqmap.FilterRefHits},
+	{name: "template list", req: comp("GET", "/v1/config/templates", ""), disp: reqmap.Read, row: "companion GET /v1/config/templates", filter: reqmap.FilterTemplates},
+	{name: "template read", req: comp("GET", "/v1/config/template?id=t1", ""), disp: reqmap.Read, row: "companion GET /v1/config/template", checks: []string{"read template:t1/config"}},
+	{name: "script read", req: comp("GET", "/v1/config/script?id=s1", ""), disp: reqmap.Read, row: "companion GET /v1/config/script", checks: []string{"read script:s1/config"}},
+	{name: "automation read", req: comp("GET", "/v1/config/automation?id=a1", ""), disp: reqmap.Read, row: "companion GET /v1/config/automation", checks: []string{"read automation:a1/config"}},
+	{name: "helpers", req: comp("GET", "/v1/config/helpers?domain=input_boolean", ""), disp: reqmap.Read, row: "companion GET /v1/config/helpers", filter: reqmap.FilterHelpers},
+	{name: "helper read is response-side", req: comp("GET", "/v1/config/helper?id=x", ""), disp: reqmap.Read, row: "companion GET /v1/config/helper", filter: reqmap.FilterHelper},
+	{name: "wireguard status", req: comp("GET", "/v1/wireguard/status?tunnel=wg0", ""), disp: reqmap.Read, row: "companion GET /v1/wireguard/status", checks: []string{"read system:wireguard"}},
+	{name: "companion logs", req: comp("GET", "/v1/logs", ""), disp: reqmap.Read, row: "companion GET /v1/logs", checks: []string{"read system:logs"}},
 }
 
 // TestClassifyReadAndExemptRequests — every read row is a read and every
@@ -649,7 +654,7 @@ func TestEveryRowHasAVector(t *testing.T) {
 func TestRowDispositionsAreWhatTheRowSays(t *testing.T) {
 	for _, r := range reqmap.Rows() {
 		switch r.Disposition {
-		case reqmap.Write, reqmap.ReadDeferred, reqmap.Exempt:
+		case reqmap.Write, reqmap.Read, reqmap.Exempt:
 		default:
 			t.Errorf("row %q has disposition %s", r.Key, r.Disposition)
 		}
@@ -660,9 +665,9 @@ func TestRowDispositionsAreWhatTheRowSays(t *testing.T) {
 	}
 }
 
-// TestUnmappedRequests — a request no row names is refused if it can change
-// anything (every websocket type, every method but GET) and allowed otherwise
-// until phase 3 (D-74, E-9).
+// TestUnmappedRequests — a request no row names is refused: one that can
+// change anything (every websocket type, every method but GET; D-74, E-9) and,
+// from W-2 on, an unmapped read too (D-145).
 func TestUnmappedRequests(t *testing.T) {
 	for _, v := range []vector{
 		{name: "an unknown websocket type", req: ws("config/entity_registry/frobnicate", nil), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request ws config/entity_registry/frobnicate"},
@@ -679,8 +684,8 @@ func TestUnmappedRequests(t *testing.T) {
 		checkVector(t, v)
 	}
 	got := reqmap.Classify(rest("GET", "/api/events", ""), nil)
-	if got.Disposition != reqmap.Unmapped || got.Mutating || got.Refused() {
-		t.Errorf("an unmapped GET: %+v, want unmapped, not mutating, not refused (phase 2)", got)
+	if got.Disposition != reqmap.Unmapped || got.Mutating || !got.Refused() {
+		t.Errorf("an unmapped GET: %+v, want unmapped, not mutating, refused (D-145: from W-2 on)", got)
 	}
 	if !strings.HasPrefix(got.Rule, "fail-closed: unmapped request rest GET /api/events") {
 		t.Errorf("an unmapped GET still names what it is: %q", got.Rule)
@@ -721,11 +726,11 @@ func TestWholePathRule(t *testing.T) {
 	} {
 		checkVector(t, v)
 	}
-	// An unmappable read is not refused in phase 2 (reads are not enforced),
-	// but it is still unmappable.
+	// An unmappable read is refused from W-2 on (D-145), and it is still a
+	// read: nothing mutating.
 	got := reqmap.Classify(rest("GET", "/api/states/..", ""), nil)
-	if got.Disposition != reqmap.Unmappable || got.Refused() {
-		t.Errorf("GET /api/states/..: %+v, want unmappable and not refused", got)
+	if got.Disposition != reqmap.Unmappable || !got.Refused() || got.Mutating {
+		t.Errorf("GET /api/states/..: %+v, want unmappable, refused and not mutating", got)
 	}
 	// The query is not part of the path rule: `?return_response=true` keeps
 	// the row.

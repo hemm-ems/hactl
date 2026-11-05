@@ -46,6 +46,12 @@ type Options struct {
 	Recorder Recorder
 	// Now is the clock of the audit log's `time` (time.Now when nil).
 	Now func() time.Time
+	// WriteCommand marks the invocation as a write command (D-82): its own
+	// reads — what it resolves, looks up, validates and diffs before it
+	// writes — are neither refused nor filtered, because its plan, checked
+	// in the dry run and under --confirm, decides the write. An unmapped or
+	// unmappable request is still refused (D-145).
+	WriteCommand bool
 }
 
 // Session enforces one policy for one command invocation (H-29): it decides
@@ -53,19 +59,27 @@ type Options struct {
 // write command declares, and writes the audit log. Nothing it verifies
 // outlives the invocation or the policy's content hash (D-72, R-7).
 type Session struct {
-	pol      *policy.Policy
-	command  string
-	dryRun   bool
-	audit    *Audit
-	fetcher  Fetcher
-	recorder Recorder
-	now      func() time.Time
+	pol     *policy.Policy
+	command string
+	dryRun  bool
+	// writeCommand exempts the invocation's reads (D-82).
+	writeCommand bool
+	audit        *Audit
+	fetcher      Fetcher
+	recorder     Recorder
+	now          func() time.Time
 
 	mu      sync.Mutex
 	cache   *factCache
 	written []string
 	refused *DeniedError
 	planned bool
+	reads   readCounts
+
+	// vmu guards the read verdicts this invocation decided: a listing
+	// decides the same address many times.
+	vmu      sync.Mutex
+	verdicts map[string]cachedVerdict
 }
 
 // New starts a session. It refuses a policy that puts no profile in effect:
@@ -80,14 +94,16 @@ func New(opts Options) (*Session, error) {
 		now = time.Now
 	}
 	return &Session{
-		pol:      opts.Policy,
-		command:  opts.Command,
-		dryRun:   opts.DryRun,
-		audit:    NewAudit(opts.InstanceDir),
-		fetcher:  opts.Fetcher,
-		recorder: opts.Recorder,
-		now:      now,
-		cache:    newFactCache(opts.Policy.Hash()),
+		pol:          opts.Policy,
+		command:      opts.Command,
+		dryRun:       opts.DryRun,
+		writeCommand: opts.WriteCommand,
+		audit:        NewAudit(opts.InstanceDir),
+		fetcher:      opts.Fetcher,
+		recorder:     opts.Recorder,
+		now:          now,
+		cache:        newFactCache(opts.Policy.Hash()),
+		verdicts:     map[string]cachedVerdict{},
 	}, nil
 }
 
@@ -229,17 +245,32 @@ func (s *Session) RecordRefReplacePlan(oldVal, newVal string, changes []reqmap.P
 
 // Check decides one logical request before it is sent (D-74): a write is
 // allowed only if every check of its mapping is; an unmapped or unmappable
-// request that can change anything is refused; a read, an exempt request and
-// an unmapped GET pass. Every write decision is written to the audit log.
+// request is refused, a read too (D-145); a read is refused when what it
+// names itself is denied (D-138); an exempt request passes. Every write
+// decision is written to the audit log; reads are not audited (D-146). The
+// session's own questions (reqgate.Own) are never refused as reads.
 func (s *Session) Check(ctx context.Context, req reqmap.Request) error {
 	res := s.classify(ctx, req)
 	switch {
+	case res.Refused() && !res.Mutating:
+		if isOwn(ctx) {
+			return nil
+		}
+		ref := s.newDenial(LayerRequest, s.dryRun, describe(req))
+		ref.Read = true
+		ref.Denied = []Denial{{Resource: describe(req), Verb: policy.Read.String(), Rule: res.Rule}}
+		return s.refuseRead(ref)
 	case res.Refused():
 		ref := s.newDenial(LayerRequest, s.dryRun, describe(req))
 		ref.Denied = []Denial{{Resource: describe(req), Rule: res.Rule}}
 		line := s.line(LayerRequest, s.dryRun, describe(req), "", false, res.Rule, 0)
 		_ = s.audit.Append([]AuditLine{line}) // refused either way
 		return s.refuse(ref)
+	case res.Disposition == reqmap.Read:
+		if isOwn(ctx) || s.writeCommand {
+			return nil // the session's own question, or a write's own read (D-82)
+		}
+		return s.checkRead(req, res)
 	case res.Disposition != reqmap.Write:
 		return nil
 	}
@@ -299,6 +330,33 @@ func (s *Session) Observe(req reqmap.Request, resp []byte) {
 	defer s.mu.Unlock()
 	s.cache = s.cache.forHash(s.pol.Hash())
 	s.cache.observe(req, resp)
+}
+
+// StoredDashboard is a dashboard's stored config read as the session's own —
+// unfiltered, as the request layer diffs a save against it — so a write
+// command's plan diffs the same config (preview parity) and a snapshot backs up
+// all of it. found is false when Home Assistant holds none.
+func (s *Session) StoredDashboard(ctx context.Context, urlPath string) (raw json.RawMessage, found bool, err error) {
+	u := canonicalDashboard(urlPath)
+	s.mu.Lock()
+	s.cache = s.cache.forHash(s.pol.Hash())
+	d, have := s.cache.dashboards[u]
+	s.mu.Unlock()
+	if !have {
+		if s.fetcher == nil {
+			return nil, false, errors.New("the instance cannot be asked in this invocation")
+		}
+		if d, err = s.fetcher.Dashboard(own(ctx), u); err != nil {
+			return nil, false, err
+		}
+		s.mu.Lock()
+		s.cache.dashboards[u] = d
+		s.mu.Unlock()
+	}
+	if d.Config == nil {
+		return nil, false, nil
+	}
+	return append(json.RawMessage(nil), d.Config...), true, nil
 }
 
 // classify maps a request with what this invocation knows, asking Home
@@ -447,8 +505,13 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 
 // decide answers one check: a concrete resource by Decide (where: selectors
 // asked live), a kind-wide one by DecideKindWide (D-75), a deny-only one by
-// its denies alone (D-107).
+// its denies alone (D-107). Deleting a dashboard view the profile may not read
+// is refused whatever allows it (D-153): a command saves a config its read
+// had that view dropped from (D-140), so the delete is never one it meant.
 func (s *Session) decide(c reqmap.Check) policy.Verdict {
+	if v, refused := s.unreadViewDelete(c); refused {
+		return v
+	}
 	switch {
 	case c.KindWide && c.DenyOnly:
 		return s.pol.DecideKindWideDenyOnly(c.Resource.Kind, c.Resource.Sub, c.Verb)
@@ -462,6 +525,24 @@ func (s *Session) decide(c reqmap.Check) policy.Verdict {
 		live = s.fetcher.Live()
 	}
 	return s.pol.Decide(c.Resource, c.Verb, live)
+}
+
+// RuleUnreadViewDelete refuses deleting a dashboard view the profile may not
+// read (D-153).
+const RuleUnreadViewDelete = "fail-closed: deletes a dashboard view this profile may not read"
+
+// unreadViewDelete is D-153's refusal of `delete dashboard:<u>/views/<p>`
+// while `read` on that view is denied.
+func (s *Session) unreadViewDelete(c reqmap.Check) (policy.Verdict, bool) {
+	r := c.Resource
+	if c.Verb != policy.Delete || c.KindWide || r.Kind != policy.KindDashboard || !strings.HasPrefix(r.Sub, "views/") {
+		return policy.Verdict{}, false
+	}
+	if s.readable(policy.KindDashboard, r.ID, r.Sub) {
+		return policy.Verdict{}, false
+	}
+	return policy.Verdict{Rule: RuleUnreadViewDelete, Profile: s.pol.Active(), Level: policy.Level,
+		Notes: []string{}, PartialDenies: []policy.RuleRef{}, UnmetWhere: []policy.UnmetWhere{}}, true
 }
 
 func denial(c reqmap.Check, v policy.Verdict) Denial {

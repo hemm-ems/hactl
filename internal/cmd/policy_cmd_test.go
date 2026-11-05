@@ -233,7 +233,7 @@ func TestPolicyShowJSONForTheManualExample(t *testing.T) {
 	wantField(t, what, m, "level", "A")
 	wantField(t, what, m, "disclaimer", policy.Disclaimer)
 	wantField(t, what, m, "enforced", true)
-	wantField(t, what, m, "enforced_verbs", []string{"control", "edit", "create", "delete"})
+	wantField(t, what, m, "enforced_verbs", []string{"read", "control", "edit", "create", "delete"})
 	wantField(t, what, m, "profile", "agent")
 	wantField(t, what, m, "selected_by", "active")
 	wantField(t, what, m, "what_if", false)
@@ -294,7 +294,7 @@ func TestPolicyShowProseForTheManualExample(t *testing.T) {
 		t.Fatalf("policy show: exit %d (%v)\n%s", cliExitCode(err), err, out)
 	}
 	for _, want := range []string{
-		filepath.Join(dir, policy.FileName), policy.Disclaimer, "agent", "active", "deny", "enforced: writes — reads not yet", "default",
+		filepath.Join(dir, policy.FileName), policy.Disclaimer, "agent", "active", "deny", "enforced: writes and reads", "default",
 		`deny "entity:lock.*" [read write]`, `deny "entity:device_tracker.*/attr/latitude" [read]`, `deny "file:**" [write]`,
 		`allow "entity:*" [read]`, `allow "entity:light.*" [control] where area=wohnzimmer`,
 		`allow "automation:pg_*" [read edit create]`, `allow "entity:*/registry/labels" [edit]`,
@@ -546,9 +546,9 @@ func TestPolicyCheckJSON(t *testing.T) {
 			wantField(t, what, m, "selected_by", "active")
 			wantField(t, what, m, "what_if", false)
 			wantField(t, what, m, "level", "A")
-			// D-70: a write verb is enforced while a profile is in effect,
-			// read is not yet.
-			wantField(t, what, m, "enforced", tc.verb != "read")
+			// D-70: every verb is enforced while a profile is in effect —
+			// read too, from W-2 on (D-138).
+			wantField(t, what, m, "enforced", true)
 			wantField(t, what, m, "notes", []any{})
 			// D-66: none of these has a descendant deny for its verb.
 			wantField(t, what, m, "partial", false)
@@ -985,10 +985,11 @@ func TestHACTLProfileEnvironmentHasNoEffect(t *testing.T) {
 
 // --- phase 1 scope ----------------------------------------------------------------
 
-// TestPolicyDoesNotEnforceReadsYet: reads are not enforced in this version
-// (D-54, phase 3) — a profile that denies everything, reads included, changes
-// nothing about a read such as `area ls`.
-func TestPolicyDoesNotEnforceReadsYet(t *testing.T) {
+// TestPolicyEnforcesReads: reads are enforced from W-2 on (D-138) — a profile
+// that denies everything, reads included, hides every row of a read such as
+// `area ls`, and the listing says how many (D-139). Formerly
+// TestPolicyDoesNotEnforceReadsYet, which pinned the opposite (phase 1/2).
+func TestPolicyEnforcesReads(t *testing.T) {
 	ts := startCmdServer(t, map[string]any{
 		"config/area_registry/list": []any{map[string]any{"area_id": "wohnzimmer", "name": "Wohnzimmer"}},
 	}, nil)
@@ -998,10 +999,14 @@ func TestPolicyDoesNotEnforceReadsYet(t *testing.T) {
 	}
 	out, err := runPolicyCLI(t, ts.dir, "area", "ls")
 	if err != nil {
-		t.Fatalf("area ls under a deny-all policy failed: %v — reads are not enforced yet", err)
+		t.Fatalf("area ls under a deny-all policy failed: %v — a listing hides, it does not refuse", err)
 	}
-	if !strings.Contains(out, "wohnzimmer") {
-		t.Errorf("area ls under a deny-all policy lost its row:\n%s", out)
+	if strings.Contains(out, "wohnzimmer") {
+		t.Errorf("area ls under a deny-all policy shows a row it may not read:\n%s", out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != "hidden by policy: 1 (profile locked)" {
+		t.Errorf("area ls does not close with the trailer, last line %q:\n%s", last, out)
 	}
 }
 

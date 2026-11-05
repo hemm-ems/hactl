@@ -260,7 +260,11 @@ type allowAllGate struct{}
 
 func (allowAllGate) Check(context.Context, reqmap.Request) error                    { return nil }
 func (allowAllGate) CheckHop(context.Context, reqmap.Request, reqmap.Request) error { return nil }
-func (allowAllGate) Observe(reqmap.Request, []byte)                                 {}
+func (allowAllGate) Filter(_ context.Context, _ reqmap.Request, resp []byte) ([]byte, error) {
+	return resp, nil
+}
+
+func (allowAllGate) Observe(reqmap.Request, []byte) {}
 
 // TestUnreplayableBodyIsRefusedUnderAGate (D-74): a request no client decided
 // is decided by the shared transport from its body; a body it cannot copy

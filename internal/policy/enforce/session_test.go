@@ -305,7 +305,6 @@ func TestRequestLayerDecidesWritesOnly(t *testing.T) {
 	pass := []reqmap.Request{
 		{Transport: reqmap.WS, Type: "config/area_registry/list"},
 		{Transport: reqmap.WS, Type: "auth", Params: map[string]any{"access_token": "t"}},
-		{Transport: reqmap.REST, Method: "GET", Path: "/api/no_such_read"},
 		{Transport: reqmap.Companion, Method: "GET", Path: "/v1/health"},
 	}
 	for _, r := range pass {
@@ -313,11 +312,19 @@ func TestRequestLayerDecidesWritesOnly(t *testing.T) {
 			t.Errorf("%+v refused: %v", r, err)
 		}
 	}
+	// An unmapped read is refused from W-2 on (D-145) — not audited (D-146),
+	// and not the invocation's refusal: a command that carried on past it
+	// showed less, which the trailer counts.
+	readErr := s.Check(ctx, reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/no_such_read"})
+	var readRef *enforce.DeniedError
+	if !errors.As(readErr, &readRef) || !readRef.Read || !strings.HasPrefix(readRef.Denied[0].Rule, "fail-closed: unmapped request") {
+		t.Errorf("an unmapped GET: %v, want a fail-closed read refusal (D-145)", readErr)
+	}
 	if l := auditLines(t, dir); len(l) != 0 {
 		t.Errorf("reads were audited: %v", l)
 	}
 	if s.RefusedMidRun() != nil {
-		t.Fatal("a refusal was recorded for allowed requests")
+		t.Fatal("a read refusal was recorded as the invocation's refusal")
 	}
 	for _, r := range []reqmap.Request{
 		{Transport: reqmap.WS, Type: "no_such/command"},

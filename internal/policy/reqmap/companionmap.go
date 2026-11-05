@@ -362,29 +362,3 @@ func LocationsOutsidePlan(checked, written []PlanChange) []string {
 	sort.Strings(out)
 	return out
 }
-
-// --- reads -------------------------------------------------------------------
-
-func readQueryID(kind policy.Kind, key, sub string) mapper {
-	return func(c *call) (mapping, error) {
-		id, err := c.requiredQuery(key)
-		if err != nil {
-			return mapping{}, err
-		}
-		ch, err := check(policy.Read, kind, id, sub)
-		return mapping{checks: []Check{ch}}, err
-	}
-}
-
-func readConfigBlock(c *call) (mapping, error) {
-	path, err := c.requiredQuery("path")
-	if err != nil {
-		return mapping{}, err
-	}
-	id, err := c.requiredQuery("id")
-	if err != nil {
-		return mapping{}, err
-	}
-	ch, err := check(policy.Read, policy.KindFile, path, "block/"+id)
-	return mapping{checks: []Check{ch}}, err
-}

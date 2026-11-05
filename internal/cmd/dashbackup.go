@@ -22,7 +22,7 @@ import (
 // Best-effort: a snapshot failure is logged, never fatal. Refusing to save
 // because we couldn't back up would be worse than the asymmetry it fixes.
 func snapshotDashboardBeforeSave(ctx context.Context, ws *haapi.WSClient, urlPath string) {
-	state, prev, err := classifyDashboardConfig(ctx, ws, urlPath)
+	state, prev, err := storedDashboardConfig(ctx, ws, urlPath)
 	switch state {
 	case dashConfigAbsent:
 		// The first save for a dashboard that has none. There is nothing to

@@ -1,16 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/manual"
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -48,6 +52,10 @@ var (
 	// policyRecorder, when a test sets it, sees every check a session makes
 	// (R-12's coverage harness). Production code never sets it.
 	policyRecorder enforce.Recorder
+	// policyTrailer is the ended invocation's `hidden by policy` line (D-139),
+	// "" when its reads hid and masked nothing or no profile was in effect.
+	// The entry points print it once, after the command's output.
+	policyTrailer string
 )
 
 // policyExemptPaths are the commands that still run on a broken policy.yaml
@@ -96,6 +104,7 @@ func policyExempt(cmd *cobra.Command) bool {
 // nothing: each tool call it serves runs this pre-run again (D-60, D-72).
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
+	policyTrailer = ""
 	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" || policyOwnerPaths[cmd.CommandPath()] {
 		return nil
 	}
@@ -131,13 +140,17 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	if cfg != nil {
 		url, token = cfg.URL, cfg.Token
 	}
+	fetcher := enforce.NewHAFetcher(invocationContext(cmd), url, token, cfgErr)
+	fetcher.SetConfigFileReader(policyConfigFileReader())
 	sess, err := enforce.New(enforce.Options{
 		Policy:      pol,
 		InstanceDir: dir,
 		Command:     strings.TrimSpace(cmd.CommandPath() + " " + strings.Join(args, " ")),
 		DryRun:      isPreview(cmd),
-		Fetcher:     enforce.NewHAFetcher(invocationContext(cmd), url, token, cfgErr),
-		Recorder:    policyRecorder,
+		// A write command's own reads are exempt (D-82): its plan decides.
+		WriteCommand: isWriteCommand(cmd),
+		Fetcher:      fetcher,
+		Recorder:     policyRecorder,
 	})
 	if err != nil {
 		return err
@@ -171,22 +184,139 @@ func endPolicySession() {
 
 // finishPolicySession ends the session and returns the invocation's result: a
 // request the request layer refused is an error even when the command carried
-// on past it (a best-effort cleanup), never a log line (H-29).
+// on past it (a best-effort cleanup), never a log line (H-29). A refused read
+// a command carried on past is not: the command showed less, and the trailer
+// counts it as hidden (D-139). The trailer is left in policyTrailer.
 func finishPolicySession(err error) error {
 	sess := policySession
 	endPolicySession()
-	if err == nil && sess != nil {
+	if sess == nil {
+		return err
+	}
+	// A refusal is reported as itself, whatever context a command wrapped
+	// it in (`fetching entity state: …`): its one line names the rule and
+	// its line (D-70, manual "Enforcement (reads)").
+	var denied *enforce.DeniedError
+	if errors.As(err, &denied) {
+		err = denied
+	}
+	if err == nil {
 		if r := sess.RefusedMidRun(); r != nil {
-			return r
+			err = r
 		}
 	}
+	hidden, masked, refused := sess.ReadCounts()
+	if err == nil {
+		hidden += refused
+	}
+	// A refusal is the invocation's whole answer: a write's report closes
+	// with its hint (D-118), a refused read names what it refused. The
+	// trailer describes an answer that was given (D-139).
+	if policyErrorClass(err) == "" {
+		policyTrailer = readTrailer(hidden, masked, sess.Policy().Active())
+	}
 	return err
+}
+
+// renderReadRefusal makes a refused read the invocation's whole answer, as a
+// denied write's report is (D-155): the refusal report on stdout — under
+// --json the refusal envelope — in place of anything the command printed
+// before it, while the error's own line is the D-119 count on stderr. Any
+// other error leaves out untouched.
+func renderReadRefusal(out *bytes.Buffer, err error) {
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !ref.Read {
+		return
+	}
+	out.Reset()
+	if rerr := renderPolicyRefusal(out, ref); rerr != nil {
+		slog.Debug("rendering a read refusal", "error", rerr)
+	}
+}
+
+// readTrailer is the `hidden by policy` line (D-139): `hidden by policy: N
+// (profile p)`, with `, masked: M` after N when something was masked; "" when
+// nothing was hidden or masked.
+func readTrailer(hidden, masked int, profile string) string {
+	if hidden == 0 && masked == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("hidden by policy: %d", hidden)
+	if masked > 0 {
+		s += fmt.Sprintf(", masked: %d", masked)
+	}
+	return s + " (profile " + profile + ")"
+}
+
+// writePolicyTrailer prints the ended invocation's trailer once (D-139): the
+// last stdout line in prose; under --json — and for any document the command
+// marked as one — on stderr, so the document keeps its shape.
+func writePolicyTrailer(stdout, stderr io.Writer) {
+	line := policyTrailer
+	policyTrailer = ""
+	if line == "" {
+		return
+	}
+	if flagJSON || structuredOutput {
+		_, _ = fmt.Fprintln(stderr, line)
+		return
+	}
+	_, _ = fmt.Fprintln(stdout, line)
+}
+
+// policyConfigFileReader reads a config file's raw content through the
+// companion for the read filter (D-142), connecting once, on the first file,
+// as the session's own read.
+func policyConfigFileReader() func(ctx context.Context, location string) ([]byte, error) {
+	var (
+		mu        sync.Mutex
+		cc        *companion.Client
+		connErr   error
+		connected bool
+	)
+	return func(ctx context.Context, location string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !connected {
+			connected = true
+			cc, connErr = connectCompanion(reqgate.Own(ctx))
+		}
+		if connErr != nil {
+			return nil, connErr
+		}
+		r, err := cc.ReadConfigFileRaw(reqgate.Own(ctx), location)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(r.Content), nil
+	}
 }
 
 // rootPostRun ends the policy session of an invocation whose command
 // succeeded; the entry points end it on every other path.
 func rootPostRun(*cobra.Command, []string) error {
 	return finishPolicySession(nil)
+}
+
+// writesWithoutConfirm are the write commands that have no --confirm (the
+// policy write surface's cmd rows, dev/surfaces/policy.manifest): each writes
+// as it runs. `config show` is not one of them here — it is a read command
+// whose probe its plan checks — nor are `setup` and `mcp`, which no session
+// covers. TestWriteCommandsAreThePolicyWriteSurface holds this list and the
+// --confirm commands to the manifest.
+var writesWithoutConfirm = map[string]bool{
+	"hactl config flow-inspect": true,
+	"hactl cache clear":         true,
+	"hactl cache refresh":       true,
+}
+
+// isWriteCommand reports whether cmd is a write command, whose own reads are
+// exempt from read enforcement (D-82): every --confirm command, previewed or
+// confirmed, and the few that write without one. The owner's `agent add` and
+// `policy activate` are not among them: they run without any session
+// (policyOwnerPaths, D-163), so there is nothing whose reads to exempt (D-172).
+func isWriteCommand(cmd *cobra.Command) bool {
+	return cmd.Flags().Lookup("confirm") != nil || writesWithoutConfirm[cmd.CommandPath()]
 }
 
 // isPreview reports whether cmd runs as a preview: it has --confirm and it is

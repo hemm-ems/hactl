@@ -1,5 +1,5 @@
 {
- "about": "Request-layer mapping vectors for H-29 (phase 2). One or more vectors per request row of dev/surfaces/policy.manifest (ws/rest/companion; cmd rows are proven at the command layer), plus negative vectors. Authored from the contract only. A request goes in; the row it matches, its disposition (write, read-deferred, exempt, unmapped, unmappable) and, for a write, its (resource, verb) set come out. Checks compare as a set. `refused` is the phase-2 consequence (D-74): unmappable is refused; unmapped is refused for every WS type and every non-GET method. `facts` is what the same command invocation already holds (D-72), overlaid on `facts_ref`.",
+ "about": "Request-layer mapping vectors for H-29 (phase 2). One or more vectors per request row of dev/surfaces/policy.manifest (ws/rest/companion; cmd rows are proven at the command layer), plus negative vectors. Authored from the contract only. A request goes in; the row it matches, its disposition (write, read, exempt, unmapped, unmappable) and, for a write or a read, its (resource, verb) set come out — for a read, what it names itself — and a read's answer filter. Checks compare as a set. `refused` is the consequence while a profile is in effect: unmappable and unmapped requests are refused (D-74; reads too from W-2 on, D-145). `facts` is what the same command invocation already holds (D-72), overlaid on `facts_ref`.",
  "facts": {
   "house": {
    "policy_hash": "sha256:policy-a",
@@ -1255,7 +1255,7 @@
   },
   {
    "id": "ws-read-trace-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1264,14 +1264,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws trace/list"
+    "disposition": "read",
+    "row": "ws trace/list",
+    "checks": [],
+    "filter": "traces"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-trace-get",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1282,14 +1284,20 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws trace/get"
+    "disposition": "read",
+    "row": "ws trace/get",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "automation:prod_heating/trace"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-validate_config",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1303,14 +1311,20 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws validate_config"
+    "disposition": "read",
+    "row": "ws validate_config",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:check_config"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-system_log-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1318,14 +1332,20 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws system_log/list"
+    "disposition": "read",
+    "row": "ws system_log/list",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:logs"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-repairs-list_issues",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1333,14 +1353,20 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws repairs/list_issues"
+    "disposition": "read",
+    "row": "ws repairs/list_issues",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:logs"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-entity_registry-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1348,14 +1374,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws config/entity_registry/list"
+    "disposition": "read",
+    "row": "ws config/entity_registry/list",
+    "checks": [],
+    "filter": "entity_registry"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-area_registry-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1363,14 +1391,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws config/area_registry/list"
+    "disposition": "read",
+    "row": "ws config/area_registry/list",
+    "checks": [],
+    "filter": "areas"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-label_registry-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1378,14 +1408,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws config/label_registry/list"
+    "disposition": "read",
+    "row": "ws config/label_registry/list",
+    "checks": [],
+    "filter": "labels"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-floor_registry-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1393,14 +1425,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws config/floor_registry/list"
+    "disposition": "read",
+    "row": "ws config/floor_registry/list",
+    "checks": [],
+    "filter": "floors"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-auth-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "an auxiliary read (D-147): nothing about an entity, device or config — exempt by its row",
    "request": {
     "transport": "ws",
     "message": {
@@ -1408,14 +1442,14 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
+    "disposition": "exempt",
     "row": "ws config/auth/list"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-config-device_registry-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1423,14 +1457,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws config/device_registry/list"
+    "disposition": "read",
+    "row": "ws config/device_registry/list",
+    "checks": [],
+    "filter": "device_registry"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-lovelace-dashboards-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1438,14 +1474,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws lovelace/dashboards/list"
+    "disposition": "read",
+    "row": "ws lovelace/dashboards/list",
+    "checks": [],
+    "filter": "dashboards"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-lovelace-config",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1454,14 +1492,21 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws lovelace/config"
+    "disposition": "read",
+    "row": "ws lovelace/config",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "dashboard:main"
+     }
+    ],
+    "filter": "dashboard_config"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-manifest-list",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "an auxiliary read (D-147): nothing about an entity, device or config — exempt by its row",
    "request": {
     "transport": "ws",
     "message": {
@@ -1469,14 +1514,14 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
+    "disposition": "exempt",
     "row": "ws manifest/list"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-lovelace-resources",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "an auxiliary read (D-147): nothing about an entity, device or config — exempt by its row",
    "request": {
     "transport": "ws",
     "message": {
@@ -1484,14 +1529,14 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
+    "disposition": "exempt",
     "row": "ws lovelace/resources"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-recorder-get_statistics_metadata",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1502,14 +1547,21 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws recorder/get_statistics_metadata"
+    "disposition": "read",
+    "row": "ws recorder/get_statistics_metadata",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:sensor.temp/stats"
+     }
+    ],
+    "filter": "statistic_ids"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-recorder-statistics_during_period",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1522,14 +1574,21 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws recorder/statistics_during_period"
+    "disposition": "read",
+    "row": "ws recorder/statistics_during_period",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:sensor.temp/stats"
+     }
+    ],
+    "filter": "statistics"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-recorder-list_statistic_ids",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1537,14 +1596,16 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws recorder/list_statistic_ids"
+    "disposition": "read",
+    "row": "ws recorder/list_statistic_ids",
+    "checks": [],
+    "filter": "statistic_ids"
    },
    "facts_ref": "house"
   },
   {
    "id": "ws-read-energy-get_prefs",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "ws",
     "message": {
@@ -1552,8 +1613,10 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "ws energy/get_prefs"
+    "disposition": "read",
+    "row": "ws energy/get_prefs",
+    "checks": [],
+    "filter": "energy_prefs"
    },
    "facts_ref": "house"
   },
@@ -2746,133 +2809,172 @@
   },
   {
    "id": "rest-read-getconfig-config_entries-flow_handlers",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "an auxiliary read (D-147): nothing about an entity, device or config — exempt by its row",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/config/config_entries/flow_handlers"
    },
    "expect": {
-    "disposition": "read-deferred",
+    "disposition": "exempt",
     "row": "rest GET /api/config/config_entries/flow_handlers"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getconfig-config_entries-entry",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/config/config_entries/entry"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/config/config_entries/entry"
+    "disposition": "read",
+    "row": "rest GET /api/config/config_entries/entry",
+    "checks": [],
+    "filter": "config_entries"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getdiagnostics-config_entry-01HUEENTRY",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/diagnostics/config_entry/01HUEENTRY"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/diagnostics/config_entry/{entry_id}"
+    "disposition": "read",
+    "row": "rest GET /api/diagnostics/config_entry/{entry_id}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "config_entry:01HUEENTRY"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getstates",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/states"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/states"
+    "disposition": "read",
+    "row": "rest GET /api/states",
+    "checks": [],
+    "filter": "states"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getstates-light.kitchen",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/states/light.kitchen"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/states/{entity_id}"
+    "disposition": "read",
+    "row": "rest GET /api/states/{entity_id}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:light.kitchen"
+     }
+    ],
+    "filter": "state"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-gethistory-period-2026-11-01T00:00:00+00:00",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/history/period/2026-11-01T00:00:00+00:00?filter_entity_id=light.kitchen&end_time=2026-11-01T06:00:00+00:00"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/history/period/{start}"
+    "disposition": "read",
+    "row": "rest GET /api/history/period/{start}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:light.kitchen/history"
+     }
+    ],
+    "filter": "history"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getlogbook-2026-11-01T00:00:00+00:00",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/logbook/2026-11-01T00:00:00+00:00?entity=light.kitchen"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/logbook/{start}"
+    "disposition": "read",
+    "row": "rest GET /api/logbook/{start}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:light.kitchen"
+     }
+    ],
+    "filter": "logbook"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-geterror_log",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/error_log"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/error_log"
+    "disposition": "read",
+    "row": "rest GET /api/error_log",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:logs"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getservices",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/services"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/services"
+    "disposition": "read",
+    "row": "rest GET /api/services",
+    "checks": [],
+    "filter": "services"
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-posttemplate",
-   "why": "a POST that is a read (E-6): this row keeps a method-based classifier from refusing tpl eval",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -2882,22 +2984,30 @@
     }
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest POST /api/template"
+    "disposition": "read",
+    "row": "rest POST /api/template",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:template"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-read-getconfig",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/config"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "rest GET /api/config"
+    "disposition": "read",
+    "row": "rest GET /api/config",
+    "checks": [],
+    "filter": "core_config"
    },
    "facts_ref": "house"
   },
@@ -2933,7 +3043,7 @@
   },
   {
    "id": "rest-dead-get-events",
-   "why": "D-81: GetEvents is deleted, its row with it; an unmapped GET is allowed in phase 2",
+   "why": "D-81: GetEvents is deleted, its row with it; an unmapped GET — refused like a write from W-2 on (D-145)",
    "request": {
     "transport": "rest",
     "method": "GET",
@@ -2942,13 +3052,13 @@
    "expect": {
     "disposition": "unmapped",
     "row": "",
-    "refused": false
+    "refused": true
    },
    "facts_ref": "house"
   },
   {
    "id": "rest-dead-get-automation-config",
-   "why": "D-81: GetAutomationConfig is deleted; unmapped GET, allowed in phase 2",
+   "why": "D-81: GetAutomationConfig is deleted; an unmapped GET — refused like a write from W-2 on (D-145)",
    "request": {
     "transport": "rest",
     "method": "GET",
@@ -2957,7 +3067,7 @@
    "expect": {
     "disposition": "unmapped",
     "row": "",
-    "refused": false
+    "refused": true
    },
    "facts_ref": "house"
   },
@@ -3855,225 +3965,300 @@
   },
   {
    "id": "comp-check-config",
-   "why": "a POST that is a read, mapped explicitly",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "POST",
     "path": "/v1/ha/check-config"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion POST /v1/ha/check-config"
+    "disposition": "read",
+    "row": "companion POST /v1/ha/check-config",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:check_config"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-files",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/files"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/files"
+    "disposition": "read",
+    "row": "companion GET /v1/config/files",
+    "checks": [],
+    "filter": "files"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-file",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/file?path=automations.yaml&resolve=true"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/file"
+    "disposition": "read",
+    "row": "companion GET /v1/config/file",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "file:automations.yaml"
+     },
+     {
+      "verb": "read",
+      "resource": "file:*",
+      "kind_wide": true
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-block",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/block?path=template.yaml&id=tpl_outdoor"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/block"
+    "disposition": "read",
+    "row": "companion GET /v1/config/block",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "file:template.yaml/block/tpl_outdoor"
+     }
+    ],
+    "filter": "config_block"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-related-entity",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/related/entity?entity_id=light.kitchen"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/related/entity"
+    "disposition": "read",
+    "row": "companion GET /v1/related/entity",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "entity:light.kitchen"
+     }
+    ],
+    "filter": "related"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-ref-scan",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/ref/scan?target=light.kitchen"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/ref/scan"
+    "disposition": "read",
+    "row": "companion GET /v1/ref/scan",
+    "checks": [],
+    "filter": "ref_hits"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-ref-grep",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/ref/grep?term=kitchen"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/ref/grep"
+    "disposition": "read",
+    "row": "companion GET /v1/ref/grep",
+    "checks": [],
+    "filter": "ref_hits"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-ref-entities",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/ref/entities"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/ref/entities"
+    "disposition": "read",
+    "row": "companion GET /v1/ref/entities",
+    "checks": [],
+    "filter": "ref_hits"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-templates",
-   "why": "a read row: mapped, enforcement is phase 3 (policy lint's template enumeration, D-116)",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/templates"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/templates"
+    "disposition": "read",
+    "row": "companion GET /v1/config/templates",
+    "checks": [],
+    "filter": "templates"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-template",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/template?id=tpl_outdoor"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/template"
+    "disposition": "read",
+    "row": "companion GET /v1/config/template",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "template:tpl_outdoor/config"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-script",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/script?id=morning"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/script"
+    "disposition": "read",
+    "row": "companion GET /v1/config/script",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "script:morning/config"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-automation",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/automation?id=prod_heating"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/automation"
+    "disposition": "read",
+    "row": "companion GET /v1/config/automation",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "automation:prod_heating/config"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-helpers",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/helpers?domain=input_boolean"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/helpers"
+    "disposition": "read",
+    "row": "companion GET /v1/config/helpers",
+    "checks": [],
+    "filter": "helpers"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-config-helper",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/config/helper?id=guest_mode"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/config/helper"
+    "disposition": "read",
+    "row": "companion GET /v1/config/helper",
+    "checks": [],
+    "filter": "helper"
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-wireguard-status",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/wireguard/status?tunnel=wg0"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/wireguard/status"
+    "disposition": "read",
+    "row": "companion GET /v1/wireguard/status",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:wireguard"
+     }
+    ]
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-read-logs",
-   "why": "a read row: mapped, enforcement is phase 3",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "companion",
     "method": "GET",
     "path": "/v1/logs?component=refscan"
    },
    "expect": {
-    "disposition": "read-deferred",
-    "row": "companion GET /v1/logs"
+    "disposition": "read",
+    "row": "companion GET /v1/logs",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "system:logs"
+     }
+    ]
    },
    "facts_ref": "house"
   },
@@ -4144,7 +4329,7 @@
   },
   {
    "id": "comp-dead-list-scripts",
-   "why": "D-81: ListScriptDefs is deleted; an unmapped GET, allowed in phase 2",
+   "why": "D-81: ListScriptDefs is deleted; an unmapped GET — refused like a write from W-2 on (D-145)",
    "request": {
     "transport": "companion",
     "method": "GET",
@@ -4153,13 +4338,13 @@
    "expect": {
     "disposition": "unmapped",
     "row": "",
-    "refused": false
+    "refused": true
    },
    "facts_ref": "house"
   },
   {
    "id": "comp-dead-list-automations",
-   "why": "D-81: ListAutomationDefs is deleted; an unmapped GET, allowed in phase 2",
+   "why": "D-81: ListAutomationDefs is deleted; an unmapped GET — refused like a write from W-2 on (D-145)",
    "request": {
     "transport": "companion",
     "method": "GET",
@@ -4168,7 +4353,7 @@
    "expect": {
     "disposition": "unmapped",
     "row": "",
-    "refused": false
+    "refused": true
    },
    "facts_ref": "house"
   },

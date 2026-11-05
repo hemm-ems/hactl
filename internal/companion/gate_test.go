@@ -36,6 +36,10 @@ func (g *countingGate) CheckHop(context.Context, reqmap.Request, reqmap.Request)
 	return errors.New("no redirect expected")
 }
 
+func (g *countingGate) Filter(_ context.Context, _ reqmap.Request, resp []byte) ([]byte, error) {
+	return resp, nil
+}
+
 func (g *countingGate) Observe(reqmap.Request, []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

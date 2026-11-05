@@ -2199,8 +2199,8 @@ the policy grammar (D-67, D-68, D-69) is unmappable, and an unmappable write
 is refused — never canonicalised. A request the mapping does not know is
 refused if it can change anything: every websocket type and every HTTP method
 other than GET counts as mutating unless a row says otherwise (E-9); an
-unmapped GET is allowed until phase 3 (the gate makes it a build failure
-first).
+unmapped read is refused too from W-2 on (D-145; the gate makes it a build
+failure first).
 
 **Command layer (preview parity).** A write command computes its whole plan —
 every resource every request of the confirmed run will touch, follow-up writes
@@ -2224,13 +2224,22 @@ command, and every entrypoint that reaches a mapped write request or a
 `system:cache` write without one (D-80).
 
 **The pole.** Fail closed, while a profile is in effect: an unmapped mutating
-request is denied (an unmapped GET is allowed until phase 3), unparseable is
+request is denied (an unmapped read too, from W-2 on, D-145), unparseable is
 denied, an unanswerable question (Home Assistant unreachable, or answering
 with an error, while computing a service call's reach) is denied. Over-deny is
 allowed, under-deny is not (D-59).
 
-**What this law does not claim.** It does not make reads enforced: phase 2 maps
-every read with verb `read` and enforces none (D-54, phase 3). It does not
+**Reads (W-2, D-138..D-147, D-82, D-153).** Every read is decided at the request layer
+too: what it names itself before it is sent, its answer by the session's
+filter before any command decodes it (H-21) — rows dropped, parts masked
+`<denied>`, counted once per address in the `hidden by policy` trailer. The
+session's own questions (the facts a write check needs) are never filtered,
+nor are a write command's own reads — its plan decides the write (D-82) — and
+a save never deletes a dashboard view a read hid (D-153).
+
+**What this law does not claim.** It does not redact what a read is allowed
+to return about something else: a raw config file's text, a log message, a
+trace's recorded states (D-144, D-142, guardrail D-51). It does not
 model what Home Assistant does server-side beyond what hactl can enumerate
 from the registries (D-76) — the companion's implicit domain reload, a running
 script doing what it does (`SPEC-permissions.md` §8). It does not close the
@@ -2423,7 +2432,9 @@ must go red on exactly that command.
   registered in TestEveryConfirmedRequestIsInThePlan) — watched to fail with
   `up`'s plan emptied and with `config` checked in the preview only. With this
   every write and cmd row of `dev/surfaces/policy.manifest` is proven; the
-  ceiling (45) is the read-deferred-phase3 rows.
+  ceiling (45) is the read-deferred-phase3 rows. W-2 (2026-11-05) proved
+  every read row (TestEveryReadRowIsEnforced) or exempted it (D-147); the
+  ceiling is 0.
   The blind Docker suite written from the contract alone
   (`internal/integration/policy_enforce_test.go`,
   `internal/companiontest/policy_enforce_e2e_test.go`) is green against the

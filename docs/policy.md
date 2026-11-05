@@ -10,11 +10,12 @@ everything except locks, switch lights only in the living room, edit only the
 > anything that wants to get around it. The token in `.env` can do everything,
 > and anything with a shell can call Home Assistant directly or edit the file.
 
-> **Status: writes are enforced, reads are not yet.** Every command that
-> changes something refuses a denied change, already in its dry run, before
-> anything is written. Reads are not filtered yet: a `read` rule is what
-> `policy check` answers, but no listing hides a row and no attribute is masked
-> in this version. See [What hactl enforces](#what-hactl-enforces).
+> **Status: writes and reads are enforced.** Every command that changes
+> something refuses a denied change, already in its dry run, before anything
+> is written. Every command that reads is filtered before it sees the answer: a
+> listing drops what the profile may not read and ends with `hidden by policy:
+> N`, a denied attribute reads `<denied>`, and reading one denied thing is
+> refused. See [What hactl enforces](#what-hactl-enforces).
 
 ## Quick start
 
@@ -118,7 +119,7 @@ A rule is `"<resource pattern>": [verbs]` under `allow:` or `deny:`.
 | `config_entry` | entry_id | `config_entry:01J…/options` |
 | `file` | path in the config directory | `file:packages/**`, `file:automations.yaml/block/alarm` |
 | `service` | `<domain>.<service>` | `service:lock.unlock` |
-| `system` | `logs`, `wireguard`, `reload`, `check_config`, `cache` | `system:reload/automation` |
+| `system` | `logs`, `wireguard`, `reload`, `check_config`, `cache`, `template` | `system:reload/automation` |
 
 Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 `registry/<field>`, where field is one of `name`, `area_id`, `labels`, `icon`,
@@ -466,6 +467,47 @@ A few things worth knowing:
   Assistant after an allowed write and hactl cannot list them in advance:
   the companion reloads what it wrote, and running a script lets that script
   do whatever it does.
+
+**Every read is filtered before the command sees it.** A listing leaves out
+what the profile may not read and ends with a line saying how many it left out;
+a part you may not read — an attribute, an entity's state, a registry field — is
+shown with its value `<denied>`; reading one thing you may not read is refused,
+naming the rule and its line:
+
+```console
+$ hactl ent ls --domain lock
+entity_id          state     area  labels last_changed
+lock.garage        locked                 11-05 09:12
+hidden by policy: 1 (profile agent)
+$ hactl ent show lock.front_door
+policy_denied: would read entity:lock.front_door — refused by policy, nothing was written
+  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
+  checked: 1 resources, 1 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 12 — ask the owner; a change goes through a draft and `hactl policy activate`
+```
+
+A refused read looks exactly like a refused write: the report above on
+stdout (the refusal object under `--json`), and the one-line count
+`policy_denied: 1 of 1 resources denied (profile agent)` on stderr.
+
+With `--json` the JSON keeps its shape and the `hidden by policy` line goes to
+stderr. A few things worth knowing:
+
+- **Wide reads are filtered per hit.** `grep` and `ref scan` drop a hit in a
+  file you may not read, or in an automation, script or template entity whose
+  config you may not read; `log` needs `read` on `system:logs` as a whole, and a
+  logbook row needs `read` on its entity. Raw file contents (`config file`) are
+  checked as the file, not redacted.
+- **`tpl eval` needs `system:template`.** A template can read any state, so
+  while your profile denies any read, `tpl eval` needs
+  `"system:template": [read]` allowed explicitly.
+- **A write command's own reads are not filtered.** A command that changes
+  something reads what it changes first; those reads belong to the write, and
+  the write's own check decides it. So a profile may allow `edit` on
+  something without `read` — the write works, and its preview may show what
+  it changes — while every read command still hides it. Saving a dashboard
+  without a view you may not read (which would delete it) is refused.
 
 **Over MCP**, `hactl mcp` without `--allow-writes` still refuses every write
 first; with `--allow-writes`, the policy decides each one as on the command

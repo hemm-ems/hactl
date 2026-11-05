@@ -358,9 +358,6 @@ func renderReview(doc reviewDoc) string {
 	} else {
 		b.WriteString("indirect: checked — what written automations and scripts would switch is checked as if switched directly\n")
 	}
-	if !slices.Contains(doc.EnforcedVerbs, policy.Read.String()) {
-		b.WriteString("reads: not enforced yet — the counts below say what the profile would let it read\n")
-	}
 
 	renderReviewGrants(&b, doc)
 	renderReviewNever(&b, doc.Never)
