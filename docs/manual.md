@@ -1567,6 +1567,38 @@ For `unreachable`, an allow's sub-resource path is a set, not a literal: the all
 
 Findings are ordered by line, then code, profile and rule. `unchecked` follows the order of the kinds table; within a kind the kind's own entry (`profile`/`rule` "", `line` 0 — a kind Home Assistant could not be read for) comes first, then one entry per rule in file order (line, then column). Both are `[]` when empty. In prose, a broken file's report is its `file:` line, one `policy_broken: <file>:<line>: <message>` line per problem and the closing owner line (Policy file format); under `--json` its findings have code `broken`, and the document adds `"hint": "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"` (only when `valid` is false).
 
+#### Setting up an agent: draft, review, activate
+
+**An agent may draft a policy; only the owner activates one** (D-148). The flow:
+
+1. **The owner creates the agent's instance**, in a terminal: `hactl agent add <name>` (see "Several agents" below). The new agent starts **read-only**: its `policy.yaml` holds one profile that denies every write (D-150), so it can look at everything it needs to propose rules and change nothing.
+2. **The agent drafts.** `hactl rtfm --skill policy-setup` prints the procedure for an agent: inventory the instance, ask the owner in plain language what it may switch, edit and see and what never, write `policy.draft.yaml` beside `policy.yaml` with `default: deny`, check it with `hactl policy lint --file policy.draft.yaml`, and hand over. The agent never writes `policy.yaml`.
+3. **The owner reviews**: `hactl policy review --file policy.draft.yaml` says in counts and names what the draft's active profile would let the agent do on *this* instance — which entities it may switch and see, which automations, scripts and dashboards it may edit, create or delete, which services it may call, what it can never touch, whether what written automations do is checked (D-135), and every lint finding.
+4. **The owner activates**: `hactl policy activate policy.draft.yaml` — **in a terminal of its own** (D-149). It refuses unless stdin and stdout are a terminal, so neither an agent nor Claude Code's `!` prefix can run it (both have none, M-5); over MCP it is never offered. It lints the draft (a broken draft is refused), prints the review, asks for the profile name as confirmation, then writes `policy.yaml` atomically and keeps the previous one as `policy.yaml.prev`.
+
+`policy show`, `policy check` and `policy lint` take `--file <path>` to read a draft instead of `policy.yaml`; the answer says so (`file: … (draft, not in effect)`).
+
+#### Several agents
+
+**One instance directory per agent** (D-151): its own `.env` with its own token, its own `policy.yaml`, its own audit log. The file still picks the profile (D-62), and an MCP server is pinned to one directory (D-64), so each agent gets exactly its own rules.
+
+```console
+$ hactl agent add kitchen-helper        # in a terminal, as the owner
+created ~/.hactl/agents/kitchen-helper  (from ~/.hactl/default)
+  token:   a long-lived token of its own, "hactl agent kitchen-helper"
+  policy:  read-only until you activate one (HACTL_POLICY=required)
+  next:    give the agent `hactl rtfm --skill policy-setup`, then review and activate its draft
+  mcp:     claude mcp add kitchen-helper -- hactl mcp --dir ~/.hactl/agents/kitchen-helper --allow-writes
+
+$ hactl agent ls
+NAME            DIR                              PROFILE    REQUIRED  LAST WRITE CHECK
+kitchen-helper  ~/.hactl/agents/kitchen-helper   readonly   yes       never
+```
+
+- `agent add <name>` copies `HA_URL` and `COMPANION_URL` from the source instance (`--from <dir>`, default: the instance hactl would use), writes `HACTL_POLICY=required` (D-136), and gives the agent **a token of its own** (M-6), so Home Assistant's own records tell the agents apart. It asks Home Assistant for one; where that is not possible it asks for one to be pasted (`--token -`). `--path` chooses the directory. Like `activate`, it needs a terminal.
+- `agent ls` lists the agent directories under `~/.hactl/agents/` (or `--root`).
+- **Writes from several agents to one Home Assistant never interleave** (D-152): the write lock is held per Home Assistant (keyed by its URL), not per directory.
+
 #### Worked example: protect one automation
 
 An automation has two addresses: its config, `automation:<config id>` (what `auto apply`, `auto delete` and switching it check), and its entity, `entity:automation.<object id>` (what `ent rename`, `ent set-label`, `ent set-area` and a registry delete check). For an automation made in the UI the two ids differ. Find both in one listing — `id` is the entity's object id, `config_id` the config id:
