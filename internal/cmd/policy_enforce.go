@@ -179,6 +179,13 @@ func finishPolicySession(err error) error {
 	if sess == nil {
 		return err
 	}
+	// A refusal is reported as itself, whatever context a command wrapped
+	// it in (`fetching entity state: …`): its one line names the rule and
+	// its line (D-70, manual "Enforcement (reads)").
+	var denied *enforce.DeniedError
+	if errors.As(err, &denied) {
+		err = denied
+	}
 	if err == nil {
 		if r := sess.RefusedMidRun(); r != nil {
 			err = r
