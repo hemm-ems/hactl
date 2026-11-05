@@ -1589,14 +1589,14 @@ Findings are ordered by line, then code, profile and rule. `unchecked` follows t
 
 What a profile lets the agent do **on this instance**, for the owner, in counts and names (D-162): `policy.yaml`, or the draft `--file` names. It reads Home Assistant (the same inventory `policy lint` uses) and changes nothing. Sections, in this order:
 
-- the `review:` line — the file, and `(draft, not in effect)` for a draft; the `profile:` line — the profile in effect and how it was selected, and its default; the `indirect:` line — `checked` or `unchecked (line <n>)` (D-135); and, while reads are not enforced, `reads: not enforced yet — see is what the profile would allow`;
-- `entities (<n>)`: `see`, `switch` (control) and `edit` (rename, area, labels — the registry) — each `<a> of <n>`, then the domains (`light 20 of 20, switch 14 of 30`), allowed first;
+- the `review:` line — the file, and `(draft, not in effect)` for a draft; the `profile:` line — the profile in effect and how it was selected, and its default; the `indirect:` line — `checked` or `unchecked (line <n>)` (D-135); and, while reads are not enforced, `reads: not enforced yet — the counts below say what the profile would let it read`;
+- `entities (<n>)`: `see`, `switch` (control) and `edit` (rename, area, labels — the registry) — each `<a> of <n>` and what it reaches, by name (`switch: 2 of 212 — light.hall, light.kitchen`; see the naming rule below);
 - `automations`, `scripts`, `dashboards` (`<n>` each): `edit`, `delete`, for scripts `run` (control on `script:<id>/run`) — `<a> of <n>` and the ids; and `create`: `any id`, `only what <allow rule> (line <n>)[, …] allows`, or `no`;
-- `services (<n>)`: `call` — `<a> of <n>` and the domains;
-- `never` — every deny rule of the profile, with what it matches here: `deny "entity:lock.*" [read write] (line 14): 2 entities — lock.back_door, lock.front_door`; a pattern on a part (`entity:*/registry/entity_id`) counts the ids whose part it denies;
+- `services (<n>)`: `call` — `<a> of <n>` and the services, by name;
+- one `never:` line per deny rule of the profile, with what it matches here: `never: deny "entity:lock.*" [read write] (line 14): 2 entities — lock.back_door, lock.front_door` (`never: no deny rules` without one); a pattern on a part (`entity:*/registry/entity_id`) counts the ids whose part it denies;
 - `lint` — the profile's file linted exactly as `policy lint` would, its findings and unchecked kinds, or `clean`.
 
-A list of ids shows at most 8, then `… and <k> more`; `--json` lists every one. A kind Home Assistant could not be read for says `not checked: <reason>` instead of a count. With no profile in effect it says `ALLOW-ALL` (no file, or no `active:` and no `default` profile) and lists nothing. **The whole review is printed whatever `--tokensmax` says** (a document). Exit 0 whatever it found — findings are for the owner to read, not a verdict; 1 for a broken file (reported as `policy show` reports one), a draft that does not exist, or Home Assistant not reachable at all.
+A grant line names the shorter list: every id it reaches, or `all but <ids>` when fewer are left out (`see: 210 of 212 — all but lock.back_door, lock.front_door`), `all` when nothing is, and no names when it reaches nothing. A list shows at most 10 ids, then `…, +<k> more`; `--json` lists every allowed one. A kind Home Assistant could not be read for says `not checked: <reason>` instead of a count. With no profile in effect it says `ALLOW-ALL` (no file, or no `active:` and no `default` profile) and lists nothing. **The whole review is printed whatever `--tokensmax` says** (a document). Exit 0 whatever it found — findings are for the owner to read, not a verdict; 1 for a broken file (reported as `policy show` reports one), a draft that does not exist, or Home Assistant not reachable at all.
 
 ```json
 {"file": "/home/u/ha/agents/kitchen/policy.draft.yaml", "draft": true, "profile": "agent", "selected_by": "active",

@@ -145,10 +145,11 @@ func TestPolicyReviewText(t *testing.T) {
 		"review: " + filepath.Join(ts.dir, "policy.draft.yaml") + " (draft, not in effect)\n",
 		"profile: agent (selected by active), default: deny\n",
 		"entities (8):\n",
-		"  switch: 2 of 8 — light 2 of 2\n",
-		"  call: 1 of 2 — light 1 of 1\n",
+		"  switch: 2 of 8 — light.hall, light.kitchen\n",
+		"  call: 1 of 2 — light.turn_on\n",
+		"  see: 7 of 8 — all but lock.front_door\n",
 		"  create: only what allow \"automation:pg_*\" [edit create delete] (line 10) allows\n",
-		"  deny \"entity:lock.*\" [read write] (line 12): 1 entities — lock.front_door\n",
+		"never: deny \"entity:lock.*\" [read write] (line 12): 1 entities — lock.front_door\n",
 		"(a part of each)",
 		"lint: 1 finding(s), 0 unchecked\n",
 	} {
@@ -181,5 +182,28 @@ func TestPolicyReviewEdges(t *testing.T) {
 	out, err = runPolicyCLI(t, dead, "policy", "review", "--file", "d.yaml")
 	if cliExitCode(err) != 1 || !strings.Contains(err.Error(), "not reachable") || out != "" {
 		t.Errorf("review with Home Assistant down: exit %d err %v\n%s", cliExitCode(err), err, out)
+	}
+}
+
+// D-162: a line names at most ten ids, then `…, +<k> more`; a grant that
+// reaches nearly everything names what it does not reach instead.
+func TestPolicyReviewNamesTheShorterList(t *testing.T) {
+	ids := []string{"a.1", "a.2", "a.3", "a.4", "a.5", "a.6", "a.7", "a.8", "a.9", "a.10", "a.11", "a.12"}
+	if got, want := namesText("entity", ids), "a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, …, +2 more"; got != want {
+		t.Errorf("namesText = %q, want %q", got, want)
+	}
+	for _, tc := range []struct {
+		g    reviewGrant
+		want string
+	}{
+		{reviewGrant{Kind: "entity", Allowed: 0, Total: 3, denied: []string{"x.1", "x.2", "x.3"}}, ""},
+		{reviewGrant{Kind: "entity", Allowed: 3, Total: 3, IDs: []string{"x.1", "x.2", "x.3"}}, " — all"},
+		{reviewGrant{Kind: "entity", Allowed: 2, Total: 3, IDs: []string{"x.1", "x.2"}, denied: []string{"x.3"}}, " — all but x.3"},
+		{reviewGrant{Kind: "entity", Allowed: 1, Total: 3, IDs: []string{"x.1"}, denied: []string{"x.2", "x.3"}}, " — x.1"},
+		{reviewGrant{Kind: "dashboard", Allowed: 1, Total: 2, IDs: []string{""}, denied: []string{"main"}}, " — (default)"},
+	} {
+		if got := grantNamesText(tc.g); got != tc.want {
+			t.Errorf("grantNamesText(%d of %d) = %q, want %q", tc.g.Allowed, tc.g.Total, got, tc.want)
+		}
 	}
 }

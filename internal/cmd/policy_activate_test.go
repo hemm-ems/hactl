@@ -93,7 +93,7 @@ func TestPolicyActivateWritesTheDraftBytesAndKeepsThePrevious(t *testing.T) {
 	noTempFiles(t, ts.dir)
 	for _, want := range []string{
 		"review: " + draft + " (draft, not in effect)\n",
-		"  switch: 2 of 8 — light 2 of 2\n",
+		"  switch: 2 of 8 — light.hall, light.kitchen\n",
 		"replaces: " + target + " (profile readonly)\n",
 		"type the profile name to activate it (agent), anything else cancels: ",
 		"activated: " + target + " — profile agent is in effect from the next command\n",

@@ -42,8 +42,8 @@ func init() {
 	policyCmd.AddCommand(policyReviewCmd)
 }
 
-// reviewNamesShown is how many ids a text line lists before `… and <k> more`.
-const reviewNamesShown = 8
+// reviewNamesShown is how many ids a text line lists before `…, +<k> more`.
+const reviewNamesShown = 10
 
 type reviewGrant struct {
 	Kind      string   `json:"kind"`
@@ -54,9 +54,9 @@ type reviewGrant struct {
 	Total     int      `json:"total"`
 	IDs       []string `json:"ids"`
 	Unchecked string   `json:"unchecked"`
-	// byDomain groups entity and service counts for the text answer.
-	byDomain bool
-	domains  map[string][2]int
+	// denied are the ids the grant does not reach, for the text answer's
+	// `all but …` when they are the shorter list.
+	denied []string
 }
 
 type reviewCreate struct {
@@ -183,26 +183,25 @@ type reviewLister func(policy.Kind) ([]string, error)
 
 // reviewGrantSpec is one grant the review decides for every live id.
 type reviewGrantSpec struct {
-	kind     policy.Kind
-	verb     policy.Verb
-	sub      string // the address the verb is decided at, below each id
-	label    string
-	byDomain bool
+	kind  policy.Kind
+	verb  policy.Verb
+	sub   string // the address the verb is decided at, below each id
+	label string
 }
 
 // reviewGrantSpecs is D-162's fixed list, in the order the review prints it.
 var reviewGrantSpecs = []reviewGrantSpec{
-	{policy.KindEntity, policy.Read, "", "see", true},
-	{policy.KindEntity, policy.Control, "", "switch", true},
-	{policy.KindEntity, policy.Edit, "registry", "edit", true},
-	{policy.KindAutomation, policy.Edit, "config", "edit", false},
-	{policy.KindAutomation, policy.Delete, "", "delete", false},
-	{policy.KindScript, policy.Edit, "config", "edit", false},
-	{policy.KindScript, policy.Delete, "", "delete", false},
-	{policy.KindScript, policy.Control, "run", "run", false},
-	{policy.KindDashboard, policy.Edit, "", "edit", false},
-	{policy.KindDashboard, policy.Delete, "", "delete", false},
-	{policy.KindService, policy.Control, "", "call", true},
+	{policy.KindEntity, policy.Read, "", "see"},
+	{policy.KindEntity, policy.Control, "", "switch"},
+	{policy.KindEntity, policy.Edit, "registry", "edit"},
+	{policy.KindAutomation, policy.Edit, "config", "edit"},
+	{policy.KindAutomation, policy.Delete, "", "delete"},
+	{policy.KindScript, policy.Edit, "config", "edit"},
+	{policy.KindScript, policy.Delete, "", "delete"},
+	{policy.KindScript, policy.Control, "run", "run"},
+	{policy.KindDashboard, policy.Edit, "", "edit"},
+	{policy.KindDashboard, policy.Delete, "", "delete"},
+	{policy.KindService, policy.Control, "", "call"},
 }
 
 // reviewGrants decides every grant of reviewGrantSpecs for every live id.
@@ -211,7 +210,7 @@ func reviewGrants(pol *policy.Policy, list reviewLister, live policy.Live) []rev
 	for _, g := range reviewGrantSpecs {
 		row := reviewGrant{
 			Kind: string(g.kind), Verb: g.verb.String(), Sub: g.sub, Label: g.label,
-			IDs: []string{}, byDomain: g.byDomain, domains: map[string][2]int{},
+			IDs: []string{},
 		}
 		all, err := list(g.kind)
 		if err != nil {
@@ -221,16 +220,12 @@ func reviewGrants(pol *policy.Policy, list reviewLister, live policy.Live) []rev
 		}
 		row.Total = len(all)
 		for _, id := range all {
-			allowed := pol.Decide(policy.Resource{Kind: g.kind, ID: id, Sub: g.sub}, g.verb, live).Allowed
-			d := domainOf(id)
-			c := row.domains[d]
-			c[1]++
-			if allowed {
+			if pol.Decide(policy.Resource{Kind: g.kind, ID: id, Sub: g.sub}, g.verb, live).Allowed {
 				row.Allowed++
 				row.IDs = append(row.IDs, id)
-				c[0]++
+			} else {
+				row.denied = append(row.denied, id)
 			}
-			row.domains[d] = c
 		}
 		out = append(out, row)
 	}
@@ -298,12 +293,6 @@ func sortedUnique(ids []string) []string {
 	return slices.Compact(out)
 }
 
-// domainOf is the part of an entity or service id before its first dot.
-func domainOf(id string) string {
-	d, _, _ := strings.Cut(id, ".")
-	return d
-}
-
 // kindPlural names a kind's section.
 func kindPlural(k string) string {
 	switch k {
@@ -330,7 +319,7 @@ func reviewIDName(kind, id string) string {
 	return id
 }
 
-// namesText lists at most reviewNamesShown ids, then `… and <k> more`.
+// namesText lists at most reviewNamesShown ids, then `…, +<k> more`.
 func namesText(kind string, ids []string) string {
 	shown := ids
 	if len(shown) > reviewNamesShown {
@@ -342,7 +331,7 @@ func namesText(kind string, ids []string) string {
 	}
 	s := strings.Join(names, ", ")
 	if rest := len(ids) - len(shown); rest > 0 {
-		s += fmt.Sprintf(" … and %d more", rest)
+		s += fmt.Sprintf(", …, +%d more", rest)
 	}
 	return s
 }
@@ -370,7 +359,7 @@ func renderReview(doc reviewDoc) string {
 		b.WriteString("indirect: checked — what written automations and scripts would switch is checked as if switched directly\n")
 	}
 	if !slices.Contains(doc.EnforcedVerbs, policy.Read.String()) {
-		b.WriteString("reads: not enforced yet — see is what the profile would allow\n")
+		b.WriteString("reads: not enforced yet — the counts below say what the profile would let it read\n")
 	}
 
 	renderReviewGrants(&b, doc)
@@ -410,23 +399,6 @@ func createFor(doc reviewDoc, g reviewGrant) (string, bool) {
 	return "", false
 }
 
-// domainsText lists the domains with at least one allowed id, by name:
-// `light 20 of 20, switch 14 of 30`.
-func domainsText(domains map[string][2]int) string {
-	var names []string
-	for d, c := range domains {
-		if c[0] > 0 {
-			names = append(names, d)
-		}
-	}
-	sort.Strings(names)
-	parts := make([]string, len(names))
-	for i, d := range names {
-		parts[i] = fmt.Sprintf("%s %d of %d", d, domains[d][0], domains[d][1])
-	}
-	return strings.Join(parts, ", ")
-}
-
 // renderReviewGrants prints the grant sections, each kind with its create line.
 func renderReviewGrants(b *strings.Builder, doc reviewDoc) {
 	section := ""
@@ -449,13 +421,7 @@ func renderReviewGrants(b *strings.Builder, doc reviewDoc) {
 			continue
 		}
 		fmt.Fprintf(b, "  %s: %d of %d", label, g.Allowed, g.Total)
-		switch {
-		case g.Allowed == 0:
-		case g.byDomain:
-			b.WriteString(" — " + domainsText(g.domains))
-		default:
-			b.WriteString(" — " + namesText(g.Kind, g.IDs))
-		}
+		b.WriteString(grantNamesText(g))
 		b.WriteString("\n")
 		if c, ok := createFor(doc, g); ok {
 			fmt.Fprintf(b, "  create: %s\n", c)
@@ -463,14 +429,28 @@ func renderReviewGrants(b *strings.Builder, doc reviewDoc) {
 	}
 }
 
-// renderReviewNever prints every deny rule with what it reaches.
+// grantNamesText names what a grant reaches, the shorter way: every id it
+// allows, or `all but` the ids it does not — at most reviewNamesShown each.
+func grantNamesText(g reviewGrant) string {
+	switch {
+	case g.Allowed == 0:
+		return ""
+	case len(g.denied) == 0:
+		return " — all"
+	case len(g.denied) < g.Allowed:
+		return " — all but " + namesText(g.Kind, g.denied)
+	}
+	return " — " + namesText(g.Kind, g.IDs)
+}
+
+// renderReviewNever prints every deny rule with what it reaches, one
+// `never:` line each.
 func renderReviewNever(b *strings.Builder, never []reviewNever) {
 	if len(never) == 0 {
 		b.WriteString("never: no deny rules\n")
 	} else {
-		b.WriteString("never:\n")
 		for _, n := range never {
-			fmt.Fprintf(b, "  %s (line %d): ", n.Rule, n.Line)
+			fmt.Fprintf(b, "never: %s (line %d): ", n.Rule, n.Line)
 			switch {
 			case n.Kind == "*":
 				b.WriteString("everything\n")
