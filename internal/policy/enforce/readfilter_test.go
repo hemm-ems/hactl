@@ -456,3 +456,48 @@ func TestFilteringAWriteAsksNothing(t *testing.T) {
 		t.Errorf("filtering a write's answer asked %v", f.asked)
 	}
 }
+
+// TestTheTrailerCountsEveryHiddenOccurrence — D-139 as refined: the trailer
+// counts the rows a listing does not show. A row that is an occurrence, not a
+// thing — a logbook row, a history or statistics point, a trace, a search
+// hit, an energy source — counts each time, even when many of them belong to
+// one denied entity, statistic or path.
+func TestTheTrailerCountsEveryHiddenOccurrence(t *testing.T) {
+	body := `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "entity:lock.*": [read]
+      "entity:sensor.p/stats": [read]
+      "automation:prod_*": [read]
+      "file:secrets.yaml": [read]
+`
+	for _, c := range []struct {
+		name   string
+		req    reqmap.Request
+		answer string
+		hidden int
+	}{
+		{"four logbook rows of one entity", reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/logbook/x"},
+			`[{"entity_id":"lock.a","state":"on"},{"entity_id":"lock.a","state":"off"},{"entity_id":"lock.a","state":"on"},{"entity_id":"lock.a","state":"off"},{"entity_id":"light.b","state":"on"}]`, 4},
+		{"three history points of one entity", reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/history/period/x"},
+			`[[{"entity_id":"lock.a","state":"on"},{"state":"off"},{"state":"on"}],[{"entity_id":"light.b","state":"on"}]]`, 3},
+		{"two statistics points of one statistic", reqmap.Request{Transport: reqmap.WS, Type: "recorder/statistics_during_period", Params: map[string]any{}},
+			`{"sensor.p":[{"sum":1},{"sum":2}],"sensor.q":[{"sum":3}]}`, 2},
+		{"three traces of one automation", reqmap.Request{Transport: reqmap.WS, Type: "trace/list", Params: map[string]any{"domain": "automation"}},
+			`[{"domain":"automation","item_id":"prod_x","run_id":"1"},{"domain":"automation","item_id":"prod_x","run_id":"2"},{"domain":"automation","item_id":"prod_x","run_id":"3"},{"domain":"automation","item_id":"ok","run_id":"4"}]`, 3},
+		{"a key hit and a value hit at one path", reqmap.Request{Transport: reqmap.Companion, Method: "GET", Path: "/v1/ref/grep"},
+			`{"hits":[{"location":"secrets.yaml","path":"a","kind":"key"},{"location":"secrets.yaml","path":"a","kind":"value"}]}`, 2},
+		{"two energy rows naming one statistic", reqmap.Request{Transport: reqmap.WS, Type: "energy/get_prefs"},
+			`{"energy_sources":[{"type":"solar","stat_energy_from":"sensor.p"}],"device_consumption":[{"stat_consumption":"sensor.p"},{"stat_consumption":"sensor.q"}]}`, 2},
+	} {
+		s, _ := newSession(t, body, nil)
+		if _, err := s.Filter(context.Background(), c.req, []byte(c.answer)); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if hidden, _, _ := s.ReadCounts(); hidden != c.hidden {
+			t.Errorf("%s: hidden %d, want %d (each hidden row counts)", c.name, hidden, c.hidden)
+		}
+	}
+}
