@@ -1180,7 +1180,7 @@ hactl policy check entity:lock.front_door write --json   # one verdict per write
 
 **A guardrail against mistakes, not a security boundary: the token in .env can do everything** (D-51, level A). A policy stops a misread instruction, a too-wide target or a typo in an id; it does not stop anything with a shell, which can reach Home Assistant directly or edit the file. hactl reads `<instance>/policy.yaml` and never writes it — there is no command that does. The policy is the owner's: never edit, move or delete `policy.yaml`. A denial is an answer to report, not an obstacle to remove.
 
-**Writes are enforced, reads are not yet.** Every command that changes something — `control`, `edit`, `create`, `delete` — checks its whole plan against the policy in its dry run and again under `--confirm`, and refuses before its first write if anything in the plan is denied (see "Enforcement" below). Reads are not enforced in this version: a `read` rule decides `policy check` and the `read` a write's plan needs on what a written automation, script or template mentions (D-133), but no listing hides a row and no attribute is masked yet (D-54, a later version). `policy show` says `enforced: writes — reads not yet` (`"enforced": true`, `"enforced_verbs": ["control", "edit", "create", "delete"]` in `--json`).
+**Writes and reads are enforced.** Every command that changes something — `control`, `edit`, `create`, `delete` — checks its whole plan against the policy in its dry run and again under `--confirm`, and refuses before its first write if anything in the plan is denied (see "Enforcement" below). Every command that reads filters what it reads the same way: a listing drops what you may not read and says how many, a denied attribute reads `<denied>`, and reading one denied thing is refused (see "Enforcement (reads)"). `policy show` says `enforced: writes and reads` (`"enforced": true`, `"enforced_verbs": ["read", "control", "edit", "create", "delete"]` in `--json`).
 
 **No file, no change.** Without `policy.yaml` everything is allowed, byte-identical to hactl without a policy (D-58) — in what every command sends, writes and prints as its own answer (D-108): `policy show` says `no policy file`, `policy check` allows everything with rule `no policy file`, `policy lint` reports nothing and exits 0.
 
@@ -1448,6 +1448,35 @@ These checks run for `auto create`, `auto apply`, `auto rollback` (the backup it
 ```
 
 A line also carries `unmet_where`, as in the refusal, when a narrowed allow was tried and did not hold. `layer` is `command` for the plan check and `request` for the check of each request sent — one line per request, not per retry. `command` is the command path and its positional arguments; flag values that carry content (`--data`, `-f`) are not logged. At 10 MiB the file is renamed to `policy-audit.log.1`, replacing the previous one; `cache clear` does not remove it. If the line cannot be written, the write is refused (`fail-closed: audit log not writable`) — a preview too, since a preview is what authorises `--confirm` (D-71). hactl never reads the log back; it is for the owner.
+
+#### Enforcement (reads)
+
+While a profile is in effect, **what a command reads is filtered before the command sees it** (D-138): every answer from Home Assistant and the companion passes the policy at the request layer, before any command decodes it (H-21), so no output path — prose, `--json`, a count, an error message — can carry a denied value. This holds for every command, the wide reads included.
+
+- **A listing drops the rows you may not read** — entities, devices, areas, floors, labels, automations, scripts, dashboards, statistics, traces, logbook rows, search hits — and says how many: a last line `hidden by policy: N (profile <p>)` on stdout. Under `--json` the JSON keeps its shape and the same line goes to stderr (D-139). Counts the command prints describe what it shows; the trailer is what it does not (H-11).
+- **A part you may not read is masked, not dropped** (D-140): a denied attribute keeps its key and reads `<denied>`, a denied `state` reads `<denied>`, and the trailer counts them: `hidden by policy: 0, masked: 3 (profile <p>)`.
+- **Reading one thing you may not read is refused** like a denied write (exit 1, `policy_denied`, the rule and its line): `ent show lock.front_door`, `auto cat <id>`, `trace show`, `dash show <u>`, `config file <path>`, `ent hist`, `log` without `read` on `system:logs`.
+- **What is checked:**
+
+| what | checked as |
+|---|---|
+| an entity's state and attributes | `read entity:<e>`; `…/state`, `…/attr/<name>` mask |
+| registry rows | `read entity:<e>` / `device:<d>` / `area:<a>` / `floor:<f>` / `label:<l>` |
+| history, statistics | `read entity:<e>/history`, `…/stats` (an external statistic `domain:name` has no address: hidden) |
+| automation, script, template config; traces | `read automation:<id>` (`script:`, `template:`); `…/trace` |
+| dashboards, a dashboard's views | `read dashboard:<u>`; a denied view is dropped from the config, counted |
+| config files, `grep` and `ref scan` hits | `read file:<path>`, plus the typed owner a hit lies in |
+| config entries, flows | `read config_entry:<id>` |
+| logs, repairs | `read system:logs` |
+| logbook (`changes`) | each row by `read entity:<e>` |
+| energy preferences | each source by `read entity:<statistic>`; an external statistic is hidden |
+| `tpl eval` | `read system:template` — required while the profile denies any read (D-143), because a template can read any state |
+
+- **A row hactl cannot address is hidden**, never shown unchecked (D-141): a listing row without an id, an external statistic, a trace without an item id.
+- **An unmapped read is refused** (D-145): a GET or websocket read no row names fails closed, as writes always did (E-9).
+- **Not covered** (guardrail, D-51): what a raw config file *says* about a denied entity (`config file automations.yaml` is checked as the file, not redacted), the text of a log message, and anything outside hactl.
+
+Reads are not written to the audit log (D-146); a refused read is reported like a refused write.
 
 #### `policy show`
 
