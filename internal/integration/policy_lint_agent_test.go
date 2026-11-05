@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,4 +88,19 @@ func TestPolicyLintNamesNoHiddenIDWithoutATerminal(t *testing.T) {
 	if !strings.Contains(text, "inventory: what the active profile can read") {
 		t.Errorf("the agent's lint does not say what it checked against:\n%s", text)
 	}
+}
+
+// ownerLint runs `policy lint --json` in dir as the owner does — the built
+// binary at a (pseudo-)terminal — so it lints against the whole instance
+// (D-173); an in-process run has no terminal and would lint as an agent.
+func ownerLint(t *testing.T, dir string) (string, error) {
+	t.Helper()
+	out, err := underTerminal(t, hactlSetupBin(t), hactlEnv(t.TempDir()), nil, "--dir", dir, "policy", "lint", "--json")
+	// A terminal carries stdout and stderr on one stream: the document is
+	// the first JSON value, the stderr summary line follows it.
+	var doc json.RawMessage
+	if decErr := json.NewDecoder(strings.NewReader(strings.ReplaceAll(out, "\r", ""))).Decode(&doc); decErr != nil {
+		t.Fatalf("the owner's lint printed no JSON document (%v):\n%s", decErr, out)
+	}
+	return string(doc), err
 }

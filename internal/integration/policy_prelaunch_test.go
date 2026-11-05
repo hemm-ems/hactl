@@ -32,7 +32,8 @@ profiles:
       "entity:*": { area: "*" }
 `
 	dir := policyDir(t, body)
-	out, _ := runHactlDirErr(t, dir, "policy", "lint", "--json")
+	// The owner's lint, at a terminal: the whole instance (D-173).
+	out, _ := ownerLint(t, dir)
 	var doc struct {
 		Findings []struct {
 			Code    string `json:"code"`
