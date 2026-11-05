@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -46,7 +47,13 @@ func TestOracleEnergyGetPrefsUnconfigured(t *testing.T) {
 // energyDirectionByType classifies. Kept here as a literal rather than
 // imported, because the two lists agreeing is the thing being asserted and a
 // gate that reads its expectation from the code it checks proves nothing.
-var energyDirectionTable = []string{"battery", "gas", "grid", "solar", "water"}
+var energyDirectionTable = []string{"battery", "gas", "grid", "home", "solar", "water"}
+
+// energyTypesNewerThanSomeTestedHA are table entries an older Home Assistant
+// the CI still tests against does not define yet, with the release that added
+// them. The table may run ahead of an HA by exactly these; anything else it
+// holds that HA does not define is a stale entry.
+var energyTypesNewerThanSomeTestedHA = map[string]string{"home": "2026.11"}
 
 // TestOracleEnergySourceTypes asks Home Assistant which energy source types
 // exist, and fails when hactl's direction table does not cover exactly those.
@@ -88,7 +95,22 @@ func TestOracleEnergySourceTypes(t *testing.T) {
 		t.Fatalf("no `type: Literal[…]` declarations found in %s — the extractor has stopped "+
 			"matching and would pass forever while proving nothing:\n%s", path, out)
 	}
-	if strings.Join(got, ",") != strings.Join(energyDirectionTable, ",") {
+	var missing, stale []string
+	for _, kind := range got {
+		if !slices.Contains(energyDirectionTable, kind) {
+			missing = append(missing, kind)
+		}
+	}
+	for _, kind := range energyDirectionTable {
+		if !slices.Contains(got, kind) && energyTypesNewerThanSomeTestedHA[kind] == "" {
+			stale = append(stale, kind)
+		}
+	}
+	if len(stale) > 0 {
+		t.Errorf("hactl's energyDirectionByType classifies %v, which Home Assistant does not define "+
+			"and no newer HA is known to add (energyTypesNewerThanSomeTestedHA)", stale)
+	}
+	if len(missing) > 0 {
 		t.Errorf("Home Assistant defines energy source types %v; hactl's energyDirectionByType "+
 			"covers %v.\nA type HA emits and the table does not classify renders as %q — add it to "+
 			"internal/cmd/energy.go with the direction data.py's own docstring gives it, and to "+
