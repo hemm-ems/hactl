@@ -630,7 +630,8 @@ One row per statistic feeding the dashboard (`type` grid/solar/battery/gas/water
 run before touching anything (`ent show <statistic>` answers who owns it).
 `direction` is what that statistic means for that source type, in HA's own
 terms: grid `consumption`/`return`, solar `production`, battery
-`discharge`/`charge`, gas and water `consumption`. Only a generative source
+`discharge`/`charge`, gas and water `consumption`, and the whole-home meter
+(`home`, HA 2026.11 and later) `consumption`. Only a generative source
 reads `production`; a source type this build does not know reads `unknown`
 rather than a guess. An
 instance whose Energy dashboard was never set up says exactly that (`--json`:

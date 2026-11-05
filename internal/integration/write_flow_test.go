@@ -132,14 +132,21 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 	inspectOut := runHactlDir(t, inst.Dir(), "config", "flow-inspect", flowID)
 	assertContains(t, inspectOut, flowID)
 
+	// What the form proposes, submitted as is (flowFormValues: HA 2026.11
+	// suggests met_eireann's location and elevation rather than defaulting them).
+	formData, err := json.Marshal(flowFormValues(t, []byte(startOut)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// --- flow-step dry-run must not complete the flow (no entry appears) ---
-	runHactlDir(t, inst.Dir(), "config", "flow-step", flowID, "--data", "{}")
+	runHactlDir(t, inst.Dir(), "config", "flow-step", flowID, "--data", string(formData))
 	if _, ok := configEntryByDomain(ctx, t, inst, flowDomain); ok {
 		t.Fatal("dry-run flow-step created a config entry")
 	}
 
 	// --- flow-step --confirm completes the flow to create_entry ---
-	stepOut := runHactlDir(t, inst.Dir(), "config", "flow-step", flowID, "--data", "{}", "--confirm", "--json")
+	stepOut := runHactlDir(t, inst.Dir(), "config", "flow-step", flowID, "--data", string(formData), "--confirm", "--json")
 	var step map[string]any
 	if err := json.Unmarshal([]byte(stepOut), &step); err != nil {
 		t.Fatalf("flow-step --json invalid: %v\n%s", err, stepOut)
@@ -158,10 +165,11 @@ func TestConfigFlowCreateDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("HA config entry has no entry_id: %v", entry)
 	}
 	// Title and state are witnesses hactl never echoed as fields of the entry:
-	// met_eireann titles the entry after HA's configured location ("Home"), and
-	// HA reports it loaded once the integration set up successfully.
-	if entry["title"] != "Home" {
-		t.Errorf("HA stored title %v, want Home", entry["title"])
+	// met_eireann titles the entry itself — after HA's configured location
+	// ("Home") up to HA 2026.10, with the fixed "Met Éireann" from 2026.11 —
+	// and HA reports it loaded once the integration set up successfully.
+	if title := entry["title"]; title != "Home" && title != "Met Éireann" {
+		t.Errorf("HA stored title %v, want Home (HA ≤ 2026.10) or Met Éireann (HA ≥ 2026.11)", title)
 	}
 	if entry["state"] != "loaded" {
 		t.Errorf("HA stored state %v, want loaded", entry["state"])
@@ -191,32 +199,57 @@ func metOptionsElevation(t *testing.T, client *haapi.Client, entryID string) flo
 	if err != nil {
 		t.Fatalf("opening options flow to read elevation: %v", err)
 	}
-	// Each field's `default` carries its own type (name is a string, elevation a
-	// number), so decode defaults raw and parse only the one we assert on.
+	if id := flowIDOf(raw); id != "" {
+		_ = client.AbortOptionsFlow(ctx, id)
+	}
+	v, ok := flowFormValues(t, raw)["elevation"]
+	if !ok {
+		t.Fatalf("met options form has no elevation value: %s", string(raw))
+	}
+	elev, ok := v.(float64)
+	if !ok {
+		t.Fatalf("met options form's elevation is a %T (%v), not a number", v, v)
+	}
+	return elev
+}
+
+// flowFormValues is what a flow form proposes for each field: its `default`
+// or, where HA seeds the form with suggestions instead (met from HA 2026.11:
+// add_suggested_values_to_schema), its `description.suggested_value`. A
+// caller that means "submit it unchanged" has to send these: HA fills a
+// missing required key from a default, never from a suggestion.
+func flowFormValues(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
 	var parsed struct {
-		FlowID     string `json:"flow_id"`
 		DataSchema []struct {
-			Name    string          `json:"name"`
-			Default json.RawMessage `json:"default"`
+			Name        string `json:"name"`
+			Default     any    `json:"default"`
+			Description struct {
+				SuggestedValue any `json:"suggested_value"`
+			} `json:"description"`
 		} `json:"data_schema"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatalf("parsing options flow: %v", err)
+		t.Fatalf("parsing flow form: %v\n%s", err, raw)
 	}
-	if parsed.FlowID != "" {
-		_ = client.AbortOptionsFlow(ctx, parsed.FlowID)
-	}
+	values := map[string]any{}
 	for _, f := range parsed.DataSchema {
-		if f.Name == "elevation" {
-			var elev float64
-			if err := json.Unmarshal(f.Default, &elev); err != nil {
-				t.Fatalf("parsing elevation default %q: %v", string(f.Default), err)
-			}
-			return elev
+		switch {
+		case f.Default != nil:
+			values[f.Name] = f.Default
+		case f.Description.SuggestedValue != nil:
+			values[f.Name] = f.Description.SuggestedValue
 		}
 	}
-	t.Fatalf("met options form has no elevation field: %s", string(raw))
-	return 0
+	return values
+}
+
+func flowIDOf(raw []byte) string {
+	var v struct {
+		FlowID string `json:"flow_id"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.FlowID
 }
 
 // setMetElevationDirect writes the met entry's elevation straight through HA's
@@ -232,7 +265,12 @@ func setMetElevationDirect(t *testing.T, client *haapi.Client, entryID string, e
 	if err != nil {
 		return fmt.Errorf("parsing options flow: %w", err)
 	}
-	payload := json.RawMessage(fmt.Sprintf(`{"elevation":%v}`, elevation))
+	values := flowFormValues(t, raw)
+	values["elevation"] = elevation
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
 	if _, err := client.StepFlow(ctx, flow.FlowID, true, payload); err != nil {
 		return fmt.Errorf("stepping options flow: %w", err)
 	}
@@ -299,8 +337,17 @@ func TestConfigOptionsRoundTrip(t *testing.T) {
 	}
 
 	// --- flow-step --options --confirm submits the new elevation and persists it ---
+	// The form's own values with the new elevation: since HA 2026.11 met
+	// suggests its values instead of defaulting them, so a partial submit is
+	// refused for the missing required location (flowFormValues).
+	values := flowFormValues(t, []byte(optOut))
+	values["elevation"] = int(newElev)
+	data, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stepOut := runHactlDir(t, inst.Dir(), "config", "flow-step", flowID,
-		"--options", "--data", fmt.Sprintf(`{"elevation":%v}`, int(newElev)), "--confirm", "--json")
+		"--options", "--data", string(data), "--confirm", "--json")
 	var step map[string]any
 	if err := json.Unmarshal([]byte(stepOut), &step); err != nil {
 		t.Fatalf("options flow-step --json invalid: %v\n%s", err, stepOut)
