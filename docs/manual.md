@@ -1466,6 +1466,7 @@ While a profile is in effect, **what a command reads is filtered before the comm
 | what | checked as |
 |---|---|
 | an entity's state and attributes | `read entity:<e>`; `…/state`, `…/attr/<name>` mask |
+| the home's location and name (`health`, Home Assistant's core config) | they are `zone.home`'s: `read entity:zone.home/attr/<name>` masks each — `latitude`, `longitude`, `elevation`, `radius`, and the name as `friendly_name` |
 | registry rows | `read entity:<e>` / `device:<d>` / `area:<a>` / `floor:<f>` / `label:<l>` |
 | history, statistics | `read entity:<e>/history`, `…/stats` (an external statistic `domain:name` has no address: hidden) |
 | automation, script, template config; traces | `read automation:<id>` (`script:`, `template:`); `…/trace` |

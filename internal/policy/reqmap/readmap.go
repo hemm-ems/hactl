@@ -66,8 +66,9 @@ const (
 	FilterLogbook FilterKind = "logbook"
 	// FilterServices — GET /api/services: each service by `read service:<d>.<s>`.
 	FilterServices FilterKind = "services"
-	// FilterCoreConfig — GET /api/config: the home's location, which is
-	// zone.home's, masked by `read entity:zone.home/attr/<name>`.
+	// FilterCoreConfig — GET /api/config: the home's location and name,
+	// which are zone.home's, masked by `read entity:zone.home/attr/<name>`
+	// (the name by `attr/friendly_name`).
 	FilterCoreConfig FilterKind = "core_config"
 	// FilterFiles — companion GET /v1/config/files, by `read file:<path>` (D-144).
 	FilterFiles FilterKind = "files"

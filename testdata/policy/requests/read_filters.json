@@ -3,7 +3,8 @@
  "policies": {
   "reader": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n",
   "templater": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n    allow:\n      \"system:template\": [read]\n",
-  "open": "version: 1\nactive: open\nprofiles:\n  open:\n    deny:\n      \"entity:lock.*\": [control]\n"
+  "open": "version: 1\nactive: open\nprofiles:\n  open:\n    deny:\n      \"entity:lock.*\": [control]\n",
+  "blind": "version: 1\nactive: blind\nprofiles:\n  blind:\n    default: deny\n"
  },
  "vectors": [
   {
@@ -1126,6 +1127,33 @@
     },
     "hidden": 0,
     "masked": 1
+   }
+  },
+  {
+   "id": "core-config-location-name",
+   "why": "the home's name is zone.home's friendly_name (HA names zone.home after location_name): under a profile that reads nothing it is masked with the coordinates — found by the W-6 read sweep, where `health` printed it",
+   "row": "rest GET /api/config",
+   "policy": "blind",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config"
+   },
+   "answer": {
+    "version": "2026.11.0",
+    "location_name": "Policy Enforce",
+    "latitude": 52.37,
+    "time_zone": "UTC"
+   },
+   "expect": {
+    "answer": {
+     "version": "2026.11.0",
+     "location_name": "<denied>",
+     "latitude": "<denied>",
+     "time_zone": "UTC"
+    },
+    "hidden": 0,
+    "masked": 2
    }
   },
   {
