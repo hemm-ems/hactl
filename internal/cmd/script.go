@@ -836,7 +836,7 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 
 	// Verify the script entity exists before calling the service (also in
 	// dry-run, so the preview is truthful about what would run).
-	if _, err := client.GetState(ctx, entityID); err != nil {
+	if _, stateErr := client.GetState(ctx, entityID); stateErr != nil {
 		return fmt.Errorf("script not found: %s", entityID)
 	}
 
@@ -848,17 +848,24 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 			render(w)
 	}
 
-	if _, err := client.CallService(ctx, "script", "turn_on", map[string]any{
+	changed, err := client.CallService(ctx, "script", "turn_on", map[string]any{
 		"entity_id": entityID,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("running script %s: %w", entityID, err)
 	}
 
-	return done("execute "+entityID).
+	// `executed` is HA's verdict that the script started, not that its steps
+	// reached anything: a step aimed at a missing entity succeeds silently, and
+	// only HA's log says so (D-131). Exit 0 either way — the script did run.
+	res := done("execute "+entityID).
 		with("entity_id", entityID).
 		with("via", "script.turn_on").
-		text("executed %s", entityID).
-		render(w)
+		text("executed %s", entityID)
+	for _, msg := range scriptRunLogWarnings(ctx, cfg, entityID, changed) {
+		res = res.warn("%s", msg)
+	}
+	return res.render(w)
 }
 
 func runScriptCreate(ctx context.Context, w io.Writer) error {
