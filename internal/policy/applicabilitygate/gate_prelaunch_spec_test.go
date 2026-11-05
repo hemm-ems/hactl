@@ -304,6 +304,7 @@ var manualSample = map[string]string{
 	"system:logs":                       "system:logs",
 	"system:check_config":               "system:check_config",
 	"system:reload":                     "system:reload",
+	"system:template":                   "system:template",
 }
 
 var (

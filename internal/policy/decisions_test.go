@@ -190,7 +190,7 @@ func TestLintCountsAllWildcardFreeSegmentsAsChecked(t *testing.T) {
 	inv := fakeInventory{ids: map[Kind][]string{
 		KindEntity:    {"light.sofa"},
 		KindDashboard: {"", "main"},
-		KindSystem:    {"logs", "wireguard", "reload", "check_config", "cache"},
+		KindSystem:    {"logs", "wireguard", "reload", "check_config", "cache", "template"},
 	}}
 	p := mustLoad(t, profileHead+
 		"    deny:\n"+
@@ -468,7 +468,7 @@ func TestLintChecksAttributeNamesAgainstLiveState(t *testing.T) {
 func TestLintListsEveryOtherFreeSubSegmentAsUnchecked(t *testing.T) {
 	inv := fakeInventory{ids: map[Kind][]string{
 		KindDashboard: {"", "main"},
-		KindSystem:    {"logs", "wireguard", "reload", "check_config", "cache"},
+		KindSystem:    {"logs", "wireguard", "reload", "check_config", "cache", "template"},
 	}}
 	p := mustLoad(t, profileHead+
 		"    deny:\n"+

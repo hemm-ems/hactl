@@ -390,7 +390,7 @@ func (c *Client) doOnce(req *http.Request) ([]byte, error) {
 	}
 
 	gated.observe(respBody)
-	return respBody, nil
+	return gated.filter(respBody)
 }
 
 // drainRequestBody reads and closes a request's body so it can be decided and
@@ -411,6 +411,7 @@ func drainRequestBody(req *http.Request) ([]byte, error) {
 type gatedRequest struct {
 	gate reqgate.Gate
 	req  reqmap.Request
+	ctx  context.Context
 }
 
 // observe hands a successful answer to the gate that decided the request.
@@ -418,6 +419,15 @@ func (g gatedRequest) observe(resp []byte) {
 	if g.gate != nil {
 		g.gate.Observe(g.req, resp)
 	}
+}
+
+// filter is what the caller may decode of a successful answer (W-2): the
+// gate's filtered answer, or its refusal. With no gate the answer as it is.
+func (g gatedRequest) filter(resp []byte) ([]byte, error) {
+	if g.gate == nil {
+		return resp, nil
+	}
+	return g.gate.Filter(g.ctx, g.req, resp)
 }
 
 // gate decides one logical REST request before it is first sent — once,
@@ -435,7 +445,7 @@ func (c *Client) gate(ctx context.Context, req *http.Request, body []byte) (*htt
 		return nil, gatedRequest{}, err
 	}
 	marked := reqgate.WithChecked(ctx, reqgate.Checked{Request: r, WirePath: wire, Prefix: c.basePath})
-	return req.WithContext(marked), gatedRequest{gate: g, req: r}, nil
+	return req.WithContext(marked), gatedRequest{gate: g, req: r, ctx: ctx}, nil
 }
 
 // wirePath is a URL's escaped path and raw query, as it goes on the wire.
@@ -538,7 +548,7 @@ func (c *Client) doWithRetry(ctx context.Context, req *http.Request) ([]byte, er
 		}
 
 		gated.observe(respBody)
-		return respBody, nil
+		return gated.filter(respBody)
 	}
 
 	// unreachable

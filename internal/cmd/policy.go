@@ -24,8 +24,8 @@ import (
 // The policy family (manual "Policy (permission guardrail)", D-51..D-62).
 //
 // Three read-only commands over the model. Writes are enforced by every write
-// command while a profile is in effect (policy_enforce.go, H-29); reads are
-// not yet, which show and check say. The profile is
+// command while a profile is in effect (policy_enforce.go, H-29), and reads by
+// the request layer's filter (W-2, D-138), which show and check say. The profile is
 // chosen by the file alone (D-62): there is deliberately no --profile flag
 // and no environment variable; `--as` is a what-if that never changes the
 // effective profile.
@@ -40,7 +40,7 @@ var policyCmd = family(&cobra.Command{
 	Short: "Read the instance's permission policy (a guardrail against mistakes, not a security boundary)",
 	Long: "Read <instance>/policy.yaml: which profile is in effect, what it allows, and whether its rules " +
 		"mean what their author wrote. " + policy.Disclaimer + ". hactl never writes the file. " +
-		"Writes are enforced while a profile is in effect; reads are not yet.",
+		"Writes and reads are enforced while a profile is in effect.",
 })
 
 var policyShowCmd = &cobra.Command{
@@ -230,7 +230,7 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
 	_, _ = fmt.Fprintf(w, "level: %s\n", policy.Level)
 	if enforced {
-		_, _ = fmt.Fprintln(w, "enforced: writes — reads not yet")
+		_, _ = fmt.Fprintln(w, "enforced: writes and reads")
 		if !pol.IndirectChecked() {
 			_, _ = fmt.Fprintf(w, "indirect: unchecked (line %d) — what written automations, scripts and templates would do is not checked\n", pol.IndirectLine())
 		}
@@ -313,7 +313,7 @@ func policyEnforcement(pol *policy.Policy) (bool, []string) {
 	if sel == policy.SelectedByNoFile || sel == policy.SelectedByImplicit {
 		return false, []string{}
 	}
-	return true, verbNames([]policy.Verb{policy.Control, policy.Edit, policy.Create, policy.Delete})
+	return true, verbNames([]policy.Verb{policy.Read, policy.Control, policy.Edit, policy.Create, policy.Delete})
 }
 
 func verbNames(vs []policy.Verb) []string {
@@ -382,11 +382,11 @@ func (e *policyDeniedError) Error() string { return "denied by policy: " + e.wha
 func (e *policyDeniedError) ExitCode() int { return 1 }
 
 // enforcedVerdict reports whether a command would act on a verdict for verb v
-// under pol: a write verb while a profile is in effect (D-70). Reads are not
-// enforced in this version.
-func enforcedVerdict(pol *policy.Policy, v policy.Verb) bool {
+// under pol: any verb while a profile is in effect (D-70; reads from W-2 on,
+// D-138).
+func enforcedVerdict(pol *policy.Policy, _ policy.Verb) bool {
 	enforced, _ := policyEnforcement(pol)
-	return enforced && v != policy.Read
+	return enforced
 }
 
 // denyOnlyControl reports whether a check of verb v on r is one only a deny
@@ -479,8 +479,8 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 			_, _ = fmt.Fprintf(w, "note: %s\n", n)
 		}
 		switch {
-		case doc.Verb == policy.Read.String():
-			_, _ = fmt.Fprintln(w, "not enforced yet: reads are a later version")
+		case doc.Verb == policy.Read.String() && doc.Enforced:
+			_, _ = fmt.Fprintln(w, "enforced: a read hides, masks or refuses what this verdict denies")
 		case doc.denyOnlyDefault:
 			_, _ = fmt.Fprintln(w, denyOnlyDefaultText(res, doc.scriptRun))
 		case doc.Enforced:
@@ -498,6 +498,11 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 // policyCheckVerdict decides verb v on res and builds its one-verb document.
 func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, live policy.Live) policyCheckDoc {
 	verdict := pol.Decide(res, v, live)
+	if v == policy.Read {
+		// What `tpl eval` reads needs an allow of its own while a read is
+		// denied (D-143): check answers what the request layer enforces.
+		verdict = enforce.TemplateRead(pol, res, verdict)
+	}
 
 	// A typed address a service call reaches is checked for its denies only
 	// (D-107): a denial by the profile default alone is never enforced there.

@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -47,23 +46,25 @@ type got struct {
 	Disposition string
 	Checks      []string // "verb resource" (+ " kind_wide"), sorted, deduplicated
 	Reason      string
+	// Filter is a read's answer filter (W-2).
+	Filter string
 }
 
 // The five dispositions, in the vectors' spelling.
 const (
-	dWrite        = "write"
-	dReadDeferred = "read-deferred"
-	dExempt       = "exempt"
-	dUnmapped     = "unmapped"
-	dUnmappable   = "unmappable"
+	dWrite      = "write"
+	dRead       = "read"
+	dExempt     = "exempt"
+	dUnmapped   = "unmapped"
+	dUnmappable = "unmappable"
 )
 
 func dispositionName(d reqmap.Disposition) string {
 	switch d {
 	case reqmap.Write:
 		return dWrite
-	case reqmap.ReadDeferred:
-		return dReadDeferred
+	case reqmap.Read:
+		return dRead
 	case reqmap.Exempt:
 		return dExempt
 	case reqmap.Unmapped:
@@ -87,6 +88,7 @@ func classify(t *testing.T, r vecRequest, f vecFacts) got {
 		Disposition: dispositionName(res.Disposition),
 		Checks:      normChecks(res.Checks),
 		Reason:      reason,
+		Filter:      string(res.Filter.Kind),
 	}
 }
 
@@ -336,6 +338,8 @@ type vecExpect struct {
 	Checks         []vecCheck `json:"checks"`
 	ReasonContains string     `json:"reason_contains"`
 	Refused        *bool      `json:"refused"`
+	// Filter is a read's answer filter (W-2), "" for none.
+	Filter string `json:"filter"`
 }
 
 type requestVector struct {
@@ -428,18 +432,11 @@ func (vf requestVectorFile) factsFor(t *testing.T, ref string, own map[string]js
 	return f
 }
 
-// refusedInPhase2 is D-74's consequence of a mapping while a profile is in
-// effect: an unmappable request is refused; an unmapped one is refused when it
-// can change anything — every websocket type, every HTTP method but GET. An
-// unmapped GET is still sent in phase 2.
-func refusedInPhase2(g got, r vecRequest) bool {
-	switch g.Disposition {
-	case dUnmappable:
-		return true
-	case dUnmapped:
-		return r.Transport == "ws" || r.Method != http.MethodGet
-	}
-	return false
+// refusedWhileInEffect is the consequence of a mapping while a profile is in
+// effect: an unmappable or unmapped request is refused — a write since D-74,
+// a read since W-2 (D-145). A denied read is refused by the session, not here.
+func refusedWhileInEffect(g got, _ vecRequest) bool {
+	return g.Disposition == dUnmappable || g.Disposition == dUnmapped
 }
 
 // ===========================================================================
@@ -489,19 +486,22 @@ func assertExpectation(t *testing.T, v requestVector, g got) {
 	if e.Row != nil && g.Row != *e.Row {
 		t.Errorf("%s:\n row %q, want %q", v.Why, g.Row, *e.Row)
 	}
-	if e.Disposition == dWrite {
+	if e.Disposition == dWrite || e.Disposition == dRead {
 		if want := wantChecks(e.Checks); !slices.Equal(g.Checks, want) {
 			t.Errorf("%s:\n checks\n  %s\n want\n  %s\n missing %v\n extra   %v", v.Why,
 				strings.Join(g.Checks, "\n  "), strings.Join(want, "\n  "),
 				minus(want, g.Checks), minus(g.Checks, want))
 		}
 	}
+	if e.Disposition == dRead && g.Filter != e.Filter {
+		t.Errorf("%s:\n filter %q, want %q", v.Why, g.Filter, e.Filter)
+	}
 	if e.ReasonContains != "" && !strings.Contains(g.Reason, e.ReasonContains) {
 		t.Errorf("%s:\n reason %q does not name %q", v.Why, g.Reason, e.ReasonContains)
 	}
 	if e.Refused != nil {
-		if r := refusedInPhase2(g, v.Request); r != *e.Refused {
-			t.Errorf("%s:\n refused in phase 2 = %v, want %v (disposition %q)", v.Why, r, *e.Refused, g.Disposition)
+		if r := refusedWhileInEffect(g, v.Request); r != *e.Refused {
+			t.Errorf("%s:\n refused = %v, want %v (disposition %q)", v.Why, r, *e.Refused, g.Disposition)
 		}
 	}
 }
@@ -515,7 +515,7 @@ func assertShape(t *testing.T, g got) {
 		if g.Row != "" {
 			t.Errorf("an unmapped request names row %q", g.Row)
 		}
-	case dWrite, dReadDeferred, dExempt:
+	case dWrite, dRead, dExempt:
 		if g.Row == "" {
 			t.Errorf("a %s answer names no manifest row", g.Disposition)
 		}
@@ -523,7 +523,7 @@ func assertShape(t *testing.T, g got) {
 	default:
 		t.Errorf("disposition %q is none of the five", g.Disposition)
 	}
-	if g.Disposition == dReadDeferred {
+	if g.Disposition == dRead {
 		for _, c := range g.Checks {
 			if !strings.HasPrefix(c, "read ") {
 				t.Errorf("read row %q carries a write check %q", g.Row, c)

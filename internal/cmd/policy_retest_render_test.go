@@ -38,7 +38,7 @@ profiles:
 	want := "file: " + filepath.Join(dir, policy.FileName) + "\n" +
 		policy.Disclaimer + "\n" +
 		"level: A\n" +
-		"enforced: writes — reads not yet\n" +
+		"enforced: writes and reads\n" +
 		"profile: agent (selected by active)\n" +
 		"default: deny\n" +
 		"rules:\n" +

@@ -15,7 +15,7 @@ import (
 // with the class its `map:` comment gives it.
 type policyRequestRow struct {
 	key   string
-	class string // "write", "read-deferred" or "exempt"
+	class string // "write", "read" or "exempt"
 	line  int
 }
 
@@ -48,8 +48,8 @@ func policyRequestRows(t *testing.T, root string) []policyRequestRow {
 				switch {
 				case strings.HasPrefix(after, "exempt"):
 					class = "exempt"
-				case strings.HasPrefix(after, "read-deferred-phase3"):
-					class = "read-deferred"
+				case after == "read" || strings.HasPrefix(after, "read ") || strings.HasPrefix(after, "read,"):
+					class = "read"
 				default:
 					class = "write"
 				}

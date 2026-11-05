@@ -55,8 +55,11 @@ type Disposition int
 const (
 	// Write means the request changes something; Checks is its plan.
 	Write Disposition = iota + 1
-	// ReadDeferred means the request is a read, enforced from phase 3.
-	ReadDeferred
+	// Read means the request is a read (W-2, D-138): Checks are what the
+	// request itself names — each must be allowed, or the request is refused
+	// before it is sent — and Filter is how its answer is filtered before any
+	// command decodes it (H-21).
+	Read
 	// Exempt means the request touches no policy resource, by an explicit row.
 	Exempt
 	// Unmapped means no row names the request.
@@ -69,8 +72,8 @@ func (d Disposition) String() string {
 	switch d {
 	case Write:
 		return "write"
-	case ReadDeferred:
-		return "read-deferred-phase3"
+	case Read:
+		return "read"
 	case Exempt:
 		return "exempt"
 	case Unmapped:
@@ -119,10 +122,19 @@ type Result struct {
 	// Row is the manifest key of the row that named the request; "" when
 	// Unmapped.
 	Row string
-	// Checks is the plan of a Write, or the reads of a ReadDeferred row as far
-	// as the request names them (informational until phase 3). Sorted by verb,
+	// Checks is the plan of a Write, or what a Read names itself — the one
+	// thing a single read reads, refused when denied (D-138). A listing names
+	// nothing here: its rows are decided one by one by Filter. Sorted by verb,
 	// then target; no duplicates.
 	Checks []Check
+	// Filter is how the answer to a Read is filtered before a command decodes
+	// it: rows dropped, parts masked, a single read refused on what only the
+	// answer names (D-138..D-142). The zero value passes the answer as it is.
+	Filter ReadFilter
+	// Whole marks a Read whose answer is one opaque body (a config entry's
+	// diagnostics: data and options together): a partial verdict cannot be
+	// masked there, so it refuses the request.
+	Whole bool
 	// Mutating says whether the request can change anything. It is the row's
 	// own answer when a row named the request, and otherwise true for every
 	// websocket type and every HTTP method other than GET (E-9).
@@ -139,11 +151,12 @@ type Result struct {
 }
 
 // Refused reports whether the request must be refused whatever the policy says
-// (while a profile is in effect): it is unmapped or unmappable, and it can
-// change something. A Write, a read and an exempt request are decided by the
-// policy, or not at all.
+// (while a profile is in effect): it is unmapped or unmappable. From W-2 on an
+// unmapped or unmappable read is refused too, fail-closed like a write (D-145;
+// D-74 allowed an unmapped GET in phase 2). A Write, a Read and an exempt
+// request are decided by the policy, or not at all.
 func (r Result) Refused() bool {
-	return (r.Disposition == Unmapped || r.Disposition == Unmappable) && r.Mutating
+	return r.Disposition == Unmapped || r.Disposition == Unmappable
 }
 
 // Strings renders Checks as `<verb> <target>` lines, in order; a deny-only

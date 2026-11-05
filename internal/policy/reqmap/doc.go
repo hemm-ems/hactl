@@ -10,8 +10,9 @@
 //     (resource, verb) the policy must allow before it is sent. A kind-wide
 //     check ([Check.KindWide]) stands for every id of a kind (D-75): it is
 //     rendered `<kind>:*` and a refusal names it so.
-//   - [ReadDeferred]: a read. Phase 2 enforces no read (D-54); the row exists
-//     so the closure gate can tell a read from a forgotten write.
+//   - [Read]: a read (W-2, D-138). [Result.Checks] is what the request names
+//     itself, refused before it is sent when denied; [Result.Filter] is how
+//     the session filters its answer before any command decodes it (H-21).
 //   - [Exempt]: no policy resource (transport, probe), by an explicit row.
 //   - [Unmapped]: no row names the request.
 //   - [Unmappable]: a row names it, but the request cannot be mapped — a path
@@ -21,9 +22,9 @@
 //
 // [Result.Refused] says whether the request must be refused whatever the
 // policy says (fail closed, E-9): an unmapped or unmappable request that can
-// change anything. A websocket type and every HTTP method other than GET is
-// mutating unless its row says otherwise; an unmapped GET is allowed in phase 2
-// and refused from phase 3 (D-74). [Result.Rule] then names the fail-closed
+// change anything — and, from W-2 on, an unmapped or unmappable read too
+// (D-145). A websocket type and every HTTP method other than GET is mutating
+// unless its row says otherwise. [Result.Rule] then names the fail-closed
 // reason, `fail-closed: …`, the way a policy rule is named.
 //
 // # Pure

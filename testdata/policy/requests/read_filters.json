@@ -1,0 +1,1701 @@
+{
+ "about": "Read-filter vectors for W-2 (manual \"Enforcement (reads)\", D-138..D-147). One or more per read row of dev/surfaces/policy.manifest. A request goes in under a named policy; it is refused before it is sent (expect.refused names the deciding rule), or its answer goes through the session's filter and comes out as expect.answer (compared as JSON), with expect.hidden things dropped and expect.masked parts reading <denied> — counted as the rows the listing does not show: a thing several answers build into one row (an entity's state and registry row) once, by its address; an occurrence (a logbook row, a history or statistics point, a trace, a search hit, an energy source) each time. `files` are config files the filter may read for a hit's typed owner.",
+ "policies": {
+  "reader": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n",
+  "templater": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n    allow:\n      \"system:template\": [read]\n",
+  "open": "version: 1\nactive: open\nprofiles:\n  open:\n    deny:\n      \"entity:lock.*\": [control]\n"
+ },
+ "vectors": [
+  {
+   "id": "trace-list",
+   "why": "each trace by its automation|script:<item_id>/trace; a row without an item id is hidden (D-141)",
+   "row": "ws trace/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/list",
+     "domain": "automation"
+    }
+   },
+   "answer": [
+    {
+     "domain": "automation",
+     "item_id": "prod_heating",
+     "run_id": "r1"
+    },
+    {
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r2"
+    },
+    {
+     "domain": "automation",
+     "run_id": "r3"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "domain": "automation",
+      "item_id": "morning_light",
+      "run_id": "r2"
+     }
+    ],
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "trace-get-denied",
+   "why": "a trace of a denied automation is refused before it is sent",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "prod_heating",
+     "run_id": "r1"
+    }
+   },
+   "expect": {
+    "refused": "deny \"automation:prod_*\" [read]"
+   }
+  },
+  {
+   "id": "trace-get-allowed",
+   "why": "a trace of a readable automation passes as it is",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1"
+    }
+   },
+   "answer": {
+    "trace": {
+     "x": 1
+    }
+   },
+   "expect": {
+    "answer": {
+     "trace": {
+      "x": 1
+     }
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "validate-config-denied",
+   "why": "validate_config is read system:check_config",
+   "row": "ws validate_config",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "validate_config",
+     "triggers": []
+    }
+   },
+   "expect": {
+    "refused": "deny \"system:check_config\" [read]"
+   }
+  },
+  {
+   "id": "validate-config-open",
+   "why": "validate_config passes where system:check_config is readable",
+   "row": "ws validate_config",
+   "policy": "open",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "validate_config",
+     "triggers": []
+    }
+   },
+   "answer": {
+    "triggers": {
+     "valid": true,
+     "error": null
+    }
+   },
+   "expect": {
+    "answer": {
+     "triggers": {
+      "valid": true,
+      "error": null
+     }
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "system-log",
+   "why": "system_log/list is read system:logs as a whole (D-142)",
+   "row": "ws system_log/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "system_log/list"
+    }
+   },
+   "expect": {
+    "refused": "deny \"system:logs\" [read]"
+   }
+  },
+  {
+   "id": "repairs",
+   "why": "repairs are read system:logs (D-147)",
+   "row": "ws repairs/list_issues",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "repairs/list_issues"
+    }
+   },
+   "expect": {
+    "refused": "deny \"system:logs\" [read]"
+   }
+  },
+  {
+   "id": "entity-registry",
+   "why": "rows by entity:<e>; fields masked by entity:<e>/registry/<field>, a list keeping its shape (D-140)",
+   "row": "ws config/entity_registry/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/entity_registry/list"
+    }
+   },
+   "answer": [
+    {
+     "entity_id": "lock.front_door",
+     "name": null,
+     "area_id": null,
+     "labels": []
+    },
+    {
+     "entity_id": "sensor.temp",
+     "name": "Temp",
+     "area_id": "office",
+     "labels": [
+      "a"
+     ],
+     "icon": null
+    },
+    {
+     "entity_id": "light.desk",
+     "name": null,
+     "area_id": "office",
+     "labels": []
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "entity_id": "sensor.temp",
+      "name": "Temp",
+      "area_id": "<denied>",
+      "labels": [
+       "<denied>"
+      ],
+      "icon": null
+     },
+     {
+      "entity_id": "light.desk",
+      "name": null,
+      "area_id": "office",
+      "labels": []
+     }
+    ],
+    "hidden": 1,
+    "masked": 2
+   }
+  },
+  {
+   "id": "areas",
+   "why": "rows by area:<area_id>",
+   "row": "ws config/area_registry/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/area_registry/list"
+    }
+   },
+   "answer": [
+    {
+     "area_id": "vault",
+     "name": "Vault"
+    },
+    {
+     "area_id": "office",
+     "name": "Office"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "area_id": "office",
+      "name": "Office"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "labels",
+   "why": "rows by label:<label_id>",
+   "row": "ws config/label_registry/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/label_registry/list"
+    }
+   },
+   "answer": [
+    {
+     "label_id": "secret"
+    },
+    {
+     "label_id": "night"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "label_id": "night"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "floors",
+   "why": "rows by floor:<floor_id>",
+   "row": "ws config/floor_registry/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/floor_registry/list"
+    }
+   },
+   "answer": [
+    {
+     "floor_id": "basement"
+    },
+    {
+     "floor_id": "ground"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "floor_id": "ground"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "devices",
+   "why": "rows by device:<id>; name_by_user masked by device:<id>/registry/name_by_user",
+   "row": "ws config/device_registry/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "config/device_registry/list"
+    }
+   },
+   "answer": [
+    {
+     "id": "dev_lock",
+     "name": "Lock"
+    },
+    {
+     "id": "dev_hue1",
+     "name": "Hue",
+     "name_by_user": "Desk lamp",
+     "area_id": "office",
+     "labels": []
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "id": "dev_hue1",
+      "name": "Hue",
+      "name_by_user": "<denied>",
+      "area_id": "office",
+      "labels": []
+     }
+    ],
+    "hidden": 1,
+    "masked": 1
+   }
+  },
+  {
+   "id": "dashboards",
+   "why": "rows by dashboard:<url_path>",
+   "row": "ws lovelace/dashboards/list",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/dashboards/list"
+    }
+   },
+   "answer": [
+    {
+     "id": "a",
+     "url_path": "private"
+    },
+    {
+     "id": "b",
+     "url_path": "main"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "id": "b",
+      "url_path": "main"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "dashboard-denied",
+   "why": "a denied dashboard's config is refused before it is sent",
+   "row": "ws lovelace/config",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config",
+     "url_path": "private"
+    }
+   },
+   "expect": {
+    "refused": "deny \"dashboard:private\" [read]"
+   }
+  },
+  {
+   "id": "dashboard-views",
+   "why": "a denied view is dropped from the config and counted; a path-less view too while a view is denied (D-140, D-141)",
+   "row": "ws lovelace/config",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config",
+     "url_path": "main"
+    }
+   },
+   "answer": {
+    "title": "Main",
+    "views": [
+     {
+      "path": "home",
+      "title": "Home"
+     },
+     {
+      "path": "secret",
+      "title": "S"
+     },
+     {
+      "title": "no path"
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "title": "Main",
+     "views": [
+      {
+       "path": "home",
+       "title": "Home"
+      }
+     ]
+    },
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "dashboard-default",
+   "why": "the default dashboard (`lovelace`) is dashboard: — no view of it is denied, the config passes as it is",
+   "row": "ws lovelace/config",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "lovelace/config",
+     "url_path": "lovelace"
+    }
+   },
+   "answer": {
+    "views": [
+     {
+      "title": "no path"
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "views": [
+      {
+       "title": "no path"
+      }
+     ]
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "stats-metadata-denied",
+   "why": "a statistic the request names is refused when denied",
+   "row": "ws recorder/get_statistics_metadata",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/get_statistics_metadata",
+     "statistic_ids": [
+      "sensor.power"
+     ]
+    }
+   },
+   "expect": {
+    "refused": "deny \"entity:sensor.power/stats\" [read]"
+   }
+  },
+  {
+   "id": "stats-metadata",
+   "why": "rows by entity:<statistic_id>/stats; an external statistic is hidden (D-141)",
+   "row": "ws recorder/get_statistics_metadata",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/get_statistics_metadata",
+     "statistic_ids": [
+      "sensor.energy",
+      "tibber:price"
+     ]
+    }
+   },
+   "answer": [
+    {
+     "statistic_id": "sensor.energy"
+    },
+    {
+     "statistic_id": "tibber:price"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "statistic_id": "sensor.energy"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "stats-during",
+   "why": "the answer's keys by entity:<id>/stats; external hidden",
+   "row": "ws recorder/statistics_during_period",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/statistics_during_period",
+     "statistic_ids": [
+      "sensor.energy",
+      "tibber:price"
+     ],
+     "period": "hour"
+    }
+   },
+   "answer": {
+    "sensor.energy": [
+     {
+      "sum": 1
+     }
+    ],
+    "tibber:price": [
+     {
+      "mean": 2
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "sensor.energy": [
+      {
+       "sum": 1
+      }
+     ]
+    },
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "stat-ids",
+   "why": "rows by entity:<statistic_id>/stats; external and denied hidden",
+   "row": "ws recorder/list_statistic_ids",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "recorder/list_statistic_ids"
+    }
+   },
+   "answer": [
+    {
+     "statistic_id": "sensor.energy"
+    },
+    {
+     "statistic_id": "sensor.power"
+    },
+    {
+     "statistic_id": "tibber:price"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "statistic_id": "sensor.energy"
+     }
+    ],
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "energy-prefs",
+   "why": "each source by the statistics it names (D-142): a denied or external one hides its source; legacy grid flows item by item. Each hidden source, flow and device is a row the listing does not show and counts: four here, three of them behind sensor.power",
+   "row": "ws energy/get_prefs",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "energy/get_prefs"
+    }
+   },
+   "answer": {
+    "energy_sources": [
+     {
+      "type": "solar",
+      "stat_energy_from": "sensor.energy"
+     },
+     {
+      "type": "battery",
+      "stat_energy_from": "sensor.power"
+     },
+     {
+      "type": "gas",
+      "stat_energy_from": "tibber:gas"
+     },
+     {
+      "type": "grid",
+      "flow_from": [
+       {
+        "stat_energy_from": "sensor.energy"
+       },
+       {
+        "stat_energy_from": "sensor.power"
+       }
+      ],
+      "flow_to": []
+     }
+    ],
+    "device_consumption": [
+     {
+      "stat_consumption": "sensor.power",
+      "name": "Fan"
+     },
+     {
+      "stat_consumption": "sensor.energy",
+      "name": "Desk"
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "energy_sources": [
+      {
+       "type": "solar",
+       "stat_energy_from": "sensor.energy"
+      },
+      {
+       "type": "grid",
+       "flow_from": [
+        {
+         "stat_energy_from": "sensor.energy"
+        }
+       ],
+       "flow_to": []
+      }
+     ],
+     "device_consumption": [
+      {
+       "stat_consumption": "sensor.energy",
+       "name": "Desk"
+      }
+     ]
+    },
+    "hidden": 4,
+    "masked": 0
+   }
+  },
+  {
+   "id": "config-entries",
+   "why": "rows by config_entry:<entry_id>; options are not in the listing",
+   "row": "rest GET /api/config/config_entries/entry",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/config_entries/entry"
+   },
+   "answer": [
+    {
+     "entry_id": "01ZWAVE",
+     "domain": "zwave_js"
+    },
+    {
+     "entry_id": "01HUEENTRY",
+     "domain": "hue"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "entry_id": "01HUEENTRY",
+      "domain": "hue"
+     }
+    ],
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "diagnostics-denied",
+   "why": "a denied entry's diagnostics are refused",
+   "row": "rest GET /api/diagnostics/config_entry/{entry_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/diagnostics/config_entry/01ZWAVE"
+   },
+   "expect": {
+    "refused": "deny \"config_entry:01ZWAVE\" [read]"
+   }
+  },
+  {
+   "id": "diagnostics-partial",
+   "why": "data and options are one body: a denied part refuses it rather than masks",
+   "row": "rest GET /api/diagnostics/config_entry/{entry_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/diagnostics/config_entry/01HUEENTRY"
+   },
+   "expect": {
+    "refused": "deny \"config_entry:01HUEENTRY/options\" [read]"
+   }
+  },
+  {
+   "id": "diagnostics-allowed",
+   "why": "a readable entry's diagnostics pass as they are",
+   "row": "rest GET /api/diagnostics/config_entry/{entry_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/diagnostics/config_entry/01MET"
+   },
+   "answer": {
+    "data": {
+     "a": 1
+    }
+   },
+   "expect": {
+    "answer": {
+     "data": {
+      "a": 1
+     }
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "states",
+   "why": "rows by entity:<e>; state and attributes masked by …/state and …/attr/<name> (D-140); numbers stay as HA sent them",
+   "row": "rest GET /api/states",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states"
+   },
+   "answer": [
+    {
+     "entity_id": "lock.front_door",
+     "state": "locked",
+     "attributes": {}
+    },
+    {
+     "entity_id": "sensor.temp",
+     "state": "21.5",
+     "attributes": {
+      "secret": "x",
+      "unit_of_measurement": "°C",
+      "precision": 1.1
+     }
+    },
+    {
+     "entity_id": "light.kitchen",
+     "state": "on",
+     "attributes": {
+      "brightness": 255
+     }
+    },
+    {
+     "entity_id": "light.desk",
+     "state": "off",
+     "attributes": {
+      "brightness": 0.5
+     }
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "entity_id": "sensor.temp",
+      "state": "21.5",
+      "attributes": {
+       "secret": "<denied>",
+       "unit_of_measurement": "°C",
+       "precision": 1.1
+      }
+     },
+     {
+      "entity_id": "light.kitchen",
+      "state": "<denied>",
+      "attributes": {
+       "brightness": 255
+      }
+     },
+     {
+      "entity_id": "light.desk",
+      "state": "off",
+      "attributes": {
+       "brightness": 0.5
+      }
+     }
+    ],
+    "hidden": 1,
+    "masked": 2
+   }
+  },
+  {
+   "id": "state-denied",
+   "why": "one denied entity's state is refused before it is sent",
+   "row": "rest GET /api/states/{entity_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states/lock.front_door"
+   },
+   "expect": {
+    "refused": "deny \"entity:lock.*\" [read]"
+   }
+  },
+  {
+   "id": "state-masked",
+   "why": "one entity allowed with a denied attribute is shown masked, not hidden",
+   "row": "rest GET /api/states/{entity_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/states/sensor.temp"
+   },
+   "answer": {
+    "entity_id": "sensor.temp",
+    "state": "21.5",
+    "attributes": {
+     "secret": "x",
+     "friendly_name": "Temp"
+    }
+   },
+   "expect": {
+    "answer": {
+     "entity_id": "sensor.temp",
+     "state": "21.5",
+     "attributes": {
+      "secret": "<denied>",
+      "friendly_name": "Temp"
+     }
+    },
+    "hidden": 0,
+    "masked": 1
+   }
+  },
+  {
+   "id": "history-denied",
+   "why": "a denied entity's history is refused when the request names it",
+   "row": "rest GET /api/history/period/{start}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/history/period/2026-11-01T00:00:00Z?filter_entity_id=light.kitchen"
+   },
+   "expect": {
+    "refused": "deny \"entity:light.kitchen/history\" [read]"
+   }
+  },
+  {
+   "id": "history",
+   "why": "each entity's list by entity:<e>/history; its rows masked like a state",
+   "row": "rest GET /api/history/period/{start}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/history/period/2026-11-01T00:00:00Z"
+   },
+   "answer": [
+    [
+     {
+      "entity_id": "lock.front_door",
+      "state": "locked"
+     }
+    ],
+    [
+     {
+      "entity_id": "light.kitchen",
+      "state": "on"
+     }
+    ],
+    [
+     {
+      "entity_id": "sensor.temp",
+      "state": "1",
+      "attributes": {
+       "secret": "s"
+      }
+     },
+     {
+      "state": "2",
+      "last_changed": "t"
+     }
+    ]
+   ],
+   "expect": {
+    "answer": [
+     [
+      {
+       "entity_id": "sensor.temp",
+       "state": "1",
+       "attributes": {
+        "secret": "<denied>"
+       }
+      },
+      {
+       "state": "2",
+       "last_changed": "t"
+      }
+     ]
+    ],
+    "hidden": 2,
+    "masked": 1
+   }
+  },
+  {
+   "id": "logbook-denied",
+   "why": "a logbook of one denied entity is refused",
+   "row": "rest GET /api/logbook/{start}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/logbook/2026-11-01?entity=lock.front_door"
+   },
+   "expect": {
+    "refused": "deny \"entity:lock.*\" [read]"
+   }
+  },
+  {
+   "id": "logbook",
+   "why": "each row by entity:<e> (D-142); a row without an entity is hidden (D-141); state masked",
+   "row": "rest GET /api/logbook/{start}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/logbook/2026-11-01"
+   },
+   "answer": [
+    {
+     "entity_id": "lock.front_door",
+     "state": "unlocked"
+    },
+    {
+     "name": "Home Assistant",
+     "message": "started"
+    },
+    {
+     "entity_id": "light.kitchen",
+     "state": "on"
+    },
+    {
+     "entity_id": "light.desk",
+     "state": "off"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "entity_id": "light.kitchen",
+      "state": "<denied>"
+     },
+     {
+      "entity_id": "light.desk",
+      "state": "off"
+     }
+    ],
+    "hidden": 2,
+    "masked": 1
+   }
+  },
+  {
+   "id": "error-log",
+   "why": "the error log is read system:logs",
+   "row": "rest GET /api/error_log",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/error_log"
+   },
+   "expect": {
+    "refused": "deny \"system:logs\" [read]"
+   }
+  },
+  {
+   "id": "services",
+   "why": "each service by service:<domain>.<service>; a domain left with none is dropped",
+   "row": "rest GET /api/services",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/services"
+   },
+   "answer": [
+    {
+     "domain": "lock",
+     "services": {
+      "lock": {},
+      "unlock": {}
+     }
+    },
+    {
+     "domain": "light",
+     "services": {
+      "turn_on": {}
+     }
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "domain": "light",
+      "services": {
+       "turn_on": {}
+      }
+     }
+    ],
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "template-denied",
+   "why": "tpl eval needs an explicit allow of system:template while the profile denies a read (D-143)",
+   "row": "rest POST /api/template",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ 1 }}\"}"
+   },
+   "expect": {
+    "refused": "system:template needs an explicit allow"
+   }
+  },
+  {
+   "id": "template-allowed",
+   "why": "with system:template [read] allowed, tpl eval passes",
+   "row": "rest POST /api/template",
+   "policy": "templater",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ 1 }}\"}"
+   },
+   "answer": "1",
+   "expect": {
+    "answer": "1",
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "template-open",
+   "why": "a profile that denies no read needs no allow for tpl eval",
+   "row": "rest POST /api/template",
+   "policy": "open",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ 1 }}\"}"
+   },
+   "answer": "1",
+   "expect": {
+    "answer": "1",
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "core-config",
+   "why": "the home's location is zone.home's: masked by entity:zone.home/attr/<name>",
+   "row": "rest GET /api/config",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config"
+   },
+   "answer": {
+    "version": "2026.11.0",
+    "latitude": 52.37,
+    "longitude": 4.89
+   },
+   "expect": {
+    "answer": {
+     "version": "2026.11.0",
+     "latitude": "<denied>",
+     "longitude": 4.89
+    },
+    "hidden": 0,
+    "masked": 1
+   }
+  },
+  {
+   "id": "check-config",
+   "why": "check-config is read system:check_config",
+   "row": "companion POST /v1/ha/check-config",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "POST",
+    "path": "/v1/ha/check-config"
+   },
+   "expect": {
+    "refused": "deny \"system:check_config\" [read]"
+   }
+  },
+  {
+   "id": "files",
+   "why": "each file by file:<path> (D-144)",
+   "row": "companion GET /v1/config/files",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/files"
+   },
+   "answer": {
+    "files": [
+     "secrets.yaml",
+     "automations.yaml"
+    ]
+   },
+   "expect": {
+    "answer": {
+     "files": [
+      "automations.yaml"
+     ]
+    },
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "file-denied",
+   "why": "a denied file is refused",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=secrets.yaml&resolve=false"
+   },
+   "expect": {
+    "refused": "deny \"file:secrets.yaml\" [read]"
+   }
+  },
+  {
+   "id": "file-resolved",
+   "why": "a resolved read needs every file: one denied file refuses it (a superset)",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=configuration.yaml&resolve=true"
+   },
+   "expect": {
+    "refused": "deny \"file:secrets.yaml\" [read]"
+   }
+  },
+  {
+   "id": "file-allowed",
+   "why": "a readable file passes, contents not redacted",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=automations.yaml&resolve=false"
+   },
+   "answer": {
+    "path": "automations.yaml",
+    "content": "x"
+   },
+   "expect": {
+    "answer": {
+     "path": "automations.yaml",
+     "content": "x"
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "block-denied",
+   "why": "a block named by its canonical id is refused when denied",
+   "row": "companion GET /v1/config/block",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/block?path=template.yaml&id=tpl_secret"
+   },
+   "expect": {
+    "refused": "deny \"file:template.yaml/block/tpl_secret\" [read]"
+   }
+  },
+  {
+   "id": "block-by-alias",
+   "why": "an alias is decided by the canonical id the answer carries",
+   "row": "companion GET /v1/config/block",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/block?path=template.yaml&id=%5B2%5D"
+   },
+   "answer": {
+    "path": "template.yaml",
+    "id": "tpl_secret",
+    "content": "x"
+   },
+   "expect": {
+    "refused": "deny \"file:template.yaml/block/tpl_secret\" [read]"
+   }
+  },
+  {
+   "id": "related",
+   "why": "each related entity by entity:<e>; each stale reference as a hit",
+   "row": "companion GET /v1/related/entity",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/related/entity?entity_id=light.desk"
+   },
+   "answer": {
+    "entity_id": "light.desk",
+    "related": [
+     {
+      "entity_id": "lock.front_door",
+      "relationship": "x"
+     },
+     {
+      "entity_id": "light.kitchen",
+      "relationship": "y"
+     }
+    ],
+    "stale_refs": [
+     {
+      "location": "secrets.yaml",
+      "path": "a",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "automations.yaml",
+      "path": "[0].triggers[0].entity_id",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "automations.yaml",
+      "path": "[1].triggers[0].entity_id",
+      "matched_value": "light.desk"
+     }
+    ]
+   },
+   "files": {
+    "automations.yaml": "- id: prod_heating\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n- id: morning_light\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n"
+   },
+   "expect": {
+    "answer": {
+     "entity_id": "light.desk",
+     "related": [
+      {
+       "entity_id": "light.kitchen",
+       "relationship": "y"
+      }
+     ],
+     "stale_refs": [
+      {
+       "location": "automations.yaml",
+       "path": "[1].triggers[0].entity_id",
+       "matched_value": "light.desk"
+      }
+     ]
+    },
+    "hidden": 3,
+    "masked": 0
+   }
+  },
+  {
+   "id": "ref-scan",
+   "why": "each hit by its file and the typed owner it lies in (D-142)",
+   "row": "companion GET /v1/ref/scan",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/scan?target=light.desk"
+   },
+   "answer": {
+    "target": "light.desk",
+    "hits": [
+     {
+      "location": "automations.yaml",
+      "path": "[0].triggers[0].entity_id",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "automations.yaml",
+      "path": "[1].triggers[0].entity_id",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "secrets.yaml",
+      "path": "x",
+      "matched_value": "light.desk"
+     }
+    ],
+    "skipped": [
+     {
+      "location": "secrets.yaml",
+      "reason": "unreadable"
+     }
+    ]
+   },
+   "files": {
+    "automations.yaml": "- id: prod_heating\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n- id: morning_light\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n"
+   },
+   "expect": {
+    "answer": {
+     "target": "light.desk",
+     "hits": [
+      {
+       "location": "automations.yaml",
+       "path": "[1].triggers[0].entity_id",
+       "matched_value": "light.desk"
+      }
+     ],
+     "skipped": []
+    },
+    "hidden": 3,
+    "masked": 0
+   }
+  },
+  {
+   "id": "ref-grep",
+   "why": "grep hits as ref/scan; the sources and total lowered by what was hidden",
+   "row": "companion GET /v1/ref/grep",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/grep?term=light.desk"
+   },
+   "answer": {
+    "term": "light.desk",
+    "hits": [
+     {
+      "location": "automations.yaml",
+      "path": "[0].triggers[0].entity_id",
+      "kind": "value",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "automations.yaml",
+      "path": "[1].triggers[0].entity_id",
+      "kind": "value",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "secrets.yaml",
+      "path": "x",
+      "kind": "value",
+      "matched_value": "light.desk"
+     }
+    ],
+    "total": 3,
+    "truncated": false,
+    "sources": [
+     {
+      "location": "automations.yaml",
+      "key_hits": 0,
+      "value_hits": 2
+     },
+     {
+      "location": "secrets.yaml",
+      "key_hits": 0,
+      "value_hits": 1
+     }
+    ]
+   },
+   "files": {
+    "automations.yaml": "- id: prod_heating\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n- id: morning_light\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n"
+   },
+   "expect": {
+    "answer": {
+     "term": "light.desk",
+     "hits": [
+      {
+       "location": "automations.yaml",
+       "path": "[1].triggers[0].entity_id",
+       "kind": "value",
+       "matched_value": "light.desk"
+      }
+     ],
+     "total": 1,
+     "truncated": false,
+     "sources": [
+      {
+       "location": "automations.yaml",
+       "key_hits": 0,
+       "value_hits": 1
+      }
+     ]
+    },
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "ref-entities",
+   "why": "each row as a hit; a file that cannot be read for its owner hides the row (D-141)",
+   "row": "companion GET /v1/ref/entities",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/ref/entities"
+   },
+   "answer": {
+    "entities": [
+     {
+      "location": "automations.yaml",
+      "path": "[1].triggers[0].entity_id",
+      "key": "entity_id",
+      "matched_value": "light.desk"
+     },
+     {
+      "location": "unknown.yaml",
+      "path": "a",
+      "key": "entity_id",
+      "matched_value": "light.desk"
+     }
+    ]
+   },
+   "files": {
+    "automations.yaml": "- id: prod_heating\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n- id: morning_light\n  triggers:\n  - trigger: state\n    entity_id: light.desk\n"
+   },
+   "expect": {
+    "answer": {
+     "entities": [
+      {
+       "location": "automations.yaml",
+       "path": "[1].triggers[0].entity_id",
+       "key": "entity_id",
+       "matched_value": "light.desk"
+      }
+     ]
+    },
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "templates",
+   "why": "rows by template:<unique_id>; one without a unique_id is hidden (D-141)",
+   "row": "companion GET /v1/config/templates",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/templates"
+   },
+   "answer": {
+    "templates": [
+     {
+      "unique_id": "tpl_secret"
+     },
+     {
+      "unique_id": ""
+     },
+     {
+      "unique_id": "tpl_outdoor"
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "templates": [
+      {
+       "unique_id": "tpl_outdoor"
+      }
+     ]
+    },
+    "hidden": 2,
+    "masked": 0
+   }
+  },
+  {
+   "id": "template-config",
+   "why": "a denied template's config is refused",
+   "row": "companion GET /v1/config/template",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/template?id=tpl_secret"
+   },
+   "expect": {
+    "refused": "deny \"template:tpl_secret\" [read]"
+   }
+  },
+  {
+   "id": "script-config",
+   "why": "a denied script's config is refused",
+   "row": "companion GET /v1/config/script",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/script?id=wipe"
+   },
+   "expect": {
+    "refused": "deny \"script:wipe\" [read]"
+   }
+  },
+  {
+   "id": "automation-config",
+   "why": "a denied automation's config is refused",
+   "row": "companion GET /v1/config/automation",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/automation?id=prod_heating"
+   },
+   "expect": {
+    "refused": "deny \"automation:prod_*\" [read]"
+   }
+  },
+  {
+   "id": "automation-config-allowed",
+   "why": "a readable automation's config passes as it is",
+   "row": "companion GET /v1/config/automation",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/automation?id=morning_light"
+   },
+   "answer": {
+    "id": "morning_light",
+    "content": "x"
+   },
+   "expect": {
+    "answer": {
+     "id": "morning_light",
+     "content": "x"
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "helpers",
+   "why": "rows by helper:<domain>/<id>",
+   "row": "companion GET /v1/config/helpers",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/helpers"
+   },
+   "answer": {
+    "helpers": [
+     {
+      "id": "alarm",
+      "domain": "input_boolean"
+     },
+     {
+      "id": "guest",
+      "domain": "input_boolean"
+     }
+    ]
+   },
+   "expect": {
+    "answer": {
+     "helpers": [
+      {
+       "id": "guest",
+       "domain": "input_boolean"
+      }
+     ]
+    },
+    "hidden": 1,
+    "masked": 0
+   }
+  },
+  {
+   "id": "helper-denied",
+   "why": "the helper's address is in the answer: refused when denied",
+   "row": "companion GET /v1/config/helper",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/helper?id=alarm"
+   },
+   "answer": {
+    "id": "alarm",
+    "domain": "input_boolean",
+    "content": "x"
+   },
+   "expect": {
+    "refused": "deny \"helper:input_boolean/alarm\" [read]"
+   }
+  },
+  {
+   "id": "helper-allowed",
+   "why": "a readable helper passes",
+   "row": "companion GET /v1/config/helper",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/helper?id=guest"
+   },
+   "answer": {
+    "id": "guest",
+    "domain": "input_boolean",
+    "content": "x"
+   },
+   "expect": {
+    "answer": {
+     "id": "guest",
+     "domain": "input_boolean",
+     "content": "x"
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "wireguard",
+   "why": "wireguard status is read system:wireguard",
+   "row": "companion GET /v1/wireguard/status",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/wireguard/status?tunnel=wg0"
+   },
+   "expect": {
+    "refused": "deny \"system:wireguard\" [read]"
+   }
+  },
+  {
+   "id": "logs",
+   "why": "companion logs are read system:logs",
+   "row": "companion GET /v1/logs",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/logs"
+   },
+   "expect": {
+    "refused": "deny \"system:logs\" [read]"
+   }
+  }
+ ]
+}

@@ -11,7 +11,11 @@ type nopGate struct{ name string }
 
 func (nopGate) Check(context.Context, reqmap.Request) error                    { return nil }
 func (nopGate) CheckHop(context.Context, reqmap.Request, reqmap.Request) error { return nil }
-func (nopGate) Observe(reqmap.Request, []byte)                                 {}
+func (nopGate) Filter(_ context.Context, _ reqmap.Request, resp []byte) ([]byte, error) {
+	return resp, nil
+}
+
+func (nopGate) Observe(reqmap.Request, []byte) {}
 
 // TestInstallReplacesAndUninstallsOnlyItsOwnGate: one gate per invocation; a
 // stale uninstall (an invocation that ended after the next one started) never

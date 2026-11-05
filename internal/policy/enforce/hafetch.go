@@ -15,9 +15,12 @@ import (
 
 // HAFetcher answers a session's questions from Home Assistant, through the
 // same clients every command uses — so its own requests pass the session's
-// gate too, as the reads (and the exempt extract_from_target) they are. It
-// connects lazily, on the first question, so a command whose requests need no
-// fact contacts nothing extra.
+// gate too, as the reads (and the exempt extract_from_target) they are, but
+// marked as the session's own (reqgate.Own): they are never refused or
+// filtered as reads (W-2), or a write check would decide on what the profile
+// may read rather than on what the write touches. It connects lazily, on the
+// first question, so a command whose requests need no fact contacts nothing
+// extra.
 type HAFetcher struct {
 	ctx        context.Context
 	url, token string
@@ -31,6 +34,10 @@ type HAFetcher struct {
 	err  error
 
 	live *registryLive
+
+	// configFile reads a config file's raw content through the companion,
+	// for the read filter's typed owners (D-142); nil = it cannot.
+	configFile func(ctx context.Context, location string) ([]byte, error)
 }
 
 // NewHAFetcher answers from the instance at url with token. A non-nil cfgErr
@@ -39,9 +46,27 @@ type HAFetcher struct {
 // ctx bounds the questions the where: selectors ask, which the evaluator
 // asks without a context of its own.
 func NewHAFetcher(ctx context.Context, url, token string, cfgErr error) *HAFetcher {
-	f := &HAFetcher{ctx: ctx, url: url, token: token, cfgErr: cfgErr}
+	f := &HAFetcher{ctx: own(ctx), url: url, token: token, cfgErr: cfgErr}
 	f.live = &registryLive{fetch: f}
 	return f
+}
+
+// SetConfigFileReader lets the fetcher read config files (ConfigFileFetcher).
+func (f *HAFetcher) SetConfigFileReader(read func(ctx context.Context, location string) ([]byte, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configFile = read
+}
+
+// ConfigFile implements ConfigFileFetcher.
+func (f *HAFetcher) ConfigFile(ctx context.Context, location string) ([]byte, error) {
+	f.mu.Lock()
+	read := f.configFile
+	f.mu.Unlock()
+	if read == nil {
+		return nil, errors.New("config files cannot be read in this invocation")
+	}
+	return read(own(ctx), location)
 }
 
 // LiveStates implements Fetcher: the entity ids of GET /api/states, each
@@ -51,6 +76,7 @@ func NewHAFetcher(ctx context.Context, url, token string, cfgErr error) *HAFetch
 // whole answer unusable: the live set is then unread, and a mapping that
 // needs it fails closed (H-7).
 func (f *HAFetcher) LiveStates(ctx context.Context) (*reqmap.LiveStates, error) {
+	ctx = own(ctx)
 	c, err := f.client()
 	if err != nil {
 		return nil, err
@@ -115,6 +141,7 @@ func memberIDs(v any) []string {
 
 // Reach implements Fetcher.
 func (f *HAFetcher) Reach(ctx context.Context, target map[string]any) ([]string, error) {
+	ctx = own(ctx)
 	ws, err := f.socket(ctx)
 	if err != nil {
 		return nil, err
@@ -124,6 +151,7 @@ func (f *HAFetcher) Reach(ctx context.Context, target map[string]any) ([]string,
 
 // Registries implements Fetcher.
 func (f *HAFetcher) Registries(ctx context.Context) (*reqmap.Registries, bool, error) {
+	ctx = own(ctx)
 	ws, err := f.socket(ctx)
 	if err != nil {
 		return nil, false, err
@@ -165,6 +193,7 @@ func (f *HAFetcher) Registries(ctx context.Context) (*reqmap.Registries, bool, e
 // Dashboard implements Fetcher. A dashboard Home Assistant holds no stored
 // config for answers a nil Config.
 func (f *HAFetcher) Dashboard(ctx context.Context, urlPath string) (reqmap.StoredDashboard, error) {
+	ctx = own(ctx)
 	ws, err := f.socket(ctx)
 	if err != nil {
 		return reqmap.StoredDashboard{}, err
@@ -182,6 +211,7 @@ func (f *HAFetcher) Dashboard(ctx context.Context, urlPath string) (reqmap.Store
 
 // DashboardIDs implements Fetcher.
 func (f *HAFetcher) DashboardIDs(ctx context.Context) (map[string]string, error) {
+	ctx = own(ctx)
 	ws, err := f.socket(ctx)
 	if err != nil {
 		return nil, err
@@ -211,6 +241,7 @@ func (f *HAFetcher) Close() {
 }
 
 func (f *HAFetcher) socket(ctx context.Context) (*haapi.WSClient, error) {
+	ctx = own(ctx)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cfgErr != nil {

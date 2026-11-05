@@ -58,7 +58,7 @@ func codes(rep LintReport) []string {
 var liveFixture = fakeInventory{ids: map[Kind][]string{
 	KindEntity:     {"lock.front_door", "light.sofa", "device_tracker.jan", "sensor.t"},
 	KindAutomation: {"pg_heating", "1700000000000"},
-	KindSystem:     {"logs", "wireguard", "reload", "check_config", "cache"},
+	KindSystem:     {"logs", "wireguard", "reload", "check_config", "cache", "template"},
 }}
 
 // A typo in a deny is a silent hole otherwise: lint must name it.

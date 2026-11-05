@@ -308,7 +308,7 @@ func lintInventory() policy.Inventory {
 	return fixtureInventory{e: &lintExpect{Inventory: map[string][]string{
 		"entity":    {"light.kitchen", "device_tracker.jan"},
 		"dashboard": {"", "main"},
-		"system":    {"logs", "wireguard", "reload", "check_config", "cache"},
+		"system":    {"logs", "wireguard", "reload", "check_config", "cache", "template"},
 	}}}
 }
 

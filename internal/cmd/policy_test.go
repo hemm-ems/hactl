@@ -178,7 +178,7 @@ func TestPolicyCheckVerdicts(t *testing.T) {
 		t.Fatalf("check --json: %v\n%s", err, out)
 	}
 	if code != 0 || !doc.Allowed || doc.Rule != `allow "entity:*" [read]` || doc.Line != 10 || doc.SelectedBy != "active" ||
-		doc.WhatIf || doc.Enforced || doc.Level != "A" || doc.Notes == nil {
+		doc.WhatIf || !doc.Enforced || doc.Level != "A" || doc.Notes == nil {
 		t.Errorf("allowed --json: code=%d %+v", code, doc)
 	}
 

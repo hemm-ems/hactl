@@ -92,7 +92,8 @@ type SubSpec struct {
 // KindSpecs returns the grammar of every kind, in Kinds() order.
 //
 // system is the one irregular kind: its ids are the closed set
-// {logs, wireguard, reload, check_config, cache}, and only `reload` has a sub,
+// {logs, wireguard, reload, check_config, cache, template} — `template` is
+// what `tpl eval` reads (D-143) — and only `reload` has a sub,
 // a single free segment naming the domain (`system:reload/automation`), with
 // no fixed word before it. SubSpec{Word: "", Param: true} encodes that.
 func KindSpecs() []KindSpec {
@@ -122,7 +123,7 @@ func KindSpecs() []KindSpec {
 		{Kind: KindFile, IDSegments: 0, Subs: []SubSpec{{Word: "block", Param: true}}},
 		{Kind: KindService, IDSegments: 1, Qualified: true},
 		{Kind: KindSystem, IDSegments: 1,
-			IDs:  []string{"logs", "wireguard", "reload", "check_config", "cache"},
+			IDs:  []string{"logs", "wireguard", "reload", "check_config", "cache", "template"},
 			Subs: []SubSpec{{Word: "", Param: true}}},
 	}
 }
