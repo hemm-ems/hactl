@@ -249,7 +249,9 @@ type MissingError struct {
 }
 
 func (e *MissingError) Error() string {
-	return ClassMissing + ": " + e.File + " — " + e.Why + "; this instance requires a policy (HACTL_POLICY=required in .env), so nothing runs until the owner restores it — report this, do not edit policy.yaml or .env"
+	return ClassMissing + ": " + e.File + " — this instance requires a policy; the owner restores it\n" +
+		"  why: " + e.Why + " (HACTL_POLICY=required in .env)\n" +
+		"  hint: report this; do not edit policy.yaml or .env"
 }
 
 // ExitCode is 1.
