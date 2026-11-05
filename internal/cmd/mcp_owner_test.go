@@ -17,6 +17,11 @@ import (
 // runner, pinned to dir with --allow-writes — the agent's own setup.
 func mcpCall(t *testing.T, dir, command string) (string, bool) {
 	t.Helper()
+	// RunWithOutputContext leaves the tool call's (cancelled) context on
+	// rootCmd; a later Execute() in this test binary would inherit it and end
+	// at once with "context canceled". In a real process nothing runs after
+	// the server, so only the test needs the reset.
+	t.Cleanup(func() { rootCmd.SetContext(context.Background()) })
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
 	srv := mcpserver.NewServer(mcpserver.Options{
