@@ -123,8 +123,8 @@ func TestRequestLayerChecksTheCandidateOnItsOwn(t *testing.T) {
 			t.Errorf("%s with an action on the denied lock: Check = %v, want a refusal naming entity:lock.front", method, err)
 		}
 		s, _ = newSession(t, candidatePolicy, newF())
-		if err := s.Check(context.Background(), req(method, "light.turn_on\n    target: {entity_id: light.hall}")); err != nil {
-			t.Errorf("%s with an allowed action: Check = %v, want allowed", method, err)
+		if allowErr := s.Check(context.Background(), req(method, "light.turn_on\n    target: {entity_id: light.hall}")); allowErr != nil {
+			t.Errorf("%s with an allowed action: Check = %v, want allowed", method, allowErr)
 		}
 		s, _ = newSession(t, candidatePolicy, newF())
 		err = s.Check(context.Background(), req(method, "light.turn_on\n    target: {entity_id: \"{{ 'lock.front' }}\"}"))
