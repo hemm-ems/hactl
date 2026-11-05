@@ -102,7 +102,19 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !pol.InEffect() {
-		return nil // D-58: nothing installed, nothing sent, nothing logged
+		// D-136: an instance that requires a policy refuses without one in
+		// effect; otherwise D-58 — nothing installed, sent or logged.
+		if required, reqErr := config.PolicyRequired(dir); required || reqErr != nil {
+			why := "no profile is in effect (no active:, no default profile)"
+			switch {
+			case reqErr != nil:
+				why = reqErr.Error()
+			case !pol.Exists():
+				why = "the file does not exist"
+			}
+			return &enforce.MissingError{File: pol.Source(), Why: why}
+		}
+		return nil
 	}
 	cfg, cfgErr := config.Load(flagDir)
 	var url, token string

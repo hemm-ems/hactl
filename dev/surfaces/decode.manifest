@@ -68,3 +68,4 @@ internal/policy/enforce/facts.go:(*factCache).observeRefReplace = exempt: record
 internal/policy/enforce/hafetch.go:(*HAFetcher).LiveStates = exempt: decodes each state's entity_id (and its entity_id and id attributes, D-106/D-107) for the policy check; a state without one refuses the whole answer, so a service call's reach is unknown and the call refused (D-73), never computed from a partial set
 internal/surfaceaudit/policy.go:releaseTargets = proven: TestPolicyRequestSitesCoverEveryReleaseTarget
 internal/policy/enforce/session.go:needsOf = exempt: decodes a service call's own outgoing data only to see whether it is empty; a body that does not decode keeps every fact asked, and the classifier refuses a body that is no object
+internal/policy/enforce/candidate.go:(*Session).CandidateChecks = proven: TestCandidateChecksRefusesAnUnreadableCandidate

@@ -195,6 +195,9 @@ type Facts struct {
 	// RefReplacePlans are the checked ref/replace dry runs of this
 	// invocation.
 	RefReplacePlans []RefReplacePlan
+	// IndirectUnchecked is the profile's `indirect: unchecked` (D-135): what
+	// a write makes automations, scripts and templates do is not checked.
+	IndirectUnchecked bool
 }
 
 // LiveStates is the live entity set, with what each live state says about the
@@ -228,7 +231,12 @@ type Registries struct {
 
 // RegistryEntity is one entity registry row.
 type RegistryEntity struct {
+	// ID is the registry entry's own id (a uuid). A device action names its
+	// target entity by it (D-137).
+	ID       string
 	EntityID string
+	// DeviceID is the device the entity belongs to; "" for none.
+	DeviceID string
 	// Platform is the integration that provides the entity (`template`,
 	// `input_boolean`, `script`, …): it tells a helper or a template entity
 	// apart from other entities of its domain (D-107).
@@ -326,6 +334,26 @@ func (s *checkSet) list() []Check {
 	}
 	sortChecks(out)
 	return out
+}
+
+// MergeChecks adds more to a result's checks, keeping the result's order
+// (by verb, then target) and its no-duplicates guarantee.
+func MergeChecks(base, more []Check) []Check {
+	set := newCheckSet()
+	set.addAll(base)
+	set.addAll(more)
+	return set.list()
+}
+
+// CandidateRows are the rows whose body is a candidate an automation, a
+// script or a template entity is written from (W-1): the request layer adds
+// what the candidate would do to their checks.
+var CandidateRows = map[string]bool{
+	"companion POST /v1/config/automation": true,
+	"companion PUT /v1/config/automation":  true,
+	"companion POST /v1/config/script":     true,
+	"companion PUT /v1/config/script":      true,
+	"companion POST /v1/config/template":   true,
 }
 
 func sortChecks(cs []Check) {

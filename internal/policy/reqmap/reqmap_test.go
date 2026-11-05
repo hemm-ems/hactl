@@ -359,7 +359,19 @@ var writeVectors = []vector{
 			}},
 		}},
 		disp: reqmap.Write, row: "companion POST /v1/ref/replace",
-		checks: []string{"edit automation:a1/config", "edit file:automations.yaml", "edit file:scripts.yaml"},
+		// + control on the new id: a change lies in automation a1 (W-1).
+		checks: []string{"control entity:light.b", "edit automation:a1/config", "edit file:automations.yaml", "edit file:scripts.yaml"},
+	},
+	{
+		name: "a confirmed ref/replace under indirect: unchecked adds no control on the new id (D-135)",
+		req:  comp("POST", "/v1/ref/replace", `{"old":"light.a","new":"light.b","dry_run":false}`),
+		facts: &reqmap.Facts{IndirectUnchecked: true, RefReplacePlans: []reqmap.RefReplacePlan{
+			{Old: "light.a", New: "light.b", Changes: []reqmap.PlanChange{
+				{Location: "automations.yaml", Path: "[0].actions[0].entity_id", Owner: &reqmap.TypedOwner{Kind: policy.KindAutomation, ID: "a1"}},
+			}},
+		}},
+		disp: reqmap.Write, row: "companion POST /v1/ref/replace",
+		checks: []string{"edit automation:a1/config", "edit file:automations.yaml"},
 	},
 	{
 		name: "template create takes every unique_id of a full block",

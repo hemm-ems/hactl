@@ -305,9 +305,33 @@ func (s *Session) Observe(req reqmap.Request, resp []byte) {
 // Assistant first for what the request's row needs and the invocation has
 // not read yet.
 func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Result {
+	res := s.classifyRow(ctx, req)
+	if res.Disposition != reqmap.Write || !reqmap.CandidateRows[res.Row] {
+		return res
+	}
+	// The body is a candidate: what it would do is part of the write (W-1).
+	more, denials := s.CandidateChecks(ctx, req.Body)
+	if len(denials) > 0 {
+		return reqmap.Result{Disposition: reqmap.Unmappable, Row: res.Row, Mutating: true,
+			Rule: denials[0].Rule, Detail: "the candidate's effect cannot be decided: " + denials[0].Resource}
+	}
+	res.Checks = reqmap.MergeChecks(res.Checks, more)
+	return res
+}
+
+// factsFor renders the cache with what the policy itself contributes. The
+// caller holds s.mu.
+func (s *Session) factsFor(reach *reqmap.Reach, cascade bool) *reqmap.Facts {
+	f := s.cache.facts(reach, cascade)
+	f.IndirectUnchecked = !s.pol.IndirectChecked()
+	return f
+}
+
+// classifyRow maps a request by its row alone.
+func (s *Session) classifyRow(ctx context.Context, req reqmap.Request) reqmap.Result {
 	s.mu.Lock()
 	s.cache = s.cache.forHash(s.pol.Hash())
-	pre := reqmap.Classify(req, s.cache.facts(nil, false))
+	pre := reqmap.Classify(req, s.factsFor(nil, false))
 	s.mu.Unlock()
 	need := needsOf(pre.Row, req)
 	if need == (needs{}) {
@@ -316,7 +340,7 @@ func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Resul
 	reach := s.gather(ctx, req, need)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return reqmap.Classify(req, s.cache.facts(reach, need.cascade))
+	return reqmap.Classify(req, s.factsFor(reach, need.cascade))
 }
 
 // needs are the facts a row's mapping reads.

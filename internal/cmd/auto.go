@@ -1073,7 +1073,7 @@ func runAutoApply(ctx context.Context, w io.Writer, autoID string) error {
 	// before the first write, the same in the preview and under --confirm:
 	// edit on the target, + create on the file's id when it differs (E-5,
 	// D-78); a file without a usable id is refused (R-6).
-	note, err := checkWritePlan(w, !flagAutoConfirm, autoApplyPlan(configID, candidate))
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoApplyPlan(configID, candidate).addCandidate(ctx, candidate))
 	if err != nil {
 		return err
 	}
@@ -1218,7 +1218,7 @@ func runAutoCreate(ctx context.Context, w io.Writer) error {
 
 	// The plan: create on the id the file declares; a file without a usable
 	// id is refused (D-78) — the same bytes the companion is sent.
-	note, err := checkWritePlan(w, !flagAutoConfirm, autoCreatePlan(data))
+	note, err := checkWritePlan(w, !flagAutoConfirm, autoCreatePlan(data).addCandidate(ctx, data))
 	if err != nil {
 		return err
 	}

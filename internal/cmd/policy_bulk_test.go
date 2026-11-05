@@ -186,8 +186,8 @@ func TestRefReplaceRefusedByItsPlan(t *testing.T) {
 	if !strings.HasPrefix(out, `policy_denied: would rename "sensor.old" to "sensor.new" — refused by policy, nothing was written`) {
 		t.Errorf("preview report:\n%s", out)
 	}
-	if !strings.Contains(out, "checked: 3 resources, 1 denied") {
-		t.Errorf("the plan is not file + automation + dashboard:\n%s", out)
+	if !strings.Contains(out, "checked: 4 resources, 1 denied") {
+		t.Errorf("the plan is not file + automation + dashboard + control on the new id (W-1):\n%s", out)
 	}
 
 	out, err = runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new", "--confirm")
@@ -220,8 +220,8 @@ func TestRefReplaceChecksFileAndDashboardParts(t *testing.T) {
 	assertRefused(t, "preview", out, err,
 		`edit file:automations.yaml — deny "file:automations.yaml" [edit] (line 6)`,
 		`edit dashboard: — deny "dashboard:" [edit] (line 7)`)
-	if !strings.Contains(out, "checked: 3 resources, 2 denied") {
-		t.Errorf("both denials are reported:\n%s", out)
+	if !strings.Contains(out, "checked: 4 resources, 2 denied") {
+		t.Errorf("both denials are reported (4 = file + automation + dashboard + control on the new id, W-1):\n%s", out)
 	}
 
 	for _, block := range []string{"other", "prod_heating"} { // untouched, and the one rewritten
@@ -284,8 +284,8 @@ func TestRefReplaceChecksEveryEntryThatSharesTheChange(t *testing.T) {
 	for _, args := range [][]string{{}, {"--confirm"}} {
 		out, err := runPolicyCLI(t, r.ts.dir, append([]string{"ref", "replace", "sensor.old", "sensor.new"}, args...)...)
 		assertRefused(t, "anchor shared by a denied automation "+strings.Join(args, ""), out, err, want)
-		if !strings.Contains(out, "checked: 3 resources, 1 denied") {
-			t.Errorf("the plan is file + both sharing automations:\n%s", out)
+		if !strings.Contains(out, "checked: 4 resources, 1 denied") {
+			t.Errorf("the plan is file + both sharing automations + control on the new id (W-1):\n%s", out)
 		}
 	}
 	if got := r.companionRequests(); slices.Contains(got, "ref/replace dry_run=false") {
@@ -352,7 +352,7 @@ func TestRefReplaceCountsEachCheckOnce(t *testing.T) {
 	const want = `edit automation:prod_heating/config — deny "automation:prod_*" [edit] (line 6)`
 	out, err := runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new")
 	assertRefused(t, "two changes, one owner", out, err, want)
-	if !strings.Contains(out, "  checked: 2 resources, 1 denied\n") {
+	if !strings.Contains(out, "  checked: 3 resources, 1 denied\n") { // file + automation + control on the new id (W-1)
 		t.Errorf("checked counts a pair twice:\n%s", out)
 	}
 	if n := strings.Count(out, "  denied: "+want); n != 1 {
@@ -371,7 +371,7 @@ func TestRefReplaceConfirmChecksADryRunFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "\n  policy: 3 checked, allowed (profile agent)\n") {
+	if !strings.Contains(out, "\n  policy: 4 checked, allowed (profile agent)\n") {
 		t.Errorf("the allowed preview does not say what it checked:\n%s", out)
 	}
 	out, err = runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new", "--json")
@@ -379,7 +379,7 @@ func TestRefReplaceConfirmChecksADryRunFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	details, _ := decodeObject(t, out)["details"].(map[string]any)
-	wantField(t, "preview details", details, "policy", map[string]any{"checked": float64(3), "profile": "agent"})
+	wantField(t, "preview details", details, "policy", map[string]any{"checked": float64(4), "profile": "agent"}) // + control on the new id (W-1)
 
 	r.reset()
 	if out, err = runPolicyCLI(t, r.ts.dir, "ref", "replace", "sensor.old", "sensor.new", "--confirm"); err != nil {
@@ -449,8 +449,8 @@ func TestEntRenameRefusedByItsPlan(t *testing.T) {
 	const want = `edit automation:prod_heating/config — deny "automation:prod_*" [write] (line 6)`
 	out, err := runPolicyCLI(t, r.ts.dir, "ent", "rename", "sensor.old", "sensor.new")
 	assertRefused(t, "preview", out, err, want)
-	if !strings.Contains(out, "checked: 5 resources, 1 denied") {
-		t.Errorf("the plan is registry edit + create + file + automation + dashboard:\n%s", out)
+	if !strings.Contains(out, "checked: 6 resources, 1 denied") {
+		t.Errorf("the plan is registry edit + create + file + automation + dashboard + control on the new id (W-1):\n%s", out)
 	}
 	out, err = runPolicyCLI(t, r.ts.dir, "ent", "rename", "sensor.old", "sensor.new", "--confirm")
 	assertRefused(t, "--confirm", out, err, want)
@@ -473,7 +473,7 @@ func TestEntRenameRefusedByItsPlan(t *testing.T) {
 func TestEntRenameConfirmChecksOncePerInvocation(t *testing.T) {
 	r := refRig(t, policyAllowEverything)
 	out, err := runPolicyCLI(t, r.ts.dir, "ent", "rename", "sensor.old", "sensor.new")
-	if err != nil || !strings.Contains(out, "policy:") || !strings.Contains(out, "5 checked, allowed (profile agent)") {
+	if err != nil || !strings.Contains(out, "policy:") || !strings.Contains(out, "6 checked, allowed (profile agent)") {
 		t.Fatalf("preview: %v\n%s", err, out)
 	}
 	r.reset()

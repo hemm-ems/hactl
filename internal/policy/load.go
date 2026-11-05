@@ -410,9 +410,17 @@ func (w *walker) profile(name string, line int, n *yaml.Node) *profile {
 			pr.rules = append(pr.rules, w.rules(Deny, what, kv.val)...)
 		case "where":
 			whereNode = kv.val
+		case "indirect":
+			if s, ok := w.str(kv.val, what+" indirect"); ok {
+				if s == "unchecked" {
+					pr.indirectUnchecked, pr.indirectLine = true, kv.key.Line
+				} else {
+					w.addf(kv.val.Line, "%s indirect must be unchecked (got %q); leave it out to check what written automations, scripts and templates would do", what, s)
+				}
+			}
 		default:
-			w.addf(kv.key.Line, "unknown key %q in %s (want default, allow, deny or where)%s", kv.key.Value, what,
-				didYouMean(kv.key.Value, []string{"default", "allow", "deny", "where"}))
+			w.addf(kv.key.Line, "unknown key %q in %s (want default, allow, deny, where or indirect)%s", kv.key.Value, what,
+				didYouMean(kv.key.Value, []string{"default", "allow", "deny", "where", "indirect"}))
 		}
 	}
 	if whereNode != nil {

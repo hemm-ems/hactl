@@ -124,6 +124,11 @@ func writeInstanceEnv(dir, envPath, haURL, haToken string) error {
 		return fmt.Errorf("cannot create config directory: %w", mkErr)
 	}
 	envContent := fmt.Sprintf("HA_URL=%s\nHA_TOKEN=%s\n", haURL, haToken)
+	// A rewrite keeps the instance's policy requirement (D-136): re-running
+	// setup must not lift it as a side effect.
+	if required, _ := config.PolicyRequired(dir); required {
+		envContent += "HACTL_POLICY=required\n"
+	}
 	if writeErr := os.WriteFile(envPath, []byte(envContent), 0o600); writeErr != nil {
 		return fmt.Errorf("cannot write .env: %w", writeErr)
 	}

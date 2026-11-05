@@ -261,7 +261,7 @@ func runTplCreate(ctx context.Context, w io.Writer) error {
 
 	// The plan: create on every unique_id the file declares; an entity
 	// without one has no address, so the create is refused (D-78).
-	note, err := checkWritePlan(w, !flagTplConfirm, tplCreatePlan(content))
+	note, err := checkWritePlan(w, !flagTplConfirm, tplCreatePlan(content).addCandidate(ctx, []byte(content)))
 	if err != nil {
 		return err
 	}

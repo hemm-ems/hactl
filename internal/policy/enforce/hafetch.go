@@ -147,7 +147,7 @@ func (f *HAFetcher) Registries(ctx context.Context) (*reqmap.Registries, bool, e
 	reg := &reqmap.Registries{}
 	for _, e := range ents {
 		reg.Entities = append(reg.Entities, reqmap.RegistryEntity{
-			EntityID: e.EntityID, UniqueID: e.UniqueID, Platform: e.Platform, ConfigEntryID: e.ConfigEntryID,
+			ID: e.ID, EntityID: e.EntityID, DeviceID: e.DeviceID, UniqueID: e.UniqueID, Platform: e.Platform, ConfigEntryID: e.ConfigEntryID,
 			AreaID: e.AreaID, Labels: e.Labels,
 		})
 	}

@@ -16,6 +16,9 @@ const (
 	ClassDenied = "policy_denied"
 	// ClassBroken: policy.yaml cannot be read as a policy (D-60).
 	ClassBroken = "policy_broken"
+	// ClassMissing is an instance that requires a policy and has none in
+	// effect (D-136).
+	ClassMissing = "policy_missing"
 )
 
 // The two layers a check is made at (D-71's `layer`).
@@ -236,3 +239,21 @@ func (e *BrokenError) ExitCode() int { return 1 }
 
 // PolicyClass is the error class, ClassBroken.
 func (e *BrokenError) PolicyClass() string { return ClassBroken }
+
+// MissingError refuses a command on an instance that requires a policy
+// (`HACTL_POLICY=required`, D-136) while none is in effect: no policy.yaml, a
+// file that selects no profile, or an unreadable requirement.
+type MissingError struct {
+	// File is the policy.yaml looked for; Why says what is wrong with it.
+	File, Why string
+}
+
+func (e *MissingError) Error() string {
+	return ClassMissing + ": " + e.File + " — " + e.Why + "; this instance requires a policy (HACTL_POLICY=required in .env), so nothing runs until the owner restores it — report this, do not edit policy.yaml or .env"
+}
+
+// ExitCode is 1.
+func (e *MissingError) ExitCode() int { return 1 }
+
+// PolicyClass is the error class, ClassMissing.
+func (e *MissingError) PolicyClass() string { return ClassMissing }

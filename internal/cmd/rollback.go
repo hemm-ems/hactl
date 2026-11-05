@@ -97,7 +97,7 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		if planErr != nil {
 			return planErr
 		}
-		note, checkErr := checkWritePlan(w, !flagRollbackConfirm, autoRollbackPlan(plan.AutomationID, plan.BackupPath))
+		note, checkErr := checkWritePlan(w, !flagRollbackConfirm, autoRollbackPlan(ctx, plan.AutomationID, plan.BackupPath))
 		if checkErr != nil {
 			return checkErr
 		}
