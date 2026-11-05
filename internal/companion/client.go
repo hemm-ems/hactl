@@ -773,6 +773,9 @@ func (c *Client) doWithRetry(ctx context.Context, req *http.Request) ([]byte, er
 		}
 		if gated.gate != nil {
 			gated.gate.Observe(gated.req, respBody)
+			// What the caller may decode of the answer (W-2): filtered, or
+			// refused, before any command decodes it (H-21).
+			return gated.gate.Filter(ctx, gated.req, respBody)
 		}
 		return respBody, nil
 	}

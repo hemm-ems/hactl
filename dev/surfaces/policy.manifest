@@ -105,8 +105,12 @@
 #   map: <verb> <resource>[; <verb> <resource>…]   the (resource, verb) the
 #        request or plan is checked as; {x} is taken from the request, the
 #        body or the command's resolved target as the note says
-#   map: read-deferred-phase3 <resource>            a read: the row exists now,
-#        enforcement is phase 3 (D-54)
+#   map: read <resource> | read, each row by <resource>
+#                                                   a read (W-2, D-138): what it
+#        names itself is checked before it is sent, refused when denied; its
+#        answer is filtered before any command decodes it (H-21) — rows
+#        dropped, parts masked `<denied>`, counted in the `hidden by policy`
+#        trailer (D-139, D-140)
 #   map: exempt (<class>)                           no policy resource; always
 #        allowed, by an explicit row, never by default
 #
@@ -128,8 +132,8 @@
 #
 # Unmapped at runtime (a site this file does not name): a websocket type, or a
 # request of any HTTP method other than GET, is treated as mutating and
-# refused (fail closed, E-9); an unmapped GET is allowed in phase 2 and
-# refused from phase 3 (D-74). The gate makes both a build failure first.
+# refused (fail closed, E-9); an unmapped GET was allowed in phase 2 and is
+# refused from W-2 on (D-145). The gate makes both a build failure first.
 #
 # Whole-path rule, before any row is matched (D-74, R-8): the request path —
 # every segment, placeholder or literal — holds no `.` or `..` segment and no
@@ -147,13 +151,12 @@
 #
 # The ceiling is the number of rows not yet proven. Phase 2 is done when every
 # write row (map: control|edit|create|delete) and every cmd row is proven;
-# what may remain is read-deferred-phase3. The ceiling may fall without
-# ceremony and may only rise by editing this line on purpose. Stage 2b
-# (2026-11-01) proved every write and cmd row; what remained was the 45
-# read-deferred-phase3 rows. Raised to 46 on purpose (2026-11-01): `policy
-# lint`'s template enumeration brought back GET /v1/config/templates, a
-# read-deferred-phase3 listing (D-116). Every write and cmd row stays proven.
-#ceiling 46
+# what may remain is the reads. The ceiling may fall without ceremony and may
+# only rise by editing this line on purpose. Stage 2b (2026-11-01) proved every
+# write and cmd row; what remained was the 45 read rows (46 with `policy
+# lint`'s template enumeration, D-116). W-2 (2026-11-05) proved every read row
+# (TestEveryReadRowIsEnforced) or exempted it (D-147): nothing is debt.
+#ceiling 0
 
 # =============================================================================
 # WS — Home Assistant websocket
@@ -248,72 +251,83 @@ ws lovelace/dashboards/create = proven: TestEveryWriteRequestHasAMapping
 # (D-72). No such read in this invocation: unmappable, refused.
 ws lovelace/dashboards/delete = proven: TestEveryWriteRequestHasAMapping
 
-# --- reads (phase 3) ---------------------------------------------------------------
+# --- reads (W-2) -------------------------------------------------------------------
 
-# map: read-deferred-phase3 automation|script:{item_id}/trace per returned row
-# (listing). Direct WriteJSON site.
-ws trace/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by automation|script:{item_id}/trace (the row's
+# domain); a row without an item id is hidden (D-141). Direct WriteJSON site.
+ws trace/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 {domain}:{item_id}/trace. Direct WriteJSON site.
-ws trace/get = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read {domain}:{item_id}/trace, refused when denied. Direct WriteJSON
+# site. The trace's own content (the states it recorded) is not redacted.
+ws trace/get = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:check_config. Pure schema validation of a
-# candidate, sent in previews too: never refused by a write check. Direct
+# map: read system:check_config, refused when denied. Pure schema validation
+# of a candidate, sent in previews too: a read, never a write check. Direct
 # WriteJSON site. The candidate's references are E-3, phase 4.
-ws validate_config = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+ws validate_config = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:logs. Direct WriteJSON site.
-ws system_log/list = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read system:logs, refused when denied (D-142: as a whole; a log
+# message's text is not redacted). Direct WriteJSON site.
+ws system_log/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:logs (Q: no kind fits repair issues).
-ws repairs/list_issues = debt: read-deferred-phase3 — kind undecided, system:logs proposed
+# map: read system:logs, refused when denied (D-147).
+ws repairs/list_issues = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing entity:{entity_id}/registry per row.
-ws config/entity_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by entity:{entity_id} (and its
+# registry/entity_id: a row whose id is unreadable cannot be shown); the
+# fields name, area_id, labels, icon, disabled_by masked by
+# entity:{e}/registry/{field} (D-140; a list keeps its shape: ["<denied>"]).
+ws config/entity_registry/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing area:{area_id} per row.
-ws config/area_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by area:{area_id}.
+ws config/area_registry/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing label:{label_id} per row.
-ws config/label_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by label:{label_id}.
+ws config/label_registry/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing floor:{floor_id} per row.
-ws config/floor_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by floor:{floor_id}.
+ws config/floor_registry/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, no policy resource (HA users, used to render a
-# user_id as a name). Q: auxiliary disposition or a new kind.
-ws config/auth/list = debt: read-deferred-phase3 — no kind fits Home Assistant users yet
+# map: exempt (auxiliary, D-147). HA users, read to render a user id as a
+# name: nothing about an entity, device or config.
+ws config/auth/list = exempt: an auxiliary read (D-147) — Home Assistant's users, read to render a user id as a name; nothing about an entity, device or config
 
-# map: read-deferred-phase3 listing device:{device_id}/registry per row.
-ws config/device_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by device:{id}; area_id, labels, name_by_user masked by
+# device:{id}/registry/{field} (D-140).
+ws config/device_registry/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing dashboard:{url_path} per row. Also the
-# id-to-url_path source for lovelace/dashboards/delete.
-ws lovelace/dashboards/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by dashboard:{url_path}. Also the id-to-url_path source
+# for lovelace/dashboards/delete — that one is the session's own, unfiltered.
+ws lovelace/dashboards/list = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 dashboard:{url_path} ("" or absent = dashboard:).
-ws lovelace/config = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read dashboard:{url_path} ("" or absent or `lovelace` = dashboard:),
+# refused when denied; a view a deny covers is dropped from the config and
+# counted (D-140), a path-less view while any view is denied too (D-141).
+ws lovelace/config = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, no policy resource (integration manifests).
-ws manifest/list = debt: read-deferred-phase3 — no kind fits integration manifests yet
+# map: exempt (auxiliary, D-147). Integration manifests.
+ws manifest/list = exempt: an auxiliary read (D-147) — the integrations' manifests; nothing about an entity, device or config
 
-# map: read-deferred-phase3 dashboard:/resources (Q: resources are one global
-# list, the grammar hangs them under a dashboard).
-ws lovelace/resources = debt: read-deferred-phase3 — the dashboard id for a global list is undecided
+# map: exempt (auxiliary, D-147). The frontend's one global resource list.
+ws lovelace/resources = exempt: an auxiliary read (D-147) — the frontend's one global list of resource URLs; nothing about an entity, device, view or config
 
-# map: read-deferred-phase3 entity:{statistic_id}/stats; an external statistic
-# (domain:name) has no address.
-ws recorder/get_statistics_metadata = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read entity:{statistic_id}/stats for each id the request names,
+# refused when denied; each answer row by the same rule, an external statistic
+# (domain:name) hidden (D-141).
+ws recorder/get_statistics_metadata = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 entity:{statistic_id}/stats.
-ws recorder/statistics_during_period = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read entity:{statistic_id}/stats for each id the request names,
+# refused when denied; the answer's keys by the same rule, external hidden.
+ws recorder/statistics_during_period = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing entity:{statistic_id}/stats per row.
-ws recorder/list_statistic_ids = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by entity:{statistic_id}/stats; an external
+# statistic hidden (D-141).
+ws recorder/list_statistic_ids = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, no kind fits (Q). Proposal: read
-# entity:{stat}/stats for each statistic the prefs name.
-ws energy/get_prefs = debt: read-deferred-phase3 — no kind fits the energy preferences yet
+# map: read, each source, legacy grid flow and tracked device by
+# entity:{statistic}/stats for every stat_* it names and entity:{e} for every
+# entity_* (D-142); an external statistic hides its source (D-141).
+ws energy/get_prefs = proven: TestEveryReadRowIsEnforced
 
 # =============================================================================
 # REST — Home Assistant HTTP API (haapi.Client)
@@ -413,44 +427,51 @@ rest GET /api/config/config_entries/flow/{flow_id} = proven: TestEveryWriteReque
 # is the entry_id here too (D-83).
 rest GET /api/config/config_entries/options/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
 
-# map: read-deferred-phase3, no resource (integration catalog). Sent only by
-# flow-start's dry run, so it must never be stricter than the confirm.
-rest GET /api/config/config_entries/flow_handlers = debt: read-deferred-phase3 — no kind fits the integration catalog yet
+# map: exempt (auxiliary, D-147's reasoning). The integration catalog —
+# which domains offer a config flow. Sent only by flow-start's dry run.
+rest GET /api/config/config_entries/flow_handlers = exempt: an auxiliary read (D-147's reasoning) — the integration catalog, which domains offer a config flow; nothing about an entity, device or config
 
-# map: read-deferred-phase3 listing config_entry:{entry_id} per row.
-rest GET /api/config/config_entries/entry = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by config_entry:{entry_id}.
+rest GET /api/config/config_entries/entry = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 config_entry:{entry_id} (data and options in one
-# opaque body: a partial read verdict skips it rather than masks).
-rest GET /api/diagnostics/config_entry/{entry_id} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read config_entry:{entry_id}, refused when denied — and when partial:
+# data and options are one opaque body, so a denied part refuses it rather
+# than masks.
+rest GET /api/diagnostics/config_entry/{entry_id} = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing entity:{entity_id}/state and /attr/* per row.
-rest GET /api/states = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by entity:{entity_id}; `state` masked by
+# entity:{e}/state and each attribute by entity:{e}/attr/{name} (D-140).
+rest GET /api/states = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 entity:{entity_id}/state + /attr/*.
-rest GET /api/states/{entity_id} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read entity:{entity_id}, refused when denied; state and attributes
+# masked as in the listing.
+rest GET /api/states/{entity_id} = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 entity:{filter_entity_id}/history (a query param).
-rest GET /api/history/period/{start} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read entity:{e}/history for each entity filter_entity_id names,
+# refused when denied; each entity's list of the answer by the same rule, its
+# rows masked like a state.
+rest GET /api/history/period/{start} = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 entity:{entity}/history with entity=, else
-# entity:{row}/history per row (E-6 wide read).
-rest GET /api/logbook/{start} = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read entity:{entity} when entity= names one, refused when denied;
+# each row by entity:{entity_id}, a row without one hidden (D-141, D-142).
+rest GET /api/logbook/{start} = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:logs.
-rest GET /api/error_log = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read system:logs, refused when denied.
+rest GET /api/error_log = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing service:{domain}.{service} per row.
-rest GET /api/services = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each service by service:{domain}.{service}; a domain left
+# without one is dropped.
+rest GET /api/services = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, no resource (E-6 documented: Jinja reads any
-# state). A POST that is a read: this row is what keeps a method-based
-# classifier from refusing tpl eval.
-rest POST /api/template = debt: read-deferred-phase3 — a wide read E-6 documents, never a write
+# map: read system:template (D-143), refused when denied. A POST that is a
+# read: Jinja reads any state, so while the profile denies some read it needs
+# an explicit allow — the profile default does not grant it.
+rest POST /api/template = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, no resource (core config). Holds the home's
-# latitude/longitude, so phase 3 must decide it rather than exempt it.
-rest GET /api/config = debt: read-deferred-phase3 — undecided; it carries the home location
+# map: read, the home's location (latitude, longitude, elevation, radius)
+# is zone.home's, so each is masked by entity:zone.home/attr/{name}. The
+# rest (version, components, time zone) is no policy resource.
+rest GET /api/config = proven: TestEveryReadRowIsEnforced
 
 # map: exempt (probe). API liveness and auth probe of setup and health.
 rest GET /api/ = exempt: the API liveness probe answers "API running" and nothing about any Home Assistant resource
@@ -550,63 +571,71 @@ companion POST /v1/wireguard/start = proven: TestEveryWriteRequestHasAMapping
 # map: control system:wireguard.
 companion POST /v1/wireguard/stop = proven: TestEveryWriteRequestHasAMapping
 
-# map: read-deferred-phase3 system:check_config (D-74). A POST that changes
-# nothing (it runs HA's config check); sent by `health --check-config`, a read
-# command — never refused by a write check.
+# map: read system:check_config (D-74), refused when denied. A POST that
+# changes nothing (it runs HA's config check); sent by `health --check-config`.
 # Whether HA's check_config leaves a side effect on an invalid config is
 # recorded unknown; it does not change this row while the check is read.
-companion POST /v1/ha/check-config = debt: read-deferred-phase3 — a POST that is a read, mapped explicitly
+companion POST /v1/ha/check-config = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing file:{path} per row.
-companion GET /v1/config/files = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each file by file:{path} (D-144).
+companion GET /v1/config/files = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 file:{path} (+ every file it !includes when
-# resolve=true; known only from the response).
-companion GET /v1/config/file = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read file:{path}, refused when denied; with resolve=true the
+# answer inlines every file it !includes, which the request cannot name, so
+# read on every file too (file:*, kind-wide — a superset). Contents are not
+# redacted (D-144).
+companion GET /v1/config/file = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 file:{path}/block/{id} (id, alias or [n] address one
-# block: phase 3 reads the canonical id from the response).
-companion GET /v1/config/block = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read file:{path}/block/{id} as the request names it, refused when
+# denied; an alias or [n] is decided by the canonical id the answer carries,
+# refused when denied.
+companion GET /v1/config/block = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 entity:{entity_id}; wide read over file:** (E-6).
-companion GET /v1/related/entity = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+# map: read entity:{entity_id}, refused when denied; each related entity
+# by entity:{e}, each stale reference as a ref hit (file + typed owner).
+companion GET /v1/related/entity = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, wide read; each hit file:{location}.
-companion GET /v1/ref/scan = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+# map: read (E-6 wide read): each hit by file:{location} and the typed owner
+# its path lies in (automation|script|template:{id}/config; D-142) — the owner
+# read from the file only while the profile can deny one; a hit that cannot
+# be placed is hidden (D-141); each skipped file by file:{location}.
+companion GET /v1/ref/scan = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, wide read; each hit file:{location}.
-companion GET /v1/ref/grep = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+# map: read (E-6 wide read): each hit as for ref/scan; each source by
+# file:{location}, its counts and the total lowered by the hits hidden.
+companion GET /v1/ref/grep = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3, wide read; each row file:{location}.
-companion GET /v1/ref/entities = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+# map: read (E-6 wide read): each row as a ref/scan hit.
+companion GET /v1/ref/entities = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing template:{unique_id} per row. Sent by
-# `policy lint` to enumerate template ids (D-116), a read.
-companion GET /v1/config/templates = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by template:{unique_id}; an entity without one is
+# hidden (D-141). Also `policy lint`'s enumeration (D-116), which runs
+# without a session.
+companion GET /v1/config/templates = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 template:{id}/config.
-companion GET /v1/config/template = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read template:{id}/config, refused when denied.
+companion GET /v1/config/template = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 script:{id}/config.
-companion GET /v1/config/script = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read script:{id}/config, refused when denied.
+companion GET /v1/config/script = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 automation:{id}/config. Also the verification the
-# DELETE row depends on.
-companion GET /v1/config/automation = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read automation:{id}/config, refused when denied. Also the
+# verification the DELETE row depends on: a refused read verifies nothing.
+companion GET /v1/config/automation = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 listing helper:{domain}/{id}.
-companion GET /v1/config/helpers = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+# map: read, each row by helper:{domain}/{id}.
+companion GET /v1/config/helpers = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 helper:{response domain}/{response id}/config (the
-# domain is not in the request: response-side, phase 3).
-companion GET /v1/config/helper = debt: read-deferred-phase3 — the address is in the response, phase 3
+# map: read helper:{domain}/{id}/config — the address is in the answer
+# only, so the answer is refused when denied.
+companion GET /v1/config/helper = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:wireguard.
-companion GET /v1/wireguard/status = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read system:wireguard, refused when denied.
+companion GET /v1/wireguard/status = proven: TestEveryReadRowIsEnforced
 
-# map: read-deferred-phase3 system:logs (the add-on's own log shares the id
-# with HA core's log).
-companion GET /v1/logs = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+# map: read system:logs, refused when denied (the add-on's own log shares
+# the id with HA core's log).
+companion GET /v1/logs = proven: TestEveryReadRowIsEnforced
 
 # =============================================================================
 # cmd — the command layer: the plan, checked in the preview (preview parity)

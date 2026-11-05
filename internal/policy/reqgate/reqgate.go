@@ -41,6 +41,34 @@ type Gate interface {
 	// stored config) can authorise a later request of the same invocation
 	// under the same policy (D-72).
 	Observe(req reqmap.Request, resp []byte)
+	// Filter is what the caller may decode of a successful answer to a
+	// request Check allowed (W-2, D-138): the answer with the rows the policy
+	// hides dropped and the parts it masks reading `<denied>`, or an error
+	// refusing it when the address only the answer carries is denied. The
+	// client returns the filtered bytes, never the raw ones, so no command
+	// holds a denied value (H-21). Observe still sees the raw answer.
+	Filter(ctx context.Context, req reqmap.Request, resp []byte) ([]byte, error)
+}
+
+type ownKey struct{}
+
+// Own marks ctx as carrying the policy session's own questions — the live
+// set, the registries, a stored dashboard, a config file a hit lies in — that
+// it asks to decide a request or to filter an answer (W-2). Their reads are
+// neither refused nor filtered: a write check that saw only what the profile
+// may read would check less than the write touches. Only the session and the
+// policy's own fact fetchers mark a context.
+func Own(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ownKey{}, true)
+}
+
+// IsOwn reports whether ctx carries the session's own questions.
+func IsOwn(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(ownKey{}).(bool)
+	return v
 }
 
 var (

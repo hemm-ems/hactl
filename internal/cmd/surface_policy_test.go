@@ -174,8 +174,8 @@ func TestPolicyManifestIsInLockstepWithTheClassifier(t *testing.T) {
 		switch {
 		case strings.HasPrefix(maps[key], "exempt"):
 			want = reqmap.Exempt
-		case strings.HasPrefix(maps[key], "read-deferred-phase3"):
-			want = reqmap.ReadDeferred
+		case maps[key] == "read" || strings.HasPrefix(maps[key], "read ") || strings.HasPrefix(maps[key], "read,"):
+			want = reqmap.Read
 		}
 		if d != want {
 			t.Errorf("%q: the manifest's `map: %s` says %s, the classifier's row says %s", key, maps[key], want, d)

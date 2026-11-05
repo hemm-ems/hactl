@@ -1,6 +1,7 @@
 package haapi
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -192,10 +193,29 @@ func (t *gatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return t.base.RoundTrip(req)
 	}
-	if err := g.Check(req.Context(), reqmap.Request{Transport: reqmap.REST, Method: req.Method, Path: wirePath(req.URL), Body: body}); err != nil {
+	r := reqmap.Request{Transport: reqmap.REST, Method: req.Method, Path: wirePath(req.URL), Body: body}
+	if err := g.Check(req.Context(), r); err != nil {
 		return nil, err
 	}
-	return t.base.RoundTrip(req)
+	resp, rtErr := t.base.RoundTrip(req)
+	if rtErr != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp, rtErr
+	}
+	// A request decided here is filtered here too (W-2): what the caller
+	// reads is the filtered answer, never the raw one.
+	raw, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("reading response body: %w", readErr)
+	}
+	filtered, filterErr := g.Filter(req.Context(), r, raw)
+	if filterErr != nil {
+		return nil, filterErr
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(filtered))
+	resp.ContentLength = int64(len(filtered))
+	resp.Header.Del("Content-Length")
+	return resp, nil
 }
 
 // replayableBody returns a copy of the request's body without consuming the

@@ -45,6 +45,10 @@ func (g *recordingGate) CheckHop(_ context.Context, _, hop reqmap.Request) error
 	return g.hopErr
 }
 
+func (g *recordingGate) Filter(_ context.Context, _ reqmap.Request, resp []byte) ([]byte, error) {
+	return resp, nil
+}
+
 func (g *recordingGate) Observe(r reqmap.Request, resp []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

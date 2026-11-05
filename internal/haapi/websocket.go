@@ -127,6 +127,11 @@ func (ws *WSClient) TraceList(ctx context.Context, domain string) (TraceListResu
 		}
 		return nil, fmt.Errorf("trace/list failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	// HA returns a flat array of trace summaries: [{...}, {...}, ...].
 	// Group them by "domain.item_id" to build the TraceListResult map.
@@ -179,7 +184,7 @@ func (ws *WSClient) TraceGet(ctx context.Context, domain, itemID, runID string) 
 		return nil, fmt.Errorf("trace/get failed: %s", errMsg)
 	}
 
-	return resp.Result, nil
+	return ws.conn.filter(msg, resp.Result)
 }
 
 // ValidateResult is the per-section outcome of a validate_config call.
@@ -232,6 +237,11 @@ func (ws *WSClient) ValidateConfig(ctx context.Context, triggers, conditions, ac
 		}
 		return nil, fmt.Errorf("validate_config failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	var result map[string]ValidateResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
@@ -271,6 +281,11 @@ func (ws *WSClient) SystemLogList(ctx context.Context) ([]SystemLogEntry, error)
 		}
 		return nil, fmt.Errorf("system_log/list failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	var result []SystemLogEntry
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
@@ -819,8 +834,7 @@ func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[
 			g.Observe(req, resp.Result)
 		}
 	}
-
-	return resp.Result, nil
+	return ws.conn.filter(msg, resp.Result)
 }
 
 // wsConn is the websocket connection every message leaves through. WriteJSON
@@ -858,6 +872,21 @@ func (c *wsConn) ReadJSON(v any) error { return c.raw.ReadJSON(v) }
 
 // Close closes the connection.
 func (c *wsConn) Close() error { return c.raw.Close() }
+
+// filter is what the caller may decode of a successful answer to msg (W-2):
+// the gate's filtered answer, or its refusal — before the caller decodes it
+// (H-21). With no gate it is the answer as it is (D-58).
+func (c *wsConn) filter(msg any, result json.RawMessage) (json.RawMessage, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return result, nil
+	}
+	req, err := wsRequest(msg)
+	if err != nil {
+		return nil, fmt.Errorf("policy: websocket message cannot be mapped: %w", err)
+	}
+	return g.Filter(c.ctx, req, result)
+}
 
 // wsRequest reads an outgoing message the way it goes on the wire — its JSON
 // — as the classifier's request: the type, and every other key but the id.
