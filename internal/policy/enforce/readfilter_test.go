@@ -416,3 +416,20 @@ profiles:
 		t.Errorf("hidden %d masked %d, want 3 (lock.a once, two rows without an entity) and 1", hidden, masked)
 	}
 }
+
+// TestFilteringAWriteAsksNothing — the answer to a write passes as it is, and
+// filtering it asks Home Assistant nothing: a service call's reach is not
+// asked a second time for its answer.
+func TestFilteringAWriteAsksNothing(t *testing.T) {
+	f := &fakeFetcher{}
+	s, _ := newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", f)
+	req := reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/services/light/turn_on", Body: []byte(`{"entity_id":"light.a"}`)}
+	answer := []byte(`[{"entity_id":"lock.a","state":"locked"}]`)
+	out, err := s.Filter(context.Background(), req, answer)
+	if err != nil || string(out) != string(answer) {
+		t.Errorf("a write's answer was filtered: %s %v", out, err)
+	}
+	if len(f.asked) != 0 {
+		t.Errorf("filtering a write's answer asked %v", f.asked)
+	}
+}

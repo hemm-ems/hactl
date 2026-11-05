@@ -203,7 +203,10 @@ func (s *Session) Filter(ctx context.Context, req reqmap.Request, resp []byte) (
 	if isOwn(ctx) {
 		return resp, nil
 	}
-	res := s.classify(ctx, req)
+	// A read's mapping needs no fact (the row and the request decide it), so
+	// the answer is classified without asking anything: a write's answer is
+	// never filtered, and its mapping is not computed a second time.
+	res := reqmap.Classify(req, nil)
 	if res.Disposition != reqmap.Read || res.Filter.Kind == reqmap.FilterNone {
 		return resp, nil
 	}
