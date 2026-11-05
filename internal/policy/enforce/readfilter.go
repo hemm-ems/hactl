@@ -706,12 +706,22 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	return b, true, err
 }
 
-// coreConfig masks the home's location in GET /api/config: it is zone.home's,
-// so it is read as zone.home's attributes.
+// coreConfigZoneHome maps the keys of GET /api/config that are zone.home's
+// to the zone.home attribute they are read as: the home's location, and its
+// name — Home Assistant names zone.home after location_name, so the name is
+// zone.home's friendly_name (found by the W-6 read sweep: `health` printed it
+// under a profile that reads nothing).
+var coreConfigZoneHome = []struct{ key, attr string }{
+	{"latitude", "latitude"}, {"longitude", "longitude"}, {"elevation", "elevation"},
+	{"radius", "radius"}, {"location_name", "friendly_name"},
+}
+
+// coreConfig masks the home's location and name in GET /api/config:
+// they are zone.home's, so they are read as zone.home's attributes.
 func (f *answerFilter) coreConfig(o map[string]json.RawMessage) (bool, error) {
-	for _, k := range []string{"latitude", "longitude", "elevation", "radius"} {
-		if _, has := o[k]; has && !f.s.readable(policy.KindEntity, "zone.home", "attr/"+k) {
-			f.mask(o, k, deniedJSON, "entity:zone.home/attr/"+k)
+	for _, z := range coreConfigZoneHome {
+		if _, has := o[z.key]; has && !f.s.readable(policy.KindEntity, "zone.home", "attr/"+z.attr) {
+			f.mask(o, z.key, deniedJSON, "entity:zone.home/attr/"+z.attr)
 		}
 	}
 	return true, nil

@@ -17,7 +17,10 @@ func TestDiffDashboard(t *testing.T) {
 		want                        []string
 		wantErr                     bool
 	}{
-		{"identical configs need no check", "d-a", stored, stored, nil, false},
+		// D-180: an unchanged config is still sent and saved — Home Assistant
+		// rewrites it and fires lovelace_updated — so it is the whole.
+		{"identical configs are the whole dashboard", "d-a", stored, stored,
+			[]string{"edit dashboard:d-a"}, false},
 		{"one view's content changed", "d-a", stored,
 			`{"title":"Home","views":[{"path":"home","cards":[1,2]},{"title":"pathless","cards":[]},{"path":"secret","cards":[2]}]}`,
 			[]string{"edit dashboard:d-a/views/home"}, false},

@@ -301,7 +301,10 @@ The first `dash save` on a dashboard nothing is stored for yet (right after
 it needs; anything else in it, such as a title, needs `edit` on the dashboard.
 A first save that brings no view at all (`{}`, an empty `views` list) still
 stores a dashboard where none was — on the auto-generated default dashboard it
-replaces what users see — so it needs `edit` on the dashboard too.
+replaces what users see — so it needs `edit` on the dashboard too. So does a
+save of the config the dashboard already holds: hactl still sends it, Home
+Assistant rewrites the dashboard and tells every open frontend to reload, so
+it is checked as `edit` on the dashboard rather than let through as a no-op.
 
 ### Switching typed entries
 

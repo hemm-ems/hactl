@@ -561,6 +561,36 @@ func TestDashSaveRefusedByItsPlan(t *testing.T) {
 	assertRefused(t, "no stored config", out, err, "edit dashboard:wall-panel — "+viewDeny+" — a part of it is denied")
 }
 
+// TestDashSaveOfTheStoredConfigIsStillASave (D-180, G-6): `dash save` of the
+// config Home Assistant already holds still sends the save — Home Assistant
+// rewrites the dashboard and fires lovelace_updated — so it is checked as
+// `edit dashboard:<u>`: a deny-all profile refuses it in the preview and under
+// --confirm, and nothing is sent. Allowed, it is sent as before.
+func TestDashSaveOfTheStoredConfigIsStillASave(t *testing.T) {
+	stored := map[string]any{"title": "Wall", "views": []any{dashView("home", "light.a")}}
+	same := writeDashFile(t, stored)
+
+	r := dashRig(t, stored)
+	writePolicyFile(t, r.ts.dir, agentPolicy("    default: deny\n    allow:\n      \"*\": [read]\n"))
+	for _, args := range [][]string{{}, {"--confirm"}} {
+		out, err := runPolicyCLI(t, r.ts.dir, append([]string{"dash", "save", "wall-panel", "-f", same}, args...)...)
+		assertRefused(t, "an unchanged save "+strings.Join(args, ""), out, err, "edit dashboard:wall-panel — default: deny")
+	}
+	if n := r.ts.commandCount("lovelace/config/save"); n != 0 {
+		t.Errorf("a refused unchanged save sent %d lovelace/config/save", n)
+	}
+
+	allowed := dashRig(t, stored)
+	writePolicyFile(t, allowed.ts.dir, agentPolicy("    default: deny\n    allow:\n      \"dashboard:wall-panel\": [edit]\n"))
+	out, err := runPolicyCLI(t, allowed.ts.dir, "dash", "save", "wall-panel", "-f", same, "--confirm")
+	if err != nil {
+		t.Fatalf("an allowed unchanged save: %v\n%s", err, out)
+	}
+	if n := allowed.ts.commandCount("lovelace/config/save"); n != 1 {
+		t.Errorf("an allowed unchanged save sent %d lovelace/config/save, want 1", n)
+	}
+}
+
 // TestDashSaveCreatesFirstViewsWhenNothingIsStored (D-126): Home Assistant's
 // config_not_found is "nothing is stored", so the first save after `dash
 // create` is diffed against an empty config — each view is a create, which an

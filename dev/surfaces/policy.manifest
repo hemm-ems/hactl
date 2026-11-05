@@ -476,8 +476,9 @@ rest GET /api/services = proven: TestEveryReadRowIsEnforced
 rest POST /api/template = proven: TestEveryReadRowIsEnforced
 
 # map: read, the home's location (latitude, longitude, elevation, radius)
-# is zone.home's, so each is masked by entity:zone.home/attr/{name}. The
-# rest (version, components, time zone) is no policy resource.
+# and its name (location_name, zone.home's friendly_name) are zone.home's, so
+# each is masked by entity:zone.home/attr/{name}. The rest (version,
+# components, time zone) is no policy resource.
 rest GET /api/config = proven: TestEveryReadRowIsEnforced
 
 # map: exempt (probe). API liveness and auth probe of setup and health.
