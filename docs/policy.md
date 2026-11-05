@@ -480,8 +480,16 @@ entity_id          state     area  labels last_changed
 lock.garage        locked                 11-05 09:12
 hidden by policy: 1 (profile agent)
 $ hactl ent show lock.front_door
-policy_denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12) (profile agent) — reading it is refused
+policy_denied: would read entity:lock.front_door — refused by policy, nothing was written
+  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
+  checked: 1 resources, 1 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 12 — report it; do not edit policy.yaml
 ```
+
+A refused read looks exactly like a refused write: the report above on
+stdout (the refusal object under `--json`), and the one-line count
+`policy_denied: 1 of 1 resources denied (profile agent)` on stderr.
 
 With `--json` the JSON keeps its shape and the `hidden by policy` line goes to
 stderr. A few things worth knowing:
