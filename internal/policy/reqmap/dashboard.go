@@ -24,15 +24,16 @@ import (
 //   - stored == nil (none was read, or it could not be): edit
 //     dashboard:<u>. A dashboard Home Assistant holds no config for is not
 //     this case: its caller passes EmptyDashboard (D-126);
-//   - a stored config with no key (EmptyDashboard, or an empty object Home
-//     Assistant holds — the two cannot be told apart here) and a proposal
-//     that otherwise needs no check (`{}`, an empty or null `views`): edit
-//     dashboard:<u> — storing a config where none was is a change (D-126).
+//   - a proposal the diff finds no change in: edit dashboard:<u>. Against
+//     a stored config with no key (EmptyDashboard, or an empty object Home
+//     Assistant holds) it stores a config where none was (D-126); against
+//     anything else it is the stored config sent back unchanged, which Home
+//     Assistant still rewrites and announces (lovelace_updated) — a save,
+//     never a no-op (D-180).
 //
 // urlPath is canonicalised first (`lovelace` is the default dashboard,
 // `dashboard:`). A view path the policy grammar refuses is an error: the
-// request is unmappable, never canonicalised. Otherwise identical configs need
-// no check.
+// request is unmappable, never canonicalised. A save is never zero checks.
 func DiffDashboard(urlPath string, stored, proposed json.RawMessage) ([]Check, error) {
 	u := canonicalDashboard(urlPath)
 	whole, err := check(policy.Edit, policy.KindDashboard, u, "")
@@ -90,11 +91,13 @@ func DiffDashboard(urlPath string, stored, proposed json.RawMessage) ([]Check, e
 			}
 		}
 	}
-	if len(prev) == 0 && len(set.m) == 0 {
-		// Nothing stored, and the proposal brings no view to create: the
-		// save still turns "nothing stored" into a stored dashboard (on the
-		// auto-generated default dashboard it replaces what users see), so
-		// it is the whole dashboard, never zero checks (D-126).
+	if len(set.m) == 0 {
+		// A save the diff finds no change in is still a save: nothing stored
+		// and no view brought turns "nothing stored" into a stored dashboard
+		// (on the auto-generated default it replaces what users see, D-126),
+		// and the config sent back unchanged is rewritten and announced to
+		// every open frontend (lovelace_updated, D-180). Either way it is the
+		// whole dashboard, never zero checks.
 		set.add(whole)
 	}
 	return set.list(), nil
