@@ -268,10 +268,9 @@ func (r *agentsRig) activateDrafts(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The agent checks its draft (the skill's step 5): clean on this
-		// instance. Only alpha's: lint reports beta's kind-wide `label:*`
-		// [create] as no-match on an instance with no labels yet — a lint
-		// question outside this package, recorded rather than pinned here.
-		if text, isErr := mcpRun(t, r.mcp[name], "policy lint --file policy.draft.yaml"); name == "alpha" && (isErr || !strings.Contains(text, "(draft, not in effect)") || !strings.Contains(text, "clean")) {
+		// instance — beta's `label:*` [create] included, on an instance with
+		// no label yet (D-171).
+		if text, isErr := mcpRun(t, r.mcp[name], "policy lint --file policy.draft.yaml"); isErr || !strings.Contains(text, "(draft, not in effect)") || !strings.Contains(text, "clean") {
 			t.Errorf("%s's draft does not lint clean: isError=%v\n%s", name, isErr, text)
 		}
 		text, isErr := mcpRun(t, r.mcp[name], "policy activate policy.draft.yaml")
