@@ -27,6 +27,29 @@ Without `--dir`/`HACTL_DIR`, hactl uses the `.env` in the current directory,
 then walks parent directories (git-style; parent `.env` files without `HA_URL`
 are skipped), then falls back to `~/.hactl/default/`.
 
+## Giving an agent its own instance and policy
+
+An AI agent should not work in your own instance directory. Give it one of its
+own, with its own token and a policy that starts read-only:
+
+```bash
+hactl agent add kitchen-helper          # in your terminal; prints the MCP line to register
+```
+
+Then ask the agent to draft its rules (`hactl rtfm --skill policy-setup` tells
+it how). It writes `policy.draft.yaml` and asks you to review it. In a terminal
+of your own — not through the agent, not with Claude Code's `!` prefix:
+
+```bash
+hactl --dir ~/.hactl/agents/kitchen-helper policy review --file policy.draft.yaml
+hactl --dir ~/.hactl/agents/kitchen-helper policy activate policy.draft.yaml
+```
+
+`activate` shows the review again, asks you to type the profile name, and keeps
+the previous `policy.yaml` as `policy.yaml.prev`. The policy is a guardrail
+against mistakes, not a security boundary: see the manual's "Policy" section
+(`hactl rtfm --reference policy`) and [`policy.md`](policy.md).
+
 ## Debugging connectivity
 
 Set `HACTL_LOG_LEVEL=debug` to surface discovery, WS, and HTTP details on
