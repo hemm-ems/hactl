@@ -454,7 +454,7 @@ func TestPolicySetupSpecReviewReportsRealCounts(t *testing.T) {
 	}
 	totals := []int{len(statesBefore), len(union)}
 
-	switchLine := lineMatching(out, `(?i)switch`)
+	switchLine := lineMatching(out, `^\s*switch:`)
 	if switchLine == "" {
 		t.Errorf("policy review names no entities it may switch\n%s", out)
 	} else if m := reCountOf.FindStringSubmatch(switchLine); m == nil {
@@ -488,13 +488,13 @@ func TestPolicySetupSpecReviewReportsRealCounts(t *testing.T) {
 	}
 
 	t.Run("D-135 indirect", func(t *testing.T) {
-		if strings.Contains(out, "unchecked") {
+		if strings.Contains(out, "indirect: unchecked") {
 			t.Errorf("a draft that does not switch the check off reports something unchecked:\n%s", out)
 		}
 		unchecked := strings.Replace(reviewDraft, "    default: deny\n", "    default: deny\n    indirect: unchecked\n", 1)
 		writeFileT(t, filepath.Join(dir, "policy.unchecked.yaml"), unchecked)
 		u := runSetupBin(t, home, dir, nil, "--dir", dir, "policy", "review", "--file", "policy.unchecked.yaml")
-		if !strings.Contains(u.Stdout, "unchecked") {
+		if !strings.Contains(u.Stdout, "indirect: unchecked") {
 			t.Errorf("policy review of a draft with `indirect: unchecked` does not say what written automations do is unchecked\n%s", u)
 		}
 	})
@@ -502,7 +502,7 @@ func TestPolicySetupSpecReviewReportsRealCounts(t *testing.T) {
 	t.Run("without --file it reviews policy.yaml", func(t *testing.T) {
 		same := setupInstanceDir(t, inst, reviewDraft, false)
 		r := runSetupBin(t, home, same, nil, "--dir", same, "policy", "review")
-		if got, want := lineMatching(r.Stdout, `(?i)switch`), switchLine; got == "" || got != want {
+		if got, want := lineMatching(r.Stdout, `^\s*switch:`), switchLine; got == "" || got != want {
 			t.Errorf("policy review of policy.yaml (= the draft): switch line %q, want %q\n%s", got, want, r)
 		}
 		if reDraftFileLine.MatchString(r.Stdout) {
