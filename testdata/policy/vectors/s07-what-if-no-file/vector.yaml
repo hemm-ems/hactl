@@ -1,0 +1,3 @@
+clause: "D-62 / manual: any `--as` name is refused when there is no file"
+as: default
+as_error_contains: []

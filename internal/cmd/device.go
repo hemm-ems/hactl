@@ -15,6 +15,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var (
@@ -147,11 +148,22 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 		return err
 	}
 
+	// The plan (H-29): the device's area_id field, for a set and a --clear
+	// alike. Entities inheriting the device's area are not written.
+	action := "set device area"
+	if flagDeviceAreaClear {
+		action = "clear device area"
+	}
+	note, err := checkWritePlan(w, !flagDeviceConfirm, newWritePlan(action).add(policy.Edit, policy.KindDevice, device.ID, "registry/area_id"))
+	if err != nil {
+		return err
+	}
+
 	if !flagDeviceConfirm {
 		if flagDeviceAreaClear {
-			return dryRunDeviceClearAreaSummary(device, areas).render(w)
+			return dryRunDeviceClearAreaSummary(device, areas).withPolicy(note).render(w)
 		}
-		return dryRunDeviceSetAreaSummary(device, areaEntry, areas).render(w)
+		return dryRunDeviceSetAreaSummary(device, areaEntry, areas).withPolicy(note).render(w)
 	}
 
 	if err := ws.DeviceRegistryUpdate(ctx, device.ID,
@@ -258,6 +270,13 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	}
 	final, removed := applyLabelDelta(device.Labels, toAdd, toRemove)
 
+	// The plan (H-29): the device's labels field (--remove writes it too).
+	plan := newWritePlan("set device labels").add(policy.Edit, policy.KindDevice, device.ID, "registry/labels")
+	note, err := checkWritePlan(w, !flagDeviceConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagDeviceConfirm {
 		// Slices, not their %v rendering, so --json carries real arrays.
 		return dryRun("set device labels").
@@ -266,6 +285,7 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 			with("current_labels", nonNil(device.Labels)).
 			with("new_labels", nonNil(final)).
 			withIf(len(removed) > 0, "removed_labels", removed).
+			withPolicy(note).
 			render(w)
 	}
 

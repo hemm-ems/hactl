@@ -1,0 +1,13 @@
+clause: "Lint (D-65 refined 2026-10-31): a free sub segment made only of wildcards counts as checked — nothing there can be misspelt — so it adds no unchecked entry (views/*, reload/*, block/*, and attr/* even when attributes cannot be listed); one holding a literal character beside a wildcard (views/a*, reload/auto*, block/clim*) stays unchecked, reason `sub-resource not checked`; each file rule's own not-enumerated entry (D-128) is unaffected"
+lint:
+  inventory:
+    entity: [light.kitchen]
+    dashboard: ["", main]
+    system: [logs, wireguard, reload, check_config, cache]
+  findings: []
+  unchecked:
+    - {kind: dashboard, reason: sub-resource not checked, profile: agent, rule: 'deny "dashboard:main/views/a*" [read]', line: 10}
+    - {kind: file, reason: not enumerated, profile: agent, rule: 'deny "file:x.yaml/block/*" [read]', line: 13}
+    - {kind: file, reason: not enumerated, profile: agent, rule: 'deny "file:x.yaml/block/clim*" [read]', line: 14}
+    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clim*" [read]', line: 14}
+    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/auto*" [read]', line: 11}

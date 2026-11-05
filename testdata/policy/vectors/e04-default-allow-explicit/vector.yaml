@@ -1,0 +1,5 @@
+clause: "D-52 / manual: `default: allow` allows what no rule matched"
+view: {exists: true, selected_by: active, active: agent, allow_all: false, default: allow, profiles: [agent]}
+cases:
+  - {resource: "entity:light.kitchen", verb: delete, allowed: true, rule: "default: allow", line: 0, profile: agent}
+  - {resource: "entity:lock.front_door", verb: delete, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 7, profile: agent}

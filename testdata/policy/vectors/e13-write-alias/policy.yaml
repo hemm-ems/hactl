@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "automation:pg_*": [write]
+      "script:*": [write, read]
+    deny:
+      "entity:lock.*": [write]
+      "entity:*": [read]

@@ -12,6 +12,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var flagLabelColor string
@@ -125,8 +126,17 @@ func runLabelCreate(ctx context.Context, w io.Writer, name string) error {
 		return err
 	}
 
+	// The plan (H-29's command layer), checked in the preview and again before
+	// the write: Home Assistant mints the label id, so the check is create on
+	// every label id (D-75), reported as `label:*`.
+	plan := newWritePlan("create label").addKindWide(policy.Create, policy.KindLabel, "")
+	note, err := checkWritePlan(w, !flagLabelConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagLabelConfirm {
-		return dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc).render(w)
+		return dryRunLabelSummary(name, flagLabelIcon, flagLabelColor, flagLabelDesc).withPolicy(note).render(w)
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -179,10 +189,21 @@ func runLabelDelete(ctx context.Context, w io.Writer, labelID string) error {
 	}
 	labelID = entry.LabelID
 
+	// The plan (H-29): the label, and the labels field of every entity,
+	// device and area holding it — the cascade as a deliberate superset,
+	// enumerated from the registries exactly as the request layer maps the
+	// delete (D-76).
+	plan := newWritePlan("delete label").addRequestMapping(ctx, registryDeleteRequest(policy.KindLabel, labelID))
+	note, err := checkWritePlan(w, !flagLabelConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagLabelConfirm {
 		return dryRun("delete label").
 			with("label_id", entry.LabelID).
 			with("name", entry.Name).
+			withPolicy(note).
 			render(w)
 	}
 

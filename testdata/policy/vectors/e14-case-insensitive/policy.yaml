@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:Light.Kitchen": [read]
+      "automation:PG_*": [edit]
+      "area:Wohn*": [read]
+    deny:
+      "entity:*/attr/Latitude": [read]

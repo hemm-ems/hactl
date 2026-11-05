@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: an unknown key at the top level (`profile:` for `profiles:`)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 3,
+        "contains": [
+          "profile"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

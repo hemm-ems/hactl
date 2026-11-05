@@ -21,7 +21,10 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
+	"github.com/hemm-ems/hactl/internal/glob"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
 )
 
 var (
@@ -1343,55 +1346,18 @@ func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 // it. A value with a dot that is not a domain — a device named "Sonos v1.2" —
 // gains an anchor it has no use for, which is a false positive in the
 // permissive direction on a filter and cannot turn a match into a miss.
+//
+// The glob engine itself lives in internal/glob, shared with the policy
+// evaluator (one matcher, never two). Only the substring convenience for a
+// wildcard-free pattern is the filter's own.
 func matchPattern(s, pattern string) bool {
 	if pattern == "" {
 		return s == ""
 	}
-	s, pattern = strings.ToLower(s), strings.ToLower(pattern)
-	if !strings.ContainsAny(pattern, "*?") {
-		return strings.Contains(s, pattern)
+	if !glob.HasWildcard(pattern) {
+		return strings.Contains(strings.ToLower(s), strings.ToLower(pattern))
 	}
-	if matchGlob(s, pattern) {
-		return true
-	}
-	if _, unqualified, found := strings.Cut(s, "."); found {
-		return matchGlob(unqualified, pattern)
-	}
-	return false
-}
-
-func matchGlob(s, pattern string) bool {
-	for len(pattern) > 0 {
-		switch pattern[0] {
-		case '*':
-			// Skip consecutive stars
-			for len(pattern) > 0 && pattern[0] == '*' {
-				pattern = pattern[1:]
-			}
-			if len(pattern) == 0 {
-				return true
-			}
-			for i := range len(s) + 1 {
-				if matchGlob(s[i:], pattern) {
-					return true
-				}
-			}
-			return false
-		case '?':
-			if len(s) == 0 {
-				return false
-			}
-			s = s[1:]
-			pattern = pattern[1:]
-		default:
-			if len(s) == 0 || s[0] != pattern[0] {
-				return false
-			}
-			s = s[1:]
-			pattern = pattern[1:]
-		}
-	}
-	return len(s) == 0
+	return glob.MatchQualified(s, pattern)
 }
 
 // entStateWidth is how wide the state column renders for a reader; the machine
@@ -1484,7 +1450,7 @@ var entRenameCmd = &cobra.Command{
 	Short: "Rename an entity and rewrite every reference (dry-run by default)",
 	Long: "Rename a registry entity (config/entity_registry/update with new_entity_id), then rewrite " +
 		"every literal reference across YAML config files and dashboards — the ref replace pass — in " +
-		"one command (D-11: registry first, it is the authoritative object). Dry-run by default: the " +
+		"one command (registry first, it is the authoritative object). Dry-run by default: the " +
 		"preview resolves the old id against the registry, pre-checks the new id for collisions, and " +
 		"counts the references a confirmed run would rewrite. Requires hactl-companion (it rewrites " +
 		"the config half). A dashboard that cannot be scanned refuses the run unless --allow-partial.",
@@ -1562,12 +1528,31 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 			strings.Join(scope.unreadSources(), " and "), renameScopeDetail(scope))
 	}
 
+	// The plan (E-5 + E-7, D-77), checked in the preview and again before the
+	// registry update, which is the first write: the rename itself and every
+	// resource the reference rewrite after it touches. With no profile nothing
+	// is asked or checked (D-58).
+	var note *planPolicyNote
+	var checked *refCheckedPlan
+	if policySession != nil {
+		plan := newWritePlan("rename entity").
+			add(policy.Edit, policy.KindEntity, oldID, "registry/entity_id").
+			add(policy.Create, policy.KindEntity, newID, "")
+		if checked, err = addRenameReferences(ctx, plan, src, oldID, newID); err != nil {
+			return err
+		}
+		if note, err = checkWritePlan(w, !flagEntConfirm, plan); err != nil {
+			return err
+		}
+	}
+
 	if !flagEntConfirm {
 		return dryRun("rename entity").
 			with("entity_id", oldID).
 			with("new_entity_id", newID).
 			withIf(entry.Platform != "", "platform", entry.Platform).
 			with("references", refs).
+			withPolicy(note).
 			withHint("use --confirm to rename the registry entry and rewrite every reference "+
 				"(reference detail: hactl ref scan "+oldID+")").
 			render(w)
@@ -1580,12 +1565,33 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 		_, _ = fmt.Fprintf(w, "renamed registry entry %s -> %s\n", oldID, newID)
 	}
 
-	if err := refReplaceWithOptions(ctx, w, oldID, newID, true, flagEntRenameAllowPartial); err != nil {
+	if err := refReplaceRun(ctx, w, oldID, newID, true, flagEntRenameAllowPartial, checked); err != nil {
+		var refusal *enforce.DeniedError
+		if errors.As(err, &refusal) {
+			return err // its report already said what was written (D-77)
+		}
 		return fmt.Errorf("registry entry renamed to %s, but the reference rewrite failed: %w — "+
 			"references may still point at %s; re-run 'hactl ref replace %s %s --confirm' (idempotent)",
 			newID, err, oldID, oldID, newID)
 	}
 	return nil
+}
+
+// addRenameReferences declares the reference half of a rename, under a
+// profile: the companion's dry run of the rewrite and every dashboard it would
+// change, as `ref replace` checks them (D-77) — computed before the registry
+// update so the whole rename is refused before anything is written (E-7).
+func addRenameReferences(ctx context.Context, plan *writePlan, src *refSources, oldID, newID string) (*refCheckedPlan, error) {
+	dashboards, err := src.ws.DashboardList(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing dashboards: %w", err)
+	}
+	dashPlans, _ := planDashboardReplacements(ctx, src.ws, dashboards, oldID, newID)
+	dry, err := src.cc.RefReplace(ctx, oldID, newID, true)
+	if err != nil {
+		return nil, fmt.Errorf("companion ref replace: %w", err)
+	}
+	return addRefReplace(ctx, plan, src.cc, oldID, newID, dry.Changes, dashPlans), nil
 }
 
 // renameScopeDetail names what went unread, one clause per source, so the
@@ -1682,8 +1688,17 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	currentLabels := entry.Labels
 	final, removed := applyLabelDelta(currentLabels, toAdd, toRemove)
 
+	// The plan (H-29), at the finest address the write has: the entity's
+	// labels field — never the entity as a whole, and never label:<id>
+	// (assigning a label does not edit it). --remove writes the same field.
+	plan := newWritePlan("set entity labels").add(policy.Edit, policy.KindEntity, entityID, "registry/labels")
+	note, err := checkWritePlan(w, !flagEntConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagEntConfirm {
-		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).render(w)
+		return dryRunEntSetLabelSummary(entityID, currentLabels, final, removed).withPolicy(note).render(w)
 	}
 
 	// An empty `final` is sent as `labels: []`, which clears every label rather
@@ -1767,11 +1782,22 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 		return fmt.Errorf("entity %q not found in registry (use 'ent ls' to see available entities)", entityID)
 	}
 
+	// The plan (H-29): the entity's own area_id field, for a set and a
+	// --clear alike.
+	action := "set entity area"
+	if flagEntAreaClear {
+		action = "clear entity area"
+	}
+	note, err := checkWritePlan(w, !flagEntConfirm, newWritePlan(action).add(policy.Edit, policy.KindEntity, entityID, "registry/area_id"))
+	if err != nil {
+		return err
+	}
+
 	if !flagEntConfirm {
 		if flagEntAreaClear {
-			return dryRunEntClearAreaSummary(entityEntry, areas).render(w)
+			return dryRunEntClearAreaSummary(entityEntry, areas).withPolicy(note).render(w)
 		}
-		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).render(w)
+		return dryRunEntSetAreaSummary(entityEntry, areaEntry, areas).withPolicy(note).render(w)
 	}
 
 	if err := ws.EntityRegistryUpdate(ctx, entityID,

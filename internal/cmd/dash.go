@@ -18,6 +18,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/jsonwalk"
+	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 var flagDashView string
@@ -597,11 +599,29 @@ func runDashSave(ctx context.Context, w io.Writer, urlPath string) error {
 		title = target.Title
 	}
 
+	// The plan (D-66 as refined), checked in the preview and again before the
+	// save: per view against the stored config, the dashboard itself for the
+	// rest — against an empty config when Home Assistant holds none (D-126),
+	// for all of it when the config cannot be read. With no profile nothing
+	// is read or checked (D-58).
+	var note *planPolicyNote
+	if policySession != nil {
+		state, stored, _ := classifyDashboardConfig(ctx, ws, urlPath) // unreadable: nil, checked whole
+		if state == dashConfigAbsent {
+			stored = reqmap.EmptyDashboard
+		}
+		plan := newWritePlan("save dashboard config").addDashboardSave(urlPath, stored, data)
+		if note, err = checkWritePlan(w, !flagDashConfirm, plan); err != nil {
+			return err
+		}
+	}
+
 	if !flagDashConfirm {
 		return dryRun("save dashboard config").
 			with("url_path", dashDisplayPath(urlPath)).
 			with("title", title).
 			with("config_bytes", len(data)).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -797,28 +817,28 @@ func matchDashboards(ctx context.Context, ws *haapi.WSClient, targets []dashScan
 	return matches, scope
 }
 
-// dashReplaceOne fetches one dashboard's raw config and returns a deep copy with
-// every exact occurrence of oldVal rewritten to newVal, along with the changed
-// paths. It never saves. A nil error with no changed paths means no match.
+// dashReplaceOne fetches one dashboard's raw config and returns it (stored)
+// and a deep copy with every exact occurrence of oldVal rewritten to newVal,
+// along with the changed paths. It never saves. A nil error with no changed paths means no match.
 // Shared by `dash replace` and `ref replace`.
-func dashReplaceOne(ctx context.Context, ws *haapi.WSClient, urlPath, oldVal, newVal string) (result any, changed []jsonwalk.Path, err error) {
+func dashReplaceOne(ctx context.Context, ws *haapi.WSClient, urlPath, oldVal, newVal string) (stored json.RawMessage, result any, changed []jsonwalk.Path, err error) {
 	// A dashboard with no stored config contains no occurrences of anything, so
 	// the answer is "nothing matched" rather than a wire error (finding #3).
 	// Callers must have resolved urlPath — see classifyDashboardConfig.
 	state, raw, classifyErr := classifyDashboardConfig(ctx, ws, urlPath)
 	switch state {
 	case dashConfigAbsent:
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	case dashConfigUnclassifiable:
-		return nil, nil, fmt.Errorf("fetching dashboard config: %w", classifyErr)
+		return nil, nil, nil, fmt.Errorf("fetching dashboard config: %w", classifyErr)
 	case dashConfigStored:
 	}
 	var root any
 	if unmarshalErr := json.Unmarshal(raw, &root); unmarshalErr != nil {
-		return nil, nil, fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
+		return nil, nil, nil, fmt.Errorf("parsing dashboard config: %w", unmarshalErr)
 	}
 	result, changed = jsonwalk.Replace(root, oldVal, newVal)
-	return result, changed, nil
+	return raw, result, changed, nil
 }
 
 // runDashGrep scans every dashboard for an exact entity_id reference.
@@ -905,7 +925,7 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 		}
 	}
 
-	result, changed, err := dashReplaceOne(ctx, ws, urlPath, oldVal, newVal)
+	stored, result, changed, err := dashReplaceOne(ctx, ws, urlPath, oldVal, newVal)
 	if err != nil {
 		return err
 	}
@@ -923,6 +943,22 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 			render(w)
 	}
 
+	out, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("encoding dashboard config: %w", err)
+	}
+
+	// The plan (D-66 as refined): the rewrite diffed per view against the
+	// config it was made from, checked in the preview and again before the
+	// save. With no profile nothing is checked (D-58).
+	var note *planPolicyNote
+	if policySession != nil {
+		plan := newWritePlan("replace in dashboard "+dashDisplayPath(urlPath)).addDashboardSave(urlPath, stored, out)
+		if note, err = checkWritePlan(w, !flagDashConfirm, plan); err != nil {
+			return err
+		}
+	}
+
 	if !flagDashConfirm {
 		sites := make([]string, 0, len(changed))
 		for _, p := range changed {
@@ -934,13 +970,10 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 			with("to", newVal).
 			with("occurrences", len(changed)).
 			with("paths", sites).
+			withPolicy(note).
 			render(w)
 	}
 
-	out, err := json.Marshal(result)
-	if err != nil {
-		return fmt.Errorf("encoding dashboard config: %w", err)
-	}
 	snapshotDashboardBeforeSave(ctx, ws, urlPath)
 	if err := ws.DashboardConfigSave(ctx, urlPath, out); err != nil {
 		return fmt.Errorf("saving dashboard config: %w", err)
@@ -982,6 +1015,14 @@ func runDashCreate(ctx context.Context, w io.Writer) error {
 		return fmt.Errorf("dashboard %q already exists (id: %s)", existing.URLPath, existing.ID)
 	}
 
+	// The plan, checked in the preview and again before the create; nothing
+	// with no profile (D-58).
+	plan := newWritePlan("create dashboard").add(policy.Create, policy.KindDashboard, policyDashboardID(flagDashURLPath), "")
+	note, err := checkWritePlan(w, !flagDashConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagDashConfirm {
 		return dryRun("create dashboard").
 			with("url_path", flagDashURLPath).
@@ -989,6 +1030,7 @@ func runDashCreate(ctx context.Context, w io.Writer) error {
 			with("icon", flagDashIcon).
 			with("sidebar", flagDashSidebar).
 			with("admin", flagDashAdmin).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -1033,10 +1075,20 @@ func runDashDelete(ctx context.Context, w io.Writer, urlPath string) error {
 			"remove it from configuration.yaml instead", urlPath, target.Mode)
 	}
 
+	// The plan, checked in the preview and again before the delete; the
+	// default dashboard is `dashboard:` however it is named. Nothing with no
+	// profile (D-58).
+	plan := newWritePlan("delete dashboard").add(policy.Delete, policy.KindDashboard, policyDashboardID(urlPath), "")
+	note, err := checkWritePlan(w, !flagDashConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagDashConfirm {
 		return dryRun("delete dashboard").
 			with("url_path", urlPath).
 			with("title", target.Title).
+			withPolicy(note).
 			render(w)
 	}
 

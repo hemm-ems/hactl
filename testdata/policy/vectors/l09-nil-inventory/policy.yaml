@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    allow:
+      "entity:light.*": [control]
+    deny:
+      "automation:*": [delete]
+      "entity:lock.*": [write]

@@ -1,0 +1,14 @@
+clause: "D-55 / manual selectors: `label` holds when one of the resource's own labels matches by id or name; exact without a wildcard"
+live:
+  entities:
+    switch.a: {labels: [{id: other, name: Other}, {id: agent_ok, name: Agent OK}]}
+    switch.b: {labels: [{id: other, name: Other}]}
+    switch.c: {labels: [{id: agent_ok_2, name: Agent OK 2}]}
+    switch.d: {labels: [{id: lbl_123, name: agent_ok}]}
+    switch.e: {area: {id: agent_ok, name: agent_ok}}
+cases:
+  - {resource: "entity:switch.a", verb: control, allowed: true, rule: 'allow "entity:switch.*" [control] where label=agent_ok', line: 7}
+  - {resource: "entity:switch.b", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:switch.c", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:switch.d", verb: control, allowed: true, rule: 'allow "entity:switch.*" [control] where label=agent_ok', line: 7}
+  - {resource: "entity:switch.e", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}

@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "device:a*": [edit]
+      "device:b*": [control]
+    where:
+      "device:a*": { area: garage }
+      "device:b*": { label: agent_ok }

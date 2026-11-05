@@ -18,6 +18,7 @@ Match the user's question here first and run exactly the listed sequence — com
 | "Disable / turn on / trigger X" | verify (`auto show` / `ent show`), then `svc call` dry-run | `--confirm` only after the user confirms the plan |
 | "Build / change a dashboard" | `ent ls --pattern <topic>`, then `dash create` dry-run | Same confirmation rule |
 | "List labels / areas / helpers / scripts" | exactly: `label ls` · `area ls` · `helper ls` · `script ls` | One call, answer. `helper` is not an entity domain — never `ent ls --domain helper` |
+| "Am I allowed to …?" | `policy check <kind>:<id> <verb>` | exit 0 allowed, 1 denied; `policy show` lists the rules |
 
 Full command set (family → subcommands):
 
@@ -29,6 +30,7 @@ Full command set (family → subcommands):
 - `device ls|show` · `label|area|floor ls|create|delete`
 - `config entries|show|options|delete|files|file|block|flow-start|flow-step|flow-inspect`
 - `grep` · `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
+- `policy show|check|lint`
 
 No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
 
@@ -201,8 +203,10 @@ show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
 interchangeable names: the config `id:`, the alias, the entity_id, or the
 entity_id's object id (the `id` column of `auto ls`). Copy an identifier out of
 any listing and it works in the next command. The config `id:` is the canonical
-one hactl prints (`auto show --json`'s `config_id`, `auto create`'s result);
-`--pattern` matches all forms.
+one hactl prints (`auto ls --json`'s and `auto show --json`'s `config_id`, `auto create`'s result);
+`--pattern` matches all forms. `auto ls --json` carries `config_id` on every row — `""` for an
+automation without one, a restored ghost included — while the text table keeps its columns; it is
+the id a policy's `automation:` rules name (see Policy).
 
 `auto show` summarizes; `auto cat` prints the stored config itself, so it is what
 you feed back into `auto diff -f` / `auto apply -f`. It needs the companion.
@@ -558,6 +562,10 @@ Supported domains: input_boolean, input_number, input_select, input_text, input_
   storage helper carries a leading `# source: storage` comment; it is still
   valid YAML.
 
+`helper delete --confirm` names the helper's domain in its request — the domain
+the dry run resolved and printed — so a slug that exists in two helper domains
+is deleted in exactly that domain, with or without a policy (D-123).
+
 `helper create`'s dry run checks everything `--confirm` does, in the order that
 answers cheapest first: the domain is one of the eight it writes (`script`,
 `automation` and `template` are HA domains but not helper domains); the id is
@@ -613,6 +621,8 @@ The dry run judges the **payload**, not just the service name, against HA's own 
 
 - **`-d '{"target":{"entity_id":…}}'` is refused.** The `target:` wrapper is automation/script YAML syntax, which HA flattens before calling the service; a service call takes `entity_id`/`device_id`/`area_id`/`label_id`/`floor_id` at the top level.
 - **A targeted service with no target reaches nothing.** The preview says so (`targets: none — …`); HA selects no entity when none of the five selector fields is present. `"entity_id":"all"` is the opposite and the preview says that too.
+
+**`--data` must be a JSON object**, or left out (which sends `{}`), with or without a policy: `null`, a list, a string, a number or a boolean is refused in the dry run already — exit 1, nothing on stdout, nothing sent — as `invalid --data: want a JSON object ({…}), got null` (D-122). Malformed JSON stays `invalid --data JSON: <parser error>`.
 
 What the preview does *not* refuse: an `entity_id` naming an entity that does not exist (HA accepts it and changes nothing), and any payload for a service whose registry entry documents no fields — `script.<name>` takes arbitrary keys as script variables.
 
@@ -719,7 +729,7 @@ When a step fails, the HA error detail (e.g. the offending field) is included in
 
 When starting a *new* integration (not reconfiguring an existing entry), use `flow-start` + `flow-step` without `--options`.
 
-To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, pass `--probe-options-flow` to read current values from a transient options flow (started and immediately aborted); without the flag no options flow is started and the note tells you to add it. The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
+To **read back** how an entry is currently configured (e.g. to confirm a value you just set via an options flow), use `config show <entry_id>` — do not infer configuration from behavior. It prints the setup summary (domain, state, source, options/reconfigure support, disabled/failure reason) plus the current configuration, sourced from the integration's diagnostics dump (secrets redacted by the integration). When the integration ships no diagnostics platform, pass `--probe-options-flow` to read current values from a transient options flow (started and immediately aborted); without the flag no options flow is started and the note tells you to add it. Under a policy that denies `edit config_entry:<entry_id>/options` the probe is skipped, nothing is started, and the note says so, naming the rule — `config show` itself still answers (D-79). The `config_source` field (`diagnostics` | `options_flow` | `unavailable`) tells you which. Read-only; needs an admin token.
 
 Every `config` command except `files`/`file`/`block` uses HA's REST API directly — no companion needed. Add `--json` for structured output suitable for LLM consumption.
 
@@ -1093,6 +1103,7 @@ hactl cache clear                         # wipe all local cache, stable IDs inc
 
 hactl version                             # version, commit, build date (same first line as --version)
 hactl rtfm                                # print this manual (for LLM self-teaching)
+hactl rtfm --reference policy             # a family's reference section, which no command delivers on its own
 ```
 
 ### WireGuard (companion lifeline)
@@ -1111,6 +1122,428 @@ volume; `up`/`down` only affect the live interface. To have the tunnel return af
 reboot, set the add-on's `vpn.enabled` option (it reconciles on every add-on (re)start).
 Mutations are dry-run by default — pass `--confirm` to apply. Use `--tunnel <name>` for a
 non-default tunnel (default `wg0`). Requires hactl-companion.
+
+### Policy (permission guardrail)
+
+```bash
+hactl policy show                                  # the profile in effect, its rules, the file it came from
+hactl policy check entity:lock.front_door control  # exit 0 allowed, 1 denied; names the rule that decided
+hactl policy check automation:pg_heating write     # every write verb at once; exit 0 only if every enforced one is allowed
+hactl policy lint                                  # validate the file, then check every rule against the live instance
+hactl policy lint --allow-partial                  # accept what lint could not check (it is still listed)
+hactl rtfm --reference policy                      # the full reference: file format, grammar, every --json field
+```
+
+**A guardrail against mistakes, not a security boundary.** `<instance>/policy.yaml` tells hactl what may be changed. It stops a misread instruction, a target wider than meant, a typo in an id; it does not stop anything with a shell — the token in `.env` can do everything. **The file is the owner's: never edit, move or delete `policy.yaml`.** hactl never writes it and has no command that does. A denial is an answer to report, not an obstacle to remove.
+
+**What is enforced.** While a profile is in effect, every command that switches, edits, creates or deletes something works out everything its `--confirm` run would touch and checks all of it in the dry run, and again under `--confirm`, before its first write. All or nothing: if one of 40 files is denied, none is written. Reads are not enforced yet: `policy check … read` answers, but no listing hides anything. Without `policy.yaml` nothing changes and nothing is checked.
+
+**A refusal** exits 1 with the error class `policy_denied`; the report is on stdout:
+
+```console
+$ hactl auto delete prod_heating
+policy_denied: would delete automation — refused by policy, nothing was written
+  denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 14)
+  checked: 2 resources, 1 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+```
+
+stderr carries one summary line, `policy_denied: 1 of 2 resources denied (profile agent)`. With `--json` it is the preview object with `"ok": false`, `"error": "policy_denied"`, every denial under `details.policy.denied` and the same `hint`.
+
+Read the rule each `denied:` line names:
+
+- `deny "…"` — the owner wrote a rule against this;
+- `default: deny` — no rule allows it; an indented `where not met:` line under it says that an allow matched but its area or label did not hold for this resource;
+- `fail-closed: …` — hactl could not work out everything the command would touch (Home Assistant did not answer, a file could not be read), so it refused rather than guess.
+
+Report the refusal to the user with the rule and its line. Do not work around it: dropping the denied part is a different, narrower command, which the user confirms like any other. A refused dry run does not open the `--confirm` window. A `--confirm` can still be refused after its preview passed — when the policy, an area or a label, or what a service call reaches changed in between — and the refusal says so.
+
+**Ask before you act.** `policy check <resource> <verb>` answers without changing anything. Verbs: `read`, `control` (switch: `svc call`, `script run`), `edit`, `create`, `delete`, or `write` for every write verb that applies there. A resource is `<kind>:<id>[/<sub>]`: `entity:light.kitchen`, `entity:light.kitchen/registry/labels`, `automation:<config id>` (the `id:` in its config — `config_id` in `auto ls --json` — not the alias), `script:<id>/run`, `helper:<domain>/<id>`, `dashboard:<url_path>/views/<path>`, `service:light.turn_on`, `file:packages/x.yaml`. The answer names the rule that decided it; the exit code is the verdict. The reference lists every kind and sub-resource.
+
+**A broken file** — a typo, an unknown key — refuses every command except `policy show`, `policy lint`, `version`, `help`, `completion` and `rtfm`, with one `policy_broken: <file>:<line>: <message>` line per problem. The owner fixes it; report it, do not edit it.
+
+**Over MCP**, a server started without `--allow-writes` refuses every write first; with it, the policy decides each write exactly as on the command line.
+
+**Writing or reviewing a policy?** Run `policy lint` before relying on a deny: a misspelt deny matches nothing and protects nothing. Everything else — the file format, matching, what each command checks, every `--json` field, worked examples such as protecting one automation — is in `hactl rtfm --reference policy`.
+
+### Policy reference
+
+The policy family's full contract: the file format, the address grammar, how a verdict is reached, what each write command checks, and every `--json` field. Nothing delivers it automatically — `hactl rtfm --reference policy` prints it (D-121); the how-to above is what a caller working under a policy needs.
+
+```bash
+hactl policy show --as agent                       # what-if: another declared profile's rules; changes nothing
+hactl policy show --json
+hactl policy check entity:device_tracker.jan/attr/latitude read --as agent   # what-if verdict
+hactl policy check automation:pg_heating edit --json
+hactl policy check entity:lock.front_door write --json   # one verdict per write verb that applies
+```
+
+**A guardrail against mistakes, not a security boundary: the token in .env can do everything** (D-51, level A). A policy stops a misread instruction, a too-wide target or a typo in an id; it does not stop anything with a shell, which can reach Home Assistant directly or edit the file. hactl reads `<instance>/policy.yaml` and never writes it — there is no command that does. The policy is the owner's: never edit, move or delete `policy.yaml`. A denial is an answer to report, not an obstacle to remove.
+
+**Writes are enforced, reads are not yet.** Every command that changes something — `control`, `edit`, `create`, `delete` — checks its whole plan against the policy in its dry run and again under `--confirm`, and refuses before its first write if anything in the plan is denied (see "Enforcement" below). Reads are not enforced in this version: a `read` rule decides `policy check`, but no listing hides a row and no attribute is masked yet (D-54, a later version). `policy show` says `enforced: writes — reads not yet` (`"enforced": true`, `"enforced_verbs": ["control", "edit", "create", "delete"]` in `--json`).
+
+**No file, no change.** Without `policy.yaml` everything is allowed, byte-identical to hactl without a policy (D-58) — in what every command sends, writes and prints as its own answer (D-108): `policy show` says `no policy file`, `policy check` allows everything with rule `no policy file`, `policy lint` reports nothing and exits 0.
+
+#### Policy file format
+
+```yaml
+# <instance>/policy.yaml
+version: 1
+active: agent                     # the profile in effect, for CLI and MCP alike
+profiles:
+  default:                        # in effect when there is no active:
+    deny:
+      "entity:lock.*":                  [write]
+  agent:
+    default: deny
+    allow:
+      "entity:*":                       [read]
+      "entity:light.*":                 [control]
+      "automation:pg_*":                [read, edit, create]
+      "entity:*/registry/labels":       [edit]
+    deny:
+      "entity:lock.*":                  [read, write]
+      "entity:device_tracker.*/attr/latitude":  [read]
+      "file:**":                        [write]
+    where:
+      "entity:light.*": { area: wohnzimmer }
+```
+
+- `version` — required, the integer `1`.
+- `active` — optional, the name of a declared profile.
+- `profiles` — optional, a mapping of profile name to profile. A profile has up to four keys:
+  - `default` — `deny` or `allow`; omitted means `allow`. Only a profile that declares `default: deny` denies what no rule matched (D-52).
+  - `allow`, `deny` — a mapping of resource pattern to a non-empty list of verbs.
+  - `where` — a mapping of an `allow` pattern of the same profile, written exactly as in `allow`, to a selector `{area: <v>, label: <v>}`. A value is a string or a non-empty list of strings, held to the same Unicode rule as an id (D-69, under Resources).
+
+**Which profile applies** (D-61, D-62). Only the file selects it, never the caller: there is no `--profile` flag, no `HACTL_PROFILE` variable and no `hactl mcp --profile`; the owner switches profile by editing `active:`.
+
+| the file has | profile in effect | `selected_by` |
+|---|---|---|
+| no file at all | none — allow-all | `no-file` |
+| `active: <p>` | `<p>` | `active` |
+| no `active:`, a profile named `default` | `default` | `default-profile` |
+| no `active:`, no `default` profile | none — allow-all, and `policy show` says so loudly: `ALLOW-ALL` | `implicit-allow-all` |
+| (`--as <p>` on `show`/`check`) | `<p>`, for this answer only | `what-if` |
+
+`--as <profile>` is a read-only what-if: it evaluates another declared profile and never changes the effective one. Its output says `what-if` (`"what_if": true`). It names a declared profile; any other name, and any name when there is no file, is refused (exit 1).
+
+Nor does the caller choose the instance, and with it the policy file, per call over MCP (D-64): an `hactl mcp --dir <instance>` server refuses a call whose `--dir` names another directory (see "MCP server"). On the CLI, `--dir` picks the instance as always — another instance directory is another instance, with its own `policy.yaml`.
+
+**A broken file fails closed** (D-60). A file hactl cannot read as a policy is refused, never read leniently, because a typo must never silently become allow-all. Broken means any of:
+
+- not valid YAML, the top level is not a mapping, or more than one YAML document (a second `---` would be ignored);
+- a YAML anchor, alias or merge key (`&d`, `*d`, `<<:`) anywhere, an anchor nothing refers to included — write every value out;
+- any mapping key twice at any level (top level, a profile name, a profile's keys, an `allow`/`deny` pattern, a `where` pattern, a selector key) — both lines are named;
+- a key this section does not define, at any level (`profile:` for `profiles:`, `allows:`, a selector key other than `area`/`label`);
+- a value of the wrong shape: `profiles`, a profile, `allow`, `deny`, `where` or a selector that is not a mapping — an empty `agent:` included (write `agent: {}`);
+- `version` missing or not `1`;
+- `active` present but empty (`active:`, `active: ~`, `active: ""`) or not a string, or naming a profile the file does not declare;
+- `default` other than `allow` or `deny`;
+- a pattern that breaks the grammar below — unknown kind, wrong number of id segments, unknown sub-resource, a wildcard where the grammar wants a literal, a `system` id that names (or, as a glob, matches) none of its set, a character outside the id's charset, a `.`/`..` or ambiguous `block` segment in a `file` id, or an `entity`/`service` id with neither a `.` nor a wildcard (it can never match: `entity:front_door` — write `entity:*.front_door`; D-63);
+- a verb list that is empty, not a list, or holds an unknown verb (`wirte`);
+- a `where` key that is not an `allow` pattern of the same profile, a `where` on a kind other than `entity` and `device` (or on `*`), an empty selector, or an empty selector value;
+- a `policy.yml` in the instance directory — hactl reads only `policy.yaml`, and a policy saved under the wrong name must not silently be no policy;
+- a `policy.yaml` (or `policy.yml`) that exists but cannot be read — a dangling symlink, a directory, no permission: the error names the path, and it is never `no policy file`.
+
+Every problem is one line, worded the same everywhere — in `policy show` and `policy lint` (stdout), in `policy check` and every refused command (stderr), and in an MCP refusal: `policy_broken: <file>:<line>: <message>`. An unknown verb, key, kind, sub-resource word or registry field name ends ` — did you mean "<word>"?` when a valid word of that position is within two edits (the nearest; a tie goes to the first in this manual's order): `policy_broken: /home/u/ha/home/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?`. The output closes with one line, `policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it` (D-117). `policy show` and `policy lint` report the problems (exit 1; their stderr line is `policy_broken: <n> problem(s) in <file>`); `policy check` refuses (exit 1, empty stdout). **Every other command refuses the same way** — exit 1, the problem lines and the closing line on stderr, nothing on stdout, nothing sent to Home Assistant — reads included, because a file that cannot be read cannot say which reads it would have allowed. The only commands that still run are `policy show` and `policy lint` (so you can see what to fix) and the ones that read no instance and send nothing: `version` (and `--version`), `help` (and `--help`), `completion` and `rtfm`. `setup` refuses like every other command — fix the file first. `hactl mcp` starts, and refuses each tool call the same way except that same list (D-60); the file is read again on every call, so fixing it takes effect without a restart.
+
+#### Resources
+
+A rule pattern and a `policy check` resource share one address grammar:
+
+```
+<kind>:<id>[/<sub>[/<sub>]]
+```
+
+The id is Home Assistant's own identifier, written exactly as hactl prints it (an automation's config id, not its alias — D-1).
+
+| kind | id | sub-resources |
+|---|---|---|
+| `entity` | entity_id (`light.kitchen`) | `state` · `attr/<name>` · `registry/<field>`, field one of `name` `area_id` `labels` `icon` `disabled_by` `entity_id` · `history` · `stats` |
+| `device` | device_id | `registry/<field>`, field one of `area_id` `labels` `name_by_user` |
+| `area` · `floor` · `label` | registry id | — |
+| `automation` | config id | `config` · `trace` |
+| `script` | config id (the object id) | `config` · `trace` · `run` |
+| `template` | unique_id — of a YAML template entity; a template helper made in the UI is a config entry (`config_entry:<entry_id>`, its entity `entity:<id>`), not a `template:` | `config` |
+| `helper` | `<domain>/<id>` — two segments (`input_boolean/guest_mode`); no command edits a helper's config (`helper create`/`delete` only), and switching one is `control` on its entity | `config` |
+| `dashboard` | url_path; the default dashboard is the empty id (`dashboard:`, `dashboard:/views/home`) | `views/<path>` · `resources` |
+| `config_entry` | entry_id | `options` · `flow` |
+| `file` | companion-relative path, one or more segments | `block/<id>` |
+| `service` | `<domain>.<service>` | — |
+| `system` | one of `logs` `wireguard` `reload` `check_config` `cache` | `<domain>`, below `reload` only (`system:reload/automation`) |
+
+- A sub-resource path may stop early: `entity:x/attr` is every attribute of `x`, `entity:x/registry` every registry field.
+- Sub-resource words (`attr`, `registry`, `views`, `block`, …) and the registry field names are literal: a misspelling is a broken file, not a rule that matches nothing.
+- For `file`, a trailing `/block/<id>` is always the block sub-resource; everything before it is the path. A segment named `block` (in any case) anywhere else — `file:a/block`, `file:a/block/b/c.yaml`, `file:block/x` with no path before it — is refused as ambiguous with the block sub-resource (D-67).
+- A `file` path never holds a `.` or `..` segment (`file:./secrets.yaml`, `file:packages/../secrets.yaml`): refused, never canonicalised (D-67).
+- **Id charset** (D-68). `entity` and `service` ids: ASCII letters, digits, `_` and `.`; `helper`: ASCII letters, digits and `_` in each of its two segments; `area`, `floor`, `label`: ASCII letters, digits and `_` — Home Assistant's own charset, letters in any case (D-2). Patterns may add `*` and `?`. Every other kind's id takes any character except these, which no id segment and no free sub-resource segment (`attr/<name>`, `views/<path>`, `block/<id>`, `reload/<domain>`) of any kind may hold: white space at either end (a leading or trailing space, a trailing no-break space), a control character anywhere (a tab, NUL), and an invisible format character anywhere (Unicode category Cf: zero-width space and joiners, word joiner, BOM, soft hyphen, bidi overrides). White space inside is allowed where Home Assistant allows it — in `automation`, `script` and `template` ids, `dashboard` url_paths, `file` paths and every free sub-resource segment (`file:packages/my file.yaml`, `entity:weather.home/attr/Hourly forecast`); `device` and `config_entry` ids, which Home Assistant generates, hold no white space at all. Free sub-resource segments take no other charset.
+- **One Unicode rule for every text site** (D-69). In every id, every free sub-resource segment and every `where:` value, anywhere in the text, these are refused as well: any White_Space character other than the ASCII space (a no-break space, an ideographic space, a line or paragraph separator, a tab), any Default_Ignorable_Code_Point (a variation selector, a combining grapheme joiner, a Hangul filler, besides the format characters above), and bytes that are not valid UTF-8. The ASCII space stays refused at either end. The same rule applies to every id hactl reads off an outgoing request (see Enforcement): a request whose id breaks it cannot be mapped, and a write carrying it is refused.
+- A `policy check` resource is concrete: it holds no `*` or `?`. A resource that breaks any rule of this section is refused (exit 1, nothing on stdout); a pattern that breaks one is a broken file.
+- Kinds, sub-resource words and verbs are lowercase, exactly as written here.
+
+#### Verbs
+
+| verb | means | e.g. |
+|---|---|---|
+| `read` | see it | `ent show`, `config file`, `dash show` |
+| `control` | change runtime state, not config | `svc call`, `script run` |
+| `edit` | change an existing config or registry field | `auto apply`, `ent set-label`, `dash save` |
+| `create` | bring a new resource into existence | `auto create`, `area create` |
+| `delete` | remove it | `auto delete`, `dash delete` |
+
+`write` stands for the write verbs — `control`, `edit`, `create`, `delete` — **that apply at the rule's address** (D-53, D-110). A verb applies at an address only if some command asks for it there; the table below is the complete list, held in lockstep with what hactl's checks emit. A pattern covers its own address and everything below it, so a verb applies at a pattern when the table lists it at any address the pattern covers (`*` covers every kind). **A deny also holds every verb that changes what it covers from above** (D-125) — a part of it is denied, so all of it is: `create` and `delete` reach every part of what they create or delete, `control` on `entity:<id>` changes its `state` and `attr/…`, and `edit` on `file:<path>` rewrites its `block/…`. An allow does not: it grants only the part. So `"entity:*/registry/entity_id": [write]` means `[edit]` in an allow and `[edit, create, delete]` in a deny — never `control`, because no command switches a registry field; the no-renames rule is therefore `deny "entity:*/registry/entity_id": [edit]`, since with `[write]` it refuses deleting (and creating) every entity, and `policy lint` reports each allow it overrides as `blocked-by-part` (D-127) — while `"entity:lock.*": [write]` means all four, `deny "entity:lock.*/state": [write]` means control, create and delete, and `"system:reload/*": [write]` means nothing. `policy show` lists the result as `expanded` (in text, ` → [<verbs>]` after a rule holding `write`). `read` applies at every address.
+
+| address | write verbs that apply there |
+|---|---|
+| `entity:<id>` | control, create, delete |
+| `entity:<id>/registry/<field>` | edit |
+| `device:<id>` | delete |
+| `device:<id>/registry/<field>` | edit |
+| `area:<id>` | create, edit, delete |
+| `floor:<id>`, `label:<id>` | create, delete |
+| `automation:<id>`, `template:<id>`, `helper:<domain>/<id>`, `script:<id>` | control (checked for denies only — Enforcement, "Service calls: reach"), create, delete |
+| `automation:<id>/config`, `template:<id>/config`, `script:<id>/config` | edit |
+| `script:<id>/run` | control |
+| `dashboard:<url_path>`, `dashboard:<url_path>/views/<path>` | create, edit, delete |
+| `config_entry:<id>` | create, edit, delete |
+| `config_entry:<id>/options` | edit |
+| `file:<path>` | edit |
+| `service:<domain>.<service>` | control |
+| `system:wireguard` | control, edit |
+| `system:cache` | edit, delete |
+| every other address: `entity:<id>/state`, `/attr/<name>`, `/history`, `/stats`; `automation:<id>/trace`, `script:<id>/trace`; `helper:<domain>/<id>/config`; `dashboard:<url_path>/resources`; `config_entry:<id>/flow`; `file:<path>/block/<id>`; `system:logs`, `system:check_config`, `system:reload` | none — `read` only |
+
+A verb written by name is kept as written, on any kind — the file is not broken, and a check of exactly that address still matches it — but a write verb that applies nowhere its pattern reaches (for a deny, counting the verbs that change it from above) decides nothing a command asks: `policy lint` reports it as `verb-not-applicable`, and a `write` that applies to nothing the same way. `policy check` accepts `write` and answers each write verb that applies at the resource (see `policy check`).
+
+#### Matching
+
+- The pattern `*` matches every resource of every kind.
+- Otherwise the kind must be equal, and the id is matched **segment by segment** with the same glob engine as `--pattern`: case-insensitive (D-2), `*` any run of characters and `?` exactly one character (one Unicode code point, not one byte — `file:k?che.yaml` matches `küche.yaml`), but neither crosses a `/`. A segment that is exactly `**` matches zero or more whole segments, and only in a `file` id (`file:packages/**`).
+- **The full id only** (D-63). Unlike `--pattern`, a policy pattern has no second anchor after the domain (D-28 is for filters): `entity:kitchen*` matches no entity, because every entity id starts with its domain, and `entity:sensor.*` does not match `binary_sensor.x`. Across domains write the domain as a wildcard: `entity:*.front_door` matches `lock.front_door` and `cover.front_door`. An `entity` or `service` pattern with neither a `.` nor a wildcard (`entity:front_door`, `service:turn_on`) can never match and is a broken file.
+- **Unlike `--pattern`, a pattern without a wildcard is exact, never a substring.** `entity:light.kitchen` matches `light.kitchen` (any case) and not `light.kitchen_2`: a filter may err towards more rows, an allow may not err towards more rights.
+- A pattern without a sub-resource covers the resource and everything below it. A pattern with one covers that sub-resource and everything below it, and not the resource itself (each sub segment glob-matched the same way).
+
+#### Evaluation
+
+For one resource and one verb, in the effective profile (D-52):
+
+1. **A deny that matches decides: denied.**
+2. Otherwise, **an allow that matches decides: allowed** — if it has a `where:`, only when the selector holds.
+3. Otherwise, **the profile default decides:** `default: deny` denies, anything else allows.
+4. **Partial** (D-66). If steps 2–3 allowed the resource but a deny of the same profile, for the same verb, covers a strict descendant of it **and that verb applies at the deny's own address** — the table's verbs there, or a verb that changes it from above (Verbs, D-110, D-125) — the verdict is partial. A strict descendant is the same kind and id with one or more further sub-resource segments: `deny "entity:*/registry/entity_id" [edit]` covers a descendant of `entity:light.x` and of `entity:light.x/registry`, and a deny on `entity:device_tracker.*/attr/latitude` one of `entity:device_tracker.jan`. A `file` path is not a descendant of another path — a deny on `file:packages/x.yaml` leaves `file:packages` whole; `file:packages/x.yaml/block/b` is a descendant of `file:packages/x.yaml`.
+   - For a write verb (`control`, `edit`, `create`, `delete`) **partial is denied**: the rule named is the first of those descendant denies.
+   - For `read` **partial is allowed**: the rule named is still the one that allowed it, and the descendant denies are listed — the parts a phase-3 read will mask (D-54).
+
+   A deny whose verb does not apply where the deny sits never makes anything partial: `deny "entity:*/registry/entity_id" [write]` holds no `control`, so `control entity:light.x` is allowed, and an explicit `deny "entity:*/registry/labels" [control]` refuses nothing — no command's `control` changes a registry field, and `policy lint` says so. A verb that changes the deny's part does make it partial: `deny "automation:x/config" [write]` refuses `delete automation:x` (deleting the automation deletes its config), `deny "entity:lock.*/state" [control]` refuses a service call on a lock, and `deny "file:x.yaml/block/b" [edit]` refuses an edit of `file:x.yaml`. A deny that matches the resource itself, or an ancestor of it, is step 1, never partial. A verdict with no profile in effect (`no policy file`, implicit allow-all) is never partial.
+
+Rule order in the file means nothing; deny always overrides allow, so there are no exceptions to exceptions — narrow the allow instead. A parent covers its children: `read` on `entity:light.kitchen` covers `entity:light.kitchen/attr/brightness`. A deny on a child cuts out only the child — and makes a check on the parent partial (step 4). An allow on a child alone grants only the child (`entity:*/registry/labels` [edit] allows editing labels and nothing else of the entity). When several rules of the deciding kind match, the one named is the first in the file: the lowest line, then the leftmost column (two rules can share a line in a flow mapping, `deny: {"entity:lock.*": [write], "entity:*": [control]}`).
+
+**Selectors** (`where:`, D-55) narrow an allow on an `entity` or `device` pattern and are evaluated live on every check — a relabel takes effect at once. `area` holds when the resource's area matches by id or name: for an entity its effective area, its own or else its device's (H-8); for a device its own. `label` holds when one of the resource's own labels matches by id or name (an entity does not inherit its device's labels). Values glob like patterns; several values of one key are alternatives; `area` and `label` together must both hold. A selector is evaluated only while it can still change the verdict or the rule it names: never when a deny matches the resource (step 1), and the narrowed allows that match are tried in file order (line, then column) — none after an allow that already grants, and none placed after a matching allow without `where:`. If a tried selector cannot be evaluated — Home Assistant unreachable — that narrowed allow does **not** match, the next one is tried, and the verdict says so in a note. A tried selector that evaluated to false is reported when no allow granted, so a denial by the default says which narrowed allow matched the resource and why its selector did not hold (`unmet_where`, text `where not met:`, D-112): the reason names the first key that failed, area before label — `input_boolean.pg_x has no label pg_core_label`, `light.desk is in area office, not wohnzimmer`, `light.desk has no area` (an entity's area is its own, or else its device's). A selector never tried is not evaluated and not noted.
+
+Every verdict names what decided it, as `deny "entity:lock.*" [read write]`, `allow "entity:light.*" [control] where area=wohnzimmer`, `default: deny`, `default: allow`, `no policy file`, or `implicit allow-all: no active: and no default profile`. A rule is shown with its verbs as written.
+
+#### Enforcement (writes)
+
+**When it applies.** Only while a profile is in effect (D-74). With no `policy.yaml`, or with a file that puts no profile in effect (`implicit-allow-all`), every command behaves byte-identically to hactl without a policy (D-58): no check, no extra request to Home Assistant, no audit line. Writes — the verbs `control`, `edit`, `create`, `delete` — are enforced; `read` is not yet (see the top of this section).
+
+**The plan is checked in the dry run.** Every write command first works out everything its confirmed run would touch — each `(resource, verb)`, including the follow-up writes the command makes on its own — and checks all of it **before printing its preview**. `--confirm` checks the same plan again before its first write. So a dry run refuses exactly what `--confirm` would refuse, naming the same rule (preview parity, H-2). A passing dry run means the confirmed run is allowed **as long as nothing it depends on changes**: `--confirm` re-reads `policy.yaml`, re-evaluates `where:` selectors and recomputes a service call's reach, so an edited policy, a moved or relabelled entity, or a grown area can still refuse it — and that refusal says the preview had passed (D-80). A refused dry run does not count as the dry run that authorises `--confirm`: the 30-minute window opens only on a preview that passed, so a `--confirm` right after a refused preview is refused by the confirm guard (its own message, no rule) before the policy is asked. The commands that write without `--confirm` (`cache clear`, `cache refresh`, `config flow-inspect`, `config show`'s probe) check the same way before they write.
+
+**All or nothing** (E-7). If any resource in the plan is denied, the whole command is refused and nothing is written — also when the other 39 of 40 files are allowed. The refusal lists **every** denied resource, not only the first. `--allow-partial` never overrides a denial: it accepts sources that could not be *read*, not resources the policy refuses.
+
+**What a refusal looks like.** Exit 1, the error class `policy_denied`, the report on stdout, one summary line on stderr:
+
+```console
+$ hactl auto delete prod_heating
+policy_denied: would delete automation — refused by policy, nothing was written
+  denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 14)
+  checked: 2 resources, 1 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+$ echo $?
+1
+```
+
+stderr: `policy_denied: 1 of 2 resources denied (profile agent)` — a count, never a repeat of the report (D-119). Under `--json` the report keeps the preview envelope, with `ok` false and the error class (D-70):
+
+```json
+{"dry_run": true, "ok": false, "error": "policy_denied", "action": "delete automation",
+ "details": {"policy": {
+   "denied": [{"resource": "automation:prod_heating", "verb": "delete",
+               "rule": "deny \"automation:prod_*\" [delete]", "line": 14, "partial": false}],
+   "checked": 2, "profile": "agent", "selected_by": "active", "level": "A", "written": []}},
+ "hint": "the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml"}
+```
+
+`dry_run` is `true` for a refused preview and `false` for a refused `--confirm`. `details.policy.denied` lists every denied `(resource, verb)` of the plan in plan order, each with the rule and line that decided it; `"partial": true` marks a denial by a deny on a part of the resource (below), and `"kind_wide": true` a check on every id of a kind, reported as `<kind>:*` (Ids Home Assistant mints, below). `checked` counts the plan's `(resource, verb)` pairs. `written` lists what had already been written when the refusal came — always `[]` for a refusal of the plan; non-empty only when a request was refused mid-run (a hactl bug to report) or when `ref replace` wrote outside its checked plan (below). A refusal hactl makes without a rule — fail-closed, below — has `rule` `fail-closed: <reason>` and `line` 0. A denial by `default: deny` after a narrowed allow was tried carries `"unmet_where": [{"rule": "allow \"entity:*.pg_*\" [control] where label=pg_core_label", "line": 9, "reason": "input_boolean.pg_x has no label pg_core_label"}]` (only when non-empty; Selectors), and the text adds `    where not met: <rule> (line <n>) — <reason>` under its `denied:` line; a denial by a deny on a part of the resource ends `— a part of it is denied, so all of it is`. An allowed preview, while a profile is in effect, adds `policy: <n> checked, allowed (profile <p>)` to its text and `"policy": {"checked": <n>, "profile": "<p>"}` to its `details`. A broken file is `policy_broken` (D-60), also exit 1.
+
+**The hint** (D-118) is the report's last text line, `  hint: <text>`, and the JSON `hint` holds the same text. It is built from the denials' causes, in this order, joined by `; `: `the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach)` when that applies; `the owner would change the rule on line <n>[, <m>…]` for every line a deny decided (partial included), ascending; `nothing allows <resource>[ (and <k> more)]; the owner would add an allow` for denials by `default: deny`; `hactl could not check <resource> (<reason>), so it refused` for the first fail-closed denial; `allowed: <a> of <n> checked resources, but the command is refused as a whole` when only some were denied. It always ends ` — report it; do not edit policy.yaml`. A request-layer refusal whose plan had allowed the request says `hactl's own plan missed this request — a hactl bug to report; do not edit policy.yaml` instead. The hint never suggests `--confirm`. The one stderr line is `policy_denied: <m> of <n> resources denied (profile <p>)`, `<m>` the denials and `<n>` the checked pairs; a request-layer refusal appends ` — refused at the request layer[ although the command's plan allowed it (a hactl bug to report)]; already written: <what, or nothing>`.
+
+**Partly denied means denied** (D-66). A write to a resource checks the resource *and* everything below it: with `deny "entity:*/registry/entity_id" [edit]`, a command that edits `entity:light.x` as a whole is refused, naming that deny. Commands write at the finest address they can: `ent set-label` checks `entity:<id>/registry/labels`, never the whole entity; `dash save` checks each changed view (`dashboard:<u>/views/<path>`), and the dashboard itself only for changes outside views, in a view without a `path`, or when the stored config could not be read; a dashboard Home Assistant holds no config for (`config_not_found`, e.g. right after `dash create`) is compared against an empty config, so each view its first save brings is a `create` (D-126); a first save that brings no view (`{}`, an empty or null `views`) is still `edit dashboard:<u>` — it stores a dashboard where none was (D-126). **A change a command can address only at the parent is refused by any denied part, touched or not:** with `deny "dashboard:main/views/secret" [edit]`, changing `main`'s title (a non-view key) is refused. A view deny `[edit]` does not stop removing or re-adding the view through an allow of `create`/`delete` on the dashboard; `[write]` does, but then also refuses deleting and creating the dashboard itself (D-125, D-127). A deny on a part no command writes on its own still refuses every write that changes the part (Verbs, D-125): `deny "file:<path>/block/<id>" [edit]` refuses `ref replace` editing `file:<path>`, whichever block the rewrite touches, and `deny "automation:<id>/config" [write]` refuses `auto delete <id>`. Only a verb that cannot change the part refuses nothing — `deny "entity:*/registry/labels" [control]` — and `policy lint` reports such a rule as `verb-not-applicable`.
+
+**What each write command checks.** `{x}` is the resolved identifier (an automation's config id, never its alias — D-1). The default dashboard is `dashboard:` however it was named (`""`, `lovelace`).
+
+| command | checks |
+|---|---|
+| `svc call <d>.<s>` | `control service:<d>.<s>`, always (E-2) + `control` on every entity the call reaches, every entity named in `--data` and every member of a group or scene among them (E-1, below); `homeassistant.turn_on`/`turn_off`/`toggle` + `control service:<domain>.<s>` for each domain they reach; a call that starts scripts (`script.<x>`, `script.turn_on`, `script.toggle`, `homeassistant.turn_on`/`toggle`) + `control script:{x}/run` for each; + `control` on the typed address of every automation, script, helper or template entity it reaches, decided by denies only (below) |
+| `script run <x>` | `control script:{x}/run` + `control service:script.turn_on` + `control entity:script.{x}` — `{x}` is the script's config key from the entity registry; when hactl cannot read it, the run of every script (`script:*/run`) is checked instead |
+| `script apply <x>` | `edit script:{x}/config` + `control service:script.reload` (hactl reloads scripts itself after the write), checked before the diff is shown; an apply with no changes writes nothing and checks nothing |
+| `script create`, `auto create`, `helper create <d>`, `tpl create` | `create` on the id the file declares: `script:{key}`, `automation:{id}`, `helper:<d>/{key}`, `template:{unique_id}` for every unique_id in the file — a template entity without `unique_id` has no address, so `tpl create` refuses it (`fail-closed: template entity without unique_id`) |
+| `auto apply <x>` | `edit automation:{x}/config`; + `create automation:{id}` when the file's `id:` differs (a rename, E-5); a file with no `id:` (or a non-string one) is refused |
+| `auto rollback [x]`, `rollback [x]` | `edit automation:{x}/config` (the target from the backup's name when no `x`); + `create` on the backup's own `id:` when it differs; a backup with no `id:` is refused |
+| `auto delete`, `script delete`, `helper delete`, `tpl delete` | `delete` on the definition + `delete entity:{e}` for each registry entry the delete then removes (the cleanup after a delete is part of the plan); an automation without a config id (a YAML entry found by alias) is refused (`fail-closed: automation has no config id`); `helper delete` names the helper's domain in its request — always, with or without a policy (D-123) — so a slug that exists in two domains is deleted in the one `helper show` resolves rather than refused as ambiguous |
+| `area create`, `floor create`, `label create` | `create` on **every** id of the kind (Home Assistant mints the id, below) |
+| `area delete <x>` | `delete area:{x}` + `edit entity:{e}/registry/area_id` and `edit device:{d}/registry/area_id` for every entity and device whose own area it is |
+| `floor delete <x>` | `delete floor:{x}` + `edit area:{a}` for every area on that floor |
+| `label delete <x>` | `delete label:{x}` + `edit entity:{e}/registry/labels` and `edit device:{d}/registry/labels` for every entity and device holding it, `edit area:{a}` for every area holding it |
+| `ent set-label`, `ent set-area` | `edit entity:{x}/registry/labels` / `…/registry/area_id` (`--clear` and `--remove` too) |
+| `device set-label`, `device set-area` | `edit device:{x}/registry/labels` / `…/registry/area_id` |
+| `ent rename <old> <new>` | `edit entity:{old}/registry/entity_id` + `create entity:{new}` (E-5) + everything `ref replace` checks (E-7) |
+| `ref replace <old> <new>` | `edit file:<path>` for every config file the rewrite touches + `edit automation:{id}/config` / `script:{key}/config` / `template:{uid}/config` for every automation, script or template entity a change lies in (a changed `id:` or `unique_id:` is a rename: + `create` on the new id) + `edit dashboard:<u>[/views/<v>]` for every dashboard it rewrites — all or nothing, so one denied entry in a file refuses the whole replace |
+| `dash save`, `dash replace` | `edit` per changed view, `create`/`delete` per added/removed view, `edit dashboard:<u>` for the rest — against an empty config when Home Assistant holds none (D-126), as the whole dashboard when the stored config cannot be read |
+| `dash create`, `dash delete` | `create` / `delete dashboard:<url_path>` |
+| `config delete <x>` | `delete config_entry:{x}` + `delete` on every device and entity whose registry entry names that entry — checked as a deliberate superset (a device that also belongs to another entry is checked too) |
+| `config options <x>` | `edit config_entry:{x}/options` |
+| `config flow-step --options`, `config flow-inspect --options` | `edit config_entry:{x}/options`, the entry the flow belongs to — on every entry's options when hactl cannot tell which (a flow started by an earlier command) |
+| `config flow-start`, `config flow-step`, `config flow-inspect` | `create` on every config entry id (and `edit` too for `flow-step` and `flow-inspect`: the flow may be reconfiguring an existing entry). `flow-inspect` is checked like a step because asking Home Assistant for a flow runs its current step — it can finish the flow |
+| `companion wireguard config` / `up` / `down` | `edit` / `control` / `control system:wireguard` |
+| `cache clear` / `cache refresh` | `delete` / `edit system:cache` (hactl's own bookkeeping — the id cache, the confirm window, backups, the audit log — is never checked) |
+| `config show` | its options-flow probe needs `edit config_entry:{x}/options`; when denied, the probe is skipped with a note — `config show` itself is never refused for it |
+
+**Service calls: reach** (E-1, D-59). A service call acts on whatever its target expands to — an area, a floor, a label, a device, a group. hactl asks Home Assistant for that set (`extract_from_target`, with groups expanded) in the dry run and requires `control` on each entity in it. A service counts as one domain's entity service only when its domain is not `homeassistant` and has live entities (`light.turn_on`): then only the available entities of that domain count. Any other service — `homeassistant.turn_on`, an integration's own service such as `zwave_js.clear_lock_usercode` that acts on `lock` entities, anything hactl cannot classify — is checked against the whole set the target names, across domains; this can refuse more than the call would touch, never less. `entity_id: all` (in any case) is never sent to that question: it means every live entity of the service's domain for an entity service, and every live entity of every domain otherwise. `homeassistant.turn_on`, `turn_off` and `toggle` call each domain's own service in turn, so they also need `control service:<domain>.<service>` for every domain in the reach; and a call that can start scripts — `script.<x>`, `script.turn_on`, `script.toggle`, `homeassistant.turn_on`/`toggle` — needs `control script:{x}/run` for every script it starts, as `script run` does. Entity ids passed outside the target are checked too: every mapping key and every string value in `--data`, at any depth, that names a live entity needs `control` (`scene.apply` with `entities: {lock.front_door: unlocked}` needs `control entity:lock.front_door`). An entity that passes the call on — a group, a light (switch, cover, fan, lock, media_player) group, a scene — needs `control` on every member its live state lists in its `entity_id` attribute, members of members included, because Home Assistant's answer names only the group or scene itself (D-106): `scene.turn_on` on a scene that unlocks `lock.front_door` needs `control entity:lock.front_door`. The members' own services are not added. **An entity that is a typed resource is also checked at its typed address, for denies only** (D-107): an automation as `automation:<config id>` (its `id` attribute), a script as `script:<config key>`, a helper as `helper:<domain>/<id>`, a template entity as `template:<unique_id>` (each read from the entity registry). A deny there refuses the call — `deny "automation:prod_*" [write]` refuses `svc call automation.turn_off` on `prod_heating` — but neither an allow nor `default: deny` decides it: the call's grant is the entity's. An automation without a config id has no typed address and is checked as its entity; when the registries cannot be read, a script, helper or template address is checked on every id of its kind (`<kind>:*`). **If the reach cannot be computed — Home Assistant does not answer the question, or answers with an error — the call is refused** (`fail-closed: reach unknown`), never sent unchecked. A service with no target and no entity in its data needs only its `service:` check.
+
+**Service calls: the service itself** (E-2). `control service:<domain>.<service>` is checked on every service call, with or without a target — the ones you type (`svc call homeassistant.restart`) and the ones hactl sends itself (`script.turn_on` for `script run`, `script.reload` for `script apply`). The service check is never skipped because the entity checks passed. It is decided like any resource (D-52, D-73): under `default: deny` a service needs an allow (`"service:light.*": [control]`); a profile without `default: deny` allows a service no deny matches. A profile that uses `script apply` under `default: deny` must allow `service:script.reload`. `<domain>.reload` needs no `system:reload/<domain>`.
+
+**Rename** (E-5). Renaming moves a resource to a new id, so it needs `edit` on the old one and `create` on the new one — a deny on the new id stops the rename, and so does a deny on renaming the old. This covers `ent rename` and the hidden renames: `auto apply` (and `auto rollback`) with a file whose `id:` is not the target's, and a `ref replace` that rewrites an automation's `id:` or a template's `unique_id:`.
+
+**Ids Home Assistant mints.** `area create`, `floor create`, `label create` and a new config entry (`config flow-start`, `config flow-step`) send a name or a domain; Home Assistant chooses the id. Since there is no id to check yet, hactl checks `create` on **every** id of the kind (D-75): allowed only if no deny for `create` matches any id of that kind and an allow covers them all (`"area:*": [create]`) or the default allows. So `deny "area:secret" [create]` refuses every `area create`, and so does a `create` deny on a part of any id of the kind (`deny "config_entry:*/options" [create]` refuses every new config entry — partly denied means denied). A refusal reports the resource as `area:*` with `"kind_wide": true`.
+
+**Unmapped requests fail closed** (E-9, D-74). Beneath the plan, every request hactl sends — Home Assistant websocket and REST, and the companion — is mapped to the resources it touches before it leaves, once per request however often it is retried. A request hactl cannot map is refused if it could change anything — any websocket command, any HTTP method but GET (`fail-closed: unmapped request <what>`); an unmapped GET is still sent in this version. So is a request whose path holds a `.` or `..` segment or an encoded slash, or whose id breaks the grammar (D-67, D-68, D-69). You should never see one: it means a hactl bug, and the refusal says what was already written.
+
+**`ref replace` and `ent rename`, confirmed** (E-7, D-77). The confirmed run first asks the companion for the rewrite as a dry run, checks everything in it, and only then sends the real rewrite of the same `old`/`new` (`ent rename` does this before its registry update, and sends the rewrite after it through the plan it checked). To find the automation, script or template entity a change lies in, hactl reads the file the change is in and walks the change's path: an entry of a top-level list or of an `automation`/`automation <label>` key that has an `id:` and triggers, actions or a blueprint is that automation; a key of a `script` mapping, or a top-level key holding a `sequence`, is that script (a file that is one script — `!include_dir_named` — is the script its file name names); an entity item with a `unique_id` under a template entity domain of a template block is that entity, and a change in the block's shared part (its trigger, condition, action, variables) lies in every entity of the block. A path that matches the file two ways gets both. A change in a node the file shares through a YAML anchor — `&x` in one entry, `*x` or `<<: *x` in another — lies in every entry that shares it, since the rewrite changes them all (D-104). A change in a file another file pulls in with `!include` (or `!include_dir_list`/`_named`/`_merge_list`/`_merge_named`) lies in the entry the include sits in, up through includes of includes: hactl reads the instance's config files to find them (D-105). A file hactl cannot read, that no longer holds the change's path, that may include the changed file but does not parse, or whose anchors or includes make the entries too many to work out, refuses the run (`fail-closed: typed owner unknown`). A file that starts matching in the moment between the two is written without a check: the run then exits 1 with `policy_denied`, names each such file with `fail-closed: written outside the checked plan` and lists it in `written` (as `edit file:<path>`). In text the rename's report comes first and the refusal after it; under `--json` the refusal is the run's only document.
+
+**Not covered** (guardrail, D-51). What Home Assistant does on its own after an allowed write, beyond what hactl can enumerate from its registries, is not checked: the companion reloads a domain after writing it, a script you may run does whatever it does. (Deleting a label, area, floor or config entry *is* checked against its current holders, above.) A typed write is checked as its type (`automation:x/config`), not also as the file it lands in (`file:automations.yaml`); a `ref replace` change hactl cannot place in an automation, script or template entry is checked as its file only. Created automations, scripts, helpers and templates are checked as what they are, not as the entities Home Assistant mints for them. `tpl eval` can read any state. Checking the entities a written automation, script or template *references* (E-3), cross-checking typed and file writes, and the built-in deny on `file:hactl/**` (E-8) come in a later version.
+
+**MCP.** `hactl mcp` checks in this order (D-72): a server started without `--allow-writes` refuses every write command first (its own error, no policy involved); then a broken `policy.yaml` refuses (D-60); then the policy decides, exactly as on the CLI. `--allow-writes` permits writes in general; the policy decides which. The policy is read on every tool call, from the pinned instance (D-64), and nothing one call checked is trusted by the next.
+
+**Audit log.** While a profile is in effect, every write check is appended to `<instance>/cache/policy-audit.log`, one JSON object per line — previews and confirmed runs, allowed and denied:
+
+```json
+{"time": "2026-11-01T09:42:07+01:00", "command": "hactl auto delete prod_heating", "dry_run": false,
+ "layer": "command", "resource": "automation:prod_heating", "verb": "delete", "allowed": false,
+ "rule": "deny \"automation:prod_*\" [delete]", "line": 14, "profile": "agent"}
+```
+
+A line also carries `unmet_where`, as in the refusal, when a narrowed allow was tried and did not hold. `layer` is `command` for the plan check and `request` for the check of each request sent — one line per request, not per retry. `command` is the command path and its positional arguments; flag values that carry content (`--data`, `-f`) are not logged. At 10 MiB the file is renamed to `policy-audit.log.1`, replacing the previous one; `cache clear` does not remove it. If the line cannot be written, the write is refused (`fail-closed: audit log not writable`) — a preview too, since a preview is what authorises `--confirm` (D-71). hactl never reads the log back; it is for the owner.
+
+#### `policy show`
+
+Prints the file path (or `no policy file`), the level-A sentence above verbatim, the effective profile and how it was selected, the profile default, its rules — deny rules first, then allow rules, each in file order (line, then column) with its line, and after a rule whose verbs hold `write` what it expands to, ` → [<verbs>]` (D-128: `deny "entity:*/registry/entity_id" [write] → [edit create delete]`, `allow "entity:*/registry/labels" [write] → [edit]`) — the declared profiles, and `enforced: writes — reads not yet`. With no `active:` and no `default` profile it says `ALLOW-ALL` and why. `--as <p>` shows profile `<p>` and marks the output `what-if`. **The whole report is printed whatever `--tokensmax` says** — it is a document, like `--json` (Output conventions). Exit 0, or 1 for a broken file: its text report is the `file:` line, the disclaimer, one `policy_broken: <file>:<line>: <message>` line per problem and the closing owner line (Policy file format).
+
+```json
+{"file": "/home/u/ha/home/policy.yaml", "exists": true, "valid": true, "problems": [],
+ "level": "A", "disclaimer": "a guardrail against mistakes, not a security boundary: the token in .env can do everything",
+ "enforced": true, "enforced_verbs": ["control", "edit", "create", "delete"],
+ "profile": "agent", "selected_by": "active", "what_if": false, "allow_all": false,
+ "default": "deny", "profiles": ["agent", "default"],
+ "rules": [{"effect": "deny", "pattern": "entity:lock.*", "verbs": ["read", "write"],
+            "expanded": ["read", "control", "edit", "create", "delete"], "where": null, "line": 16},
+           {"effect": "allow", "pattern": "entity:light.*", "verbs": ["control"], "expanded": ["control"],
+            "where": {"area": ["wohnzimmer"], "label": []}, "line": 12}]}
+```
+
+`enforced` is true and `enforced_verbs` lists the verbs commands enforce in this version, in the order read, control, edit, create, delete — `read` joins it when reads are enforced. With no profile in effect nothing is checked, and they say so: `enforced` false, `enforced_verbs` `[]`. `verbs` is the list as written, `expanded` the verbs it grants or denies at its address — `write` replaced by the write verbs that apply there (Verbs), a verb written by name kept — in the order read, control, edit, create, delete (`"entity:*/registry/entity_id": [write]` expands to `["edit"]`). `profiles` is sorted. With no file: `exists` false, `profile` "", `selected_by` `no-file`, `allow_all` true, `default` `allow`, `profiles` and `rules` empty. A broken file: `valid` false, `problems` `[{"line": 7, "message": "…"}]` (the message with its "did you mean", without the `<file>:<line>:` prefix) and `"hint": "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"` — `hint` appears only when `valid` is false; `profile`, `selected_by` and `default` are "", `allow_all` is false, `profiles` and `rules` are empty.
+
+#### `policy check <resource> <verb>`
+
+Answers one question and **its exit code is the verdict: 0 allowed, 1 denied** — a partial verdict exits by what it resolved to (1 for a write verb, 0 for `read`). The text answer is `allowed: <resource> <verb>` or `denied: <resource> <verb>`, then the deciding rule and its line (`rule: <rule> (line <n>)`), then one `where not met: <rule> (line <n>) — <reason>` line per narrowed allow that was tried and did not hold (Selectors), then — for a partial verdict only — one `partial: <rule> (line <n>)` line per descendant deny, then the profile and how it was selected; a what-if starts with a `what-if: --as <p>` line. It contacts Home Assistant only when a `where:` selector can still change the verdict (see Selectors): a check a deny or an earlier plain allow decides never contacts it.
+
+```json
+{"resource": "entity:lock.front_door", "verb": "control", "allowed": false,
+ "rule": "deny \"entity:lock.*\" [read write]", "line": 16, "profile": "agent",
+ "selected_by": "active", "what_if": false, "level": "A", "enforced": true, "notes": [],
+ "partial": false, "partial_denies": [], "unmet_where": []}
+```
+
+`line` is 0 when no rule decided. `enforced` says whether a command would act on this verdict in this version: true for a write verb while a profile is in effect, false for `read` (the text answer then ends `not enforced yet: reads are a later version`) and when no profile is in effect. `control` on an automation, a helper, a template entity or a script itself is checked for denies only (D-107): a verdict `default: deny` decided there is not enforced (`"enforced": false`, text `not enforced: control on <kind>:<id> is checked for its denies only — …`). A script is the exception when the same default also denies its run: `script run` and a service call starting the script check `control script:<id>/run` in full, so that verdict is enforced and carries the note `a run is checked as control script:<id>/run, denied — <rule>: script run and a service call starting the script refuse it`; while the run is allowed, the script's `not enforced: …` line says `a run is decided by control script:<id>/run, which is allowed` (D-128). `notes` lists every narrowed allow whose `where:` was tried and could not be evaluated, and two notes of their own: `control on <kind>:<id> is checked for its denies only — this allow grants nothing; a service call is decided by the entity's own verdict` when an allow decided `control` on an automation, helper or template address (D-111; not a script, whose allow also grants its `run`, D-128), and `<verb> does not apply at <resource>: no command asks for it there, so this verdict decides no command` for a write verb no command asks for at or below the resource (D-110, D-128). Each note is a `note:` line in text. `unmet_where` lists every narrowed allow that was tried and whose selector did not hold, in the order tried, as `{"rule", "line", "reason"}` — `[]` when none (Selectors, D-112). A partial verdict has `"partial": true` and lists every descendant deny of step 4 in `partial_denies`, in file order (line, then column), each as `{"rule": "deny \"entity:device_tracker.*/attr/latitude\" [read]", "line": 17}`; for a write verb `allowed` is false and `rule`/`line` are those of its first entry, for `read` `allowed` is true and `rule`/`line` name what allowed it. Otherwise `partial` is false and `partial_denies` is `[]`. An invalid resource or verb, an unknown `--as` profile, or a broken file is refused: exit 1, the reason on stderr, nothing on stdout — so a denial is exit 1 **with** a verdict on stdout, and a refusal is exit 1 without one.
+
+**`write`** (D-120) answers one verdict per write verb that applies at or below the resource (Verbs), in the order control, edit, create, delete, and **exits 0 only when every one a command enforces is allowed** — a deny-only `control` the default decided (`not enforced`) is shown denied and does not count — on an automation, a helper or a template only: a script's counts whenever the default also denies its run (D-128) — the top line and `allowed` follow the exit code (D-128). Text: `allowed: <resource> write` or `denied: <resource> write`, then per verb `<verb>: allowed|denied — <rule> (line <n>)` with that verb's `partial:`, `where not met:` and `note:` lines indented below it (and, for a deny-only `control` the default decided, its `not enforced: …` line), then `profile:` and the `enforced:` line as for one verb:
+
+```console
+$ hactl policy check entity:light.sofa write
+denied: entity:light.sofa write
+control: allowed — allow "entity:light.*" [control] where area=wohnzimmer (line 12)
+edit: denied — default: deny
+create: denied — default: deny
+delete: denied — default: deny
+profile: agent (selected by active)
+enforced: a write command refuses what this verdict denies
+```
+
+JSON: `resource`, `"verb": "write"`, `allowed` (true only when every enforced verdict is), `profile`, `selected_by`, `what_if`, `level`, `enforced`, and `verdicts` — one object per applicable verb, each exactly the document `policy check <resource> <verb> --json` prints. A one-verb answer has no `verdicts` key. A resource at which no write verb applies is refused — exit 1, nothing on stdout, `write applies to nothing at entity:light.sofa/attr/brightness: no command asks for a write there`.
+
+#### `policy lint`
+
+Validates the file, then checks every rule of **every** profile, not only the effective one — a typo in an inactive profile is a hole the day the owner switches to it. Findings, each with its profile, rule and line:
+
+| code | means |
+|---|---|
+| `broken` | a broken-file problem, as above; no live checks run |
+| `implicit-allow-all` | profiles are declared, but no `active:` and no `default` profile puts any of them in effect |
+| `redundant-allow` | an allow in a profile without `default: deny` — that profile already allows what no deny matches, so the allow and its `where:` decide nothing |
+| `no-match` | the pattern's id matches nothing of its kind on the live instance, or its `attr/<name>` matches no attribute of any entity the id matches — a typo in a deny is a silent hole otherwise |
+| `unreachable` | for one of its verbs, every live match of the allow is denied by a deny of the same profile, so it can never decide |
+| `verb-not-applicable` | a write verb written by name applies nowhere the pattern reaches, or a `write` applies to nothing there (Verbs, D-110): `"control" does not apply at entity:*/registry/entity_id — no command asks for it there, so the rule decides nothing for it (control on entity is checked at: entity:<id>)`, or `"write" applies to nothing at system:reload/* — no command asks for a write there, so the rule decides nothing for writes` — one finding per rule and verb |
+| `no-effect` | an allow on an `automation`, `helper` or `template` address naming `control`: control there is checked for denies only, so the allow grants nothing for it (D-111) — `control on automation:<id> is checked for denies only, so this allow grants nothing for control — grant switching on the entity instead: allow "entity:automation.*": [control], and its service` |
+| `blocked-by-part` | under `default: deny`, an allow whose write verb a deny of the same profile on a strict-descendant pattern always refuses from above — the verb is in both, applies at the deny's pattern (D-125: `create`/`delete` of the owner, `control` via `state`/`attr`, `edit` via a file `block`) and some command asks it between the two — wherever the patterns overlap (D-127); one finding per allow and deny: `never grants delete where deny "entity:*/registry/entity_id" [write] (line 61) covers a part: a part of it is denied, so all of it is — if the deny should only stop changes to the part itself, narrow it to [edit]` (the last clause only when such a narrower deny exists) |
+| `self-grant` | under `default: deny`, a narrowed allow's `where:` that another allow of the profile lets the agent satisfy itself — an allowed edit of the matched entities' `registry/labels` or `registry/area_id`, or of their devices' `registry/area_id` (D-114): `the agent can satisfy this where: itself — allow "entity:*/registry/labels" [edit] (line 9) lets it change labels on 3 of the entities this allow matches (e.g. input_boolean.pg_x); a guardrail does not stop that — to close it, deny the field edit: deny "entity:*.pg_*/registry/labels": [edit]` |
+| `half-protected` | a deny protects an automation's, script's, helper's or template's config but not the entity it owns, or the entity but not the config (D-115; see "Worked example: protect one automation") — the message names the counterpart address, resolved live |
+
+Live checks compare the id against: `entity` — the entity_ids in states and the entity registry; `device`, `area`, `floor`, `label` — their registries; `automation` — the config ids (D-1; not the entity object id `auto ls` prints, which differs for every UI-authored automation); `script` — the ids `script ls` prints; `dashboard` — the url_paths `dash ls` prints plus the default; `service` — the services Home Assistant reports; `system` — its fixed set; `helper` — `<domain>/<id>` of every helper `helper ls` lists (the companion's YAML helpers and the storage helpers in the states); `template` — the `unique_id`s of the companion's template list; `config_entry` — the entry ids `config entries` lists (D-116). Without the companion, `helper` is checked against its storage half and listed **unchecked** with the companion's error — a match in the storage half counts as one, but no rule is reported `no-match` or `unreachable` against half a list — and `template` is unchecked with the companion's error. `file` is not enumerated (the companion lists only the YAML files it serves, not the config directory): every rule naming it is listed **unchecked** with reason `not enumerated`, its profile, rule and line (D-128) — as is every kind Home Assistant could not be read for — an unchecked kind is never reported clean. After the first transport failure (refused, timed out) lint stops asking: every Home Assistant-backed kind not yet read is listed unchecked with that same error as its reason, so a stalled host costs one `--timeout`, not one per kind.
+
+Below the id (D-65), closed sub-resource words and registry field names need no live check (a misspelling is a broken file). Of the free segments, `attr/<name>` is checked against the attribute names in the live state of every entity the pattern's id matches — glob and case as in Matching; a pattern that stops at `attr` has nothing to check, and an id that matches no entity is one `no-match`, not two. Every other free segment — `views/<path>`, `block/<id>`, `reload/<domain>` — cannot be checked: each rule holding one is listed in `unchecked` with reason `sub-resource not checked`, whether or not its kind is enumerated, so lint is never clean without `--allow-partial` while such a rule exists. A free segment of only `*` (`*`, `**`) counts as checked — nothing in it can be misspelt — so it is not listed, and `attr/*` is not looked up; a segment with any literal character (a `?` too) is unchecked, or for `attr/<name>` checked live.
+
+**`where:` values** (D-113) are checked too: each `area` value against the area registry and each `label` value against the label registry, by id or by name, glob and case as in Matching. A value that matches nothing is `no-match` with the narrowed allow's profile and rule and the `where:` entry's line — `where: label "pg_core_lable" matches no label on this instance (by id or name)` — since a misspelt selector silently denies everything the allow was meant to grant. A value of only `*` counts as checked. A registry lint could not read lists its kind (`area`, `label`) as **unchecked** once, like any other kind.
+
+**`self-grant`** asks the profile itself, with the live registries, whether the edit that satisfies the selector is allowed and by which allow — so a deny on the field, or a granting allow narrowed by its own `where:` that does not hold, is no finding. Only entities in the entity registry count (nothing else has labels or an area to change). When the registries cannot be read the narrowed allow is listed unchecked with reason `self-grant not resolved`.
+
+**`half-protected`** resolves each typed entry's entity live, as the service-call check does (an automation's entity by its `id` attribute, a script's, helper's or template's by the entity registry): a deny on `automation:<id>`, `script:<id>`, `helper:<domain>/<id>` or `template:<id>` (or its `config`) holding `edit` or `delete` whose entity still allows `edit` on a registry field — the first one still editable is named, in the order `name`, `area_id`, `labels`, `icon`, `disabled_by`, `entity_id` — and a deny on `entity:<e>` holding `edit` whose owner still allows `edit <kind>:<id>/config` or `delete <kind>:<id>` (a helper: `delete` only; a deny on any one form of its id protects it). One finding per rule, naming the first counterpart (by id, then entity) and the others in a closing `; the same holds for <x>[, <y>, <z>][ and <n> more]` (D-128): `deny "automation:pg_v9_auto_1" [write] protects the automation's config, but its entity automation.pg_v9_verify_auto can still be changed (edit entity:automation.pg_v9_verify_auto/registry/name is allowed) — to protect both, also deny "entity:automation.pg_v9_verify_auto": [write]`. When the registry cannot be read the rule is listed unchecked with reason `counterpart not resolved` (unless its kind is listed unchecked already).
+
+Exit 0 when there is no file, or the file is valid, nothing was found and nothing was unchecked; exit 1 otherwise. `--allow-partial` accepts unchecked entries (they are still listed) — it never hides a finding.
+
+For `unreachable`, an allow's sub-resource path is a set, not a literal: the allow is unreachable for a verb only when, for each live match, one deny of the same profile covers its whole sub path — the deny's sub path is no longer than the allow's, each literal allow segment matches the deny's segment, and each wildcard allow segment faces exactly `*` in the deny (or the deny stops above it). A deny on `entity:lock.*/attr/?` leaves `attr/battery` to an allow on `entity:lock.*/attr/*`, so that allow is reachable.
+
+```json
+{"file": "/home/u/ha/home/policy.yaml", "exists": true, "valid": true, "level": "A",
+ "findings": [{"code": "no-match", "profile": "agent", "rule": "deny \"entity:lokc.*\" [read write]",
+               "line": 16, "message": "matches no entity on this instance"}],
+ "unchecked": [{"kind": "dashboard", "reason": "sub-resource not checked", "profile": "agent",
+                "rule": "deny \"dashboard:main/views/secret\" [read]", "line": 19},
+               {"kind": "file", "reason": "not enumerated", "profile": "agent",
+                "rule": "deny \"file:**\" [write]", "line": 20}]}
+```
+
+Findings are ordered by line, then code, profile and rule. `unchecked` follows the order of the kinds table; within a kind the kind's own entry (`profile`/`rule` "", `line` 0 — a kind Home Assistant could not be read for) comes first, then one entry per rule in file order (line, then column). Both are `[]` when empty. In prose, a broken file's report is its `file:` line, one `policy_broken: <file>:<line>: <message>` line per problem and the closing owner line (Policy file format); under `--json` its findings have code `broken`, and the document adds `"hint": "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"` (only when `valid` is false).
+
+#### Worked example: protect one automation
+
+An automation has two addresses: its config, `automation:<config id>` (what `auto apply`, `auto delete` and switching it check), and its entity, `entity:automation.<object id>` (what `ent rename`, `ent set-label`, `ent set-area` and a registry delete check). For an automation made in the UI the two ids differ. Find both in one listing — `id` is the entity's object id, `config_id` the config id:
+
+```console
+$ hactl auto ls --pattern pg_v9 --json
+[{"id": "pg_v9_verify_auto", "config_id": "pg_v9_auto_1", "state": "on", …}]
+```
+
+Then deny both:
+
+```yaml
+    deny:
+      "automation:pg_v9_auto_1":               [write]   # its config: edit, delete, switching it
+      "entity:automation.pg_v9_verify_auto":   [write]   # its entity: rename, relabel, move, disable, delete
+```
+
+With only one of the two, `policy lint` reports `half-protected` and names the missing address. The same holds for a script (`script:<id>` and `entity:script.<…>`), a helper (`helper:<domain>/<id>` and `entity:<domain>.<…>`) and a template entity (`template:<unique_id>` and its entity). A deny cannot be narrowed with `where:` and an allow cannot exclude: to keep one domain out of a wildcard allow such as `entity:*.pg_*`, list the domains you mean (`entity:light.pg_*`, `entity:switch.pg_*`, …).
 
 ---
 
@@ -1175,7 +1608,7 @@ hactl auto ls --restored                       # same, automation-scoped table
 
 ## Output conventions
 
-- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--full` removes it too, unless you pass `--tokensmax` yourself. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `completion`, `--help`.
+- **Token cap & estimate:** output is truncated at `--tokensmax` tokens (default 500, `0` = off) with a hint naming filters that shrink it; prefer filters to raising the cap. `--full` removes it too, unless you pass `--tokensmax` yourself. `--tokens` prints a `[~N tok]` estimate (stderr under `--json`). **Documents are never capped** (a cut leaves them unparseable or incomplete): `--json`, `dash show --raw|--yaml|--view`, `<family> cat`, `config file|block`, `policy show`, `completion`, `--help`.
 - **Tables:** one header line, one row per item; `…+N more` for overflow, capped by `--top`.
 - **Stable IDs:** `trc:a7` (`auto`/`script show`), `log:f2` (`log` incl. `--unique`, `cc logs`) — kept in `cache/ids.json` until `cache clear`; `ent anomalies` mints none.
 - **Timestamps:** short form in your zone (`09:42` today, `04-16 09:42` otherwise); `--full` does **not** make them ISO. **`--json` always gives full ISO8601 with your offset**, table listings included. Boolean columns are JSON booleans (`"admin": true`); numeric cells stay strings (`"runs_24h": "0"`) — parse them, never test them for truthiness.
@@ -1233,7 +1666,7 @@ Parts of this manual may already have reached you automatically: when both stdou
 
 - `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
 - `off` also disables the first-`--confirm` guard (the refusal of a family's first write before its how-to arrived) — it is meant for scripts and pipelines that pre-load this manual another way, not a token-saving knob for interactive agents
-- `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand
+- `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand; `--reference <name>` fetches a family's reference section — today only `policy` has one: its how-to travels with the family, the full contract (`### Policy reference`) only on request
 - Humans at a terminal never see it; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
 - **Delivery is decided by who is listening, never by the shape of the answer.** `--json` is a promise about stdout and the manual has never been on stdout, so `health --json` and `device ls --json` deliver on stderr exactly as they do without the flag — an agent that reads only structured output is the caller this manual is written for, and it used to be the one caller that never received it
 
@@ -1248,6 +1681,7 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 ```
 
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
-- One instance per server process. A `--dir` given at server start pins every call to that instance; a per-call `--dir` overrides it.
+- `--allow-writes` comes first, the policy second: a read-only server refuses a write command before `policy.yaml` is consulted; on a server with `--allow-writes`, the instance's policy then decides each write exactly as on the CLI (see "Policy" — Enforcement). The policy is read on every call, so an edit to `policy.yaml` applies from the next call on; a broken file refuses every call except `policy show` and `policy lint`.
+- One instance per server process. A `--dir` given at server start pins every call to that instance — and with it to that instance's `policy.yaml` (D-64). A call whose command line carries `--dir` (or `--dir=`) naming another directory — anywhere on the line, after a `--` too, and an empty `--dir=` included — is refused with an error and runs nothing; naming the pinned directory itself is accepted. Directories are compared as absolute, cleaned paths, symlinks not followed. `HACTL_DIR` in the server's environment never moves a pinned server either. A server started without `--dir` is not pinned: each call finds its instance as the CLI does.
 - `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
 - A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.

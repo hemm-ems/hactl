@@ -18,6 +18,7 @@
 internal/writer/writer.go:(*Writer).remoteEntry = proven: TestWriter_Diff_EmptyRemoteConfigIsUnparsed
 internal/writer/writer.go:(*Writer).Rollback = proven: TestWriter_Rollback_RefusesEmptyBackup
 internal/realdata/configtext.go:StructureDrift = proven: TestStructureDriftCatchesADanglingScalar
+internal/policy/load.go:parse = proven: TestBrokenFileProblemsNameTheirLine
 
 # --- the user's own input files: a parse failure aborts, empty is refused ------
 internal/cmd/auto.go:validateAutoCreateCandidate = exempt: parses the user's own local YAML create input; a parse failure aborts before any output, and content is judged by HA's validate_config
@@ -25,7 +26,8 @@ internal/cmd/helper.go:helperCreateID = exempt: parses the user's own create inp
 internal/cmd/script.go:normalizeScriptYAML = exempt: parses the user's own script YAML; an empty mapping is refused explicitly before any request is made
 internal/cmd/script.go:normalizeScriptCreateYAML = exempt: parses the user's own create input; refuses empty input and anything but one top-level key
 internal/cmd/tpl.go:classifyTemplate = exempt: parses the user's own template YAML; an empty document is refused explicitly ("template file is empty")
-internal/writer/writer.go:readLocalAutomation = exempt: parses the user's own local file, whose emptiness is the caller's to see — a blank candidate diffs as a deletion and validate_config refuses it; the REMOTE document is decoded by remoteEntry, proven above
+internal/writer/writer.go:parseLocalAutomation = exempt: parses the user's own local file (read once by ReadCandidate), whose emptiness is the caller's to see — a blank candidate diffs as a deletion and validate_config refuses it; the REMOTE document is decoded by remoteEntry, proven above
+internal/cmd/policy_typed.go:yamlTop = exempt: parses the user's own candidate file, or hactl's own automation backup, for a write command's policy plan; a document that decodes to nothing names no id, so the plan refuses the write (fail closed, D-78) — it never renders as success
 
 # --- transport envelopes: checked explicitly, results re-decoded under the sweep
 internal/haapi/websocket.go:(*WSClient).TraceList = exempt: reads the wsResponse envelope, whose success flag is checked; the result payload is re-decoded at a sweep-governed json.Unmarshal with degeneracy.Check
@@ -48,3 +50,21 @@ internal/hatest/hatest.go:createLongLivedToken = exempt: test rig websocket auth
 internal/companiontest_discovery/fake_supervisor.go:(*fakeSupervisor).handleWS = exempt: the fake Supervisor decoding hactl's own outgoing frames; a bad frame fails the fake's protocol and the tier, nothing renders
 internal/cmd/ent.go:(*wireAttributes).UnmarshalJSON = exempt: it decodes the attribute map that hangs off entityState/historyEntryFull, whose identity (entity_id, state) is checked by degeneracy.Check on the record around it at every fetch site; an entity legitimately has no attributes at all, so an empty map is an answer and not a failed decode — the same reasoning decodeStateAttributes carries in the H-14 sweep
 internal/livefire/integrity.go:parseCensusRows = proven: TestCensusRefusesAnEmptyListing
+
+# --- the policy request classifier (internal/policy/reqmap) -------------------
+# It decodes the bodies hactl itself is about to send, to map them to policy
+# resources (H-29). A body that decodes to nothing is never mapped as "nothing
+# to check": it is unmappable, hence refused, and each test below holds that.
+internal/policy/reqmap/restmap.go:jsonObject = proven: TestServiceCallMapping
+internal/policy/reqmap/companionmap.go:yamlMapping = proven: TestClassifyWriteRequests
+internal/policy/reqmap/companionmap.go:mapRefReplace = proven: TestClassifyWriteRequests
+internal/policy/reqmap/dashboard.go:decodeObject = proven: TestDiffDashboard
+internal/policy/reqmap/refowner.go:parseRoot = proven: TestRefChangeOwnersFailsWhenItCannotPlace
+
+# --- the policy gate (H-29) -------------------------------------------------------
+internal/haapi/websocket.go:(*wsConn).ReadJSON = exempt: the gated connection forwards gorilla's ReadJSON to its callers, each of which is its own site on this surface
+internal/policy/enforce/facts.go:(*factCache).observe = exempt: records a fact from an answer the request already returned to its command; a decode failure or a zero value records nothing, and an unrecorded fact can only refuse a later request or widen its check (fail closed), never render an answer
+internal/policy/enforce/facts.go:(*factCache).observeRefReplace = exempt: records a ref/replace dry run as the plan its confirmed write is mapped through; a decode failure records no plan, and a confirmed write without one is refused (D-77)
+internal/policy/enforce/hafetch.go:(*HAFetcher).LiveStates = exempt: decodes each state's entity_id (and its entity_id and id attributes, D-106/D-107) for the policy check; a state without one refuses the whole answer, so a service call's reach is unknown and the call refused (D-73), never computed from a partial set
+internal/surfaceaudit/policy.go:releaseTargets = proven: TestPolicyRequestSitesCoverEveryReleaseTarget
+internal/policy/enforce/session.go:needsOf = exempt: decodes a service call's own outgoing data only to see whether it is empty; a body that does not decode keeps every fact asked, and the classifier refuses a body that is no object

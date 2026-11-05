@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+    deny:
+      "device:nonexistent_device": [edit]
+      "automation:nonexistent_*": [delete]

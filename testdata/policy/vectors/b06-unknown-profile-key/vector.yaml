@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: an unknown key in a profile (`allows:`)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 6,
+        "contains": [
+          "allows"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

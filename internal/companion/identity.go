@@ -11,19 +11,11 @@ import "github.com/hemm-ems/hactl/internal/degeneracy"
 // property there degrades exactly like the HA wire does: zero values, no error,
 // a rendered table of blanks. The identities below make that loud instead.
 //
-// List wrappers (ConfigFilesResponse, TemplatesResponse, ScriptsResponse,
-// AutomationsResponse, HelpersResponse, RefEntitiesResponse, LogsResponse) have
-// no method on purpose: an empty list is a legitimate answer, and poisoning it
-// would turn "no helpers configured" into a failure. Their *elements* carry the
-// identity instead, which is where a wire-shape change actually shows.
-//
-// AutomationDefinition has no method for the opposite reason: the companion
-// reports an automation with no `id:` key as an empty id
-// (routes/automations.py: `"id": item.get("id", "")`), and an id-less
-// automation is legal HA. Poisoning it would fail the command on a config that
-// is merely hand-written. The same holds for a template entity's unique_id
-// (routes/templates.py: `uid = item.get("unique_id", "")`), which is why
-// TemplateDefinition is identified by its domain alone.
+// List wrappers (ConfigFilesResponse, HelpersResponse, TemplatesResponse,
+// RefEntitiesResponse, LogsResponse) have no method on purpose: an empty list is a legitimate
+// answer, and poisoning it would turn "no helpers configured" into a failure.
+// Their *elements* carry the identity instead, which is where a wire-shape
+// change actually shows.
 
 // Identity reports the companion's health verdict and version — the two things
 // GET /v1/health exists to answer.
@@ -52,13 +44,6 @@ func (r *ConfigBlockResponse) Identity() []degeneracy.Field {
 		{Name: "path", Value: &r.Path},
 		{Name: "id", Value: &r.ID},
 	}
-}
-
-// Identity reports the write acknowledgement. A write whose status did not
-// decode is the D45 class: hactl would print "written" for an answer it never
-// read.
-func (r *ConfigWriteResponse) Identity() []degeneracy.Field {
-	return []degeneracy.Field{{Name: "status", Value: &r.Status}}
 }
 
 // Identity reports the shared write/delete acknowledgement status.
@@ -149,10 +134,9 @@ func (c *RefChange) Identity() []degeneracy.Field {
 // Identity reports the template entity's domain — the `template:` block key it
 // was found under, which the companion always fills from _ENTITY_DOMAINS.
 //
-// unique_id is deliberately excluded even though `tpl cat/delete` addresses by
-// it: HA does not require one on a template entity, and the companion reports
-// such an entity with an empty unique_id rather than skipping it. An entity
-// nothing can address is a real answer hactl must keep listing.
+// unique_id is deliberately excluded: HA does not require one on a template
+// entity, and the companion reports such an entity with an empty unique_id
+// rather than skipping it. An entity nothing can address is a real answer.
 func (d *TemplateDefinition) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "domain", Value: &d.Domain}}
 }
@@ -187,11 +171,6 @@ func (r *TemplateEntityResult) Identity() []degeneracy.Field {
 	}
 }
 
-// Identity reports the script key. Alias and mode are legitimately absent.
-func (d *ScriptDefinition) Identity() []degeneracy.Field {
-	return []degeneracy.Field{{Name: "id", Value: &d.ID}}
-}
-
 // Identity reports which script definition was returned.
 func (r *ScriptResponse) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "id", Value: &r.ID}}
@@ -204,9 +183,6 @@ func (r *ScriptCreateResponse) Identity() []degeneracy.Field {
 		{Name: "id", Value: &r.ID},
 	}
 }
-
-// AutomationDefinition has no Identity: see the package header — an automation
-// with no `id:` is legal HA and the companion reports it with an empty id.
 
 // Identity reports which automation definition was returned.
 func (r *AutomationResponse) Identity() []degeneracy.Field {

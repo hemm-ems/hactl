@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -215,11 +216,18 @@ func TestFloorCreatePreviewShowsAnExplicitLevelZero(t *testing.T) {
 // runRootCapture drives the real cobra tree and returns its combined output.
 // It resets flag state first: these tests run several invocations in one
 // process, and a --confirm left set by a previous one would make the next
-// assertion mean nothing.
+// assertion mean nothing. It hands the target command a fresh context for
+// the same reason: cobra gives a subcommand the root's context only while its
+// own is nil, so a command an earlier in-process run (an MCP call through
+// RunWithOutputContext) already ran would keep that run's cancelled context
+// and fail its first dial.
 func runRootCapture(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	resetSubcommandFlags()
 	flagDir = ""
+	if target, _, err := rootCmd.Find(args); err == nil {
+		target.SetContext(context.Background())
+	}
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
 	rootCmd.SetErr(buf)

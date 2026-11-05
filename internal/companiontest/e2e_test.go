@@ -498,8 +498,7 @@ action:
 	}
 
 	// Reference half, read from HA's own automation config API.
-	rest := haapi.New(haURL, haToken)
-	cfg, err := rest.GetAutomationConfig(ctx, autoID)
+	cfg, err := haAutomationConfig(ctx, autoID)
 	if err != nil {
 		t.Fatalf("reading automation config from HA: %v", err)
 	}

@@ -2145,3 +2145,292 @@ distinction the manifest's one `exempt` line has to make.
   as literals there: `Source: "yaml"` → `Source: helperSourceYAML` is the first
   tidy-up anyone makes, and a rule matching only string literals would go to
   zero sites and stay there while the invented value survived.
+
+## H-29 — Every request hactl sends carries a policy verdict, and a write command checks its whole plan before its first write
+
+**DRAFT (phase 2 of the permission policy, `SPEC-permissions.md` §4).** This
+entry states the law and its gate before either is built, as the checklist
+above asks: the set is derived, the sites are dispositioned in
+`dev/surfaces/policy.manifest`, and the enforcing test is named once it has been
+watched to fail. Until then the manifest is a contract nothing loads, and this
+law is debt in `dev/surfaces/invariant.manifest`.
+
+A policy (D-51 to D-82) is a guardrail against mistakes, so it is only as good
+as its coverage: a request the policy never sees is a request it allows. hactl
+has no single choke point. It sends Home Assistant websocket commands through
+`sendCommand` and through five direct `conn.WriteJSON` calls, REST through
+`haapi.Client`, and companion calls through `companion.Client` — which, under
+Ingress, rides the very same HTTP transport as HA REST, as
+`/api/hassio_ingress/<token>/v1/…`. A mapping written by hand from "the
+requests the write commands send" would be the enumeration this file keeps
+finding one site short (`dev/surfaces/README.md`'s four defects).
+
+The rule has two halves, one per layer, and both hold **while a profile is in
+effect** (D-74). With no `policy.yaml`, or a file that puts no profile in
+effect, nothing is checked, nothing extra is sent and nothing is logged —
+byte-identical to hactl without a policy (D-58).
+
+**Request layer (the guarantee).** Every request hactl sends is mapped to the
+`(resource, verb)` pairs it touches before it leaves the process, from what the
+request carries — path, query, body, websocket params — and from what the same
+command invocation already read under the same loaded policy (a dashboard's
+stored config, a dashboard's id-to-url_path map, an automation's verified
+config id, a checked `ref/replace` dry run). Nothing verified is trusted
+beyond that invocation and that policy's content hash — under `hactl mcp`, one
+process serves many invocations (D-72). One verdict per logical request: never
+per retry attempt, never skipped because a retry rebuilt the request; a
+redirect hop is mapped again, and a hop that maps differently is refused.
+Companion requests are checked once, in `companion.Client` by logical route,
+and marked so the shared HTTP transport's hook skips them — on the direct URL
+and under Ingress alike (D-74). Before any row is matched, the whole path is
+checked: no `.` or `..` segment and no `%2F`/`%5C` anywhere, each `{name}`
+placeholder exactly one segment; a request whose path or ids break that or
+the policy grammar (D-67, D-68, D-69) is unmappable, and an unmappable write
+is refused — never canonicalised. A request the mapping does not know is
+refused if it can change anything: every websocket type and every HTTP method
+other than GET counts as mutating unless a row says otherwise (E-9); an
+unmapped GET is allowed until phase 3 (the gate makes it a build failure
+first).
+
+**Command layer (preview parity).** A write command computes its whole plan —
+every resource every request of the confirmed run will touch, follow-up writes
+included (the orphan registry remove after a delete, `script apply`'s
+`script.reload`, `ent rename`'s reference rewrite, a delete's registry
+cascade enumerated as a deliberate superset, D-76) — and checks it **in the
+preview**, before rendering, and again under `--confirm` before the first
+write. A denied write is denied in the dry run and in the confirmed run, with
+the same rule named (H-2's pole, applied to the policy). A denied dry run
+records no confirm witness, so a `--confirm` that follows it is refused by the
+confirm guard first, as today (D-80); parity is asserted with a witness
+present. A passing preview promises only that the same policy, registry and
+reach allow the confirmed run: `where:` is live, the reach is recomputed and
+the file re-read, so `--confirm` may still be refused, and its refusal says
+the preview had passed (D-80). Any denial in the plan refuses the whole
+command (E-7). The request layer then never refuses a confirmed write that the
+command layer allowed; when it does, the command layer's plan was wrong, and
+the refusal is an error that names what was already written — never a log
+line. The write commands are derived, never hand-listed: every `--confirm`
+command, and every entrypoint that reaches a mapped write request or a
+`system:cache` write without one (D-80).
+
+**The pole.** Fail closed, while a profile is in effect: an unmapped mutating
+request is denied (an unmapped GET is allowed until phase 3), unparseable is
+denied, an unanswerable question (Home Assistant unreachable, or answering
+with an error, while computing a service call's reach) is denied. Over-deny is
+allowed, under-deny is not (D-59).
+
+**What this law does not claim.** It does not make reads enforced: phase 2 maps
+every read with verb `read` and enforces none (D-54, phase 3). It does not
+model what Home Assistant does server-side beyond what hactl can enumerate
+from the registries (D-76) — the companion's implicit domain reload, a running
+script doing what it does (`SPEC-permissions.md` §8). It does not close the
+window between `ref replace`'s checked dry run and its confirmed write: a file
+that starts matching in between — a file change between preview and confirm,
+two accidents — is written unchecked and reported after the fact, exit 1,
+listed in `written` (D-77). It does not cross-check typed writes against the
+file they land in, nor file writes against typed entries the change path
+cannot name (D-77, phase 4). And it holds against mistakes, not intent: the
+token in `.env` can do everything (D-51).
+
+**Planned enforcement (draft names, to be watched to fail before they are
+cited below):**
+
+- `TestPolicySurfaceIsClosed` over `dev/surfaces/policy.manifest`: the request
+  set derived from the source (every `sendCommand` type and direct
+  `WriteJSON`; every `haapi.Client` path; every companion operation
+  `companion.Client` sends (`companion.Endpoints`), plus a scan that no
+  `companion.Client` method builds a path outside them) and the command set
+  derived from the live cobra tree (every `--confirm` command, plus every
+  entrypoint that reaches a mapped write request or a `system:cache` write
+  without one — derived, never listed). Unclassified, stale and phantom rows
+  fail as on every surface. BUILT in stage 2a (see "Enforced by" below): the
+  request set is derived from the hactl binary's own packages (test rigs are
+  not product), every file of them whatever its build constraints and every
+  package-level initialiser as well as every function; any request built or
+  sent outside the request builders — `http.NewRequest` under any import
+  name, an `http.Request` literal, a `*http.Client`'s `Do`, a `RoundTrip`,
+  resolved by type — is an extractor error, as are a send taken as a value
+  rather than called, a websocket write other than `WriteJSON`, and a
+  `WriteJSON` message whose type is set after it is built
+  (`TestPolicyRequestExtractorRefusesWhatItCannotName`,
+  `TestPolicyTypedCheckSeesWhatSpellingCannot`); the command set is the
+  `--confirm` commands plus every command whose Run or any hook cobra runs
+  around it (PreRun/PostRun, persistent hooks up the tree) reaches a write
+  sink over the product's SSA call graph, through interface calls and
+  package func variables (`TestPolicyCommandSitesOnAModule`); the
+  request lines are also held in lockstep with the classifier's row table
+  (`internal/policy/reqmap`) and with `companion.Endpoints`
+  (`TestPolicyManifestIsInLockstepWithTheClassifier`), and the command census
+  is checked to hold every `--confirm` command plus config show, config
+  flow-inspect, cache clear|refresh, mcp and setup, and none of six read
+  commands (`TestPolicyCommandCensusFindsEveryWriter`).
+- `TestEveryWriteRequestHasAMapping`: table-driven, one case per mapped write
+  row — the request in, the `(resource, verb)` set out; plus the whole-path
+  vectors (a dot segment, `%2F`, a placeholder absorbing two segments →
+  refused). BUILT in stage 2a: the vectors
+  (`testdata/policy/requests/vectors.json`, `dashboard_diff.json`) were
+  written from the contract before the classifier existed, and
+  `TestEveryPolicyRequestRowHasAVector` holds them to the manifest both ways.
+- `TestUnmappedMutatingRequestIsRefused`: under a named profile, a websocket
+  type and a POST no row names are refused at the hook, with nothing sent;
+  with no profile the same requests are sent unchanged (D-58).
+- `TestPreviewRefusesWhatConfirmRefuses`: walks the cobra tree's `--confirm`
+  commands under a deny-everything-written profile, with a confirm witness
+  present; each preview exits 1 naming the rule, each `--confirm` exits 1 with
+  the same rule and nothing written.
+- `TestEveryConfirmedRequestIsInThePlan`: each `--confirm` command under an
+  allow-all profile against a recording transport; the request layer's
+  `(resource, verb)` verdicts are a subset of the command's plan — the test
+  that catches a plan one resource short, which a deny-everything profile
+  cannot.
+- `TestCompanionRequestGetsOneVerdictOnEveryTransport`: a companion write on
+  the direct URL and under Ingress yields exactly one verdict and one audit
+  line each.
+- `TestBrokenPolicyRefusesEveryCommand`: walks the cobra tree and the MCP tool
+  list with a broken `policy.yaml`; every command except D-60's exempt list
+  (one table, CLI and MCP alike) refuses.
+- Docker tier (`make test-int`): one test per verb, plus E-1 fan-out
+  (area/label/group targets against `extract_from_target`) and E-7 bulk
+  (`ref replace` with one denied file writes nothing).
+
+**Watched to fail** (the step this law owes before it leaves draft): add a
+websocket command type to `haapi` without a mapping row — the gate must go red
+as unclassified, and at runtime the request must be refused; delete one
+command's plan check — `TestPreviewRefusesWhatConfirmRefuses` must go red on
+exactly that command; drop one resource from one command's plan (the orphan
+registry remove, `script.reload`) — `TestEveryConfirmedRequestIsInThePlan`
+must go red on exactly that command.
+
+- Enforced by: DRAFT — the gate, the mapping, the hooks and the command
+  layer's plan API exist; one command (`label create`, the reference) checks
+  its plan, the other families wire theirs in stage 2b, so this law stays a
+  draft until every `cmd` line of `dev/surfaces/policy.manifest` is proven.
+  Built in stage 2b core (2026-11-01): the policy is loaded in the root's
+  pre-run once per invocation and per MCP call, and only while a profile is
+  in effect is a session started and the request gate (`internal/policy/
+  reqgate`) installed — TestNoProfileIsByteIdentical, TestNoGateNoChange; the
+  hooks — one verdict per logical request before the retry loop
+  (TestRESTRequestGetsOneVerdictBeforeItsRetries), nothing sent when refused
+  (TestRefusedRESTRequestIsNeverSent, TestRefusedCompanionRequestIsNeverSent),
+  a redirect hop mapped again (TestRedirectHopPassesTheGateAgain), a request
+  no client decided decided at the transport
+  (TestUnmarkedRequestIsDecidedAtTheTransport), every websocket send through
+  one gated connection (TestEveryWebsocketSendPassesTheGate), the companion by
+  logical route (TestCompanionRequestGetsOneVerdictOnEveryTransport), unmapped
+  mutating refused and the same requests sent without a profile
+  (TestUnmappedMutatingRequestIsRefused); the session — every write decided
+  and audited, reads not (TestRequestLayerDecidesWritesOnly), the reach asked
+  and refused when unanswered (TestServiceCallReach), facts per invocation and
+  per policy hash (TestFactCacheIsTaggedWithThePolicyHash,
+  TestFetchedFactsAreDroppedAfterAWrite, TestObservedFactsAuthorise); the
+  command layer — TestLabelCreateRefusedByItsPlan, TestLabelCreateAllowedPlan,
+  TestRefusedPreviewRecordsNoWitness, TestRequestLayerRefusalEndsTheInvocation;
+  R-12's harness — TestEveryConfirmedRequestIsInThePlan (families register
+  their commands) and its watched-to-fail half
+  TestUncoveredChecksCatchesAPlanOneResourceShort; D-60's half —
+  TestBrokenPolicyRefusesEveryCommand, TestMCPRefusesEachCallOnABrokenPolicy;
+  the request half derived for every release target (A-9) —
+  TestPolicyRequestSitesCoverEveryReleaseTarget. Built in stage 2b svc
+  (2026-11-01): `svc call`, `script run` and `script apply` check their plans
+  — every service call through the request layer's own mapping, hactl's own
+  script.turn_on and script.reload included (D-73, D-90) —
+  TestSvcCallRefusedByItsReach, TestScriptRunPlan,
+  TestScriptApplyPlanChecksTheReload, TestServiceFamilyNoProfileIsByteIdentical;
+  watched to fail: `script.reload` dropped from `script apply`'s plan went red
+  in TestEveryConfirmedRequestIsInThePlan on exactly `script apply`. Built in
+  stage 2b, typed family (2026-11-01): `auto|script|tpl|helper` apply, create, delete and
+  `auto rollback`/`rollback` check their plans (D-78, D-91, D-92) —
+  TestAutoApplyRefusedByItsPlan, TestAutoCreateRefusedByItsPlan,
+  TestAutoDeleteRefusedByItsPlan, TestAutoRollbackRefusedByItsPlan,
+  TestRollbackRefusedByItsPlan, TestScriptApplyRefusedByItsPlan,
+  TestScriptCreateRefusedByItsPlan, TestScriptDeleteRefusedByItsPlan,
+  TestTplCreateRefusedByItsPlan, TestTplDeleteRefusedByItsPlan,
+  TestHelperCreateRefusedByItsPlan, TestHelperDeleteRefusedByItsPlan; the
+  same plan in preview and --confirm (TestTypedPlansAreTheSameInPreviewAndConfirm);
+  the plan reads a body as the request layer does
+  (TestTypedPlansReadBodiesAsTheRequestLayerDoes); each registered in R-12's
+  harness; D-58 for the family against a transcript recorded before the
+  wiring (TestTypedWritesWithoutAProfileAreUnchanged). Watched to fail under
+  fourteen mutants (an orphan, the reload, the rename's create, a block's
+  later items, the delete's id proof, the preview's registry read, the
+  helper delete's domain, each dropped or widened). Built in
+  stage 2a and watched to fail on 2026-11-01 (a websocket type added to
+  `haapi` without a line went red as unclassified; a read command made to
+  reach a registry remove went red as a new write command; a manifest line
+  removed went red as a classifier row without a line):
+  TestPolicySurfaceIsClosed, TestPolicyManifestIsInLockstepWithTheClassifier,
+  TestPolicyCommandCensusFindsEveryWriter; the extractor on fixture trees
+  (each family injected goes red as exactly one unclassified site; a deleted
+  site goes red as stale; test rigs stay out): TestPolicyGateFailsOnANewSite,
+  TestPolicyGateFailsOnAStaleRow, TestPolicyExtractorLeavesOutTestInfrastructure,
+  TestPolicyExtractorFindsEveryFamily. The request mapping, row by row, from
+  vectors written before the classifier (watched to fail against a stub, and
+  against the classifier with the D-72 policy-hash check removed):
+  TestEveryWriteRequestHasAMapping, TestRedirectHopIsMappedAgain,
+  TestDashboardViewDiff; and the implementer's own: TestClassifyWriteRequests,
+  TestServiceCallMapping, TestDashboardSaveMapping, TestDiffDashboard,
+  TestWholePathRule, TestUnmappedRequests, TestEveryRowHasAVector.
+  Built in stage 2b, registry family (2026-11-01): the plans of `ent` and
+  `device set-label|set-area`, `area|floor create|delete`, `label delete`,
+  `config delete|options|flow-start|flow-step|flow-inspect`, `config show`'s
+  probe and `cache clear|refresh` — each the manual's row, checked in the
+  preview and under `--confirm` before the first write, refused naming the
+  rule (TestRegistryFamilyPlansAreTheManualsTable,
+  TestRegistryFamilyRefusesItsPlanNamingTheRule,
+  TestRegistryFamilyRefusalJSONIsThePreviewEnvelope,
+  TestConfigShowProbeSkippedWhenDenied, TestCacheClearRefusedKeepsTheCache);
+  the delete cascades planned through the request layer's own mapping
+  (D-93: TestRequestChecksIsTheRequestLayersMapping); without a profile each
+  preview sends exactly the requests it sent before
+  (TestRegistryFamilyWithoutAProfileAsksNothingMore); all eighteen write
+  runs registered in TestEveryConfirmedRequestIsInThePlan — watched to fail
+  by dropping `area delete`'s cascade and `ent set-label`'s field.
+  Built in stage 2b, the multi-target writes (2026-11-01): `ref replace` and
+  `ent rename` check the companion's dry run of the rewrite, each change
+  placed in the automation, script or template entry its path runs through
+  (D-77, R-3; a rewritten id or unique_id is a rename, E-5), before the first
+  write, and report a file written outside that plan after the fact (A-7);
+  the dash family checks per view (D-66) — TestRefReplaceRefusedByItsPlan,
+  TestRefReplaceChecksFileAndDashboardParts, TestRefReplaceIDRewriteIsARename,
+  TestRefReplaceUnplaceableChangeFailsClosed,
+  TestRefReplaceConfirmChecksADryRunFirst,
+  TestRefReplaceReportsAFileWrittenOutsideThePlan,
+  TestEntRenameRefusedByItsPlan, TestEntRenameConfirmChecksOncePerInvocation,
+  TestDashSaveRefusedByItsPlan, TestDashDefaultDashboardIsOneAddress,
+  TestDashReplaceCreateDeleteRefusedByTheirPlans,
+  TestBulkWritesWithoutAProfileAreUnchanged (D-58: the same bytes and the same
+  requests as before the policy, pinned against the pre-enforcement build),
+  the placement itself — TestRefChangeOwners and its siblings in
+  `internal/policy/reqmap` — and the six commands registered in
+  TestEveryConfirmedRequestIsInThePlan. Watched to fail: dropping the
+  dashboard part, the typed owners, the recorded plan, the confirmed run's
+  dry-run check, the dash save diff, the default dashboard's canonical id or
+  the written-outside-the-plan report each turned these red.
+  Built at stage 2b's integration (2026-11-01): `companion wireguard
+  config|up|down` check `edit`/`control system:wireguard` in the preview and
+  under `--confirm` before the companion is asked (TestWireguardRefusedByItsPlan,
+  TestWireguardAllowedRunPostsOnce, TestWireguardWithoutAProfileIsUnchanged,
+  registered in TestEveryConfirmedRequestIsInThePlan) — watched to fail with
+  `up`'s plan emptied and with `config` checked in the preview only. With this
+  every write and cmd row of `dev/surfaces/policy.manifest` is proven; the
+  ceiling (45) is the read-deferred-phase3 rows.
+  The blind Docker suite written from the contract alone
+  (`internal/integration/policy_enforce_test.go`,
+  `internal/companiontest/policy_enforce_e2e_test.go`) is green against the
+  integrated build and was watched to fail: with the command layer's check
+  disabled (`checkWritePlan` returning allowed) all 17 of its tests that
+  assert a refusal or an audit line went red (the D-58 and D-60 tests do not
+  depend on that check).
+  Fix wave after the stage-2b verification (2026-11-01): a `ref replace`
+  change is placed in every entry sharing the changed node through a YAML
+  anchor (D-104) and in every entry that pulls its file in with an
+  `!include` (D-105); a service call needs `control` on every member a
+  group or scene among its entities forwards to (D-106) and is checked, for
+  denies only, at the typed address of every automation, script, helper or
+  template entity it reaches (D-107). Each was a reproduced bypass on the
+  Docker rig and is proven there (TestE2EPolicyRefReplaceSharedAndIncludedChangesCLI,
+  TestPolicyEnforceForwardedEntities, TestPolicyEnforceTypedControl) and at
+  the unit tier (TestRefChangeOwnersPlacesAChangeInEveryEntryThatSharesIt,
+  TestRefChangeIncluderOwners, TestSvcCallChecksTheMembersAGroupOrSceneForwardsTo,
+  TestSvcCallChecksTheTypedAddressOfWhatItReaches), each watched to fail
+  with its placement or check removed.

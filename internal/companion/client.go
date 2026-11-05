@@ -18,6 +18,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/httpretry"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // Content-Type values sent per endpoint. Most write endpoints declare a
@@ -174,20 +176,6 @@ func (c *Client) ReadConfigBlock(ctx context.Context, path, id string) (*ConfigB
 	return &r, decodeResponse("/v1/config/block", data, &r)
 }
 
-// WriteConfigFile calls PUT /v1/config/file?path=<path>&dry_run=<dryRun>.
-func (c *Client) WriteConfigFile(ctx context.Context, path, content string, dryRun bool) (*ConfigWriteResponse, error) {
-	q := url.Values{
-		"path":    {path},
-		"dry_run": {strconv.FormatBool(dryRun)},
-	}
-	data, err := c.doPut(ctx, "/v1/config/file", q, content, mimeText)
-	if err != nil {
-		return nil, err
-	}
-	var r ConfigWriteResponse
-	return &r, decodeResponse("/v1/config/file", data, &r)
-}
-
 // RelatedEntity calls GET /v1/related/entity?entity_id=<entityID>[&stale=true].
 // With stale=true a renamed/deleted entity returns 200 + StaleRefs instead of 404.
 func (c *Client) RelatedEntity(ctx context.Context, entityID string, stale bool) (*RelatedEntityResponse, error) {
@@ -285,7 +273,9 @@ func (c *Client) RefReplace(ctx context.Context, oldVal, newVal string, dryRun b
 
 // --- Template CRUD ---
 
-// ListTemplates calls GET /v1/config/templates.
+// ListTemplates calls GET /v1/config/templates: every template entity the
+// companion's template files define. `policy lint` checks template: rules
+// against their unique_ids (D-116).
 func (c *Client) ListTemplates(ctx context.Context) (*TemplatesResponse, error) {
 	data, err := c.doGet(ctx, "/v1/config/templates", nil)
 	if err != nil {
@@ -303,20 +293,6 @@ func (c *Client) GetTemplate(ctx context.Context, id string) (*TemplateResponse,
 		return nil, err
 	}
 	var r TemplateResponse
-	return &r, decodeResponse("/v1/config/template", data, &r)
-}
-
-// WriteTemplate calls PUT /v1/config/template?id=<id>&dry_run=<dryRun>.
-func (c *Client) WriteTemplate(ctx context.Context, id, content string, dryRun bool) (*ConfigDeleteResponse, error) {
-	q := url.Values{
-		"id":      {id},
-		"dry_run": {strconv.FormatBool(dryRun)},
-	}
-	data, err := c.doPut(ctx, "/v1/config/template", q, content, mimeText)
-	if err != nil {
-		return nil, err
-	}
-	var r ConfigDeleteResponse
 	return &r, decodeResponse("/v1/config/template", data, &r)
 }
 
@@ -346,16 +322,6 @@ func (c *Client) DeleteTemplate(ctx context.Context, id string) (*ConfigDeleteRe
 }
 
 // --- Script CRUD ---
-
-// ListScriptDefs calls GET /v1/config/scripts.
-func (c *Client) ListScriptDefs(ctx context.Context) (*ScriptsResponse, error) {
-	data, err := c.doGet(ctx, "/v1/config/scripts", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r ScriptsResponse
-	return &r, decodeResponse("/v1/config/scripts", data, &r)
-}
 
 // GetScriptDef calls GET /v1/config/script?id=<id>.
 func (c *Client) GetScriptDef(ctx context.Context, id string) (*ScriptResponse, error) {
@@ -404,16 +370,6 @@ func (c *Client) DeleteScriptDef(ctx context.Context, id string) (*ConfigDeleteR
 }
 
 // --- Automation CRUD ---
-
-// ListAutomationDefs calls GET /v1/config/automations.
-func (c *Client) ListAutomationDefs(ctx context.Context) (*AutomationsResponse, error) {
-	data, err := c.doGet(ctx, "/v1/config/automations", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r AutomationsResponse
-	return &r, decodeResponse("/v1/config/automations", data, &r)
-}
 
 // GetAutomationDef calls GET /v1/config/automation?id=<id>.
 func (c *Client) GetAutomationDef(ctx context.Context, id string) (*AutomationResponse, error) {
@@ -517,32 +473,20 @@ func (c *Client) CreateHelper(ctx context.Context, content, domain string) (*Hel
 	return &r, decodeResponse("/v1/config/helper", data, &r)
 }
 
-// UpdateHelper calls PUT /v1/config/helper?id=<id>.
-func (c *Client) UpdateHelper(ctx context.Context, id, content string) (*ConfigDeleteResponse, error) {
+// DeleteHelper calls DELETE /v1/config/helper?id=<id>[&domain=<domain>]. An
+// empty domain is left out, and the companion then looks the id up across
+// every helper domain (409 when it is ambiguous).
+func (c *Client) DeleteHelper(ctx context.Context, id, domain string) (*ConfigDeleteResponse, error) {
 	q := url.Values{"id": {id}}
-	data, err := c.doPut(ctx, "/v1/config/helper", q, content, mimeJSON)
-	if err != nil {
-		return nil, err
+	if domain != "" {
+		q.Set("domain", domain)
 	}
-	var r ConfigDeleteResponse
-	return &r, decodeResponse("/v1/config/helper", data, &r)
-}
-
-// DeleteHelper calls DELETE /v1/config/helper?id=<id>.
-func (c *Client) DeleteHelper(ctx context.Context, id string) (*ConfigDeleteResponse, error) {
-	q := url.Values{"id": {id}}
 	data, err := c.doDelete(ctx, "/v1/config/helper", q)
 	if err != nil {
 		return nil, err
 	}
 	var r ConfigDeleteResponse
 	return &r, decodeResponse("/v1/config/helper", data, &r)
-}
-
-// ReloadDomain calls POST /v1/ha/reload/<domain>.
-func (c *Client) ReloadDomain(ctx context.Context, domain string) error {
-	_, err := c.doPostBody(ctx, "/v1/ha/reload/"+domain, nil, "", mimeText)
-	return err
 }
 
 // CheckConfig calls POST /v1/ha/check-config and reports whether the HA
@@ -696,7 +640,7 @@ func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
@@ -709,7 +653,7 @@ func (c *Client) doPostBody(ctx context.Context, path string, query url.Values, 
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doDelete(ctx context.Context, path string, query url.Values) ([]byte, error) {
@@ -721,7 +665,7 @@ func (c *Client) doDelete(ctx context.Context, path string, query url.Values) ([
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 func (c *Client) doPut(ctx context.Context, path string, query url.Values, content, contentType string) ([]byte, error) {
@@ -734,7 +678,7 @@ func (c *Client) doPut(ctx context.Context, path string, query url.Values, conte
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	return c.doWithRetry(req)
+	return c.doWithRetry(ctx, req)
 }
 
 // applyIngressAuth attaches the cached Supervisor ingress session cookie to
@@ -758,10 +702,14 @@ func (c *Client) applyIngressAuth(req *http.Request, forceRefresh bool) error {
 	return nil
 }
 
-func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
+func (c *Client) doWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	bodyBytes, err := drainBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req, gated, err := c.gate(ctx, req, bodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -798,7 +746,7 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 
 		respBody, status, err := c.doOnce(attemptReq)
 		cancel()
-		if err != nil && lastErr != nil && budget.Cut(req.Context(), err) {
+		if err != nil && lastErr != nil && budget.Cut(ctx, err) {
 			return nil, budget.Stopped(lastErr)
 		}
 		var answer error
@@ -823,9 +771,49 @@ func (c *Client) doWithRetry(req *http.Request) ([]byte, error) {
 		if answer != nil {
 			return nil, answer
 		}
+		if gated.gate != nil {
+			gated.gate.Observe(gated.req, respBody)
+		}
 		return respBody, nil
 	}
 	return nil, fmt.Errorf("%s %s: max retries exceeded", req.Method, c.route(req.URL.Path))
+}
+
+// gate decides one companion request by its logical route — the path without
+// the transport prefix, the same on the direct URL and under Ingress — once,
+// before the retry loop (D-74, R-15). The context is marked, so the shared
+// HTTP transport's hook lets the attempts through instead of mapping them a
+// second time as Home Assistant REST. With no gate installed the request is
+// returned untouched (D-58).
+func (c *Client) gate(ctx context.Context, req *http.Request, body []byte) (*http.Request, gatedRequest, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return req, gatedRequest{}, nil
+	}
+	wire := req.URL.EscapedPath()
+	if req.URL.RawQuery != "" {
+		wire += "?" + req.URL.RawQuery
+	}
+	route := wire
+	if c.basePath != "" {
+		trimmed, ok := strings.CutPrefix(wire, c.basePath)
+		if !ok || !strings.HasPrefix(trimmed, "/") {
+			return nil, gatedRequest{}, fmt.Errorf("policy: companion request %s is outside the client's own path %q (fail closed)", c.route(req.URL.Path), c.basePath)
+		}
+		route = trimmed
+	}
+	r := reqmap.Request{Transport: reqmap.Companion, Method: req.Method, Path: route, Body: body}
+	if err := g.Check(ctx, r); err != nil {
+		return nil, gatedRequest{}, err
+	}
+	marked := reqgate.WithChecked(ctx, reqgate.Checked{Request: r, WirePath: wire, Prefix: c.basePath})
+	return req.WithContext(marked), gatedRequest{gate: g, req: r}, nil
+}
+
+// gatedRequest is a request the gate decided, to be shown its answer.
+type gatedRequest struct {
+	gate reqgate.Gate
+	req  reqmap.Request
 }
 
 // doOnce performs a single HTTP request attempt and returns the response

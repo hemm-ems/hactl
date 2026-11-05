@@ -1,0 +1,14 @@
+# Each alias deliberately slugs to something other than the key: if HA derived
+# the entity id or the unique_id from the alias, the oracle would see it.
+
+policy_oracle_key:
+  alias: Alias Slugs Elsewhere
+  sequence:
+    - event: policy_oracle_ran
+  mode: single
+
+policy_oracle_second:
+  alias: Another Unrelated Alias
+  sequence:
+    - event: policy_oracle_second_ran
+  mode: single

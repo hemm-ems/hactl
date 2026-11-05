@@ -1,0 +1,7 @@
+clause: "Lint (D-65): the bare `*` is never no-match; closed sub-resource words and registry field names need no live check (a misspelling is a broken file), so they add no unchecked entry"
+lint:
+  inventory:
+    entity: [light.kitchen]
+  findings:
+    - {code: no-match, profile: agent, rule: 'deny "entity:lock.*" [write]', line: 9}
+  unchecked: []

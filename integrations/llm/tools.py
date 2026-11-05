@@ -104,6 +104,7 @@ _GROUP_SECTIONS = {
     "companion": ["### WireGuard (companion lifeline)"],
     "ref": [],  # no manual section yet; the tool docstrings carry it
     "grep": ["### Term search (`grep`)"],
+    "policy": ["### Policy (permission guardrail)"],
 }
 _GROUP_ALIASES = {"trace": "auto", "cc": "log", "issues": "health",
                   "changes": "health", "setup": "health", "area": "label",

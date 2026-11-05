@@ -19,6 +19,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 // helperDomains lists every HA domain a helper entity can live in — the
@@ -474,6 +475,12 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 		return idErr
 	}
 
+	// The plan, before the wiring probe: create on helper:<domain>/<id>.
+	note, err := checkWritePlan(w, !flagHelperConfirm, helperCreatePlan(domain, helperID))
+	if err != nil {
+		return err
+	}
+
 	if !flagHelperConfirm {
 		cc, connErr := connectCompanion(ctx)
 		if connErr != nil {
@@ -494,6 +501,7 @@ func runHelperCreate(ctx context.Context, w io.Writer, domain string) error {
 			with("domain", domain).
 			with("file", flagHelperFile).
 			with("bytes", len(data)).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -599,9 +607,10 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 	// `source: storage` rows in `helper ls`) has no companion definition and
 	// this is where the caller finds that out.
 	//
-	// One confirm-time failure this cannot predict: the same slug may exist in
-	// two domains, where the companion's GET returns the first match but its
-	// DELETE refuses with a 409 listing the candidates.
+	// The same slug may exist in two domains: the companion's GET returns the
+	// first match, and the confirmed DELETE names that match's domain, so it
+	// removes exactly the helper the preview named rather than ending in the
+	// 409 a domain-less DELETE gets for an ambiguous slug (D-123).
 	remote, err := cc.GetHelper(ctx, helperID)
 	if err != nil {
 		return fmt.Errorf("helper %q not found among the YAML helpers "+
@@ -619,13 +628,6 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 			"it has no YAML definition to delete. Remove it in the UI; 'helper show' can still read it", helperID)
 	}
 
-	if !flagHelperConfirm {
-		return dryRun("delete helper").
-			with("id", remote.ID).
-			with("domain", remote.Domain).
-			render(w)
-	}
-
 	// Resolve while the entity is still real; afterwards a registry entry is
 	// indistinguishable from an older ghost.
 	//
@@ -635,13 +637,36 @@ func runHelperDelete(ctx context.Context, w io.Writer, helperID string) error {
 	// operation — and `helper delete` was not in the sentence, so it kept
 	// leaving the `unavailable`/`restored: true` row that docs/manual.md
 	// promises is removed, in a block that names `helper delete` explicitly.
-	cfg, cfgErr := config.Load(flagDir)
+	//
+	// The cleanup is part of the policy plan (D-78), so while a profile is in
+	// effect the preview resolves it too; without one it stays the confirmed
+	// run's read (D-58).
+	var cfg *config.Config
 	orphan := ""
-	if cfgErr == nil {
-		orphan = registeredEntityID(ctx, cfg, remote.Domain+"."+remote.ID)
+	if flagHelperConfirm || policyInEffect() {
+		var cfgErr error
+		if cfg, cfgErr = config.Load(flagDir); cfgErr == nil {
+			orphan = registeredEntityID(ctx, cfg, remote.Domain+"."+remote.ID)
+		}
+	}
+	note, err := checkWritePlan(w, !flagHelperConfirm,
+		deletePlan("delete helper", policy.KindHelper, remote.Domain+"/"+helperID, orphan))
+	if err != nil {
+		return err
 	}
 
-	if _, err := cc.DeleteHelper(ctx, helperID); err != nil {
+	if !flagHelperConfirm {
+		return dryRun("delete helper").
+			with("id", remote.ID).
+			with("domain", remote.Domain).
+			withPolicy(note).
+			render(w)
+	}
+
+	// The delete always names the domain the preview resolved (and the plan
+	// checked), with or without a policy, so the companion acts on exactly
+	// helper:<domain>/<id> (D-123, superseding D-92's profile-only domain).
+	if _, err := cc.DeleteHelper(ctx, helperID, remote.Domain); err != nil {
 		return fmt.Errorf("deleting helper: %w", err)
 	}
 
