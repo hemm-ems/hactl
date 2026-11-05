@@ -84,6 +84,7 @@ var readCommands = map[string]bool{
 	"hactl log show":       true,
 	"hactl policy check":   true,
 	"hactl policy lint":    true,
+	"hactl policy review":  true,
 	"hactl policy show":    true,
 	"hactl ref scan":       true,
 	"hactl ref validate":   true,
