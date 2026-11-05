@@ -345,6 +345,7 @@ func pinnedMCP(t *testing.T, dir string) func(command string) (*mcp.CallToolResu
 // both no-match; unenumerated kinds are unchecked and fail without
 // --allow-partial.
 func TestPolicyLintAgainstTheInstance(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	dir := policyFixtureInstance(t, `version: 1
 active: agent
 profiles:

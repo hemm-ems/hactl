@@ -1,5 +1,5 @@
 {
- "about": "Read-filter vectors for W-2 (manual \"Enforcement (reads)\", D-138..D-147). One or more per read row of dev/surfaces/policy.manifest. A request goes in under a named policy; it is refused before it is sent (expect.refused names the deciding rule), or its answer goes through the session's filter and comes out as expect.answer (compared as JSON), with expect.hidden things dropped and expect.masked parts reading <denied> — each counted once by its address, however many rows carry it (a row without an address counts on its own). `files` are config files the filter may read for a hit's typed owner.",
+ "about": "Read-filter vectors for W-2 (manual \"Enforcement (reads)\", D-138..D-147). One or more per read row of dev/surfaces/policy.manifest. A request goes in under a named policy; it is refused before it is sent (expect.refused names the deciding rule), or its answer goes through the session's filter and comes out as expect.answer (compared as JSON), with expect.hidden things dropped and expect.masked parts reading <denied> — counted as the rows the listing does not show: a thing several answers build into one row (an entity's state and registry row) once, by its address; an occurrence (a logbook row, a history or statistics point, a trace, a search hit, an energy source) each time. `files` are config files the filter may read for a hit's typed owner.",
  "policies": {
   "reader": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n",
   "templater": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n    allow:\n      \"system:template\": [read]\n",
@@ -599,7 +599,7 @@
   },
   {
    "id": "energy-prefs",
-   "why": "each source by the statistics it names (D-142): a denied or external one hides its source; legacy grid flows item by item. The trailer counts what is hidden by its address, once: two statistics here, sensor.power behind three rows",
+   "why": "each source by the statistics it names (D-142): a denied or external one hides its source; legacy grid flows item by item. Each hidden source, flow and device is a row the listing does not show and counts: four here, three of them behind sensor.power",
    "row": "ws energy/get_prefs",
    "policy": "reader",
    "request": {
@@ -670,7 +670,7 @@
       }
      ]
     },
-    "hidden": 2,
+    "hidden": 4,
     "masked": 0
    }
   },

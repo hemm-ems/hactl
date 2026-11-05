@@ -86,7 +86,8 @@ profiles:
       "service:light.turn_onn": [control]
       "area:nowhere_xyz": [delete]
 `)
-	out, err := runHactlDirErr(t, dir, "policy", "lint", "--json")
+	// The owner's lint, at a terminal: the whole instance (D-173).
+	out, err := ownerLint(t, dir)
 	var doc struct {
 		Valid    bool `json:"valid"`
 		Findings []struct {

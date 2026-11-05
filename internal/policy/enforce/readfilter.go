@@ -647,12 +647,10 @@ func (f *answerFilter) history(resp []byte) ([]byte, error) {
 			}
 		}
 		if e == "" || !f.s.readable(policy.KindEntity, e, "history") {
-			f.hidden++
-			if e == "" {
-				f.anon++
-			} else {
-				f.hide("entity:" + e + "/history")
-			}
+			// The rows are the points: each hidden point counts.
+			n := max(len(l), 1)
+			f.hidden += n
+			f.anon += n
 			changed = true
 			continue
 		}
@@ -693,8 +691,10 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	if err != nil {
 		return nil, false, err
 	}
+	// A logbook row is an event, not a thing: each hidden row counts
+	// (D-139 as refined), so it is not recorded by its entity's address.
 	e, ok := stringField(o, "entity_id")
-	if !ok || !f.keep(policy.KindEntity, e, "") {
+	if !ok || !f.s.readable(policy.KindEntity, e, "") {
 		return raw, false, nil
 	}
 	before := f.masked
@@ -742,6 +742,13 @@ func (f *answerFilter) statisticReadable(id string) bool {
 	return f.keep(policy.KindEntity, id, "stats")
 }
 
+// statisticAllowed is statisticReadable for rows that are occurrences (a
+// statistic's points, an energy source naming it): it records no address, so
+// each hidden row counts on its own.
+func (f *answerFilter) statisticAllowed(id string) bool {
+	return id != "" && !strings.Contains(id, ":") && f.s.readable(policy.KindEntity, id, "stats")
+}
+
 func (f *answerFilter) statisticRow(raw json.RawMessage) (json.RawMessage, bool, error) {
 	o, err := decodeRow(raw)
 	if err != nil {
@@ -759,13 +766,19 @@ func (f *answerFilter) statistics(resp []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the answer is not an object: %w", err)
 	}
 	changed := false
-	for id := range m {
-		if !f.statisticReadable(id) {
+	for id, points := range m {
+		if !f.statisticAllowed(id) {
+			// Each hidden point counts: the answer's rows are the points.
+			var list []json.RawMessage
+			n := 1
+			if json.Unmarshal(points, &list) == nil && len(list) > 0 {
+				n = len(list)
+			}
 			delete(m, id)
-			f.hidden++
+			f.hidden += n
+			f.anon += n
 			changed = true
 		}
-		f.keyed = false
 	}
 	if !changed {
 		return resp, nil
@@ -798,14 +811,16 @@ func (f *answerFilter) energyItem(raw json.RawMessage) (json.RawMessage, bool, e
 	if err != nil {
 		return nil, false, err
 	}
+	// Each source, flow and device is a row of its own: a hidden one counts
+	// however many others name the same statistic.
 	stats, entities := energyStats(o)
 	for _, s := range stats {
-		if !f.statisticReadable(s) {
+		if !f.statisticAllowed(s) {
 			return raw, false, nil
 		}
 	}
 	for _, e := range entities {
-		if !f.keep(policy.KindEntity, e, "") {
+		if !f.s.readable(policy.KindEntity, e, "") {
 			return raw, false, nil
 		}
 	}
@@ -880,7 +895,8 @@ func (f *answerFilter) traceRow(raw json.RawMessage) (json.RawMessage, bool, err
 	if !ok || (domain != "automation" && domain != "script") {
 		return raw, false, nil
 	}
-	return raw, f.keep(policy.Kind(domain), item, "trace"), nil
+	// A trace is a run, not a thing: each hidden one counts.
+	return raw, f.s.readable(policy.Kind(domain), item, "trace"), nil
 }
 
 // serviceDomain filters one domain of GET /api/services, service by service;
@@ -1083,8 +1099,8 @@ func (f *answerFilter) hitRow(raw json.RawMessage) (json.RawMessage, bool, error
 		return raw, false, nil
 	}
 	path, _ := stringField(h, "path")
+	// A hit is an occurrence: each hidden one counts.
 	hidden := func() (json.RawMessage, bool, error) {
-		f.hide("hit:" + loc + ":" + path)
 		return raw, false, nil
 	}
 	if !f.s.readable(policy.KindFile, loc, "") {

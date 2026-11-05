@@ -737,6 +737,41 @@ type policyLintDoc struct {
 	Hint string `json:"hint,omitempty"`
 	// Draft is true when --file named a draft (D-161).
 	Draft bool `json:"draft"`
+	// Inventory says what the live checks were made against (D-173):
+	// "instance" (the owner at a terminal, or no policy at all), "readable"
+	// (only what the active profile can read), or "not-checked" (no profile
+	// in effect where one is required, or a broken policy.yaml).
+	Inventory string `json:"inventory"`
+}
+
+// Lint inventory modes (D-173).
+const (
+	lintInventoryInstance   = "instance"
+	lintInventoryReadable   = "readable"
+	lintInventoryNotChecked = "not-checked"
+)
+
+// lintInventoryMode is what `policy lint` may check against (D-173): the
+// whole instance for the owner at a terminal and where no policy applies;
+// only what the active profile can read when a profile is in effect (the
+// session filters the reads); nothing when the instance requires a profile
+// and has none, or its policy.yaml is broken — lint cannot know what the
+// caller may read, so it names nothing from the instance.
+func lintInventoryMode(dir string) string {
+	if ownerTerminalCheck() {
+		return lintInventoryInstance
+	}
+	if policySession != nil {
+		return lintInventoryReadable
+	}
+	active, err := policy.Load(dir)
+	if err != nil {
+		return lintInventoryNotChecked
+	}
+	if required, reqErr := config.PolicyRequired(dir); (required || reqErr != nil) && !active.InEffect() {
+		return lintInventoryNotChecked
+	}
+	return lintInventoryInstance
 }
 
 // policyLintError is lint's exit 1: findings, or unchecked kinds without
@@ -767,13 +802,27 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool, file str
 		return err
 	default:
 		doc.File, doc.Exists, doc.Valid = pol.Source(), pol.Exists(), true
+		doc.Inventory = lintInventoryMode(cfg.Dir)
 		var inv policy.Inventory
-		if pol.Exists() {
+		if pol.Exists() && doc.Inventory != lintInventoryNotChecked {
 			hi := &haInventory{ctx: ctx, cfg: cfg}
 			defer hi.close()
 			inv = hi
 		}
-		doc.Findings, doc.Unchecked = lintReportRows(policy.Lint(pol, inv))
+		rep := policy.Lint(pol, inv)
+		if doc.Inventory == lintInventoryNotChecked {
+			// One line says it; the per-kind "no live inventory" rows would
+			// only repeat it (D-173).
+			rep.Unchecked = nil
+		}
+		doc.Findings, doc.Unchecked = lintReportRows(rep)
+		if doc.Inventory == lintInventoryReadable {
+			for i, f := range doc.Findings {
+				if f.Code == policy.CodeNoMatch {
+					doc.Findings[i].Message = strings.Replace(f.Message, " on this instance", " that this profile can read", 1)
+				}
+			}
+		}
 	}
 
 	if flagJSON {
@@ -787,8 +836,12 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool, file str
 	if le != nil {
 		return &policyBrokenError{n: len(le.Problems), file: le.File}
 	}
-	if len(doc.Findings) > 0 || (len(doc.Unchecked) > 0 && !allowPartial) {
-		return &policyLintError{findings: len(doc.Findings), unchecked: len(doc.Unchecked)}
+	notChecked := 0
+	if doc.Inventory == lintInventoryNotChecked && doc.Exists {
+		notChecked = 1
+	}
+	if len(doc.Findings) > 0 || (len(doc.Unchecked)+notChecked > 0 && !allowPartial) {
+		return &policyLintError{findings: len(doc.Findings), unchecked: len(doc.Unchecked) + notChecked}
 	}
 	return nil
 }
@@ -852,6 +905,13 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allo
 			}
 			_, _ = fmt.Fprintf(w, "  %s: %s — line %d profile %s %s\n", u.Kind, u.Reason, u.Line, u.Profile, u.Rule)
 		}
+	}
+	switch doc.Inventory {
+	case lintInventoryNotChecked:
+		_, _ = fmt.Fprintln(w, "inventory not checked: no profile in effect")
+		return
+	case lintInventoryReadable:
+		_, _ = fmt.Fprintln(w, "inventory: what the active profile can read")
 	}
 	if len(doc.Findings) == 0 && len(doc.Unchecked) == 0 {
 		_, _ = fmt.Fprintln(w, "clean")

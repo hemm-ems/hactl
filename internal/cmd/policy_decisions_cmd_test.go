@@ -200,6 +200,7 @@ profiles:
 // are the url_paths plus the default (M35: `dashboard:` becomes a false
 // no-match), and no-match applies to allows too (M27).
 func TestPolicyLintInventoryCoversRegistryOnlyEntitiesAndTheDefaultDashboard(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	ts := policyRig(t, `version: 1
 active: agent
 profiles:
@@ -235,6 +236,7 @@ profiles:
 // 2026-10-31: automation rules are compared with the config ids, not the
 // entity object id `auto ls` prints.
 func TestPolicyLintChecksAutomationsAgainstConfigIDs(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	f := buildContractFixture(t)
 	body := "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"automation:1700000000000\": [read]\n    deny:\n      \"automation:morning\": [delete]\n"
 	if err := os.WriteFile(filepath.Join(f.dir, policy.FileName), []byte(body), 0o600); err != nil {
@@ -310,6 +312,7 @@ profiles:
 // though dashboards are enumerated: exit 1, and --allow-partial exit 0 with
 // the entry still listed. Red today: lint is clean, exit 0.
 func TestPolicyLintListsFreeSubSegmentsAsUnchecked(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	ts := policyRig(t, `version: 1
 active: agent
 profiles:
@@ -346,6 +349,7 @@ profiles:
 // attributes (x, lx), so the file lints clean. Red today: both allows are
 // reported unreachable.
 func TestPolicyLintUnreachableTreatsAGlobSubAsASet(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	ts := policyRig(t, `version: 1
 active: agent
 profiles:
