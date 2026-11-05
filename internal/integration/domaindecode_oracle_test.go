@@ -412,13 +412,18 @@ func TestOracleAutomationScriptCurrentIsIntegral(t *testing.T) {
 		"def runs", "return len(self._runs)",
 		"`current` is defined as the length of the open-runs list, i.e. a Python int by "+
 			"construction; if that stops being a length it can stop being an integer")
-	ddAssertHASource(t, inst,
+	// HA 2026.11 moved the automation and script entities out of
+	// __init__.py into entity.py; the same property is read from whichever
+	// file holds it.
+	ddAssertHASourceIn(t, inst, []string{
+		"/usr/src/homeassistant/homeassistant/components/automation/entity.py",
 		"/usr/src/homeassistant/homeassistant/components/automation/__init__.py",
-		"def extra_state_attributes", "self.action_script.runs",
+	}, "def extra_state_attributes", "self.action_script.runs",
 		"the automation entity's `current` is that same runs count")
-	ddAssertHASource(t, inst,
+	ddAssertHASourceIn(t, inst, []string{
+		"/usr/src/homeassistant/homeassistant/components/script/entity.py",
 		"/usr/src/homeassistant/homeassistant/components/script/__init__.py",
-		"def extra_state_attributes", "script.runs",
+	}, "def extra_state_attributes", "script.runs",
 		"the script entity's `current` is that same runs count")
 }
 
@@ -494,6 +499,24 @@ func ddAssertHASource(t *testing.T, inst *hatest.Instance, path, pattern, want, 
 	if !strings.Contains(out, want) {
 		t.Errorf("%s no longer contains %q near %q — %s\n%s", path, want, pattern, why, out)
 	}
+}
+
+// ddAssertHASourceIn is ddAssertHASource over the first of paths that exists
+// and holds pattern — for code Home Assistant moved between files. A pattern
+// found in none of them fails, so a move to a third file is still noticed.
+func ddAssertHASourceIn(t *testing.T, inst *hatest.Instance, paths []string, pattern, want, why string) {
+	t.Helper()
+	for _, path := range paths {
+		code, _, err := inst.Exec(context.Background(), "grep", "-q", pattern, path)
+		if err != nil {
+			t.Fatalf("reading %s from the running container: %v", path, err)
+		}
+		if code == 0 {
+			ddAssertHASource(t, inst, path, pattern, want, why)
+			return
+		}
+	}
+	t.Fatalf("%q is in none of %v — Home Assistant moved the code again", pattern, paths)
 }
 
 // TestOracleStatesSixKeyDomainCensus answers the third marker: which of the six

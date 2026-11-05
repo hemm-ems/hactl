@@ -127,6 +127,8 @@ func TestEnergyDirectionIsAPropertyOfTheSourceType(t *testing.T) {
 		// "the source of gas consumption" / "of water consumption".
 		{"gas", "consumption", ""},
 		{"water", "consumption", ""},
+		// HA 2026.11: "the whole-home consumption meter", stat_energy_to only.
+		{"home", "", "consumption"},
 	} {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			// An empty cell above means "HA's schema gives this type no such

@@ -84,9 +84,12 @@ type flowAnswer struct {
 	Type       string `json:"type"`
 	StepID     string `json:"step_id"`
 	DataSchema []struct {
-		Name     string          `json:"name"`
-		Required bool            `json:"required"`
-		Default  json.RawMessage `json:"default"`
+		Name        string          `json:"name"`
+		Required    bool            `json:"required"`
+		Default     json.RawMessage `json:"default"`
+		Description struct {
+			SuggestedValue json.RawMessage `json:"suggested_value"`
+		} `json:"description"`
 	} `json:"data_schema"`
 }
 
@@ -174,7 +177,9 @@ func TestOracleOptionsFlowHandlerIsEntryID(t *testing.T) {
 		t.Errorf("GET of an aborted options flow still answers 200: %s", goneRaw)
 	}
 
-	// --- step: a fresh flow submitted with its own seeded defaults ---
+	// --- step: a fresh flow submitted with its own seeded values ---
+	// A field's seeded value is its default or, where HA suggests instead of
+	// defaulting (met from HA 2026.11), its description.suggested_value.
 	// The answer of the step is what the manifest's POST options/flow/{flow_id}
 	// row would see after the fact; recorded so a create_entry without a
 	// handler is noticed rather than assumed.
@@ -189,13 +194,17 @@ func TestOracleOptionsFlowHandlerIsEntryID(t *testing.T) {
 	}
 	payload := map[string]json.RawMessage{}
 	for _, f := range fresh.DataSchema {
-		if len(f.Default) == 0 {
+		seeded := f.Default
+		if len(seeded) == 0 {
+			seeded = f.Description.SuggestedValue
+		}
+		if len(seeded) == 0 {
 			if f.Required {
-				t.Fatalf("required field %q has no seeded default; cannot submit unchanged: %s", f.Name, freshRaw)
+				t.Fatalf("required field %q has no seeded value; cannot submit unchanged: %s", f.Name, freshRaw)
 			}
 			continue
 		}
-		payload[f.Name] = f.Default
+		payload[f.Name] = seeded
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
