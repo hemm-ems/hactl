@@ -74,7 +74,7 @@ profiles:
 		t.Errorf("ent ls lists %s, which the profile may not read:\n%s", hidden, out)
 	}
 	var maskedRow string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, masked+" ") {
 			maskedRow = l
 		}
@@ -161,8 +161,8 @@ func TestPolicyReadsDeniedAttributeIsMasked(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	rig := buildPGRig(t, inst)
 	light := rig.Lights[0]
-	real := pgStateOf(t, inst, light).Attributes["friendly_name"]
-	if s, _ := real.(string); s == "" {
+	actual, _ := pgStateOf(t, inst, light).Attributes["friendly_name"].(string)
+	if actual == "" {
 		t.Fatalf("oracle: %s has no friendly_name — the case would prove nothing", light)
 	}
 	policy := fmt.Sprintf(`version: 1
@@ -178,8 +178,8 @@ profiles:
 	if err != nil {
 		t.Fatalf("ent show: %v\n%s", err, out)
 	}
-	if strings.Contains(out, real.(string)) || !strings.Contains(out, "<denied>") {
-		t.Errorf("prose shows the denied attribute's value %q, or no <denied>:\n%s", real, out)
+	if strings.Contains(out, actual) || !strings.Contains(out, "<denied>") {
+		t.Errorf("prose shows the denied attribute's value %q, or no <denied>:\n%s", actual, out)
 	}
 	if got := pgLastLine(out); got != fmt.Sprintf("hidden by policy: 0, masked: 1 (profile %s)", pgProfile) {
 		t.Errorf("trailer %q", got)
@@ -189,8 +189,8 @@ profiles:
 	if err != nil {
 		t.Fatalf("ent show --json: %v\n%s", err, out)
 	}
-	if strings.Contains(out, real.(string)) {
-		t.Errorf("--json carries the denied value %q:\n%s", real, out)
+	if strings.Contains(out, actual) {
+		t.Errorf("--json carries the denied value %q:\n%s", actual, out)
 	}
 	var doc map[string]any
 	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
@@ -203,7 +203,7 @@ profiles:
 	if !strings.HasPrefix(errOut, "hidden by policy: 0, masked: 1") {
 		t.Errorf("--json stderr %q, want the trailer", errOut)
 	}
-	if got := pgStateOf(t, inst, light).Attributes["friendly_name"]; got != real {
+	if got := pgStateOf(t, inst, light).Attributes["friendly_name"]; got != actual {
 		t.Errorf("HA's friendly_name changed to %v", got)
 	}
 }
