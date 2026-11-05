@@ -81,6 +81,18 @@ var policyOwnerPaths = map[string]bool{
 	"hactl agent add":       true,
 }
 
+// ownerRun reports whether this invocation is the owner's and runs without a
+// policy session: `policy activate` and `agent add` always — their own
+// terminal gate refuses anyone else (D-149) — and `policy review` when stdin
+// and stdout are a terminal (D-172). The owner's review counts the real
+// instance; anyone else's — an agent's shell, an MCP server, a script — runs
+// under the session like every read, so its counts cover only what the
+// profile lets it read and the trailer says how much was hidden.
+func ownerRun(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+	return policyOwnerPaths[path] || (path == "hactl policy review" && ownerTerminalCheck())
+}
+
 // policyExempt reports whether cmd runs without the policy: a D-60 exempt
 // command, a completion script or cobra's completion entry points, and the
 // commands that only print help or the version — the root (`hactl`,
@@ -105,7 +117,7 @@ func policyExempt(cmd *cobra.Command) bool {
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
 	policyTrailer = ""
-	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" || policyOwnerPaths[cmd.CommandPath()] {
+	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" || ownerRun(cmd) {
 		return nil
 	}
 	dir := config.BestEffortDir(flagDir)
@@ -314,7 +326,7 @@ var writesWithoutConfirm = map[string]bool{
 // exempt from read enforcement (D-82): every --confirm command, previewed or
 // confirmed, and the few that write without one. The owner's `agent add` and
 // `policy activate` are not among them: they run without any session
-// (policyOwnerPaths, D-163), so there is nothing whose reads to exempt (D-172).
+// (ownerRun, D-163), so there is nothing whose reads to exempt (D-172).
 func isWriteCommand(cmd *cobra.Command) bool {
 	return cmd.Flags().Lookup("confirm") != nil || writesWithoutConfirm[cmd.CommandPath()]
 }

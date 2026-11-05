@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -294,5 +295,49 @@ func TestAgentLsListsEachAgentsOwnPolicy(t *testing.T) {
 	out, err = runPolicyCLI(t, a, "agent", "ls", "--root", filepath.Join(root, "nope"))
 	if err != nil || !strings.Contains(out, "no agents under") {
 		t.Errorf("a missing root: %v %q", err, out)
+	}
+}
+
+// D-172 (#4): under read enforcement the read-only starter hides nothing —
+// `"*": [read]` covers every kind, system:template and system:logs included —
+// so listings print no `hidden by policy` trailer, and every write is denied.
+func TestStarterPolicyHidesNothingUnderReadEnforcement(t *testing.T) {
+	withoutOwnerTerminal(t)
+	ts := policyRig(t, starterPolicy)
+	for _, args := range [][]string{{"ent", "ls"}, {"area", "ls"}, {"label", "ls"}, {"script", "ls"}} {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldErr := os.Stderr
+		os.Stderr = w
+		out, runErr := runPolicyCLI(t, ts.dir, args...)
+		os.Stderr = oldErr
+		_ = w.Close()
+		stderr, _ := io.ReadAll(r)
+		_ = r.Close()
+		if runErr != nil {
+			t.Errorf("%v under the starter: %v\n%s", args, runErr, out)
+		}
+		if strings.Contains(out+string(stderr), "hidden by policy") || strings.Contains(out, "<denied>") {
+			t.Errorf("%v under the starter hid something:\n%s\n%s", args, out, stderr)
+		}
+	}
+	pol, err := policy.Load(ts.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, res := range []string{"system:template", "system:logs", "entity:lock.front_door/attr/x", "file:packages/a.yaml", "config_entry:abc", "dashboard:main/views/v"} {
+		r, perr := policy.ParseResource(res)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		if !pol.Decide(r, policy.Read, nil).Allowed {
+			t.Errorf("the starter denies read %s", res)
+		}
+	}
+	out, err := runPolicyCLI(t, ts.dir, "policy", "check", "system:template", "read")
+	if err != nil || !strings.HasPrefix(out, "allowed: system:template read\n") {
+		t.Errorf("policy check system:template read under the starter: %v\n%s", err, out)
 	}
 }

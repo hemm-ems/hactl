@@ -130,7 +130,7 @@ func buildReview(ctx context.Context, cfg *config.Config, pol *policy.Policy) (r
 	_, enforcedVerbs := policyEnforcement(pol)
 	if pol.Draft() {
 		// What it would enforce once activated: the verbs this version enforces.
-		enforcedVerbs = verbNames([]policy.Verb{policy.Control, policy.Edit, policy.Create, policy.Delete})
+		enforcedVerbs = verbNames([]policy.Verb{policy.Read, policy.Control, policy.Edit, policy.Create, policy.Delete})
 	}
 	doc := reviewDoc{
 		File: pol.Source(), Draft: pol.Draft(), Profile: pol.Active(), SelectedBy: string(pol.Selection()),
