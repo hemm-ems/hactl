@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/hemm-ems/hactl/internal/hatest"
 )
 
 // ============================================================================
@@ -499,14 +501,46 @@ func TestPolicySetupSpecReviewReportsRealCounts(t *testing.T) {
 		}
 	})
 
+	reviewOfPolicyYAML(t, inst, home, switchLine, locks)
+}
+
+// reviewOfPolicyYAML: without --file, review reads policy.yaml — here the
+// draft itself, which hides lock.* from reads.
+func reviewOfPolicyYAML(t *testing.T, inst *hatest.Instance, home, switchLine string, locks []string) {
+	t.Helper()
 	t.Run("without --file it reviews policy.yaml", func(t *testing.T) {
+		// Here policy.yaml is the draft itself, which hides lock.* from
+		// reads — so the comparison is the owner's review, at a terminal,
+		// which counts the real instance (D-172). Without a terminal the same
+		// review runs under that profile and counts only what it may read
+		// (the next subtest).
 		same := setupInstanceDir(t, inst, reviewDraft, false)
-		r := runSetupBin(t, home, same, nil, "--dir", same, "policy", "review")
-		if got, want := lineMatching(r.Stdout, `^\s*switch:`), switchLine; got == "" || got != want {
+		s := startPTY(t, home, same, "--dir", same, "policy", "review")
+		if code, ok := s.wait(time.Minute); !ok || code != 0 {
+			t.Fatalf("policy review at a terminal: exit %d (exited %v)\n%s", code, ok, s.transcript())
+		}
+		r := s.transcript()
+		if got, want := lineMatching(r, `^\s*switch:`), switchLine; got == "" || got != want {
 			t.Errorf("policy review of policy.yaml (= the draft): switch line %q, want %q\n%s", got, want, r)
 		}
-		if reDraftFileLine.MatchString(r.Stdout) {
-			t.Errorf("policy review without --file calls policy.yaml a draft:\n%s", r.Stdout)
+		if reDraftFileLine.MatchString(r) {
+			t.Errorf("policy review without --file calls policy.yaml a draft:\n%s", r)
+		}
+	})
+
+	t.Run("without a terminal it counts only what policy.yaml lets it read", func(t *testing.T) {
+		same := setupInstanceDir(t, inst, reviewDraft, false)
+		r := runSetupBin(t, home, same, nil, "--dir", same, "policy", "review")
+		if r.Code != 0 {
+			t.Fatalf("policy review without a terminal: %s", r)
+		}
+		for _, l := range locks {
+			if strings.Contains(r.Stdout, l) {
+				t.Errorf("an agent's review names %s, which policy.yaml hides from reads (D-172)\n%s", l, r)
+			}
+		}
+		if !strings.Contains(r.Stderr, "hidden by policy:") {
+			t.Errorf("an agent's review does not say what it left out (the trailer, D-139)\n%s", r)
 		}
 	})
 }
