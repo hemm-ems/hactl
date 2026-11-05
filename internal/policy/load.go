@@ -588,3 +588,40 @@ func (w *walker) selectorValues(n *yaml.Node, what string) ([]string, bool) {
 	}
 	return out, ok
 }
+
+// LoadDraft reads the policy file at path — a draft, not the instance's
+// policy.yaml, and never in effect (D-161). It is the same parse as Load, and
+// it returns the exact bytes it parsed, so `policy activate` can write what it
+// reviewed and nothing else (D-163). A path with nothing at it is an error,
+// never "no policy file": a typo in a draft's path must not read as
+// allow-all. A path that is there but not a readable regular file, and a file
+// that is not a valid policy, are a *LoadError naming path.
+func LoadDraft(path string) (*Policy, []byte, error) {
+	exists, err := policyFileExists(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !exists {
+		return nil, nil, &DraftMissingError{Path: path}
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // a draft the caller named, by design
+	if err != nil {
+		return nil, nil, unreadable(path, err)
+	}
+	pol, problems := parse(data)
+	if len(problems) > 0 {
+		sortProblems(problems)
+		return nil, data, &LoadError{File: path, Problems: problems}
+	}
+	sum := sha256.Sum256(data)
+	pol.source, pol.exists, pol.hash, pol.draft = path, true, hex.EncodeToString(sum[:]), true
+	return pol, data, nil
+}
+
+// DraftMissingError is a draft path with nothing at it (D-161).
+type DraftMissingError struct{ Path string }
+
+func (e *DraftMissingError) Error() string { return "no draft at " + e.Path }
+
+// ExitCode is 1.
+func (e *DraftMissingError) ExitCode() int { return 1 }

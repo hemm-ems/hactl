@@ -80,7 +80,13 @@ type Policy struct {
 	// `policy show --as` can say what it is NOT showing.
 	baseActive    string
 	baseSelection Selection
+	// draft marks a file read by LoadDraft: it is never in effect (D-161).
+	draft bool
 }
+
+// Draft reports whether this policy was read as a draft (LoadDraft), not as
+// the instance's policy.yaml: nothing of it is enforced (D-161).
+func (p *Policy) Draft() bool { return p.draft }
 
 // profile is one declared profile.
 type profile struct {
@@ -278,6 +284,7 @@ func (p *Policy) As(name string) (*Policy, error) {
 		selection:     SelectedByWhatIf,
 		baseActive:    base,
 		baseSelection: baseSel,
+		draft:         p.draft,
 	}, nil
 }
 
@@ -819,3 +826,27 @@ func anyRefMatches(refs []Ref, values []string) bool {
 	}
 	return false
 }
+
+// Kind is the kind the rule's pattern names, "" for the bare pattern `*`,
+// which names every kind.
+func (r Rule) Kind() Kind {
+	if r.addr.any {
+		return ""
+	}
+	return r.addr.kind
+}
+
+// MatchesID reports whether the rule's pattern reaches kind k's id: its kind
+// and id match (`*` reaches everything), whatever its sub-resource path —
+// `entity:*/registry/entity_id` reaches every entity, through a part of it.
+// It is what `policy review` counts a rule's reach with.
+func (r Rule) MatchesID(k Kind, id string) bool {
+	if r.addr.any {
+		return true
+	}
+	return r.addr.kind == k && r.addr.matchID(id)
+}
+
+// OnPart reports whether the rule's pattern names a part of a resource (a
+// sub-resource path), not the resource as a whole.
+func (r Rule) OnPart() bool { return !r.addr.any && len(r.addr.sub) > 0 }
