@@ -139,7 +139,7 @@ func acquireWriteLock(cmd *cobra.Command) error {
 		//nolint:nilerr // a --confirm that does not parse is cobra's error to report
 		return nil
 	}
-	cacheDir := stateCacheDir(flagDir)
+	cacheDir := writeLockDir(flagDir)
 	if heldWriteLock.Held() && heldWriteLockDir == cacheDir {
 		return nil // already holding this instance's lock
 	}
@@ -150,6 +150,21 @@ func acquireWriteLock(cmd *cobra.Command) error {
 	}
 	heldWriteLock, heldWriteLockDir = lock, cacheDir
 	return nil
+}
+
+// writeLockDir is where the write lock of the instance at dirFlag lives: one
+// lock per Home Assistant, keyed by the instance's HA_URL, in the user's cache
+// directory (D-152, D-168) — so two agents' directories on one Home Assistant
+// serialize their writes. Without a loadable HA_URL or a user cache directory
+// it is the instance's own cache directory, the per-directory lock H-26 had
+// before: such a command cannot write to Home Assistant anyway.
+func writeLockDir(dirFlag string) string {
+	if cfg, err := config.Load(dirFlag); err == nil {
+		if d, keyErr := instancelock.DirForURL(cfg.URL); keyErr == nil {
+			return d
+		}
+	}
+	return stateCacheDir(dirFlag)
 }
 
 // releaseWriteLock gives back whatever acquireWriteLock took. Safe when
