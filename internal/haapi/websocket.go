@@ -795,7 +795,7 @@ func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[
 
 	// The parameters go in first and the id and type last: the policy surface
 	// keys this send by cmdType (H-29), so no parameter may replace it.
-	msg := make(map[string]any, len(params)+2)
+	msg := map[string]any{}
 	maps.Copy(msg, params)
 	msg["id"] = ws.nextID.Add(1)
 	msg["type"] = cmdType
