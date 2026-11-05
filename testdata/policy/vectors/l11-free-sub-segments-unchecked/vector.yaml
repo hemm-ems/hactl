@@ -1,0 +1,12 @@
+clause: "Lint (D-65): every rule holding a free sub segment other than attr/<name> (views/<path>, reload/<domain>, block/<id>) is one unchecked entry, reason `sub-resource not checked`, with its profile, rule and line, whether or not its kind is enumerated — kinds table order, the kind's own entry first, then rules in file order; a closed word (resources) adds none"
+lint:
+  inventory:
+    dashboard: ["", main]
+    system: [logs, wireguard, reload, check_config, cache]
+  findings: []
+  unchecked:
+    - {kind: dashboard, reason: sub-resource not checked, profile: agent, rule: 'deny "dashboard:main/views/secrte" [read]', line: 7}
+    - {kind: dashboard, reason: sub-resource not checked, profile: other, rule: 'deny "dashboard:/views/home" [edit]', line: 13}
+    - {kind: file, reason: not enumerated, profile: "", rule: "", line: 0}
+    - {kind: file, reason: sub-resource not checked, profile: agent, rule: 'deny "file:x.yaml/block/clmate" [edit]', line: 9}
+    - {kind: system, reason: sub-resource not checked, profile: agent, rule: 'deny "system:reload/automaton" [control]', line: 8}

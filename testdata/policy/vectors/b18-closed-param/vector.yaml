@@ -1,0 +1,17 @@
+{
+  "clause": "D-60: a registry field outside the kind's closed list",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "lables"
+        ]
+      },
+      {
+        "line": 8
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "clause": "Lint unreachable: `where:` is ignored — a deny wins regardless",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "light.kitchen"
+      ]
+    },
+    "findings": [
+      {
+        "code": "unreachable",
+        "profile": "agent",
+        "rule": "allow \"entity:light.*\" [control] where area=wohnzimmer",
+        "line": 7
+      }
+    ],
+    "unchecked": []
+  }
+}

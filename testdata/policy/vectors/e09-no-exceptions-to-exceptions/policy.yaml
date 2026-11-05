@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+      "entity:lock.front_door/attr/battery_level": [read]
+    deny:
+      "entity:lock.*": [read]

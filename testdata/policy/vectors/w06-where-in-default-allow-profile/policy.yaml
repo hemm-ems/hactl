@@ -1,0 +1,8 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    allow:
+      "entity:light.*": [control]
+    where:
+      "entity:light.*": { area: wohnzimmer }

@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    where:
+      "entity:*": { label: agent_ok }
+      "entity:light.*": { area: wohnzimmer }
+    allow:
+      "entity:light.*": [control]
+      "entity:*": [control, read]

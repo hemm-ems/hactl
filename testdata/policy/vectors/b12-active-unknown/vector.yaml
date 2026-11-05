@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: `active` names a profile the file does not declare",
+  "load_error": {
+    "problems": [
+      {
+        "line": 2,
+        "contains": [
+          "agnet"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

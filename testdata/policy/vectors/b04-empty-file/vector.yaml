@@ -1,0 +1,11 @@
+{
+  "clause": "D-60: an empty policy.yaml is broken (no version, no mapping), never silently no policy",
+  "load_error": {
+    "problems": [
+      {
+        "line_any": true
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

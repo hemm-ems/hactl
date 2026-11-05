@@ -1,0 +1,9 @@
+clause: "D-2 / manual matching: a wildcard-free id of every kind — not only the qualified ones — matches case-insensitively and exactly (one matcher, never two)"
+cases:
+  - {resource: "automation:pg_heating", verb: read, allowed: true, rule: 'allow "automation:PG_Heating" [read]', line: 7}
+  - {resource: "automation:PG_HEATING", verb: read, allowed: true, rule: 'allow "automation:PG_Heating" [read]', line: 7}
+  - {resource: "automation:pg_heating_2", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "device:abc123", verb: edit, allowed: true, rule: 'allow "device:ABC123" [edit]', line: 8}
+  - {resource: "script:morning", verb: control, allowed: true, rule: 'allow "script:Morning" [control]', line: 9}
+  - {resource: "file:packages/heating.yaml", verb: edit, allowed: true, rule: 'allow "file:Packages/Heating.yaml" [edit]', line: 10}
+  - {resource: "area:wohnzimmer", verb: read, allowed: true, rule: 'allow "area:Wohnzimmer" [read]', line: 11}

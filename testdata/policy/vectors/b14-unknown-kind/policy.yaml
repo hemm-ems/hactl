@@ -1,0 +1,7 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    deny:
+      "entiy:lock.*": [write]

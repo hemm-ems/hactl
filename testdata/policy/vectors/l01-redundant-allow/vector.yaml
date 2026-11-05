@@ -1,0 +1,20 @@
+{
+  "clause": "Lint redundant-allow: an allow in a profile without `default: deny` decides nothing",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "light.kitchen",
+        "lock.front_door"
+      ]
+    },
+    "findings": [
+      {
+        "code": "redundant-allow",
+        "profile": "agent",
+        "rule": "allow \"entity:light.*\" [control]",
+        "line": 6
+      }
+    ],
+    "unchecked": []
+  }
+}

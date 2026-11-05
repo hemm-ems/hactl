@@ -1,0 +1,17 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "file:**": [read]
+      "file:.storage/core.json": [read]
+    deny:
+      "file:./secrets.yaml": [read]
+      "file:packages/../secrets.yaml": [read]
+      "file:a/block": [read]
+      "file:a/block/b/c.yaml": [read]
+      "file:block/x": [read]
+      "file:..": [read]
+      "file:pkgs/BLOCK": [read]
+      "file:pkgs/x.yaml/block/clmate": [read]

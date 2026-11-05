@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: a `where` key that is not an allow pattern of the same profile (a deny pattern; a pattern in no rule)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 11
+      },
+      {
+        "line": 12
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

@@ -1,0 +1,5 @@
+version: 1
+active: agnet
+profiles:
+  agent:
+    default: deny

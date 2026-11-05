@@ -1,0 +1,19 @@
+clause: "D-63: a policy pattern matches the FULL id only — D-28's second anchor (the part after the domain) is for filters; across domains the domain is written as a wildcard; a pattern without a wildcard is exact; `?` is exactly one character; other ids match only at the id"
+cases:
+  - {resource: "entity:light.kitchen_lamp", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.my_kitchen", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:sensor.temperature", verb: control, allowed: true, rule: 'allow "entity:sensor.*" [control]', line: 8}
+  - {resource: "entity:binary_sensor.door", verb: control, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.lamp1", verb: edit, allowed: true, rule: 'allow "entity:light.lamp?" [edit]', line: 9}
+  - {resource: "entity:light.lamp12", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.lamp", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.hallway", verb: delete, allowed: true, rule: 'allow "entity:*.hallway" [delete]', line: 10}
+  - {resource: "entity:cover.hallway", verb: delete, allowed: true, rule: 'allow "entity:*.hallway" [delete]', line: 10}
+  - {resource: "entity:light.hallway_2", verb: delete, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "service:light.turn_on", verb: control, allowed: true, rule: 'allow "service:*.turn_on" [control]', line: 11}
+  - {resource: "service:homeassistant.turn_on", verb: control, allowed: true, rule: 'allow "service:*.turn_on" [control]', line: 11}
+  - {resource: "service:light.turn_off", verb: control, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "automation:heating", verb: read, allowed: true, rule: 'allow "automation:heating" [read]', line: 12}
+  - {resource: "automation:heating_2", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "automation:pg.heating", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen_lamp", verb: create, allowed: true, rule: 'allow "entity:*kitchen*" [create]', line: 13}

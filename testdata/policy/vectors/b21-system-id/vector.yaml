@@ -1,0 +1,17 @@
+{
+  "clause": "D-60: a system id that names, or as a glob matches, none of its set",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "nope"
+        ]
+      },
+      {
+        "line": 8
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

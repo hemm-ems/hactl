@@ -1,0 +1,24 @@
+clause: "Verdict.Notes: one note per narrowed allow that matched the resource AND verb but could not be evaluated, ordered by the allow rule's line (not the where block's order)"
+live: {mode: nil}
+cases:
+  - resource: "entity:light.x"
+    verb: control
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 2
+    notes_contains: [['"entity:light.*"'], ['"entity:*"']]
+  - resource: "entity:light.x"
+    verb: read
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 1
+    notes_contains: [['"entity:*"']]
+  - resource: "entity:switch.x"
+    verb: control
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 1
+    notes_contains: [['"entity:*"']]

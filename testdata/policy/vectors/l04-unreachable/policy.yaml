@@ -1,0 +1,12 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:lock.*": [read, edit]
+      "entity:*": [read]
+      "entity:*/registry/labels": [edit]
+    deny:
+      "entity:lock.*": [read, write]
+      "entity:light.*": [write]

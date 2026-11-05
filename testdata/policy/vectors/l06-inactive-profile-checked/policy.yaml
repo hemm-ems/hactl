@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+  other:
+    default: deny
+    deny:
+      "entity:lokc.*": [write]
