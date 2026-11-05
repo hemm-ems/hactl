@@ -18,7 +18,7 @@ import (
 
 // ============================================================================
 // Read enforcement against a real Home Assistant (W-2, manual "Enforcement
-// (reads)", D-138..D-149). The oracle reads HA over plain HTTP (pgHTTP), never
+// (reads)", D-138..D-147, D-153, D-154). The oracle reads HA over plain HTTP (pgHTTP), never
 // through hactl, so a filter can neither hide what HA holds from the test nor
 // invent what it does not.
 // ============================================================================
@@ -314,7 +314,7 @@ profiles:
 	}
 
 	// Saving what was shown would delete the view the profile cannot read:
-	// refused (D-148), and HA keeps it.
+	// refused (D-153), and HA keeps it.
 	file := filepath.Join(t.TempDir(), "dash.json")
 	if werr := os.WriteFile(file, []byte(out), 0o600); werr != nil {
 		t.Fatal(werr)

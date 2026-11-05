@@ -243,7 +243,7 @@ func classifyDashboardConfig(ctx context.Context, ws *haapi.WSClient, urlPath st
 // storedDashboardConfig classifies a dashboard's stored config for a write's
 // plan and its snapshot. While a profile is in effect it is the session's own
 // read (W-2): unfiltered, the config the request layer diffs the save against,
-// so the plan sees a view the profile may not read (D-148) and the snapshot
+// so the plan sees a view the profile may not read (D-153) and the snapshot
 // backs up all of it. With no profile it is classifyDashboardConfig (D-58).
 func storedDashboardConfig(ctx context.Context, ws *haapi.WSClient, urlPath string) (dashboardConfigState, json.RawMessage, error) {
 	sess := policySession
@@ -976,7 +976,7 @@ func runDashReplace(ctx context.Context, w io.Writer, oldVal, newVal, urlPath st
 		// Diffed against the stored config as the request layer sees it, not
 		// the read the rewrite was made from: a view the profile may not read
 		// was dropped from that one (D-140), and saving without it deletes it
-		// — which the plan must show, and D-148 refuses.
+		// — which the plan must show, and D-153 refuses.
 		if state, raw, _ := storedDashboardConfig(ctx, ws, urlPath); state == dashConfigStored {
 			stored = raw
 		}

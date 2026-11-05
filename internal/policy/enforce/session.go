@@ -504,7 +504,7 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 // decide answers one check: a concrete resource by Decide (where: selectors
 // asked live), a kind-wide one by DecideKindWide (D-75), a deny-only one by
 // its denies alone (D-107). Deleting a dashboard view the profile may not read
-// is refused whatever allows it (D-148): a command saves a config its read
+// is refused whatever allows it (D-153): a command saves a config its read
 // had that view dropped from (D-140), so the delete is never one it meant.
 func (s *Session) decide(c reqmap.Check) policy.Verdict {
 	if v, refused := s.unreadViewDelete(c); refused {
@@ -526,13 +526,13 @@ func (s *Session) decide(c reqmap.Check) policy.Verdict {
 }
 
 // RuleMaskedWriteBack refuses a write that carries a masked value back
-// (D-149).
+// (D-154).
 const RuleMaskedWriteBack = "fail-closed: the write carries a value the policy masked (<denied>) back to Home Assistant"
 
 // writesBackMasked reports whether a write request carries `<denied>` — a
 // value this invocation's reads masked — back to Home Assistant: a command
 // that merges what it read (a label list, an attribute) would otherwise write
-// the mask over the real value (D-149). Only once something was masked.
+// the mask over the real value (D-154). Only once something was masked.
 func (s *Session) writesBackMasked(req reqmap.Request) bool {
 	s.mu.Lock()
 	masked := s.reads.masked
@@ -553,10 +553,10 @@ func (s *Session) writesBackMasked(req reqmap.Request) bool {
 }
 
 // RuleUnreadViewDelete refuses deleting a dashboard view the profile may not
-// read (D-148).
+// read (D-153).
 const RuleUnreadViewDelete = "fail-closed: deletes a dashboard view this profile may not read"
 
-// unreadViewDelete is D-148's refusal of `delete dashboard:<u>/views/<p>`
+// unreadViewDelete is D-153's refusal of `delete dashboard:<u>/views/<p>`
 // while `read` on that view is denied.
 func (s *Session) unreadViewDelete(c reqmap.Check) (policy.Verdict, bool) {
 	r := c.Resource

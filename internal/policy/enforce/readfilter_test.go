@@ -311,7 +311,7 @@ func TestTemplateReadNeedsAnAllowOnlyWhileAReadIsDenied(t *testing.T) {
 	}
 }
 
-// TestDeletingAnUnreadableViewIsRefused — D-148: a command saves the config
+// TestDeletingAnUnreadableViewIsRefused — D-153: a command saves the config
 // its read had a denied view dropped from (D-140); the save would delete that
 // view, which no allow may grant — at the plan and at the request layer.
 func TestDeletingAnUnreadableViewIsRefused(t *testing.T) {
@@ -350,7 +350,7 @@ profiles:
 	}
 }
 
-// TestAMaskedValueIsNeverWrittenBack — D-149: once a read masked something,
+// TestAMaskedValueIsNeverWrittenBack — D-154: once a read masked something,
 // a write carrying `<denied>` back is refused, so a command merging what it
 // read (a label list) never writes the mask over the real value.
 func TestAMaskedValueIsNeverWrittenBack(t *testing.T) {

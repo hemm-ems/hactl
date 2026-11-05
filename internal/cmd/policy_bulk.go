@@ -139,7 +139,7 @@ func addRefReplace(ctx context.Context, p *writePlan, cc *companion.Client, oldV
 		stored, serr := json.Marshal(d.stored)
 		// The stored config as the request layer diffs the save against it:
 		// the rewrite was made from a filtered read (D-140), whose dropped
-		// views a save would delete (D-148).
+		// views a save would delete (D-153).
 		if raw, found, rerr := sess.StoredDashboard(ctx, d.urlPath); rerr == nil && found {
 			stored = raw
 		}
