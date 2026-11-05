@@ -502,11 +502,12 @@ stderr. A few things worth knowing:
 - **`tpl eval` needs `system:template`.** A template can read any state, so
   while your profile denies any read, `tpl eval` needs
   `"system:template": [read]` allowed explicitly.
-- **A profile that denies reads limits writes too.** A command reads what it
-  changes first, so with `default: deny` allow `read` on what the profile may
-  change. And a command never writes back what it was not shown: saving a
-  dashboard without a view you may not read (which would delete it) is
-  refused, and so is any write carrying a `<denied>` value back.
+- **A write command's own reads are not filtered.** A command that changes
+  something reads what it changes first; those reads belong to the write, and
+  the write's own check decides it. So a profile may allow `edit` on
+  something without `read` — the write works, and its preview may show what
+  it changes — while every read command still hides it. Saving a dashboard
+  without a view you may not read (which would delete it) is refused.
 
 **Over MCP**, `hactl mcp` without `--allow-writes` still refuses every write
 first; with `--allow-writes`, the policy decides each one as on the command

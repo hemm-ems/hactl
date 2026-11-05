@@ -2219,12 +2219,13 @@ denied, an unanswerable question (Home Assistant unreachable, or answering
 with an error, while computing a service call's reach) is denied. Over-deny is
 allowed, under-deny is not (D-59).
 
-**Reads (W-2, D-138..D-147, D-153, D-154).** Every read is decided at the request layer
+**Reads (W-2, D-138..D-147, D-82, D-153).** Every read is decided at the request layer
 too: what it names itself before it is sent, its answer by the session's
 filter before any command decodes it (H-21) — rows dropped, parts masked
 `<denied>`, counted once per address in the `hidden by policy` trailer. The
 session's own questions (the facts a write check needs) are never filtered,
-and a command never writes back what a read hid (D-153) or masked (D-154).
+nor are a write command's own reads — its plan decides the write (D-82) — and
+a save never deletes a dashboard view a read hid (D-153).
 
 **What this law does not claim.** It does not redact what a read is allowed
 to return about something else: a raw config file's text, a log message, a
