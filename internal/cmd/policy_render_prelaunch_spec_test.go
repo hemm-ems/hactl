@@ -21,9 +21,9 @@ import (
 	"github.com/hemm-ems/hactl/internal/policy"
 )
 
-const ownerLine = "policy_broken: policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
+const ownerLine = "policy_broken: policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it"
 
-const ownerHint = "policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
+const ownerHint = "policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it"
 
 // --- B-4: policy show is a document ---------------------------------------------
 

@@ -141,3 +141,21 @@ func pgExit(err error) int {
 	}
 	return 1
 }
+
+// D-161 (orchestrator 2026-11-05): a relative --file resolves against the
+// instance directory, never the working directory.
+func TestPolicyFileFlagRelativePathIsTheInstanceDirectory(t *testing.T) {
+	dir, path := draftInstance(t, draftDenyLocks)
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+	if err := os.WriteFile(filepath.Join(elsewhere, "policy.draft.yaml"), []byte("version: 1\nactive: other\nprofiles:\n  other: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := RunWithOutput([]string{"hactl", "--dir", dir, "policy", "show", "--file", "policy.draft.yaml"}, &out); err != nil {
+		t.Fatalf("show --file relative: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "file: "+path+" (draft, not in effect)\n") || !strings.Contains(out.String(), "profile: agent") {
+		t.Errorf("a relative --file did not read the instance's draft:\n%s", out.String())
+	}
+}

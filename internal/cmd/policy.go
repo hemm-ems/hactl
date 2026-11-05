@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,8 +129,18 @@ func loadPolicyFile(dir, file string) (*policy.Policy, error) {
 	if file == "" {
 		return policy.Load(dir)
 	}
-	pol, _, err := policy.LoadDraft(file)
+	pol, _, err := policy.LoadDraft(draftPath(dir, file))
 	return pol, err
+}
+
+// draftPath resolves a draft path (D-161): a relative one against the
+// instance directory, beside .env — never the working directory, so the
+// skill's `--file policy.draft.yaml` names the instance's draft from anywhere.
+func draftPath(dir, file string) string {
+	if filepath.IsAbs(file) {
+		return filepath.Clean(file)
+	}
+	return filepath.Join(dir, file)
 }
 
 // fileText is the `file:` line's value: the path, and for a draft that it is

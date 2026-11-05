@@ -488,7 +488,7 @@ with its line:
 ```console
 $ hactl policy check entity:light.sofa control
 policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?
-policy_broken: policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`
+policy_broken: policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it
 ```
 
 The same lines appear in `policy show`, `policy lint` and every refused
@@ -507,7 +507,9 @@ spaces, variation selectors or a byte-order mark, and text that is not valid
 UTF-8 are all refused (D-69). An id that looks right but holds one would be a
 rule that matches nothing.
 
-hactl never writes `policy.yaml`. There is no command for it. The file is yours.
+The file is yours. hactl writes `policy.yaml` only when you run `hactl policy activate` in a
+terminal of your own (an agent drafts `policy.draft.yaml`; you review and activate it), and
+once as `hactl agent add`'s read-only starter. See "Setting up an agent" in the manual.
 
 ---
 

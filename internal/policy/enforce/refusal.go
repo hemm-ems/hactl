@@ -210,7 +210,7 @@ const failClosedPrefix = "fail-closed: "
 
 // BrokenHint is the sentence every broken-file output closes with (D-117):
 // the file is the owner's, so the caller reports it and does not fix it.
-const BrokenHint = "policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
+const BrokenHint = "policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it"
 
 // OwnerTail closes every denial's hint (D-118 as refined by W-4, D-148): the
 // agent asks the owner, and a change reaches policy.yaml only as a draft the
