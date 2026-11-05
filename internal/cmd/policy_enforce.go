@@ -93,6 +93,14 @@ func ownerRun(cmd *cobra.Command) bool {
 	return policyOwnerPaths[path] || (path == "hactl policy review" && ownerTerminalCheck())
 }
 
+// lintUnderSession reports whether this invocation is `policy lint` run by
+// anyone but the owner at a terminal (D-173): its inventory — the ids its
+// findings name — then goes through the active profile's read filter, like
+// every other read, so lint names nothing the profile hides.
+func lintUnderSession(cmd *cobra.Command) bool {
+	return cmd.CommandPath() == "hactl policy lint" && !ownerTerminalCheck()
+}
+
 // policyExempt reports whether cmd runs without the policy: a D-60 exempt
 // command, a completion script or cobra's completion entry points, and the
 // commands that only print help or the version — the root (`hactl`,
@@ -117,7 +125,11 @@ func policyExempt(cmd *cobra.Command) bool {
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
 	policyTrailer = ""
-	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" || ownerRun(cmd) {
+	// `policy lint` without a terminal reads its inventory through the
+	// active profile's read filter (D-173): it stays exempt from refusal
+	// (D-60), but while a profile is in effect it runs under the session.
+	agentLint := lintUnderSession(cmd)
+	if (policyExempt(cmd) && !agentLint) || cmd.CommandPath() == "hactl mcp" || ownerRun(cmd) {
 		return nil
 	}
 	dir := config.BestEffortDir(flagDir)
@@ -128,9 +140,15 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		var le *policy.LoadError
 		if errors.As(err, &le) {
+			if agentLint {
+				return nil // lint reports the broken file itself (D-60)
+			}
 			return &enforce.BrokenError{Err: le}
 		}
 		return err
+	}
+	if !pol.InEffect() && agentLint {
+		return nil // no profile to filter by; runPolicyLint decides (D-173)
 	}
 	if !pol.InEffect() {
 		// D-136: an instance that requires a policy refuses without one in

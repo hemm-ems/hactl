@@ -170,6 +170,7 @@ profiles:
 // makes that rule unchecked again: exit 1, and --allow-partial exit 0 with
 // the entry listed.
 func TestPolicyLintAllWildcardFreeSubsAreChecked(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	clean := `version: 1
 active: agent
 profiles:

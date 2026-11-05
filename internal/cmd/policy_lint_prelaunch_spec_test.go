@@ -142,6 +142,7 @@ func TestPolicyLintReportsATypedControlAllowAsNoEffect(t *testing.T) {
 // energy "Energy"): a misspelt label or area is no-match on the where: entry's
 // line; a value matching an id, a name, a glob, or only `*` is not.
 func TestPolicyLintChecksWhereValues(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	body := agentProfile(`    default: deny
     allow:
       "entity:light.*": [control]
@@ -191,6 +192,7 @@ func TestPolicyLintChecksWhereValues(t *testing.T) {
 // has label energy. Each case is a narrowed allow plus an allow that lets the
 // agent change what the selector reads.
 func TestPolicyLintReportsASelfGrantingWhere(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	for _, tc := range []struct {
 		name, rules        string
 		narrowed, granting string // patterns: the narrowed allow, the allow that satisfies it

@@ -76,6 +76,7 @@ func inventoryRegistries() map[string]any {
 // device's area and labels (D-114, D-115), and a YAML helper the states do
 // not hold yet (D-116).
 func TestPolicyLintResolvesOwnersAndSelectorsFromTheRegistries(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	for _, tc := range []struct {
 		name, code, rules, want string
 	}{
