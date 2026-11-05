@@ -12,6 +12,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/policy"
 	"github.com/hemm-ems/hactl/internal/policy/enforce"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
 	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
@@ -173,7 +174,10 @@ type refPlacer struct {
 func (r *refPlacer) read(ctx context.Context, loc string) refFile {
 	f, ok := r.files[loc]
 	if !ok {
-		resp, err := r.cc.ReadConfigFileRaw(ctx, loc)
+		// The plan's own question (W-2): which typed owner a change lies in
+		// decides the write check, so the file is read unfiltered and
+		// unrefused, as the request layer reads its facts.
+		resp, err := r.cc.ReadConfigFileRaw(reqgate.Own(ctx), loc)
 		if err == nil {
 			f = refFile{content: []byte(resp.Content)}
 		} else {
@@ -195,7 +199,7 @@ func (r *refPlacer) allFiles(ctx context.Context) (map[string][]byte, error) {
 		return r.every, r.everyErr
 	}
 	r.listed = true
-	list, err := r.cc.ListConfigFiles(ctx)
+	list, err := r.cc.ListConfigFiles(reqgate.Own(ctx))
 	if err != nil {
 		r.everyErr = fmt.Errorf("listing the config files: %w", err)
 		return nil, r.everyErr
