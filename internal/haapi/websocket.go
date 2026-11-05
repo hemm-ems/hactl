@@ -389,6 +389,33 @@ func (ws *WSClient) UserList(ctx context.Context) ([]UserEntry, error) {
 	return entries, nil
 }
 
+// CreateLongLivedToken mints a long-lived access token for the connection's
+// own Home Assistant user, named clientName and valid lifespanDays — what
+// `hactl agent add` gives each agent (M-6, D-160). Home Assistant accepts it on
+// a connection authenticated with a long-lived token (oracle
+// TestOracleLongLivedTokenFromLongLivedConnection, HA 2026.11.0). Never
+// retried: a second send would mint a second token.
+//
+// WS command: auth/long_lived_access_token
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/auth/__init__.py
+func (ws *WSClient) CreateLongLivedToken(ctx context.Context, clientName string, lifespanDays int) (string, error) {
+	result, err := ws.sendCommand(ctx, "auth/long_lived_access_token", map[string]any{
+		"client_name": clientName,
+		"lifespan":    lifespanDays,
+	})
+	if err != nil {
+		return "", err
+	}
+	var token string
+	if err := json.Unmarshal(result, &token); err != nil {
+		return "", fmt.Errorf("parsing auth/long_lived_access_token result: %w", err)
+	}
+	if token == "" {
+		return "", errors.New("auth/long_lived_access_token answered success with no token")
+	}
+	return token, nil
+}
+
 // DeviceRegistryList returns all device registry entries via WS.
 // WS command: config/device_registry/list
 // Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/config/device_registry.py

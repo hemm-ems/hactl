@@ -1647,7 +1647,7 @@ kitchen-helper  ~/.hactl/agents/kitchen-helper   readonly   yes       never
 **`agent add` in detail** (D-160, D-164). `<name>` is lowercase letters, digits, `-` and `_`, starting with a letter or digit, at most 64 characters. The directory is `--path`, or `~/.hactl/agents/<name>`; one that exists at all — a file, an empty directory, a symlink — is refused (exit 1, nothing changed, no token made). The source instance must load (`HA_URL` and `HA_TOKEN`). The token is a long-lived access token of the source token's own Home Assistant user, created over Home Assistant's WebSocket (`auth/long_lived_access_token`, which Home Assistant accepts on a connection authenticated with a long-lived token — oracle, D-160), named `hactl agent <name>`, valid 3650 days — it appears under that name in the user's Security → Long-lived access tokens, where the owner revokes it. `--token -` reads one from the terminal instead (not echoed). Either token is checked against Home Assistant (`GET /api/`) before anything is written; if Home Assistant refuses to create one, nothing is written and the error says to create one by hand and run again with `--token -`. Then it writes, in the new directory (mode 0700): `.env` (mode 0600) with `HA_URL`, `HA_TOKEN`, `COMPANION_URL` and `TZ` when the source has them, and `HACTL_POLICY=required`; and the starter `policy.yaml`:
 
 ```yaml
-# Written by `hactl agent add` (D-150): read-only until the owner activates
+# Written by `hactl agent add`: read-only until the owner activates
 # this agent's own policy with `hactl policy activate`.
 version: 1
 active: readonly

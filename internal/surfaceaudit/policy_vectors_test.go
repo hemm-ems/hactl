@@ -87,6 +87,7 @@ type requestVectorFile struct {
 		Expect struct {
 			Disposition string `json:"disposition"`
 			Row         string `json:"row"`
+			Refused     bool   `json:"refused"`
 		} `json:"expect"`
 	} `json:"vectors"`
 	Redirects []struct {
@@ -120,6 +121,11 @@ var deadRoutes = []string{
 // to the manifest without a vector, a vector left behind by a deleted row, and
 // a vector that quietly expects a write row to be a read all fail here, before
 // the classifier is even consulted.
+// ownerOnlyRows are the write rows whose mapping always refuses while a
+// profile is in effect: only an owner's command, which runs without a policy
+// session, sends them (D-149, D-160). A refused vector is their mapping.
+var ownerOnlyRows = map[string]bool{"ws auth/long_lived_access_token": true}
+
 func TestEveryPolicyRequestRowHasAVector(t *testing.T) {
 	root := repoRoot(t)
 	rows := policyRequestRows(t, root)
@@ -162,7 +168,7 @@ func TestEveryPolicyRequestRowHasAVector(t *testing.T) {
 		if !strings.HasPrefix(v.Expect.Row, v.Request.Transport+" ") {
 			t.Errorf("vector %s sends a %s request but names row %q", v.ID, v.Request.Transport, v.Expect.Row)
 		}
-		if v.Expect.Disposition == r.class {
+		if v.Expect.Disposition == r.class || (ownerOnlyRows[r.key] && v.Expect.Disposition == "unmappable" && v.Expect.Refused) {
 			covered[r.key] = true
 		}
 	}

@@ -124,9 +124,16 @@ var verbatimByDesign = map[string]bool{
 // data: `cache refresh` prints "traces refreshed"/"logs refreshed", `cache
 // clear` prints "cache cleared". Forcing --json here would mean inventing a
 // payload shape these commands were never designed to have.
+//
+// The owner's two terminal-gated commands belong here too: `policy activate`
+// and `agent add` run only with a terminal on stdin and stdout (D-149), print
+// a review and a prompt for a person, and report one closing line — no data
+// query, and an in-process run is refused before anything is read.
 var actionOnly = map[string]bool{
-	"cache refresh": true,
-	"cache clear":   true,
+	"cache refresh":   true,
+	"cache clear":     true,
+	"policy activate": true,
+	"agent add":       true,
 }
 
 // There is deliberately no "needs a companion" category. The eight commands
@@ -475,6 +482,9 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"policy check":        {"entity:light.kitchen", "read"},
 		"policy lint":         nil,
 		"policy review":       nil,
+		// Under the fixture's own directory, so the sweep never reads the
+		// caller's real ~/.hactl/agents.
+		"agent ls": {"--root", f.dir},
 
 		// The eight the deleted companionRequired list used to skip. They are
 		// ordinary rows here — the only thing that made them special was the

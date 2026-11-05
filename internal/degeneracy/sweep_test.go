@@ -39,6 +39,12 @@ import (
 var unidentifiedWireStructs = map[string]string{
 	// ---- hactl's own output shapes: rendered, never decoded from a wire ----
 	"autoShowResult":        "hactl's own --json output shape for `auto show`",
+	"agentRow":              "hactl's own --json output shape for `agent ls`",
+	"reviewDoc":             "hactl's own --json output shape for `policy review`",
+	"reviewGrant":           "hactl's own --json output shape for `policy review`",
+	"reviewCreate":          "hactl's own --json output shape for `policy review`",
+	"reviewNever":           "hactl's own --json output shape for `policy review`",
+	"reviewLint":            "hactl's own --json output shape for `policy review`",
 	"autoShowTrace":         "hactl's own --json output shape for `auto show`",
 	"scriptShowResult":      "hactl's own --json output shape for `script show`",
 	"scriptShowTrace":       "hactl's own --json output shape for `script show`",
@@ -134,9 +140,14 @@ var unidentifiedWireStructs = map[string]string{
 // uncheckedDecodeSites are json.Unmarshal calls whose enclosing function
 // deliberately does not call degeneracy.Check, keyed "<path>:<func>:<target>".
 // Keyed by name rather than by line so the table survives edits above it.
-var uncheckedDecodeSites = map[string]string{
+var uncheckedDecodeSites = map[string]string{ //nolint:gosec // decode-site keys and reasons, no credential
 	// Targets with no identity to check — see unidentifiedWireStructs.
 	"internal/haapi/flow.go:ConfigFlowHandlers:handlers": "decodes into []string",
+	// A string result: an empty token is refused by the method itself.
+	"internal/haapi/websocket.go:CreateLongLivedToken:token": "decodes into a string; an empty token is an error right after the decode",
+	// The agent's own audit log, local: a line that decodes to nothing is
+	// shown as an empty line, never as a Home Assistant answer.
+	"internal/cmd/agent.go:lastAuditLine:l": "hactl's own audit log line, read back for `agent ls`; no wire, no Home Assistant answer",
 	// The policy gate's own reads (H-29). Each fails closed on its own terms:
 	// an absent referenced_entities is an error, never an empty reach; an
 	// absent config_entries makes the answer incomplete; an outgoing message

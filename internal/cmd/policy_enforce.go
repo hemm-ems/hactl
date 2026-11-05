@@ -63,6 +63,16 @@ var policyExemptPaths = map[string]bool{
 	"hactl rtfm":        true,
 }
 
+// policyOwnerPaths are the owner's commands, which run without the instance's
+// policy session (D-163): `policy activate` and `agent add` sit behind their
+// own terminal gate (D-149), and a broken or missing policy.yaml — which
+// refuses every other command — must still be replaceable. Neither is ever
+// offered over MCP.
+var policyOwnerPaths = map[string]bool{
+	"hactl policy activate": true,
+	"hactl agent add":       true,
+}
+
 // policyExempt reports whether cmd runs without the policy: a D-60 exempt
 // command, a completion script or cobra's completion entry points, and the
 // commands that only print help or the version — the root (`hactl`,
@@ -86,7 +96,7 @@ func policyExempt(cmd *cobra.Command) bool {
 // nothing: each tool call it serves runs this pre-run again (D-60, D-72).
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
-	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" {
+	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" || policyOwnerPaths[cmd.CommandPath()] {
 		return nil
 	}
 	dir := config.BestEffortDir(flagDir)

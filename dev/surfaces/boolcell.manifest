@@ -33,3 +33,4 @@ internal/cmd/flow.go:renderConfigShow:e.SupportsReconfig = exempt: prose from fm
 
 internal/companion/client.go:WriteAutomationDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
 internal/companion/client.go:WriteScriptDef:dryRun = exempt: a URL query parameter, where "true"/"false" is the wire encoding HTTP requires — no reader and no --json downstream of it
+internal/cmd/agent.go:runAgentLs:req = proven: TestAgentLsListsEachAgentsOwnPolicy

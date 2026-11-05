@@ -33,6 +33,7 @@ const (
 // TestGateExhaustive enforces this against the live command tree, so adding a
 // CLI command without classifying it here fails the build.
 var readCommands = map[string]bool{
+	"hactl agent ls":                   true,
 	"hactl area ls":                    true,
 	"hactl auto cat":                   true,
 	"hactl auto diff":                  true,
@@ -147,13 +148,30 @@ var alwaysBlocked = map[string]bool{
 	"hactl mcp":        true, // would recurse into a nested server
 	"hactl completion": true, // shell-completion scripts, useless to a model
 	"hactl help":       true, // cobra help command; --help works on any command
+	// The owner's commands (D-149): an agent drafts, only the owner
+	// activates or adds an agent, at a terminal of their own.
+	"hactl policy activate": true,
+	"hactl agent add":       true,
 }
+
+// ownerOnly are the always-blocked commands that are the owner's: the refusal
+// says so and ends with the owner hint (D-149, D-166).
+var ownerOnly = map[string]bool{
+	"hactl policy activate": true,
+	"hactl agent add":       true,
+}
+
+// ownerHint is the refusal hint every denial ends with (enforce.OwnerTail).
+const ownerHint = "ask the owner; a change goes through a draft and `hactl policy activate`"
 
 // Gate decides whether a command path may run. Group commands (e.g. bare
 // "hactl ent") just print help and are allowed; classification applies to
 // leaf commands.
 func Gate(path string, allowWrites bool) (Decision, string) {
 	switch {
+	case ownerOnly[path]:
+		return BlockedAlways, fmt.Sprintf("command %q is not available over MCP: only the owner runs it, "+
+			"in a terminal of their own — %s", path, ownerHint)
 	case alwaysBlocked[path] || strings.HasPrefix(path, "hactl completion "):
 		return BlockedAlways, fmt.Sprintf("command %q is not available over MCP", path)
 	case readCommands[path]:
@@ -174,6 +192,7 @@ func Gate(path string, allowWrites bool) (Decision, string) {
 // groupCommands are non-leaf paths that only print help when run bare.
 var groupCommands = map[string]bool{
 	"hactl":                     true,
+	"hactl agent":               true,
 	"hactl area":                true,
 	"hactl auto":                true,
 	"hactl cache":               true,

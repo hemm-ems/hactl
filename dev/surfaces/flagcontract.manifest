@@ -68,3 +68,4 @@
 --top           = debt: honoured by every command that renders a table and inert on the rest — clause 1's other half, which `--since` closed and this flag has not. Moving it to its consumers is the same change and would take `--full` with it; deliberately not made here.
 --tunnel        = exempt: declared once, on the `companion wireguard` group, and inherited by four subcommands that each address a tunnel. The group itself only prints help, so there is no second declaration and no second meaning to reconcile.
 --unique        = debt: `log --unique` and `cc logs --unique` deduplicate through the same analyze path and only the `log` side is asserted.
+--token = exempt: two owner bootstraps take the instance token here — `setup` the token itself or -, `agent add` only - (read from the terminal); one referent, the instance token, and neither runs over MCP
