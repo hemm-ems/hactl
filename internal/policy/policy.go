@@ -10,7 +10,8 @@ import (
 )
 
 // FileName is the policy file inside an instance directory (D-57). hactl
-// reads it and never writes it; there is no command that does.
+// writes it in exactly two places, both the owner's and both behind a
+// terminal: `policy activate` and `agent add`'s read-only starter (D-148).
 const FileName = "policy.yaml"
 
 // Level is the enforcement level every verdict carries (D-51): "A", a

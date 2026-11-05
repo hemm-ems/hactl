@@ -39,7 +39,7 @@ var policyCmd = family(&cobra.Command{
 	Use:   "policy",
 	Short: "Read the instance's permission policy (a guardrail against mistakes, not a security boundary)",
 	Long: "Read <instance>/policy.yaml: which profile is in effect, what it allows, and whether its rules " +
-		"mean what their author wrote. " + policy.Disclaimer + ". hactl never writes the file. " +
+		"mean what their author wrote. " + policy.Disclaimer + ". Only `policy activate`, in the owner's terminal, writes the file. " +
 		"Writes are enforced while a profile is in effect; reads are not yet.",
 })
 

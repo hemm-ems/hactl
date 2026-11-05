@@ -206,7 +206,7 @@ func TestCheckPlanRefusesEveryDeniedPairInPlanOrder(t *testing.T) {
 	if ref.ExitCode() != 1 || ref.PolicyClass() != enforce.ClassDenied {
 		t.Errorf("exit %d class %q", ref.ExitCode(), ref.PolicyClass())
 	}
-	const hint = "the owner would change the rule on line 6, 7; allowed: 1 of 3 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml"
+	const hint = "the owner would change the rule on line 6, 7; allowed: 1 of 3 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`"
 	if got := ref.Hint(); got != hint {
 		t.Errorf("hint = %q, want %q", got, hint)
 	}

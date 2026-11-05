@@ -78,7 +78,7 @@ func TestLabelCreateRefusedByItsPlan(t *testing.T) {
 		"  denied: create label:* — deny \"label:secret\" [create] (line 6)\n" +
 		"  checked: 1 resources, 1 denied\n" +
 		"  profile: agent (selected by active)\n" +
-		"  hint: the owner would change the rule on line 6 — report it; do not edit policy.yaml\n"
+		"  hint: the owner would change the rule on line 6 — ask the owner; a change goes through a draft and `hactl policy activate`\n"
 	if out != want {
 		t.Errorf("refused preview stdout\n got: %q\nwant: %q", out, want)
 	}

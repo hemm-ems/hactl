@@ -21,7 +21,7 @@ func TestDeniedErrorHintAndLine(t *testing.T) {
 	failClosed := func(res, reason string) enforce.Denial {
 		return enforce.Denial{Resource: res, Verb: "control", Rule: "fail-closed: " + reason}
 	}
-	const tail = " — report it; do not edit policy.yaml"
+	const tail = " — ask the owner; a change goes through a draft and `hactl policy activate`"
 	for _, tc := range []struct {
 		name     string
 		ref      enforce.DeniedError

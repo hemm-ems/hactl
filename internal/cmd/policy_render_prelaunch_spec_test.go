@@ -21,9 +21,9 @@ import (
 	"github.com/hemm-ems/hactl/internal/policy"
 )
 
-const ownerLine = "policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"
+const ownerLine = "policy_broken: policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
 
-const ownerHint = "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"
+const ownerHint = "policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
 
 // --- B-4: policy show is a document ---------------------------------------------
 
@@ -234,7 +234,7 @@ func TestRefusalHintNamesTheCauseAndTheWayForward(t *testing.T) {
 	t.Run("explicit deny", func(t *testing.T) {
 		ts := startCmdServer(t, nil, nil)
 		writePolicyFile(t, ts.dir, policyDenySecretLabel)
-		const hint = "the owner would change the rule on line 6 — report it; do not edit policy.yaml"
+		const hint = "the owner would change the rule on line 6 — ask the owner; a change goes through a draft and `hactl policy activate`"
 		out, err := runPolicyCLI(t, ts.dir, "label", "create", "Garden")
 		assertHint(t, "label create", out, hint)
 		if err == nil || err.Error() != "policy_denied: 1 of 1 resources denied (profile agent)" {
@@ -247,7 +247,7 @@ func TestRefusalHintNamesTheCauseAndTheWayForward(t *testing.T) {
 		ts := startCmdServer(t, nil, nil)
 		writePolicyFile(t, ts.dir, "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n")
 		out, err := runPolicyCLI(t, ts.dir, "label", "create", "Garden")
-		assertHint(t, "label create", out, "nothing allows label:*; the owner would add an allow — report it; do not edit policy.yaml")
+		assertHint(t, "label create", out, "nothing allows label:*; the owner would add an allow — ask the owner; a change goes through a draft and `hactl policy activate`")
 		if err == nil || err.Error() != "policy_denied: 1 of 1 resources denied (profile agent)" {
 			t.Errorf("stderr line %v", err)
 		}
@@ -255,7 +255,7 @@ func TestRefusalHintNamesTheCauseAndTheWayForward(t *testing.T) {
 	t.Run("mixed plan", func(t *testing.T) {
 		rig := startRegistryRig(t)
 		writePolicyFile(t, rig.dir, denyPolicy(`"device:d1/registry/area_id": [edit]`))
-		const hint = "the owner would change the rule on line 6; allowed: 2 of 3 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml"
+		const hint = "the owner would change the rule on line 6; allowed: 2 of 3 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`"
 		out, err := runPolicyCLI(t, rig.dir, "area", "delete", "hall")
 		assertHint(t, "area delete", out, hint)
 		if err == nil || err.Error() != "policy_denied: 1 of 3 resources denied (profile agent)" {
@@ -271,7 +271,7 @@ func TestRefusalHintNamesTheCauseAndTheWayForward(t *testing.T) {
 		rig := startSvcRig(t, reachOf("light.a", "light.b"))
 		writePolicyFile(t, rig.dir, svcPolicy(`    default: deny`))
 		out, err := runPolicyCLI(t, rig.dir, "svc", "call", "light.turn_on", "--data", `{"area_id":"hall"}`)
-		re := regexp.MustCompile(`^  hint: nothing allows \S+ \(and 2 more\); the owner would add an allow — report it; do not edit policy\.yaml$`)
+		re := regexp.MustCompile(`^  hint: nothing allows \S+ \(and 2 more\); the owner would add an allow — ask the owner; a change goes through a draft and ` + "`hactl policy activate`$")
 		if !re.MatchString(lastLine(out)) {
 			t.Errorf("last line %q, want %s\n%s", lastLine(out), re, out)
 		}
@@ -285,7 +285,7 @@ func TestRefusalHintNamesTheCauseAndTheWayForward(t *testing.T) {
 		out, _ := runPolicyCLI(t, rig.dir, "svc", "call", "light.turn_on", "--data", `{"area_id":"hall"}`)
 		hint := lastLine(out)
 		if !strings.HasPrefix(hint, "  hint: hactl could not check ") || !strings.Contains(hint, ", so it refused") ||
-			!strings.HasSuffix(hint, " — report it; do not edit policy.yaml") {
+			!strings.HasSuffix(hint, " — ask the owner; a change goes through a draft and `hactl policy activate`") {
 			t.Errorf("fail-closed hint %q", hint)
 		}
 	})
@@ -304,7 +304,7 @@ func TestRefusalHintSaysThePreviewHadPassed(t *testing.T) {
 	writePolicyFile(t, rig.dir, svcPolicy(`    deny:`, `      "entity:light.*": [control]`))
 	out, _ := runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
 	assertHint(t, "refused --confirm", out, "the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach); "+
-		"the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml")
+		"the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`")
 }
 
 // --- B-5: no decision id in anything rendered (D-124) ----------------------------

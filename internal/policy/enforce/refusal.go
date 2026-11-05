@@ -202,7 +202,7 @@ func (r *DeniedError) Hint() string {
 		// Every refusal carries a denial; this only keeps the line whole.
 		parts = append(parts, "refused by the owner's policy.yaml (profile "+r.Profile+")")
 	}
-	return strings.Join(parts, "; ") + " — report it; do not edit policy.yaml"
+	return strings.Join(parts, "; ") + OwnerTail
 }
 
 // failClosedPrefix starts the rule of every denial hactl makes without a rule.
@@ -210,7 +210,12 @@ const failClosedPrefix = "fail-closed: "
 
 // BrokenHint is the sentence every broken-file output closes with (D-117):
 // the file is the owner's, so the caller reports it and does not fix it.
-const BrokenHint = "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"
+const BrokenHint = "policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`"
+
+// OwnerTail closes every denial's hint (D-118 as refined by W-4, D-148): the
+// agent asks the owner, and a change reaches policy.yaml only as a draft the
+// owner activates in a terminal of their own.
+const OwnerTail = " — ask the owner; a change goes through a draft and `hactl policy activate`"
 
 // BrokenReport is a broken file in the one wording every output uses (D-117):
 // `policy_broken: <file>:<line>: <message>` per problem, then the closing
@@ -251,7 +256,7 @@ type MissingError struct {
 func (e *MissingError) Error() string {
 	return ClassMissing + ": " + e.File + " — this instance requires a policy; the owner restores it\n" +
 		"  why: " + e.Why + " (HACTL_POLICY=required in .env)\n" +
-		"  hint: report this; do not edit policy.yaml or .env"
+		"  hint: ask the owner; a change goes through a draft and `hactl policy activate` — do not edit policy.yaml or .env"
 }
 
 // ExitCode is 1.

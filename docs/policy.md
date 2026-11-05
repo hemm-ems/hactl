@@ -371,7 +371,7 @@ policy_denied: would rename "light.old" to "light.new" — refused by policy, no
   denied: edit dashboard:security — deny "dashboard:security" [write] (line 16)
   checked: 41 resources, 2 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 The exit code is `1`, and stderr gets a one-line count,
@@ -488,7 +488,7 @@ with its line:
 ```console
 $ hactl policy check entity:light.sofa control
 policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?
-policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it
+policy_broken: policy.yaml belongs to the owner — report this, do not edit it; a change goes through a draft and `hactl policy activate`
 ```
 
 The same lines appear in `policy show`, `policy lint` and every refused
