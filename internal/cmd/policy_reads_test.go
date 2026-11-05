@@ -106,7 +106,7 @@ func TestReadingOneDeniedThingIsRefused(t *testing.T) {
 		"  denied: read entity:binary_sensor.door — deny \"entity:binary_sensor.*\" [read] (line 6)\n" +
 		"  checked: 1 resources, 1 denied\n" +
 		"  profile: agent (selected by active)\n" +
-		"  hint: the owner would change the rule on line 6 — report it; do not edit policy.yaml\n"
+		"  hint: the owner would change the rule on line 6 — ask the owner; a change goes through a draft and `hactl policy activate`\n"
 	if out != want || errOut != "" {
 		t.Errorf("the refusal report:\n got %q\nwant %q\nstderr %q", out, want, errOut)
 	}

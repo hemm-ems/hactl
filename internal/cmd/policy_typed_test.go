@@ -72,7 +72,7 @@ func runTypedRefusal(t *testing.T, tc typedRefusal) {
 		// The report, then its one hint line (D-118, built from the causes;
 		// its wording is TestRefusalHintNamesTheCauseAndTheWayForward's).
 		report, hint, _ := strings.Cut(out, "  hint: ")
-		if report != want.String() || !strings.HasSuffix(hint, " — report it; do not edit policy.yaml\n") || strings.Count(hint, "\n") != 1 {
+		if report != want.String() || !strings.HasSuffix(hint, " — ask the owner; a change goes through a draft and `hactl policy activate`\n") || strings.Count(hint, "\n") != 1 {
 			t.Errorf("confirm %v: stdout\n got: %q\nwant: %q + one hint line", confirm, out, want.String())
 		}
 		if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {

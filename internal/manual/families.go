@@ -108,6 +108,7 @@ var Aliases = map[string]string{
 	"changes":  "health",
 	"area":     "label",
 	"floor":    "label",
+	"agent":    "policy",
 }
 
 // Exempt lists top-level commands that never trigger manual delivery: the

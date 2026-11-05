@@ -30,7 +30,7 @@ Full command set (family → subcommands):
 - `device ls|show` · `label|area|floor ls|create|delete`
 - `config entries|show|options|delete|files|file|block|flow-start|flow-step|flow-inspect`
 - `grep` · `ref scan|replace|validate` · `cache status|refresh|clear` · `companion status|logs|wireguard`
-- `policy show|check|lint`
+- `policy show|check|lint|review|activate` · `agent add|ls`
 
 No other commands exist — never invent one. Flags unclear: `<command> --help`; full manual: `rtfm`.
 
@@ -1104,6 +1104,7 @@ hactl cache clear                         # wipe all local cache, stable IDs inc
 hactl version                             # version, commit, build date (same first line as --version)
 hactl rtfm                                # print this manual (for LLM self-teaching)
 hactl rtfm --reference policy             # a family's reference section, which no command delivers on its own
+hactl rtfm --skill policy-setup           # a procedure for an agent, shipped in the binary (today: policy-setup)
 ```
 
 ### WireGuard (companion lifeline)
@@ -1131,10 +1132,13 @@ hactl policy check entity:lock.front_door control  # exit 0 allowed, 1 denied; n
 hactl policy check automation:pg_heating write     # every write verb at once; exit 0 only if every enforced one is allowed
 hactl policy lint                                  # validate the file, then check every rule against the live instance
 hactl policy lint --allow-partial                  # accept what lint could not check (it is still listed)
+hactl rtfm --skill policy-setup                    # asked to propose your own rules: how to draft them
+hactl policy lint --file policy.draft.yaml         # check a draft; show and check take --file too
+hactl policy review --file policy.draft.yaml       # what the draft would allow here, in counts and names
 hactl rtfm --reference policy                      # the full reference: file format, grammar, every --json field
 ```
 
-**A guardrail against mistakes, not a security boundary.** `<instance>/policy.yaml` tells hactl what may be changed. It stops a misread instruction, a target wider than meant, a typo in an id; it does not stop anything with a shell — the token in `.env` can do everything. **The file is the owner's: never edit, move or delete `policy.yaml`.** hactl never writes it and has no command that does. A denial is an answer to report, not an obstacle to remove.
+**A guardrail against mistakes, not a security boundary.** `<instance>/policy.yaml` tells hactl what may be changed. It stops a misread instruction, a target wider than meant, a typo in an id; it does not stop anything with a shell — the token in `.env` can do everything. **The file is the owner's: never edit, move or delete `policy.yaml`.** Only the owner puts a policy in effect, with `hactl policy activate` in a terminal of their own; you may draft one (`policy.draft.yaml`, see `hactl rtfm --skill policy-setup`), never activate it. A denial is an answer to report, not an obstacle to remove.
 
 **What is enforced.** While a profile is in effect, every command that switches, edits, creates or deletes something works out everything its `--confirm` run would touch and checks all of it in the dry run, and again under `--confirm`, before its first write. All or nothing: if one of 40 files is denied, none is written. Every command that reads is filtered the same way: a listing drops what the profile may not read and ends with `hidden by policy: N (profile <p>)`, a denied attribute reads `<denied>`, and reading one denied thing is refused (see "Enforcement (reads)"). Without `policy.yaml` nothing changes and nothing is checked.
 
@@ -1146,7 +1150,7 @@ policy_denied: would delete automation — refused by policy, nothing was writte
   denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 14)
   checked: 2 resources, 1 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 stderr carries one summary line, `policy_denied: 1 of 2 resources denied (profile agent)`. With `--json` it is the preview object with `"ok": false`, `"error": "policy_denied"`, every denial under `details.policy.denied` and the same `hint`.
@@ -1161,7 +1165,7 @@ Report the refusal to the user with the rule and its line. Do not work around it
 
 **Ask before you act.** `policy check <resource> <verb>` answers without changing anything. Verbs: `read`, `control` (switch: `svc call`, `script run`), `edit`, `create`, `delete`, or `write` for every write verb that applies there. A resource is `<kind>:<id>[/<sub>]`: `entity:light.kitchen`, `entity:light.kitchen/registry/labels`, `automation:<config id>` (the `id:` in its config — `config_id` in `auto ls --json` — not the alias), `script:<id>/run`, `helper:<domain>/<id>`, `dashboard:<url_path>/views/<path>`, `service:light.turn_on`, `file:packages/x.yaml`. The answer names the rule that decided it; the exit code is the verdict. The reference lists every kind and sub-resource.
 
-**A broken file** — a typo, an unknown key — refuses every command except `policy show`, `policy lint`, `version`, `help`, `completion` and `rtfm`, with one `policy_broken: <file>:<line>: <message>` line per problem. The owner fixes it; report it, do not edit it.
+**A broken file** — a typo, an unknown key — refuses every command except `policy show`, `policy lint`, `version`, `help`, `completion` and `rtfm` (and the owner's `policy activate` and `agent add`), with one `policy_broken: <file>:<line>: <message>` line per problem. The owner fixes it; report it, do not edit it.
 
 **Over MCP**, a server started without `--allow-writes` refuses every write first; with it, the policy decides each write exactly as on the command line.
 
@@ -1179,7 +1183,7 @@ hactl policy check automation:pg_heating edit --json
 hactl policy check entity:lock.front_door write --json   # one verdict per write verb that applies
 ```
 
-**A guardrail against mistakes, not a security boundary: the token in .env can do everything** (D-51, level A). A policy stops a misread instruction, a too-wide target or a typo in an id; it does not stop anything with a shell, which can reach Home Assistant directly or edit the file. hactl reads `<instance>/policy.yaml` and never writes it — there is no command that does. The policy is the owner's: never edit, move or delete `policy.yaml`. A denial is an answer to report, not an obstacle to remove.
+**A guardrail against mistakes, not a security boundary: the token in .env can do everything** (D-51, level A). A policy stops a misread instruction, a too-wide target or a typo in an id; it does not stop anything with a shell, which can reach Home Assistant directly or edit the file. hactl reads `<instance>/policy.yaml` and writes it in exactly two places, both the owner's and both behind a terminal: `policy activate` and `agent add`'s read-only starter (D-148). The policy is the owner's: never edit, move or delete `policy.yaml`. A denial is an answer to report, not an obstacle to remove.
 
 **Writes and reads are enforced.** Every command that changes something — `control`, `edit`, `create`, `delete` — checks its whole plan against the policy in its dry run and again under `--confirm`, and refuses before its first write if anything in the plan is denied (see "Enforcement" below). Every command that reads filters what it reads the same way: a listing drops what you may not read and says how many, a denied attribute reads `<denied>`, and reading one denied thing is refused (see "Enforcement (reads)"). `policy show` says `enforced: writes and reads` (`"enforced": true`, `"enforced_verbs": ["read", "control", "edit", "create", "delete"]` in `--json`).
 
@@ -1250,7 +1254,7 @@ Nor does the caller choose the instance, and with it the policy file, per call o
 - a `policy.yml` in the instance directory — hactl reads only `policy.yaml`, and a policy saved under the wrong name must not silently be no policy;
 - a `policy.yaml` (or `policy.yml`) that exists but cannot be read — a dangling symlink, a directory, no permission: the error names the path, and it is never `no policy file`.
 
-Every problem is one line, worded the same everywhere — in `policy show` and `policy lint` (stdout), in `policy check` and every refused command (stderr), and in an MCP refusal: `policy_broken: <file>:<line>: <message>`. An unknown verb, key, kind, sub-resource word or registry field name ends ` — did you mean "<word>"?` when a valid word of that position is within two edits (the nearest; a tie goes to the first in this manual's order): `policy_broken: /home/u/ha/home/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?`. The output closes with one line, `policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it` (D-117). `policy show` and `policy lint` report the problems (exit 1; their stderr line is `policy_broken: <n> problem(s) in <file>`); `policy check` refuses (exit 1, empty stdout). **Every other command refuses the same way** — exit 1, the problem lines and the closing line on stderr, nothing on stdout, nothing sent to Home Assistant — reads included, because a file that cannot be read cannot say which reads it would have allowed. The only commands that still run are `policy show` and `policy lint` (so you can see what to fix) and the ones that read no instance and send nothing: `version` (and `--version`), `help` (and `--help`), `completion` and `rtfm`. `setup` refuses like every other command — fix the file first. `hactl mcp` starts, and refuses each tool call the same way except that same list (D-60); the file is read again on every call, so fixing it takes effect without a restart.
+Every problem is one line, worded the same everywhere — in `policy show` and `policy lint` (stdout), in `policy check` and every refused command (stderr), and in an MCP refusal: `policy_broken: <file>:<line>: <message>`. An unknown verb, key, kind, sub-resource word or registry field name ends ` — did you mean "<word>"?` when a valid word of that position is within two edits (the nearest; a tie goes to the first in this manual's order): `policy_broken: /home/u/ha/home/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?`. The output closes with one line, `policy_broken: policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it` (D-117). `policy show` and `policy lint` report the problems (exit 1; their stderr line is `policy_broken: <n> problem(s) in <file>`); `policy check` refuses (exit 1, empty stdout). **Every other command refuses the same way** — exit 1, the problem lines and the closing line on stderr, nothing on stdout, nothing sent to Home Assistant — reads included, because a file that cannot be read cannot say which reads it would have allowed. The only commands that still run are `policy show` and `policy lint` (so you can see what to fix) and the ones that read no instance and send nothing: `version` (and `--version`), `help` (and `--help`), `completion` and `rtfm`. `setup` refuses like every other command — fix the file first. `hactl mcp` starts, and refuses each tool call the same way except that same list (D-60); the file is read again on every call, so fixing it takes effect without a restart.
 
 #### Resources
 
@@ -1363,7 +1367,7 @@ policy_denied: would delete automation — refused by policy, nothing was writte
   denied: delete automation:prod_heating — deny "automation:prod_*" [delete] (line 14)
   checked: 2 resources, 1 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+  hint: the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`
 $ echo $?
 1
 ```
@@ -1376,12 +1380,12 @@ stderr: `policy_denied: 1 of 2 resources denied (profile agent)` — a count, ne
    "denied": [{"resource": "automation:prod_heating", "verb": "delete",
                "rule": "deny \"automation:prod_*\" [delete]", "line": 14, "partial": false}],
    "checked": 2, "profile": "agent", "selected_by": "active", "level": "A", "written": []}},
- "hint": "the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml"}
+ "hint": "the owner would change the rule on line 14; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`"}
 ```
 
 `dry_run` is `true` for a refused preview and `false` for a refused `--confirm`. `details.policy.denied` lists every denied `(resource, verb)` of the plan in plan order, each with the rule and line that decided it; `"partial": true` marks a denial by a deny on a part of the resource (below), and `"kind_wide": true` a check on every id of a kind, reported as `<kind>:*` (Ids Home Assistant mints, below). `checked` counts the plan's `(resource, verb)` pairs. `written` lists what had already been written when the refusal came — always `[]` for a refusal of the plan; non-empty only when a request was refused mid-run (a hactl bug to report) or when `ref replace` wrote outside its checked plan (below). A refusal hactl makes without a rule — fail-closed, below — has `rule` `fail-closed: <reason>` and `line` 0. A denial by `default: deny` after a narrowed allow was tried carries `"unmet_where": [{"rule": "allow \"entity:*.pg_*\" [control] where label=pg_core_label", "line": 9, "reason": "input_boolean.pg_x has no label pg_core_label"}]` (only when non-empty; Selectors), and the text adds `    where not met: <rule> (line <n>) — <reason>` under its `denied:` line; a denial by a deny on a part of the resource ends `— a part of it is denied, so all of it is`. An allowed preview, while a profile is in effect, adds `policy: <n> checked, allowed (profile <p>)` to its text and `"policy": {"checked": <n>, "profile": "<p>"}` to its `details`. A broken file is `policy_broken` (D-60), also exit 1.
 
-**The hint** (D-118) is the report's last text line, `  hint: <text>`, and the JSON `hint` holds the same text. It is built from the denials' causes, in this order, joined by `; `: `the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach)` when that applies; `the owner would change the rule on line <n>[, <m>…]` for every line a deny decided (partial included), ascending; `nothing allows <resource>[ (and <k> more)]; the owner would add an allow` for denials by `default: deny`; `hactl could not check <resource> (<reason>), so it refused` for the first fail-closed denial; `allowed: <a> of <n> checked resources, but the command is refused as a whole` when only some were denied. It always ends ` — report it; do not edit policy.yaml`. A request-layer refusal whose plan had allowed the request says `hactl's own plan missed this request — a hactl bug to report; do not edit policy.yaml` instead. The hint never suggests `--confirm`. The one stderr line is `policy_denied: <m> of <n> resources denied (profile <p>)`, `<m>` the denials and `<n>` the checked pairs; a request-layer refusal appends ` — refused at the request layer[ although the command's plan allowed it (a hactl bug to report)]; already written: <what, or nothing>`.
+**The hint** (D-118) is the report's last text line, `  hint: <text>`, and the JSON `hint` holds the same text. It is built from the denials' causes, in this order, joined by `; `: `the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach)` when that applies; `the owner would change the rule on line <n>[, <m>…]` for every line a deny decided (partial included), ascending; `nothing allows <resource>[ (and <k> more)]; the owner would add an allow` for denials by `default: deny`; `hactl could not check <resource> (<reason>), so it refused` for the first fail-closed denial; `allowed: <a> of <n> checked resources, but the command is refused as a whole` when only some were denied. It always ends `` — ask the owner; a change goes through a draft and `hactl policy activate` ``. A request-layer refusal whose plan had allowed the request says `hactl's own plan missed this request — a hactl bug to report; do not edit policy.yaml` instead. The hint never suggests `--confirm`. The one stderr line is `policy_denied: <m> of <n> resources denied (profile <p>)`, `<m>` the denials and `<n>` the checked pairs; a request-layer refusal appends ` — refused at the request layer[ although the command's plan allowed it (a hactl bug to report)]; already written: <what, or nothing>`.
 
 **Partly denied means denied** (D-66). A write to a resource checks the resource *and* everything below it: with `deny "entity:*/registry/entity_id" [edit]`, a command that edits `entity:light.x` as a whole is refused, naming that deny. Commands write at the finest address they can: `ent set-label` checks `entity:<id>/registry/labels`, never the whole entity; `dash save` checks each changed view (`dashboard:<u>/views/<path>`), and the dashboard itself only for changes outside views, in a view without a `path`, or when the stored config could not be read; a dashboard Home Assistant holds no config for (`config_not_found`, e.g. right after `dash create`) is compared against an empty config, so each view its first save brings is a `create` (D-126); a first save that brings no view (`{}`, an empty or null `views`) is still `edit dashboard:<u>` — it stores a dashboard where none was (D-126). **A change a command can address only at the parent is refused by any denied part, touched or not:** with `deny "dashboard:main/views/secret" [edit]`, changing `main`'s title (a non-view key) is refused. A view deny `[edit]` does not stop removing or re-adding the view through an allow of `create`/`delete` on the dashboard; `[write]` does, but then also refuses deleting and creating the dashboard itself (D-125, D-127). A deny on a part no command writes on its own still refuses every write that changes the part (Verbs, D-125): `deny "file:<path>/block/<id>" [edit]` refuses `ref replace` editing `file:<path>`, whichever block the rewrite touches, and `deny "automation:<id>/config" [write]` refuses `auto delete <id>`. Only a verb that cannot change the part refuses nothing — `deny "entity:*/registry/labels" [control]` — and `policy lint` reports such a rule as `verb-not-applicable`.
 
@@ -1448,7 +1452,7 @@ These checks run for `auto create`, `auto apply`, `auto rollback` (the backup it
  "rule": "deny \"automation:prod_*\" [delete]", "line": 14, "profile": "agent"}
 ```
 
-A line also carries `unmet_where`, as in the refusal, when a narrowed allow was tried and did not hold. `layer` is `command` for the plan check and `request` for the check of each request sent — one line per request, not per retry. `command` is the command path and its positional arguments; flag values that carry content (`--data`, `-f`) are not logged. At 10 MiB the file is renamed to `policy-audit.log.1`, replacing the previous one; `cache clear` does not remove it. If the line cannot be written, the write is refused (`fail-closed: audit log not writable`) — a preview too, since a preview is what authorises `--confirm` (D-71). hactl never reads the log back; it is for the owner.
+A line also carries `unmet_where`, as in the refusal, when a narrowed allow was tried and did not hold. `layer` is `command` for the plan check and `request` for the check of each request sent — one line per request, not per retry. `command` is the command path and its positional arguments; flag values that carry content (`--data`, `-f`) are not logged. At 10 MiB the file is renamed to `policy-audit.log.1`, replacing the previous one; `cache clear` does not remove it. If the line cannot be written, the write is refused (`fail-closed: audit log not writable`) — a preview too, since a preview is what authorises `--confirm` (D-71). hactl never reads the log back, except `agent ls`, which shows its last line; it is for the owner.
 
 #### Enforcement (reads)
 
@@ -1500,7 +1504,7 @@ Prints the file path (or `no policy file`), the level-A sentence above verbatim,
             "where": {"area": ["wohnzimmer"], "label": []}, "line": 12}]}
 ```
 
-`enforced` is true and `enforced_verbs` lists the verbs commands enforce, in the order read, control, edit, create, delete — every verb while a profile is in effect. With no profile in effect nothing is checked, and they say so: `enforced` false, `enforced_verbs` `[]`. `verbs` is the list as written, `expanded` the verbs it grants or denies at its address — `write` replaced by the write verbs that apply there (Verbs), a verb written by name kept — in the order read, control, edit, create, delete (`"entity:*/registry/entity_id": [write]` expands to `["edit"]`). `profiles` is sorted. With no file: `exists` false, `profile` "", `selected_by` `no-file`, `allow_all` true, `default` `allow`, `profiles` and `rules` empty. A broken file: `valid` false, `problems` `[{"line": 7, "message": "…"}]` (the message with its "did you mean", without the `<file>:<line>:` prefix) and `"hint": "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"` — `hint` appears only when `valid` is false; `profile`, `selected_by` and `default` are "", `allow_all` is false, `profiles` and `rules` are empty.
+`enforced` is true and `enforced_verbs` lists the verbs commands enforce, in the order read, control, edit, create, delete — every verb while a profile is in effect. With no profile in effect nothing is checked, and they say so: `enforced` false, `enforced_verbs` `[]`. `verbs` is the list as written, `expanded` the verbs it grants or denies at its address — `write` replaced by the write verbs that apply there (Verbs), a verb written by name kept — in the order read, control, edit, create, delete (`"entity:*/registry/entity_id": [write]` expands to `["edit"]`). `profiles` is sorted. With no file: `exists` false, `profile` "", `selected_by` `no-file`, `allow_all` true, `default` `allow`, `profiles` and `rules` empty. A broken file: `valid` false, `problems` `[{"line": 7, "message": "…"}]` (the message with its "did you mean", without the `<file>:<line>:` prefix) and `"hint": "policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it"` — `hint` appears only when `valid` is false; `profile`, `selected_by` and `default` are "", `allow_all` is false, `profiles` and `rules` are empty.
 
 #### `policy check <resource> <verb>`
 
@@ -1539,7 +1543,7 @@ Validates the file, then checks every rule of **every** profile, not only the ef
 | `broken` | a broken-file problem, as above; no live checks run |
 | `implicit-allow-all` | profiles are declared, but no `active:` and no `default` profile puts any of them in effect |
 | `redundant-allow` | an allow in a profile without `default: deny` — that profile already allows what no deny matches, so the allow and its `where:` decide nothing |
-| `no-match` | the pattern's id matches nothing of its kind on the live instance, or its `attr/<name>` matches no attribute of any entity the id matches — a typo in a deny is a silent hole otherwise |
+| `no-match` | the pattern's id matches nothing of its kind on the live instance, or its `attr/<name>` matches no attribute of any entity the id matches — a typo in a deny is a silent hole otherwise. A rule whose only verb is `create` is never `no-match`: it names ids that do not exist yet (D-171) |
 | `unreachable` | for one of its verbs, every live match of the allow is denied by a deny of the same profile, so it can never decide |
 | `verb-not-applicable` | a write verb written by name applies nowhere the pattern reaches, or a `write` applies to nothing there (Verbs, D-110): `"control" does not apply at entity:*/registry/entity_id — no command asks for it there, so the rule decides nothing for it (control on entity is checked at: entity:<id>)`, or `"write" applies to nothing at system:reload/* — no command asks for a write there, so the rule decides nothing for writes` — one finding per rule and verb |
 | `no-effect` | an allow on an `automation`, `helper` or `template` address naming `control`: control there is checked for denies only, so the allow grants nothing for it (D-111) — `control on automation:<id> is checked for denies only, so this allow grants nothing for control — grant switching on the entity instead: allow "entity:automation.*": [control], and its service` |
@@ -1571,7 +1575,101 @@ For `unreachable`, an allow's sub-resource path is a set, not a literal: the all
                 "rule": "deny \"file:**\" [write]", "line": 20}]}
 ```
 
-Findings are ordered by line, then code, profile and rule. `unchecked` follows the order of the kinds table; within a kind the kind's own entry (`profile`/`rule` "", `line` 0 — a kind Home Assistant could not be read for) comes first, then one entry per rule in file order (line, then column). Both are `[]` when empty. In prose, a broken file's report is its `file:` line, one `policy_broken: <file>:<line>: <message>` line per problem and the closing owner line (Policy file format); under `--json` its findings have code `broken`, and the document adds `"hint": "policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it"` (only when `valid` is false).
+**What lint checks against** (D-173), on the same rule as `policy review` (D-172). The owner at a terminal — stdin and stdout both one — lints against the whole instance. Anyone else (an agent's shell, an MCP server, a script) lints against what the **active** profile — `policy.yaml`'s, also for `--file <draft>` — lets it read: lint runs under that profile's read filter, so no finding names an id the profile hides; a `no-match` then reads `matches no <kind> that this profile can read` (it says nothing of what the profile hides), the text answer adds `inventory: what the active profile can read`, and the trailer counts what was left out. Where the instance requires a policy (`HACTL_POLICY=required`) and none is in effect — no file, none selected — or `policy.yaml` is broken, there is no profile to filter by: lint checks nothing against the instance and says so on one line, `inventory not checked: no profile in effect`, while the findings that need no inventory (a broken line, `redundant-allow`, `verb-not-applicable`, `no-effect`, `blocked-by-part`, `implicit-allow-all`) still print; the answer is not clean (exit 1, unless `--allow-partial`). With no policy at all and none required nothing is hidden from anyone (D-58), so lint checks the whole instance. `--json` carries `"inventory"`: `instance`, `readable` or `not-checked`.
+
+Findings are ordered by line, then code, profile and rule. `unchecked` follows the order of the kinds table; within a kind the kind's own entry (`profile`/`rule` "", `line` 0 — a kind Home Assistant could not be read for) comes first, then one entry per rule in file order (line, then column). Both are `[]` when empty. In prose, a broken file's report is its `file:` line, one `policy_broken: <file>:<line>: <message>` line per problem and the closing owner line (Policy file format); under `--json` its findings have code `broken`, and the document adds `"hint": "policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it"` (only when `valid` is false).
+
+#### Setting up an agent: draft, review, activate
+
+**An agent may draft a policy; only the owner activates one** (D-148). The flow:
+
+1. **The owner creates the agent's instance**, in a terminal: `hactl agent add <name>` (see "Several agents" below). The new agent starts **read-only**: its `policy.yaml` holds one profile that denies every write (D-150), so it can look at everything it needs to propose rules and change nothing.
+2. **The agent drafts.** `hactl rtfm --skill policy-setup` prints the procedure for an agent: inventory the instance, ask the owner in plain language what it may switch, edit and see and what never, write `policy.draft.yaml` beside `policy.yaml` with `default: deny`, check it with `hactl policy lint --file policy.draft.yaml`, and hand over. The agent never writes `policy.yaml`.
+3. **The owner reviews**: `hactl policy review --file policy.draft.yaml` says in counts and names what the draft's active profile would let the agent do on *this* instance — which entities it may switch and see, which automations, scripts and dashboards it may edit, create or delete, which services it may call, what it can never touch, whether what written automations do is checked (D-135), and every lint finding.
+4. **The owner activates**: `hactl policy activate policy.draft.yaml` — **in a terminal of its own** (D-149). It refuses unless stdin and stdout are a terminal, so neither an agent nor Claude Code's `!` prefix can run it (both have none, M-5); over MCP it is never offered. It lints the draft (a broken draft is refused), prints the review, asks for the profile name as confirmation, then writes `policy.yaml` atomically and keeps the previous one as `policy.yaml.prev`.
+
+`policy show`, `policy check` and `policy lint` take `--file <path>` to read a draft instead of `policy.yaml`; the answer says so (`file: … (draft, not in effect)`).
+
+**`--file <draft>`** (D-161). A relative path is resolved against the instance directory (beside `.env`), never the working directory — so `--file policy.draft.yaml` names the instance's draft from anywhere; an absolute path is read as written. `policy activate <draft>` resolves its argument the same way. The answer is the draft's: its profile, its verdict, its lint. A draft is never in effect, so `policy show --file` prints `enforced: nothing — a draft is not in effect; hactl policy activate puts it in effect`, `policy check --file` starts with the same `file: <path> (draft, not in effect)` line and ends `not enforced: a draft is not in effect` (its exit code is still the verdict; without `--file` it has no `file:` line), and under `--json` every one of the three carries `"draft": true` (`false` without `--file`), `show` with `"enforced": false` and `"enforced_verbs": []`. A draft that does not exist is an error (exit 1, `no draft at <path>`), never `no policy file`. `--as <p>` works on a draft as on the file. `--file` changes only what is read: the command still runs under the instance's own policy, so a broken `policy.yaml` still refuses `policy check --file`.
+
+#### `policy review [--file <draft>]`
+
+What a profile lets the agent do **on this instance**, for the owner, in counts and names (D-162): `policy.yaml`, or the draft `--file` names. It reads Home Assistant (the same inventory `policy lint` uses) and changes nothing. Sections, in this order:
+
+- the `review:` line — the file, and `(draft, not in effect)` for a draft; the `profile:` line — the profile in effect and how it was selected, and its default; the `indirect:` line — `checked` or `unchecked (line <n>)` (D-135);
+- `entities (<n>)`: `see`, `switch` (control) and `edit` (rename, area, labels — the registry) — each `<a> of <n>` and what it reaches, by name (`switch: 2 of 212 — light.hall, light.kitchen`; see the naming rule below);
+- `automations`, `scripts`, `dashboards` (`<n>` each): `edit`, `delete`, for scripts `run` (control on `script:<id>/run`) — `<a> of <n>` and the ids; and `create`: `any id`, `only what <allow rule> (line <n>)[, …] allows`, or `no`;
+- `services (<n>)`: `call` — `<a> of <n>` and the services, by name;
+- one `never:` line per deny rule of the profile, with what it matches here: `never: deny "entity:lock.*" [read write] (line 14): 2 entities — lock.back_door, lock.front_door` (`never: no deny rules` without one); a pattern on a part (`entity:*/registry/entity_id`) counts the ids whose part it denies;
+- `lint` — the profile's file linted exactly as `policy lint` would, its findings and unchecked kinds, or `clean`.
+
+**Who asks decides what it counts** (D-172). At a terminal — stdin and stdout both one, as for `activate` — the review is the owner's: it runs without the instance's policy session and counts the real instance, whatever the instance's own profile hides. Without one — an agent's shell, an MCP server, a script — it runs under the session like every other read: it counts and names only what the profile in effect lets it read, and the `hidden by policy: N (profile p)` trailer (on stderr: the review is a document) says how much it left out. An agent can review its own draft; it learns nothing its profile hides.
+
+A grant line names the shorter list: every id it reaches, or `all but <ids>` when fewer are left out (`see: 210 of 212 — all but lock.back_door, lock.front_door`), `all` when nothing is, and no names when it reaches nothing. A list shows at most 10 ids, then `…, +<k> more`; `--json` lists every allowed one. A kind Home Assistant could not be read for says `not checked: <reason>` instead of a count. With no profile in effect it says `ALLOW-ALL` (no file, or no `active:` and no `default` profile) and lists nothing. **The whole review is printed whatever `--tokensmax` says** (a document). Exit 0 whatever it found — findings are for the owner to read, not a verdict; 1 for a broken file (reported as `policy show` reports one), a draft that does not exist, or Home Assistant not reachable at all.
+
+```json
+{"file": "/home/u/ha/agents/kitchen/policy.draft.yaml", "draft": true, "profile": "agent", "selected_by": "active",
+ "allow_all": false, "default": "deny", "indirect": "checked", "enforced_verbs": ["control", "edit", "create", "delete"],
+ "grants": [{"kind": "entity", "verb": "control", "sub": "", "label": "switch", "allowed": 34, "total": 212,
+             "ids": ["light.kitchen", "…"], "unchecked": ""}],
+ "create": [{"kind": "automation", "any": false, "rules": [{"rule": "allow \"automation:pg_*\" [read edit create delete]", "line": 9}]}],
+ "never": [{"rule": "deny \"entity:lock.*\" [read write]", "line": 14, "kind": "entity", "matched": 2,
+            "ids": ["lock.back_door", "lock.front_door"], "unchecked": ""}],
+ "lint": {"findings": [], "unchecked": []}}
+```
+
+`grants` holds, in the order above, `entity` `read`/`control`/`edit`, `automation` `edit`/`delete`, `script` `edit`/`delete` and `control` with `"sub": "run"`, `dashboard` `edit`/`delete`, `service` `control`; `label` is the word the text uses; `ids` are the allowed ones, sorted; `allowed`/`total` are 0 and `unchecked` names the reason when the kind could not be read. `never[].kind` is `*` for the bare pattern `*`, which matches everything (`matched` 0, `ids` []). `lint` is the `findings`/`unchecked` pair of `policy lint --json`. With no profile in effect `allow_all` is true and `grants`, `create` and `never` are [].
+
+#### `policy activate <draft>`
+
+The owner's command — the only one that puts a policy in effect (D-148, D-149, D-163). In order:
+
+1. **A terminal, or nothing.** stdin and stdout must both be a terminal; otherwise it exits 1 before reading anything: `policy activate needs a terminal: only the owner activates a policy — run it yourself in a terminal of your own (an agent's shell and Claude Code's ! prefix have none)` and the line ``  hint: ask the owner; a change goes through a draft and `hactl policy activate` ``. Over MCP it is never offered: `command "hactl policy activate" is not available over MCP: only the owner runs it, in a terminal of their own — ask the owner; …`, and the same for `agent add`.
+2. **The draft is read once.** Its bytes are what is reviewed and exactly what is written — a draft changed after the review is not what lands. Refused before any prompt, with nothing written: a draft that does not exist; a broken draft (exit 1, its problems on stderr as `policy_broken: <draft>:<line>: <message>` lines and the closing owner line); a draft that puts no profile in effect (no `active:` and no `default` profile — there is no profile name to confirm, and an agent's instance must not be allow-all; to run without a policy, the owner removes `policy.yaml` by hand); the draft path being `policy.yaml` itself; a `policy.yml` in the instance directory (it would break the activated file).
+3. **The review** of the draft (as `policy review --file`; when Home Assistant cannot be reached there is no review and nothing is written), and what it replaces: `replaces: <dir>/policy.yaml (profile <p>)`, `(broken)`, or `nothing (no policy.yaml yet)`.
+4. **The confirmation**: `type the profile name to activate it (<p>), anything else cancels:`. Anything but the exact name — an empty line, end of input — cancels: `activate: cancelled — nothing was written`, exit 1.
+5. **The write**: the draft's bytes, unchanged — never re-serialised, so comments and layout survive. The previous `policy.yaml`, if any, is copied to `policy.yaml.prev` (replacing an older one; with no previous file no `.prev` is made), then the bytes are written to a temporary file in the instance directory, synced to disk and renamed over `policy.yaml` — a reader sees the old file or the new one, never half of either, and no temporary file is left behind, on success or failure. It prints `activated: <dir>/policy.yaml — profile <p> is in effect from the next command` and, when there was one, `previous: <dir>/policy.yaml.prev`. The draft stays where it was. Exit 0.
+
+`policy activate` and `agent add` run without the instance's policy session: they are the owner's, behind their terminal gate, so a broken or missing `policy.yaml` — which refuses every other command — can still be replaced (D-163). With no session there is nothing to filter: they are not write commands in D-82's sense, whose own reads a session exempts — they have no session at all (D-172). `policy review` at a terminal runs the same way.
+
+#### Several agents
+
+**One instance directory per agent** (D-151): its own `.env` with its own token, its own `policy.yaml`, its own audit log. The file still picks the profile (D-62), and an MCP server is pinned to one directory (D-64), so each agent gets exactly its own rules.
+
+```console
+$ hactl agent add kitchen-helper        # in a terminal, as the owner
+created ~/.hactl/agents/kitchen-helper  (from ~/.hactl/default)
+  token:   a long-lived token of its own, "hactl agent kitchen-helper"
+  policy:  read-only until you activate one (HACTL_POLICY=required)
+  next:    give the agent `hactl rtfm --skill policy-setup`, then review and activate its draft
+  mcp:     claude mcp add kitchen-helper -- hactl mcp --dir ~/.hactl/agents/kitchen-helper --allow-writes
+
+$ hactl agent ls
+NAME            DIR                              PROFILE    REQUIRED  LAST WRITE CHECK
+kitchen-helper  ~/.hactl/agents/kitchen-helper   readonly   yes       never
+```
+
+- `agent add <name>` copies `HA_URL` and `COMPANION_URL` from the source instance (`--from <dir>`, default: the instance hactl would use), writes `HACTL_POLICY=required` (D-136), and gives the agent **a token of its own** (M-6), so Home Assistant's own records tell the agents apart. It asks Home Assistant for one; where that is not possible it asks for one to be pasted (`--token -`). `--path` chooses the directory. Like `activate`, it needs a terminal.
+- `agent ls` lists the agent directories under `~/.hactl/agents/` (or `--root`).
+- **Writes from several agents to one Home Assistant never interleave** (D-152): the write lock is held per Home Assistant (keyed by its URL), not per directory.
+
+**`agent add` in detail** (D-160, D-164). `<name>` is lowercase letters, digits, `-` and `_`, starting with a letter or digit, at most 64 characters. The directory is `--path`, or `~/.hactl/agents/<name>`; one that exists at all — a file, an empty directory, a symlink — is refused (exit 1, nothing changed, no token made). The source instance must load (`HA_URL` and `HA_TOKEN`). The token is a long-lived access token of the source token's own Home Assistant user, created over Home Assistant's WebSocket (`auth/long_lived_access_token`, which Home Assistant accepts on a connection authenticated with a long-lived token — oracle, D-160), named `hactl agent <name>`, valid 3650 days — it appears under that name in the user's Security → Long-lived access tokens, where the owner revokes it. `--token -` reads one from the terminal instead (not echoed); `--token` takes no other value, so a token never lands in shell history (D-170). Home Assistant refuses the minting request to every command run under a policy (D-169). Either token is checked against Home Assistant (`GET /api/`) before anything is written; if Home Assistant refuses to create one, nothing is written and the error says to create one by hand and run again with `--token -`. Then it writes, in the new directory (mode 0700): `.env` (mode 0600) with `HA_URL`, `HA_TOKEN`, `COMPANION_URL` and `TZ` when the source has them, and `HACTL_POLICY=required`; and the starter `policy.yaml`:
+
+```yaml
+# Written by `hactl agent add`: read-only until the owner activates
+# this agent's own policy with `hactl policy activate`.
+version: 1
+active: readonly
+profiles:
+  readonly:
+    default: deny
+    allow:
+      "*": [read]
+```
+
+If writing fails after the token was made, the error names the token so the owner can revoke it. `agent add` and `policy activate` are the only commands that write `policy.yaml`.
+
+**`agent ls [--root <dir>]`** (D-167) lists every directory directly under the root that holds a `.env`, sorted by name, and reads only local files. `PROFILE` is the profile in effect, `none` (no `policy.yaml`), `allow-all` (a file that selects no profile) or `broken`; `REQUIRED` is `yes` with `HACTL_POLICY=required`; `LAST WRITE CHECK` is the last line of the agent's audit log — `<time> allowed|denied <verb> <resource>` — or `never`. A root that does not exist lists nothing (`no agents under <root>`), exit 0. `--json`: `[{"name", "dir", "profile", "selected_by", "required", "policy": "ok|missing|broken", "last_write_check": <audit line object or null>}]`.
 
 #### Worked example: protect one automation
 
@@ -1713,7 +1811,7 @@ Parts of this manual may already have reached you automatically: when both stdou
 
 - `HACTL_MANUAL_MODE`: `progressive` (default) | `full` (whole manual once) | `off`
 - `off` also disables the first-`--confirm` guard (the refusal of a family's first write before its how-to arrived) — it is meant for scripts and pipelines that pre-load this manual another way, not a token-saving knob for interactive agents
-- `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand; `--reference <name>` fetches a family's reference section — today only `policy` has one: its how-to travels with the family, the full contract (`### Policy reference`) only on request
+- `hactl rtfm --core` / `--family <name>` / `--families` fetch subsets on demand; `--reference <name>` fetches a family's reference section — today only `policy` has one: its how-to travels with the family, the full contract (`### Policy reference`) only on request; `--skill <name>` prints a skill — a step-by-step procedure for an agent, shipped in the binary like this manual (today only `policy-setup`, D-165); it is printed verbatim and uncapped, alone (it combines with no other `rtfm` flag), and an unknown name is refused with the list
 - Humans at a terminal never see it; `rtfm`, `mcp`, `setup`, `version`, `help`, `completion` never trigger it
 - **Delivery is decided by who is listening, never by the shape of the answer.** `--json` is a promise about stdout and the manual has never been on stdout, so `health --json` and `device ls --json` deliver on stderr exactly as they do without the flag — an agent that reads only structured output is the caller this manual is written for, and it used to be the one caller that never received it
 
@@ -1730,5 +1828,5 @@ claude mcp add hactl -- hactl mcp --dir ~/.hactl/default
 - Read-only by default: mutating commands (`svc call`, `auto apply`, `script apply`, create/delete, `script run`, …) are rejected with an error. Start the server with `hactl mcp --allow-writes` to permit them; the dry-run + `--confirm` write path still applies.
 - `--allow-writes` comes first, the policy second: a read-only server refuses a write command before `policy.yaml` is consulted; on a server with `--allow-writes`, the instance's policy then decides each write exactly as on the CLI (see "Policy" — Enforcement). The policy is read on every call, so an edit to `policy.yaml` applies from the next call on; a broken file refuses every call except `policy show` and `policy lint`.
 - One instance per server process. A `--dir` given at server start pins every call to that instance — and with it to that instance's `policy.yaml` (D-64). A call whose command line carries `--dir` (or `--dir=`) naming another directory — anywhere on the line, after a `--` too, and an empty `--dir=` included — is refused with an error and runs nothing; naming the pinned directory itself is accepted. Directories are compared as absolute, cleaned paths, symlinks not followed. `HACTL_DIR` in the server's environment never moves a pinned server either. A server started without `--dir` is not pinned: each call finds its instance as the CLI does.
-- `setup`, `completion`, and `mcp` itself are never available over MCP; unclassified commands fail closed.
+- `setup`, `completion`, `policy activate`, `agent add` and `mcp` itself are never available over MCP; unclassified commands fail closed. `policy activate` and `agent add` are the owner's (D-149): the refusal says so and ends with ``ask the owner; a change goes through a draft and `hactl policy activate` ``.
 - A malformed message costs that message, never the session. A line that is not a valid JSON-RPC request is answered with a JSON-RPC error when its `id` can be read, and dropped (with a note on stderr) when it cannot — a bad line from a client does not end the server. Lines above 4 MiB are dropped. The session ends when the client closes the stream, and then `hactl mcp` exits 0.

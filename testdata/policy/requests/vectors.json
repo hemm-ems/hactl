@@ -223,6 +223,24 @@
    "facts_ref": "house"
   },
   {
+   "id": "ws-llat-owner-only",
+   "why": "minting a token is the owner's agent add, never under a policy session (manifest: ws auth/long_lived_access_token)",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "auth/long_lived_access_token",
+     "client_name": "hactl agent x",
+     "lifespan": 3650
+    }
+   },
+   "expect": {
+    "disposition": "unmappable",
+    "row": "ws auth/long_lived_access_token",
+    "refused": true
+   },
+   "facts_ref": "house"
+  },
+  {
    "id": "ws-supervisor-addons",
    "why": "companion discovery, step one",
    "request": {
@@ -441,7 +459,7 @@
   },
   {
    "id": "ws-test-infra-token",
-   "why": "internal/hatest's long-lived-token write is test infrastructure, never a product row",
+   "why": "internal/hatest's long-lived-token write (the rig's own minting) meets the owner-only row like any other: refused under a policy session",
    "request": {
     "transport": "ws",
     "message": {
@@ -451,8 +469,8 @@
     }
    },
    "expect": {
-    "disposition": "unmapped",
-    "row": "",
+    "disposition": "unmappable",
+    "row": "ws auth/long_lived_access_token",
     "refused": true
    },
    "facts_ref": "house"

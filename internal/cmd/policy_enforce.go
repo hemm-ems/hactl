@@ -71,6 +71,36 @@ var policyExemptPaths = map[string]bool{
 	"hactl rtfm":        true,
 }
 
+// policyOwnerPaths are the owner's commands, which run without the instance's
+// policy session (D-163): `policy activate` and `agent add` sit behind their
+// own terminal gate (D-149), and a broken or missing policy.yaml — which
+// refuses every other command — must still be replaceable. Neither is ever
+// offered over MCP.
+var policyOwnerPaths = map[string]bool{
+	"hactl policy activate": true,
+	"hactl agent add":       true,
+}
+
+// ownerRun reports whether this invocation is the owner's and runs without a
+// policy session: `policy activate` and `agent add` always — their own
+// terminal gate refuses anyone else (D-149) — and `policy review` when stdin
+// and stdout are a terminal (D-172). The owner's review counts the real
+// instance; anyone else's — an agent's shell, an MCP server, a script — runs
+// under the session like every read, so its counts cover only what the
+// profile lets it read and the trailer says how much was hidden.
+func ownerRun(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+	return policyOwnerPaths[path] || (path == "hactl policy review" && ownerTerminalCheck())
+}
+
+// lintUnderSession reports whether this invocation is `policy lint` run by
+// anyone but the owner at a terminal (D-173): its inventory — the ids its
+// findings name — then goes through the active profile's read filter, like
+// every other read, so lint names nothing the profile hides.
+func lintUnderSession(cmd *cobra.Command) bool {
+	return cmd.CommandPath() == "hactl policy lint" && !ownerTerminalCheck()
+}
+
 // policyExempt reports whether cmd runs without the policy: a D-60 exempt
 // command, a completion script or cobra's completion entry points, and the
 // commands that only print help or the version — the root (`hactl`,
@@ -95,7 +125,11 @@ func policyExempt(cmd *cobra.Command) bool {
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
 	policyTrailer = ""
-	if policyExempt(cmd) || cmd.CommandPath() == "hactl mcp" {
+	// `policy lint` without a terminal reads its inventory through the
+	// active profile's read filter (D-173): it stays exempt from refusal
+	// (D-60), but while a profile is in effect it runs under the session.
+	agentLint := lintUnderSession(cmd)
+	if (policyExempt(cmd) && !agentLint) || cmd.CommandPath() == "hactl mcp" || ownerRun(cmd) {
 		return nil
 	}
 	dir := config.BestEffortDir(flagDir)
@@ -106,9 +140,15 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		var le *policy.LoadError
 		if errors.As(err, &le) {
+			if agentLint {
+				return nil // lint reports the broken file itself (D-60)
+			}
 			return &enforce.BrokenError{Err: le}
 		}
 		return err
+	}
+	if !pol.InEffect() && agentLint {
+		return nil // no profile to filter by; runPolicyLint decides (D-173)
 	}
 	if !pol.InEffect() {
 		// D-136: an instance that requires a policy refuses without one in
@@ -302,7 +342,9 @@ var writesWithoutConfirm = map[string]bool{
 
 // isWriteCommand reports whether cmd is a write command, whose own reads are
 // exempt from read enforcement (D-82): every --confirm command, previewed or
-// confirmed, and the few that write without one.
+// confirmed, and the few that write without one. The owner's `agent add` and
+// `policy activate` are not among them: they run without any session
+// (ownerRun, D-163), so there is nothing whose reads to exempt (D-172).
 func isWriteCommand(cmd *cobra.Command) bool {
 	return cmd.Flags().Lookup("confirm") != nil || writesWithoutConfirm[cmd.CommandPath()]
 }

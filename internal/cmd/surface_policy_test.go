@@ -231,15 +231,17 @@ func TestPolicyCommandCensusSeesEveryHook(t *testing.T) {
 // TestWriteCommandsAreThePolicyWriteSurface — D-82's predicate (which
 // invocations' own reads are exempt) is the policy write surface, not a guess:
 // isWriteCommand holds for exactly the manifest's `cmd` rows, less `config
-// show` (a read command whose probe its plan checks), `setup` and `mcp` (no
-// session covers them).
+// show` (a read command whose probe its plan checks), `setup`, `mcp` and the
+// owner's `agent add` (no session covers them).
 func TestWriteCommandsAreThePolicyWriteSurface(t *testing.T) {
 	root := surfaceRepoRoot(t)
 	m, err := surfaceaudit.LoadManifest(root, "policy")
 	if err != nil {
 		t.Fatalf("loading the policy manifest: %v", err)
 	}
-	notWrites := map[string]bool{"hactl config show": true, "hactl setup": true, "hactl mcp": true}
+	// `agent add` writes, but like setup and mcp no session covers it: the
+	// owner's command runs without one (D-163, D-172).
+	notWrites := map[string]bool{"hactl config show": true, "hactl setup": true, "hactl mcp": true, "hactl agent add": true}
 	want := map[string]bool{}
 	for key := range m.Entries {
 		path, ok := strings.CutPrefix(key, "cmd ")

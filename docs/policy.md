@@ -372,7 +372,7 @@ policy_denied: would rename "light.old" to "light.new" — refused by policy, no
   denied: edit dashboard:security — deny "dashboard:security" [write] (line 16)
   checked: 41 resources, 2 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml
+  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 The exit code is `1`, and stderr gets a one-line count,
@@ -484,7 +484,7 @@ policy_denied: would read entity:lock.front_door — refused by policy, nothing 
   denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
   checked: 1 resources, 1 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 12 — report it; do not edit policy.yaml
+  hint: the owner would change the rule on line 12 — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 A refused read looks exactly like a refused write: the report above on
@@ -530,7 +530,7 @@ with its line:
 ```console
 $ hactl policy check entity:light.sofa control
 policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?
-policy_broken: policy.yaml belongs to the owner; hactl never writes it — report this, do not edit it
+policy_broken: policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it
 ```
 
 The same lines appear in `policy show`, `policy lint` and every refused
@@ -549,7 +549,9 @@ spaces, variation selectors or a byte-order mark, and text that is not valid
 UTF-8 are all refused (D-69). An id that looks right but holds one would be a
 rule that matches nothing.
 
-hactl never writes `policy.yaml`. There is no command for it. The file is yours.
+The file is yours. hactl writes `policy.yaml` only when you run `hactl policy activate` in a
+terminal of your own (an agent drafts `policy.draft.yaml`; you review and activate it), and
+once as `hactl agent add`'s read-only starter. See "Setting up an agent" in the manual.
 
 ---
 

@@ -187,6 +187,13 @@ ws supervisor/api POST /ingress/session = exempt: an Ingress auth session is tra
 # gated by the call it serves.
 ws extract_from_target = exempt: the policy check's own oracle for a service call's reach (D-59) — reads the target's references and changes nothing
 
+# map: write — refused while a profile is in effect (fail-closed: owner only).
+# auth/long_lived_access_token mints a token for the connection's own user;
+# only `hactl agent add` sends it, the owner's command, which runs without a
+# policy session behind its terminal gate (D-149, D-160, D-163). Under a
+# session nothing may mint a token, whatever the policy says.
+ws auth/long_lived_access_token = proven: TestEveryWriteRequestHasAMapping
+
 # --- writes ----------------------------------------------------------------------
 
 # map: edit entity:{entity_id}/registry/{field} for each changed key. Wire key ->
@@ -896,6 +903,7 @@ cmd hactl cache refresh = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
 # policy resource. A broken policy.yaml refuses it like every command outside
 # D-60's exempt list (D-60 as refined).
 cmd hactl setup = exempt: setup writes the instance's own .env and touches no policy resource; it is never available over MCP
+cmd hactl agent add = exempt: the owner's command, behind a terminal gate and never over MCP; it runs without a policy session (D-163) and writes a new agent directory, no policy resource
 
 # map: exempt (dispatcher). Each tool call runs one command in-process and is
 # checked as that command, with the policy loaded per call; --allow-writes is

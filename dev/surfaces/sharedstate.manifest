@@ -53,3 +53,10 @@ internal/cache/store.go:(*Store).TrimLogs = debt: whole-file rewrite racing Appe
 # when an id it was handed no longer resolves?) rather than a lock added in a
 # hurry to a file nobody has watched fail.
 pkg/ids/ids.go:(*Registry).Save = debt: cross-process lost update on the short-id registry; needs its own reproduction before a fix, see H-26 and finding #100
+
+# --- the owner's policy writes (D-148, D-163, D-164) --------------------------
+# policy activate replaces policy.yaml only after keeping it as policy.yaml.prev
+# (one generation, by design); agent add creates files with O_EXCL in a
+# directory it has just made, so it can destroy nothing.
+internal/cmd/policy_activate.go:atomicWrite = proven: TestPolicyActivateWritesTheDraftBytesAndKeepsThePrevious
+internal/cmd/agent.go:writeNewFile = exempt: opens with O_CREATE|O_EXCL in the agent directory agent add has just created — an existing file is an error, never overwritten

@@ -78,7 +78,7 @@ func TestLabelCreateRefusedByItsPlan(t *testing.T) {
 		"  denied: create label:* — deny \"label:secret\" [create] (line 6)\n" +
 		"  checked: 1 resources, 1 denied\n" +
 		"  profile: agent (selected by active)\n" +
-		"  hint: the owner would change the rule on line 6 — report it; do not edit policy.yaml\n"
+		"  hint: the owner would change the rule on line 6 — ask the owner; a change goes through a draft and `hactl policy activate`\n"
 	if out != want {
 		t.Errorf("refused preview stdout\n got: %q\nwant: %q", out, want)
 	}
@@ -255,14 +255,17 @@ func TestBrokenPolicyRefusesEveryCommand(t *testing.T) {
 }
 
 // contractExemptOnABrokenPolicy is what still runs on a broken policy.yaml,
-// written from D-60 and D-87 rather than asked of policyExempt: the six named
-// commands, every `completion <shell>`, the root, and every bare family group
+// written from D-60, D-87 and D-163 rather than asked of policyExempt: the six
+// named commands, the owner's `policy activate` and `agent add`, every `completion <shell>`, the root, and every bare family group
 // — a command with subcommands, which only prints its help — except `hactl
 // log`, whose bare form reads the log.
 func contractExemptOnABrokenPolicy(c *cobra.Command) bool {
 	path := c.CommandPath()
 	switch {
 	case slices.Contains([]string{"hactl policy show", "hactl policy lint", "hactl version", "hactl help", "hactl completion", "hactl rtfm"}, path),
+		// The owner's commands run without the session, behind their own
+		// terminal gate, so a broken policy.yaml can be replaced (D-163).
+		path == "hactl policy activate", path == "hactl agent add",
 		strings.HasPrefix(path, "hactl completion "), path == "hactl":
 		return true
 	case c.HasSubCommands() && path != "hactl log":

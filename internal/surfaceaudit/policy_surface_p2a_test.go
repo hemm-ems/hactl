@@ -576,6 +576,7 @@ func TestPolicyExtractorFindsEveryFamily(t *testing.T) {
 		"ws validate_config",
 		"ws system_log/list",
 		"ws auth",
+		"ws auth/long_lived_access_token",
 		"ws supervisor/api GET /addons",
 		"ws supervisor/api GET /addons/{slug}/info",
 		"ws supervisor/api POST /ingress/session",
@@ -593,7 +594,10 @@ func TestPolicyExtractorFindsEveryFamily(t *testing.T) {
 	}
 	for _, k := range keys {
 		switch {
-		case k == "ws supervisor/api", k == "ws auth/long_lived_access_token", k == "ws auth_ok", k == "ws auth_required":
+		// auth/long_lived_access_token is a product request since `agent add`
+		// (D-160) — its row refuses it under any policy session; the test
+		// rig's own minting is still no site (TestPolicyExtractorLeavesOutTestInfrastructure).
+		case k == "ws supervisor/api", k == "ws auth_ok", k == "ws auth_required":
 			t.Errorf("site %q is no product request", k)
 		case strings.Contains(k, "hassio_ingress"):
 			t.Errorf("site %q is keyed by a wire URL, not the logical route", k)

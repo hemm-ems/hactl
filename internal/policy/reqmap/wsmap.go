@@ -291,3 +291,10 @@ func mapDashboardDelete(c *call) (mapping, error) {
 	ch, err := check(policy.Delete, policy.KindDashboard, canonicalDashboard(u), "")
 	return mapping{checks: []Check{ch}}, err
 }
+
+// refuseOwnerOnly maps a request only the owner sends, from a command that
+// runs without a policy session (`agent add` minting a token): while a
+// profile is in effect it is never allowed, whatever the policy says.
+func refuseOwnerOnly(*call) (mapping, error) {
+	return mapping{}, refuse("owner only", "only the owner's `hactl agent add`, run in a terminal without a policy session, creates a token")
+}

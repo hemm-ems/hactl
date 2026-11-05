@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,13 +34,16 @@ import (
 var (
 	flagPolicyAs           string
 	flagPolicyAllowPartial bool
+	// flagPolicyFile is --file <draft>: read this file instead of policy.yaml
+	// (D-161). The answer is the draft's and says so; nothing of it is in effect.
+	flagPolicyFile string
 )
 
 var policyCmd = family(&cobra.Command{
 	Use:   "policy",
 	Short: "Read the instance's permission policy (a guardrail against mistakes, not a security boundary)",
 	Long: "Read <instance>/policy.yaml: which profile is in effect, what it allows, and whether its rules " +
-		"mean what their author wrote. " + policy.Disclaimer + ". hactl never writes the file. " +
+		"mean what their author wrote. " + policy.Disclaimer + ". Only `policy activate`, in the owner's terminal, writes the file. " +
 		"Writes and reads are enforced while a profile is in effect.",
 })
 
@@ -51,7 +55,7 @@ var policyShowCmd = &cobra.Command{
 		"profiles. A broken file is reported problem by problem (exit 1). --as <profile> is a read-only what-if.",
 	Args: takesNone(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return runPolicyShow(cmd.OutOrStdout(), flagPolicyAs, cmd.Flags().Changed("as"))
+		return runPolicyShow(cmd.OutOrStdout(), flagPolicyAs, cmd.Flags().Changed("as"), flagPolicyFile)
 	},
 }
 
@@ -67,7 +71,7 @@ var policyCheckCmd = &cobra.Command{
 		"still change the verdict.",
 	Args: takes(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPolicyCheck(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], flagPolicyAs, cmd.Flags().Changed("as"))
+		return runPolicyCheck(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], flagPolicyAs, cmd.Flags().Changed("as"), flagPolicyFile)
 	},
 }
 
@@ -80,7 +84,7 @@ var policyLintCmd = &cobra.Command{
 		"--allow-partial accepts that (it never hides a finding). Exit 0 clean, 1 otherwise.",
 	Args: takesNone(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return runPolicyLint(cmd.Context(), cmd.OutOrStdout(), flagPolicyAllowPartial)
+		return runPolicyLint(cmd.Context(), cmd.OutOrStdout(), flagPolicyAllowPartial, flagPolicyFile)
 	},
 }
 
@@ -88,6 +92,10 @@ func init() {
 	const asHelp = "what-if: evaluate this declared profile instead of the effective one (read-only; the file's active: still decides)"
 	policyShowCmd.Flags().StringVar(&flagPolicyAs, "as", "", asHelp)
 	policyCheckCmd.Flags().StringVar(&flagPolicyAs, "as", "", asHelp)
+	const fileHelp = "read this draft instead of policy.yaml — the answer is the draft's, and nothing of it is in effect"
+	policyShowCmd.Flags().StringVar(&flagPolicyFile, "file", "", fileHelp)
+	policyCheckCmd.Flags().StringVar(&flagPolicyFile, "file", "", fileHelp)
+	policyLintCmd.Flags().StringVar(&flagPolicyFile, "file", "", fileHelp)
 	policyLintCmd.Flags().BoolVar(&flagPolicyAllowPartial, "allow-partial", false,
 		"accept a lint that could not enumerate every kind its rules name (unchecked kinds are still listed)")
 	policyCmd.AddCommand(policyShowCmd, policyCheckCmd, policyLintCmd)
@@ -100,10 +108,12 @@ func policyInstanceDir() (*config.Config, error) {
 	return config.Load(flagDir)
 }
 
-// loadPolicyView loads the policy and applies a what-if. A broken file comes
-// back as the *policy.LoadError.
-func loadPolicyView(dir, as string, asSet bool) (*policy.Policy, error) {
-	pol, err := policy.Load(dir)
+// loadPolicyView loads the policy — the draft at file when one is named
+// (D-161), else the instance's policy.yaml — and applies a what-if. A broken
+// file comes back as the *policy.LoadError, a missing draft as the
+// *policy.DraftMissingError.
+func loadPolicyView(dir, as string, asSet bool, file string) (*policy.Policy, error) {
+	pol, err := loadPolicyFile(dir, file)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +121,35 @@ func loadPolicyView(dir, as string, asSet bool) (*policy.Policy, error) {
 		return pol, nil
 	}
 	return pol.As(as)
+}
+
+// loadPolicyFile reads the draft at file, or the instance's policy.yaml when
+// file is "".
+func loadPolicyFile(dir, file string) (*policy.Policy, error) {
+	if file == "" {
+		return policy.Load(dir)
+	}
+	pol, _, err := policy.LoadDraft(draftPath(dir, file))
+	return pol, err
+}
+
+// draftPath resolves a draft path (D-161): a relative one against the
+// instance directory, beside .env — never the working directory, so the
+// skill's `--file policy.draft.yaml` names the instance's draft from anywhere.
+func draftPath(dir, file string) string {
+	if filepath.IsAbs(file) {
+		return filepath.Clean(file)
+	}
+	return filepath.Join(dir, file)
+}
+
+// fileText is the `file:` line's value: the path, and for a draft that it is
+// not in effect (D-161).
+func fileText(pol *policy.Policy) string {
+	if pol.Draft() {
+		return pol.Source() + " (draft, not in effect)"
+	}
+	return pol.Source()
 }
 
 // policyBrokenError is the exit-1 error of a show/lint that reported a broken
@@ -174,18 +213,20 @@ type policyShowDoc struct {
 	// what written automations, scripts and templates would do (D-135),
 	// "checked" while a profile is in effect, "" otherwise.
 	Indirect string `json:"indirect,omitempty"`
+	// Draft is true when --file named a draft (D-161).
+	Draft bool `json:"draft"`
 }
 
-func runPolicyShow(w io.Writer, as string, asSet bool) error {
+func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 	cfg, err := policyInstanceDir()
 	if err != nil {
 		return err
 	}
-	pol, err := loadPolicyView(cfg.Dir, as, asSet)
+	pol, err := loadPolicyView(cfg.Dir, as, asSet, file)
 	var le *policy.LoadError
 	switch {
 	case errors.As(err, &le):
-		return renderPolicyBroken(w, le)
+		return renderPolicyBroken(w, le, file != "")
 	case err != nil:
 		return err
 	}
@@ -196,7 +237,7 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 		Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: enforced, EnforcedVerbs: verbs,
 		Profile: pol.Active(), SelectedBy: string(pol.Selection()), WhatIf: pol.WhatIf(),
 		AllowAll: pol.AllowAll(), Default: string(pol.Default()),
-		Profiles: pol.Profiles(), Rules: []policyShowRule{},
+		Profiles: pol.Profiles(), Rules: []policyShowRule{}, Draft: pol.Draft(),
 	}
 	if enforced {
 		doc.Indirect = "checked"
@@ -225,16 +266,19 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 	if !pol.Exists() {
 		_, _ = fmt.Fprintf(w, "no policy file (looked for %s): everything is allowed, exactly as without a policy\n", pol.Source())
 	} else {
-		_, _ = fmt.Fprintf(w, "file: %s\n", pol.Source())
+		_, _ = fmt.Fprintf(w, "file: %s\n", fileText(pol))
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
 	_, _ = fmt.Fprintf(w, "level: %s\n", policy.Level)
-	if enforced {
+	switch {
+	case pol.Draft():
+		_, _ = fmt.Fprintln(w, "enforced: nothing — a draft is not in effect; hactl policy activate puts it in effect")
+	case enforced:
 		_, _ = fmt.Fprintln(w, "enforced: writes and reads")
 		if !pol.IndirectChecked() {
 			_, _ = fmt.Fprintf(w, "indirect: unchecked (line %d) — what written automations, scripts and templates would do is not checked\n", pol.IndirectLine())
 		}
-	} else {
+	default:
 		_, _ = fmt.Fprintln(w, "enforced: nothing — no profile is in effect, so every command runs as without a policy")
 	}
 	if !pol.Exists() {
@@ -282,7 +326,7 @@ func expansionText(r policy.Rule) string {
 	return " → [" + strings.Join(verbNames(r.Verbs), " ") + "]"
 }
 
-func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
+func renderPolicyBroken(w io.Writer, le *policy.LoadError, draft bool) error {
 	problems := make([]policyProblem, len(le.Problems))
 	for i, p := range le.Problems {
 		problems[i] = policyProblem{Line: p.Line, Message: p.Message}
@@ -293,13 +337,17 @@ func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
 		if err := writeJSON(w, policyShowDoc{
 			File: le.File, Exists: true, Valid: false, Problems: problems,
 			Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: false, EnforcedVerbs: []string{},
-			Profiles: []string{}, Rules: []policyShowRule{}, Hint: enforce.BrokenHint,
+			Profiles: []string{}, Rules: []policyShowRule{}, Hint: enforce.BrokenHint, Draft: draft,
 		}); err != nil {
 			return err
 		}
 		return brokenErr
 	}
-	_, _ = fmt.Fprintf(w, "file: %s\n", le.File)
+	if draft {
+		_, _ = fmt.Fprintf(w, "file: %s (draft, not in effect)\n", le.File)
+	} else {
+		_, _ = fmt.Fprintf(w, "file: %s\n", le.File)
+	}
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
 	_, _ = fmt.Fprintln(w, enforce.BrokenReport(le))
 	return brokenErr
@@ -309,6 +357,9 @@ func renderPolicyBroken(w io.Writer, le *policy.LoadError) error {
 // a what-if (`--as`) changes the view, not what is enforced: the write verbs
 // while a profile is in effect, nothing otherwise (D-70, D-74).
 func policyEnforcement(pol *policy.Policy) (bool, []string) {
+	if pol.Draft() {
+		return false, []string{} // a draft is never in effect (D-161)
+	}
 	_, sel := pol.Effective()
 	if sel == policy.SelectedByNoFile || sel == policy.SelectedByImplicit {
 		return false, []string{}
@@ -338,6 +389,8 @@ type policyCheckDoc struct {
 	Level      string   `json:"level"`
 	Enforced   bool     `json:"enforced"`
 	Notes      []string `json:"notes"`
+	// Draft is true when --file named a draft (D-161).
+	Draft bool `json:"draft"`
 	// Partial and PartialDenies are D-66's partial verdict: the resource is
 	// allowed but a deny covers a strict descendant of it.
 	Partial       bool                `json:"partial"`
@@ -365,6 +418,7 @@ type policyCheckWriteDoc struct {
 	WhatIf     bool             `json:"what_if"`
 	Level      string           `json:"level"`
 	Enforced   bool             `json:"enforced"`
+	Draft      bool             `json:"draft"`
 	Verdicts   []policyCheckDoc `json:"verdicts"`
 }
 
@@ -403,7 +457,7 @@ func denyOnlyControl(r policy.Resource, v policy.Verb) bool {
 	return false
 }
 
-func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string, asSet bool) error {
+func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string, asSet bool, file string) error {
 	// Refusals first, and before anything is written: a refusal is exit 1
 	// with nothing on stdout, a denial is exit 1 with a verdict.
 	res, err := policy.ParseResource(resource)
@@ -430,7 +484,7 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 	if err != nil {
 		return err
 	}
-	pol, err := loadPolicyView(cfg.Dir, as, asSet)
+	pol, err := loadPolicyView(cfg.Dir, as, asSet, file)
 	if err != nil {
 		var le *policy.LoadError
 		if errors.As(err, &le) {
@@ -455,6 +509,9 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 			return err
 		}
 	} else {
+		if doc.Draft {
+			_, _ = fmt.Fprintf(w, "file: %s\n", fileText(pol))
+		}
 		if doc.WhatIf {
 			_, _ = fmt.Fprintf(w, "what-if: --as %s (the effective profile is unchanged)\n", pol.Active())
 		}
@@ -479,6 +536,8 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 			_, _ = fmt.Fprintf(w, "note: %s\n", n)
 		}
 		switch {
+		case doc.Draft:
+			_, _ = fmt.Fprintln(w, "not enforced: a draft is not in effect")
 		case doc.Verb == policy.Read.String() && doc.Enforced:
 			_, _ = fmt.Fprintln(w, "enforced: a read hides, masks or refuses what this verdict denies")
 		case doc.denyOnlyDefault:
@@ -531,7 +590,7 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 		Line: verdict.Line, Profile: verdict.Profile, SelectedBy: string(pol.Selection()),
 		WhatIf: verdict.WhatIf, Level: verdict.Level, Enforced: enforcedVerdict(pol, v) && !denyOnlyDefault, Notes: verdict.Notes,
 		Partial: verdict.Partial, PartialDenies: []policyPartialDeny{}, UnmetWhere: verdict.UnmetWhere,
-		denyOnlyDefault: denyOnlyDefault, scriptRun: runAllowed,
+		denyOnlyDefault: denyOnlyDefault, scriptRun: runAllowed, Draft: pol.Draft(),
 	}
 	if runNote != "" {
 		doc.Notes = append(doc.Notes, runNote)
@@ -565,6 +624,7 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 	doc := policyCheckWriteDoc{
 		Resource: res.String(), Verb: policy.WriteAlias, Allowed: true, Profile: docs[0].Profile,
 		SelectedBy: docs[0].SelectedBy, WhatIf: docs[0].WhatIf, Level: docs[0].Level, Enforced: enforced, Verdicts: docs,
+		Draft: pol.Draft(),
 	}
 	for _, d := range docs {
 		doc.Allowed = doc.Allowed && (d.Allowed || d.denyOnlyDefault)
@@ -576,6 +636,9 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 		}
 	} else {
 		var b strings.Builder
+		if doc.Draft {
+			fmt.Fprintf(&b, "file: %s\n", fileText(pol))
+		}
 		if doc.WhatIf {
 			fmt.Fprintf(&b, "what-if: --as %s (the effective profile is unchanged)\n", pol.Active())
 		}
@@ -608,9 +671,12 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 			}
 		}
 		fmt.Fprintf(&b, "profile: %s\n", checkProfileText(doc.Profile, doc.SelectedBy))
-		if enforced {
+		switch {
+		case doc.Draft:
+			b.WriteString("not enforced: a draft is not in effect\n")
+		case enforced:
 			b.WriteString("enforced: a write command refuses what this verdict denies\n")
-		} else {
+		default:
 			b.WriteString("not enforced: no profile is in effect, so every command runs as without a policy\n")
 		}
 		if _, err := io.WriteString(w, b.String()); err != nil {
@@ -669,6 +735,43 @@ type policyLintDoc struct {
 	Unchecked []policyLintUnchecked `json:"unchecked"`
 	// Hint is the owner sentence, only on a broken file (D-117).
 	Hint string `json:"hint,omitempty"`
+	// Draft is true when --file named a draft (D-161).
+	Draft bool `json:"draft"`
+	// Inventory says what the live checks were made against (D-173):
+	// "instance" (the owner at a terminal, or no policy at all), "readable"
+	// (only what the active profile can read), or "not-checked" (no profile
+	// in effect where one is required, or a broken policy.yaml).
+	Inventory string `json:"inventory"`
+}
+
+// Lint inventory modes (D-173).
+const (
+	lintInventoryInstance   = "instance"
+	lintInventoryReadable   = "readable"
+	lintInventoryNotChecked = "not-checked"
+)
+
+// lintInventoryMode is what `policy lint` may check against (D-173): the
+// whole instance for the owner at a terminal and where no policy applies;
+// only what the active profile can read when a profile is in effect (the
+// session filters the reads); nothing when the instance requires a profile
+// and has none, or its policy.yaml is broken — lint cannot know what the
+// caller may read, so it names nothing from the instance.
+func lintInventoryMode(dir string) string {
+	if ownerTerminalCheck() {
+		return lintInventoryInstance
+	}
+	if policySession != nil {
+		return lintInventoryReadable
+	}
+	active, err := policy.Load(dir)
+	if err != nil {
+		return lintInventoryNotChecked
+	}
+	if required, reqErr := config.PolicyRequired(dir); (required || reqErr != nil) && !active.InEffect() {
+		return lintInventoryNotChecked
+	}
+	return lintInventoryInstance
 }
 
 // policyLintError is lint's exit 1: findings, or unchecked kinds without
@@ -681,13 +784,13 @@ func (e *policyLintError) Error() string {
 
 func (e *policyLintError) ExitCode() int { return 1 }
 
-func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
+func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool, file string) error {
 	cfg, err := policyInstanceDir()
 	if err != nil {
 		return err
 	}
-	doc := policyLintDoc{Level: policy.Level, Findings: []policyLintFinding{}, Unchecked: []policyLintUnchecked{}}
-	pol, err := policy.Load(cfg.Dir)
+	doc := policyLintDoc{Level: policy.Level, Findings: []policyLintFinding{}, Unchecked: []policyLintUnchecked{}, Draft: file != ""}
+	pol, err := loadPolicyFile(cfg.Dir, file)
 	var le *policy.LoadError
 	switch {
 	case errors.As(err, &le):
@@ -699,20 +802,26 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 		return err
 	default:
 		doc.File, doc.Exists, doc.Valid = pol.Source(), pol.Exists(), true
+		doc.Inventory = lintInventoryMode(cfg.Dir)
 		var inv policy.Inventory
-		if pol.Exists() {
+		if pol.Exists() && doc.Inventory != lintInventoryNotChecked {
 			hi := &haInventory{ctx: ctx, cfg: cfg}
 			defer hi.close()
 			inv = hi
 		}
 		rep := policy.Lint(pol, inv)
-		for _, f := range rep.Findings {
-			doc.Findings = append(doc.Findings, policyLintFinding{Code: f.Code, Profile: f.Profile, Rule: f.Rule, Line: f.Line, Message: f.Message})
+		if doc.Inventory == lintInventoryNotChecked {
+			// One line says it; the per-kind "no live inventory" rows would
+			// only repeat it (D-173).
+			rep.Unchecked = nil
 		}
-		for _, u := range rep.Unchecked {
-			doc.Unchecked = append(doc.Unchecked, policyLintUnchecked{
-				Kind: string(u.Kind), Reason: u.Reason, Profile: u.Profile, Rule: u.Rule, Line: u.Line,
-			})
+		doc.Findings, doc.Unchecked = lintReportRows(rep)
+		if doc.Inventory == lintInventoryReadable {
+			for i, f := range doc.Findings {
+				if f.Code == policy.CodeNoMatch {
+					doc.Findings[i].Message = strings.Replace(f.Message, " on this instance", " that this profile can read", 1)
+				}
+			}
 		}
 	}
 
@@ -727,10 +836,29 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool) error {
 	if le != nil {
 		return &policyBrokenError{n: len(le.Problems), file: le.File}
 	}
-	if len(doc.Findings) > 0 || (len(doc.Unchecked) > 0 && !allowPartial) {
-		return &policyLintError{findings: len(doc.Findings), unchecked: len(doc.Unchecked)}
+	notChecked := 0
+	if doc.Inventory == lintInventoryNotChecked && doc.Exists {
+		notChecked = 1
+	}
+	if len(doc.Findings) > 0 || (len(doc.Unchecked)+notChecked > 0 && !allowPartial) {
+		return &policyLintError{findings: len(doc.Findings), unchecked: len(doc.Unchecked) + notChecked}
 	}
 	return nil
+}
+
+// lintReportRows converts a lint report to its --json rows.
+func lintReportRows(rep policy.LintReport) ([]policyLintFinding, []policyLintUnchecked) {
+	findings := make([]policyLintFinding, 0, len(rep.Findings))
+	unchecked := make([]policyLintUnchecked, 0, len(rep.Unchecked))
+	for _, f := range rep.Findings {
+		findings = append(findings, policyLintFinding{Code: f.Code, Profile: f.Profile, Rule: f.Rule, Line: f.Line, Message: f.Message})
+	}
+	for _, u := range rep.Unchecked {
+		unchecked = append(unchecked, policyLintUnchecked{
+			Kind: string(u.Kind), Reason: u.Reason, Profile: u.Profile, Rule: u.Rule, Line: u.Line,
+		})
+	}
+	return findings, unchecked
 }
 
 func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allowPartial bool) {
@@ -738,7 +866,11 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allo
 		_, _ = fmt.Fprintf(w, "no policy file (looked for %s): nothing to lint\n", doc.File)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "file: %s\n", doc.File)
+	if doc.Draft {
+		_, _ = fmt.Fprintf(w, "file: %s (draft, not in effect)\n", doc.File)
+	} else {
+		_, _ = fmt.Fprintf(w, "file: %s\n", doc.File)
+	}
 	if le != nil {
 		// A broken file's findings are its problems, in the one wording policy
 		// show and every refusal use (D-117).
@@ -773,6 +905,13 @@ func renderPolicyLint(w io.Writer, doc policyLintDoc, le *policy.LoadError, allo
 			}
 			_, _ = fmt.Fprintf(w, "  %s: %s — line %d profile %s %s\n", u.Kind, u.Reason, u.Line, u.Profile, u.Rule)
 		}
+	}
+	switch doc.Inventory {
+	case lintInventoryNotChecked:
+		_, _ = fmt.Fprintln(w, "inventory not checked: no profile in effect")
+		return
+	case lintInventoryReadable:
+		_, _ = fmt.Fprintln(w, "inventory: what the active profile can read")
 	}
 	if len(doc.Findings) == 0 && len(doc.Unchecked) == 0 {
 		_, _ = fmt.Fprintln(w, "clean")

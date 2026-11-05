@@ -12,16 +12,18 @@
 // (finding #100). The companion's own read-modify-write is milliseconds wide
 // and was never the interesting half — hactl's is a thousand times longer.
 //
-// The unit of exclusion is the instance directory, because that is the unit
-// of sharing: it carries the .env naming the instance, the cache the manual
-// state lives in, and the backups directory a rollback reads. Two callers
-// that share it are the concurrency this lock is for, and they are exactly
-// the callers findings #61, #100 and #101 were all reported from.
+// The unit of exclusion is the Home Assistant instance, keyed by its URL
+// (D-152, DirForURL). It used to be the instance directory — the unit that
+// carries the .env, the cache and the backups — until one directory per agent
+// (D-151) made two directories on one Home Assistant the normal case, and two
+// agents' writes interleaved exactly as #100's did. The lock file now lives in
+// the user's cache directory; a caller with no URL to key by falls back to its
+// directory's own cache.
 //
 // What it does NOT cover is stated here rather than discovered later: a writer
 // that is not this hactl — Home Assistant's own UI, a second machine, or a
-// hactl pointed at a different directory carrying the same URL — is not
-// excluded by a lock on a local file. The lock makes hactl consistent with
+// hactl whose URL names the same server another way (an IP for a host name, a
+// proxy) — is not excluded by a lock on a local file. The lock makes hactl consistent with
 // itself; H-12's read-back is what catches everyone else.
 package instancelock
 

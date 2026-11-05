@@ -639,6 +639,9 @@ func TestEveryRowHasAVector(t *testing.T) {
 	if len(rows) < 80 {
 		t.Fatalf("Rows() returned %d rows; the table has lost rows", len(rows))
 	}
+	// The owner-only row maps nothing by design: it refuses under every
+	// session (D-149, D-160); TestOwnerOnlyRowRefusesUnderEveryPolicy holds it.
+	covered["ws auth/long_lived_access_token"] = true
 	for _, r := range rows {
 		if !covered[r.Key] {
 			t.Errorf("row %q (%s) has no vector that maps it", r.Key, r.Disposition)
@@ -872,5 +875,19 @@ func TestADryRunIsMappedAsTheRealWrite(t *testing.T) {
 	bad := reqmap.Classify(comp("POST", "/v1/ref/replace", `{"old":"a","new":"b","dry_run":"no"}`), nil)
 	if !bad.Refused() {
 		t.Errorf("a non-boolean dry_run was not refused: %+v", bad)
+	}
+}
+
+// TestOwnerOnlyRowRefusesUnderEveryPolicy — minting a long-lived token is the
+// owner's `agent add`, which runs without a policy session; under any session
+// the request is refused whatever the policy says (D-149, D-160).
+func TestOwnerOnlyRowRefusesUnderEveryPolicy(t *testing.T) {
+	res := reqmap.Classify(reqmap.Request{
+		Transport: reqmap.WS, Type: "auth/long_lived_access_token",
+		Params: map[string]any{"client_name": "hactl agent x", "lifespan": 3650},
+	}, nil)
+	if res.Disposition != reqmap.Unmappable || !res.Refused() || res.Row != "ws auth/long_lived_access_token" ||
+		!strings.Contains(res.Rule, "owner only") {
+		t.Errorf("auth/long_lived_access_token = %+v, want refused by the owner-only row", res)
 	}
 }

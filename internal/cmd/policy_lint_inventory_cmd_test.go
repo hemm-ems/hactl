@@ -17,6 +17,7 @@ import (
 // entity rules with "the entity_ids in states and the entity registry": a YAML
 // entity without a unique_id is in states only and is not a no-match.
 func TestPolicyLintEntityInventoryIncludesStatesOnlyEntities(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	ts := policyRig(t, `version: 1
 active: agent
 profiles:
@@ -38,6 +39,7 @@ profiles:
 // compared with the object ids `script ls` prints (kino), not the entity id
 // (script.kino).
 func TestPolicyLintChecksScriptsAgainstTheIDsScriptLsPrints(t *testing.T) {
+	withOwnerTerminal(t) // lint against the whole instance is the owner's (D-173)
 	ts := policyRig(t, `version: 1
 active: agent
 profiles:

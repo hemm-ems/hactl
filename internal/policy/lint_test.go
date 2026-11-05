@@ -177,3 +177,25 @@ func TestLintOrderIsTotal(t *testing.T) {
 		}
 	}
 }
+
+// D-171: a rule whose only verb is create names ids that do not exist yet —
+// matching none of today's is never no-match. Any other verb beside create,
+// and the same pattern without create, still is.
+func TestLintCreateOnlyRuleIsNeverNoMatch(t *testing.T) {
+	inv := fakeInventory{ids: map[Kind][]string{
+		KindLabel:      {},
+		KindAutomation: {"1700000000000"},
+	}}
+	p := mustLoad(t, "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n"+
+		"      \"label:*\": [create]\n"+ // line 7: create-only on an empty kind
+		"      \"automation:pg_*\": [create]\n"+ // line 8: create-only, no match yet
+		"      \"automation:agent_*\": [edit, create]\n"+ // line 9: edit too — a typo would be a hole
+		"    deny:\n"+
+		"      \"automation:prod_*\": [create]\n"+ // line 11: create-only deny
+		"      \"automation:prdo_*\": [delete]\n") // line 12: still no-match
+	got := codes(Lint(p, inv))
+	want := []string{"no-match@agent:9", "no-match@agent:12"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("findings = %v, want %v", got, want)
+	}
+}

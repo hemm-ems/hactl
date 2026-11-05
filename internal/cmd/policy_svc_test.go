@@ -217,7 +217,7 @@ func TestSvcCallRefusedByItsReach(t *testing.T) {
 		"  denied: control entity:light.a — deny \"entity:light.a\" [control] (line 6)\n" +
 		"  checked: 2 resources, 1 denied\n" +
 		"  profile: agent (selected by active)\n" +
-		"  hint: the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — report it; do not edit policy.yaml\n"
+		"  hint: the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`\n"
 	if out != want {
 		t.Errorf("refused preview\n got: %q\nwant: %q", out, want)
 	}

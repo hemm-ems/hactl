@@ -112,10 +112,16 @@ func TestFamiliesListMatchesMap(t *testing.T) {
 // other commands exist — never invent one", so a command missing from it is a
 // command an agent is told not to run. The core sat 27 bytes under the old
 // bound; everything else about `grep` lives in its family section.
+//
+// And 9472 to 9536 for the policy setup flow (W-4/W-5, D-148..D-152): the full
+// command set names `policy review|activate` and `agent add|ls`, one line's
+// worth, for the same reason as `grep` — "No other commands exist" would
+// otherwise tell an agent the owner's flow does not exist. The core sat 18
+// bytes over the old bound; everything else lives in the policy family.
 func TestCoreTextSize(t *testing.T) {
 	n := len(CoreText())
-	if n < 4096 || n > 9472 {
-		t.Errorf("CoreText() is %d bytes, want 4096..9472 (~1-2k tokens)", n)
+	if n < 4096 || n > 9536 {
+		t.Errorf("CoreText() is %d bytes, want 4096..9536 (~1-2k tokens)", n)
 	}
 }
 

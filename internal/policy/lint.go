@@ -336,7 +336,11 @@ func (l *linter) profile(pr *profile) {
 			continue
 		}
 		if len(matched) == 0 {
-			finding(CodeNoMatch, "matches no "+string(r.addr.kind)+" on this instance")
+			// A rule whose only verb is create names ids that do not exist
+			// yet: matching none of today's is what it is for (D-171).
+			if !createOnly(r) {
+				finding(CodeNoMatch, "matches no "+string(r.addr.kind)+" on this instance")
+			}
 			continue
 		}
 		if name, ok := r.addr.attrName(); ok && !onlyWildcards(name) {
@@ -362,6 +366,11 @@ func (l *linter) profile(pr *profile) {
 	l.findings = append(l.findings, blockedByPart(pr)...)
 	l.selfGrant(pr)
 	l.halfProtected(pr)
+}
+
+// createOnly reports whether r's only verb is create (D-171).
+func createOnly(r Rule) bool {
+	return len(r.Verbs) == 1 && r.Verbs[0] == Create
 }
 
 // uncheckedByShape lists rule r unchecked for what its pattern alone says lint
