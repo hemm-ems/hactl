@@ -251,6 +251,9 @@ func mapRefReplace(c *call) (mapping, error) {
 			if err != nil {
 				return mapping{}, err
 			}
+			if !c.fact().IndirectUnchecked {
+				checks = MergeChecks(checks, RefReplaceIndirectChecks(plan.Changes, *body.New))
+			}
 			m.checks = checks
 		}
 		return m, nil
@@ -260,6 +263,9 @@ func mapRefReplace(c *call) (mapping, error) {
 			"no dry run of {old %q, new %q} was checked in this invocation", *body.Old, *body.New)
 	}
 	checks, err := RefReplaceChecks(plan.Changes)
+	if err == nil && !c.fact().IndirectUnchecked {
+		checks = MergeChecks(checks, RefReplaceIndirectChecks(plan.Changes, *body.New))
+	}
 	return mapping{checks: checks}, err
 }
 
@@ -310,6 +316,30 @@ func RefReplaceChecks(changes []PlanChange) ([]Check, error) {
 		}
 	}
 	return set.list(), nil
+}
+
+// RefReplaceIndirectChecks is what a rewrite makes the automations, scripts and
+// template entities it lies in do (W-1): when new names an entity and any
+// change lies inside a typed entry, control on that entity — whether the
+// change sits in an action or a trigger cannot be told from the plan, so the
+// stricter verb is checked (an over-deny, never an under-deny).
+func RefReplaceIndirectChecks(changes []PlanChange, newVal string) []Check {
+	typed := false
+	for _, ch := range changes {
+		if ch.Owner != nil {
+			typed = true
+			break
+		}
+	}
+	d, o, ok := strings.Cut(newVal, ".")
+	if !typed || !ok || d == "" || o == "" {
+		return nil
+	}
+	c, err := check(policy.Control, policy.KindEntity, newVal, "")
+	if err != nil {
+		return nil
+	}
+	return []Check{c}
 }
 
 // LocationsOutsidePlan returns the locations a confirmed ref/replace wrote that

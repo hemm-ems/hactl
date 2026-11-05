@@ -89,6 +89,11 @@ type profile struct {
 	// rules: deny rules first, then allow rules, each in file order (Line,
 	// then Column).
 	rules []Rule
+	// indirectUnchecked is `indirect: unchecked` (D-135): what a written
+	// automation, script or template would do is not checked.
+	indirectUnchecked bool
+	// indirectLine is the line of that key, 0 when absent.
+	indirectLine int
 }
 
 // Load reads `<instanceDir>/policy.yaml`.
@@ -176,6 +181,23 @@ func (p *Policy) Active() string {
 
 // Selection says how Active was chosen.
 func (p *Policy) Selection() Selection { return p.selection }
+
+// IndirectChecked reports whether the profile in effect (or the what-if
+// profile) checks what a written automation, script or template would do
+// (D-56, D-133). Only `indirect: unchecked` on that profile switches it off
+// (D-135); with no profile in effect nothing is checked anyway (D-58).
+func (p *Policy) IndirectChecked() bool {
+	return p.view == nil || !p.view.indirectUnchecked
+}
+
+// IndirectLine is the line of the active profile's `indirect: unchecked`, or
+// 0 when the profile checks what written candidates would do.
+func (p *Policy) IndirectLine() int {
+	if p.view == nil || !p.view.indirectUnchecked {
+		return 0
+	}
+	return p.view.indirectLine
+}
 
 // Effective returns the effective profile and how it was selected, ignoring
 // any what-if: for a view from As it is the receiver's, never the `--as`

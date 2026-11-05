@@ -227,6 +227,29 @@ func withOrigin(err error, envPath string, o origin) error {
 	}
 }
 
+// PolicyRequired reports whether the instance at dir requires a policy
+// (D-136): `HACTL_POLICY=required` in its .env. Any other non-empty value is
+// an error, never "not required" — a typo must not lift the requirement. A
+// directory without a .env requires nothing.
+func PolicyRequired(dir string) (bool, error) {
+	env, err := parseEnvFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		var nf *ConfigNotFoundError
+		if errors.As(err, &nf) {
+			return false, nil
+		}
+		return true, err
+	}
+	switch v := env["HACTL_POLICY"]; v {
+	case "":
+		return false, nil
+	case "required":
+		return true, nil
+	default:
+		return true, fmt.Errorf("HACTL_POLICY in %s must be \"required\" (got %q)", filepath.Join(dir, ".env"), v)
+	}
+}
+
 // parseEnvFile reads a .env file and returns key-value pairs.
 // It supports blank lines, # comments, and optional quoting of values.
 func parseEnvFile(path string) (map[string]string, error) {

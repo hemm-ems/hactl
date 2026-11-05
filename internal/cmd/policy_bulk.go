@@ -127,6 +127,9 @@ func addRefReplace(ctx context.Context, p *writePlan, cc *companion.Client, oldV
 		}
 		p.addChecks(checks)
 	}
+	if sess.Policy().IndirectChecked() {
+		p.addChecks(reqmap.RefReplaceIndirectChecks(planned, newVal))
+	}
 	sess.RecordRefReplacePlan(oldVal, newVal, planned)
 	for _, d := range dashboards {
 		if !d.writable {

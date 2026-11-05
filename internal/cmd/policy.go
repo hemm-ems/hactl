@@ -170,6 +170,10 @@ type policyShowDoc struct {
 	Rules         []policyShowRule `json:"rules"`
 	// Hint is the owner sentence, only on a broken file (D-117).
 	Hint string `json:"hint,omitempty"`
+	// Indirect is "unchecked" when the profile switched off the check of
+	// what written automations, scripts and templates would do (D-135),
+	// "checked" while a profile is in effect, "" otherwise.
+	Indirect string `json:"indirect,omitempty"`
 }
 
 func runPolicyShow(w io.Writer, as string, asSet bool) error {
@@ -193,6 +197,12 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 		Profile: pol.Active(), SelectedBy: string(pol.Selection()), WhatIf: pol.WhatIf(),
 		AllowAll: pol.AllowAll(), Default: string(pol.Default()),
 		Profiles: pol.Profiles(), Rules: []policyShowRule{},
+	}
+	if enforced {
+		doc.Indirect = "checked"
+		if !pol.IndirectChecked() {
+			doc.Indirect = "unchecked"
+		}
 	}
 	for _, r := range pol.Rules() {
 		row := policyShowRule{
@@ -221,6 +231,9 @@ func runPolicyShow(w io.Writer, as string, asSet bool) error {
 	_, _ = fmt.Fprintf(w, "level: %s\n", policy.Level)
 	if enforced {
 		_, _ = fmt.Fprintln(w, "enforced: writes — reads not yet")
+		if !pol.IndirectChecked() {
+			_, _ = fmt.Fprintf(w, "indirect: unchecked (line %d) — what written automations, scripts and templates would do is not checked\n", pol.IndirectLine())
+		}
 	} else {
 		_, _ = fmt.Fprintln(w, "enforced: nothing — no profile is in effect, so every command runs as without a policy")
 	}

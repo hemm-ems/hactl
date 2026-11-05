@@ -87,3 +87,5 @@ internal/surfaceaudit/policycmd.go:(*callGraph).indexStoredFuncs = exempt: fills
 internal/surfaceaudit/policycmd.go:loadCallGraph = exempt: builds indexes (by key, by file:line, the module's concrete types) that are only looked up or tested for membership; the one answer that depends on what they hold, a command's reached sinks, is sorted before it renders
 internal/policy/enforce/session.go:(*Session).gather = exempt: copies the reach question's selectors from one map into another; the walk renders nothing and the order of a map's insertion has no meaning
 internal/surfaceaudit/policy.go:productFiles = exempt: collects the union of every release target's product files into a set whose keys are sort.Strings-ed before anything parses or reports them
+internal/policy/reqmap/candidate.go:CandidateUses = proven: TestCandidateUsesIsCanonical
+internal/policy/reqmap/candidate.go:sortedMapKeys = proven: TestCandidateUsesIsCanonical

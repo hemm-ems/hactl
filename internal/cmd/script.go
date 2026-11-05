@@ -626,7 +626,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	// script but not reload scripts is refused up front, never after a write
 	// that HA then does not activate. Same plan in the preview and under
 	// --confirm; nothing with no profile in effect (D-58).
-	note, err := checkWritePlan(w, !flagScriptConfirm, scriptApplyPlan(ctx, candidate.ID))
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptApplyPlan(ctx, candidate.ID).addCandidate(ctx, []byte(candidate.Content)))
 	if err != nil {
 		return err
 	}
@@ -906,7 +906,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 	}
 
 	// The plan: create on the file's top-level key, as the companion keys it.
-	note, err := checkWritePlan(w, !flagScriptConfirm, scriptCreatePlan(content))
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptCreatePlan(content).addCandidate(ctx, []byte(content)))
 	if err != nil {
 		return err
 	}

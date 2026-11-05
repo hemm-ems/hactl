@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -33,6 +34,24 @@ const (
 	typedDeleteAutomationAction   = "delete automation"
 	typedRollBackAutomationAction = "roll back automation"
 )
+
+// addCandidate declares what writing candidate — the very bytes the command
+// sends — would do (W-1; D-56 as refined by D-133, D-134, D-137): each action
+// as the service call it makes, control on each entity a device action names,
+// read on every other entity it mentions, and a fail-closed denial for what
+// cannot be read off it. The request layer adds the same to the companion
+// write (enforce.Session.CandidateChecks, one function for both). With no
+// profile in effect, or `indirect: unchecked` (D-135), it adds nothing.
+func (p *writePlan) addCandidate(ctx context.Context, candidate []byte) *writePlan {
+	sess := policySession
+	if sess == nil {
+		return p
+	}
+	checks, denials := sess.CandidateChecks(ctx, candidate)
+	p.checks = append(p.checks, checks...)
+	p.failClosed = append(p.failClosed, denials...)
+	return p
+}
 
 // policyInEffect reports whether this invocation enforces a policy: a profile
 // is in effect and its session runs. Work a plan needs that the command would
@@ -111,10 +130,11 @@ func autoCreatePlan(data []byte) *writePlan {
 // autoRollbackPlan: edit automation:<target>/config with the backup's own
 // bytes, + create on the backup's id when it differs; refused when the backup
 // has no usable id (D-78).
-func autoRollbackPlan(target, backupPath string) *writePlan {
+func autoRollbackPlan(ctx context.Context, target, backupPath string) *writePlan {
 	p := newWritePlan(typedRollBackAutomationAction).add(policy.Edit, policy.KindAutomation, target, "config")
 	if data, ok := readCandidate(p, policy.Create, string(policy.KindAutomation)+":"+typedNoID, backupPath); ok {
 		p.addRenameOf(target, data)
+		p.addCandidate(ctx, data)
 	}
 	return p
 }

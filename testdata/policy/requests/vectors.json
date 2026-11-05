@@ -3065,7 +3065,7 @@
   },
   {
    "id": "comp-ref-replace-confirmed",
-   "why": "dry_run:false after a checked dry run of the same {old,new}, same policy: that plan",
+   "why": "dry_run:false after a checked dry run of the same {old,new}, same policy: that plan (+ W-1: control on the new id, the change lies in an automation)",
    "request": {
     "transport": "companion",
     "method": "POST",
@@ -3080,6 +3080,10 @@
     "disposition": "write",
     "row": "companion POST /v1/ref/replace",
     "checks": [
+     {
+      "verb": "control",
+      "resource": "entity:light.cooking"
+     },
      {
       "verb": "edit",
       "resource": "file:automations.yaml"
@@ -3098,7 +3102,7 @@
   },
   {
    "id": "comp-ref-replace-dry-run-with-plan",
-   "why": "dry_run:true maps as the real write: same resources, same verb",
+   "why": "dry_run:true maps as the real write: same resources, same verb (+ W-1: control on the new id, the change lies in an automation)",
    "request": {
     "transport": "companion",
     "method": "POST",
@@ -3113,6 +3117,10 @@
     "disposition": "write",
     "row": "companion POST /v1/ref/replace",
     "checks": [
+     {
+      "verb": "control",
+      "resource": "entity:light.cooking"
+     },
      {
       "verb": "edit",
       "resource": "file:automations.yaml"
@@ -3131,7 +3139,7 @@
   },
   {
    "id": "comp-ref-replace-dry-run-absent",
-   "why": "dry_run absent defaults to TRUE: the body is decoded, mapped as the dry run",
+   "why": "dry_run absent defaults to TRUE: the body is decoded, mapped as the dry run (+ W-1: control on the new id, the change lies in an automation)",
    "request": {
     "transport": "companion",
     "method": "POST",
@@ -3145,6 +3153,10 @@
     "disposition": "write",
     "row": "companion POST /v1/ref/replace",
     "checks": [
+     {
+      "verb": "control",
+      "resource": "entity:light.cooking"
+     },
      {
       "verb": "edit",
       "resource": "file:automations.yaml"
