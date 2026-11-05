@@ -38,7 +38,7 @@ profiles:
 	want := "file: " + filepath.Join(dir, policy.FileName) + "\n" +
 		policy.Disclaimer + "\n" +
 		"level: A\n" +
-		"enforced: writes — reads not yet\n" +
+		"enforced: writes and reads\n" +
 		"profile: agent (selected by active)\n" +
 		"default: deny\n" +
 		"rules:\n" +
@@ -151,7 +151,7 @@ func TestPolicyCheckInapplicableVerbNoteSaysItDecidesNothing(t *testing.T) {
 func TestPolicyCheckWriteScriptCountsTheRunTheDefaultDenies(t *testing.T) {
 	const base = "    default: deny\n    allow:\n" +
 		"      \"script:morning\": [edit, create, delete]\n" +
-		"      \"entity:script.morning_renamed\": [control]\n" +
+		"      \"entity:script.morning_renamed\": [control, read]\n" + // read: script run finds the script it runs (W-2)
 		"      \"service:script.turn_on\": [control]\n"
 	rig := startSvcRig(t, reachOf("script.morning_renamed"))
 	writePolicyFile(t, rig.dir, agentPolicy(base))

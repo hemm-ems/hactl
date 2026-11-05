@@ -18,6 +18,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/instancelock"
+	"github.com/hemm-ems/hactl/internal/mcpserver"
 )
 
 // defaultTimeout is the bound every connection carries when the caller names
@@ -442,6 +443,8 @@ func Execute() error {
 		}
 		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
+	// What the reads hid and masked, once, after the answer (D-139).
+	writePolicyTrailer(os.Stdout, os.Stderr)
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -535,6 +538,9 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 
 	cmdPath := "hactl " + strings.Join(args[1:], " ")
 	applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
+	// What the reads hid and masked, once, after the answer (D-139); stderr
+	// is the caller's (mcpserver.WithStderr) or the process's.
+	writePolicyTrailer(w, mcpserver.Stderr(ctx))
 
 	if flagStats {
 		writeStats(w, int64(capBuf.Len()))
