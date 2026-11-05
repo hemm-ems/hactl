@@ -121,8 +121,10 @@ profiles:
 }
 
 // TestPolicyReadsOneDeniedThingIsRefused — `ent show` of an entity the
-// profile may not read is refused like a denied write: exit 1, policy_denied,
-// the rule and its line, nothing of the entity on stdout.
+// profile may not read is refused like a denied write (D-155): exit 1, the
+// D-119 count as the error line, the refusal report (or under --json its
+// envelope) on stdout naming the rule and its line, nothing of the entity's
+// state.
 func TestPolicyReadsOneDeniedThingIsRefused(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	rig := buildPGRig(t, inst)
@@ -143,13 +145,20 @@ profiles:
 		if pgExitCode(err) != 1 {
 			t.Fatalf("%v: exit %d (%v), want 1\n%s", args, pgExitCode(err), err, out)
 		}
-		want := fmt.Sprintf(`policy_denied: read entity:%s — deny "entity:%s" [read] (line %d)`, denied, denied,
-			policyLineOf(t, policy, `"entity:`+denied+`"`))
-		if !strings.HasPrefix(err.Error(), want) {
-			t.Errorf("%v: refusal %q, want it to start %q", args, err.Error(), want)
+		summary := fmt.Sprintf("policy_denied: 1 of 1 resources denied (profile %s)", pgProfile)
+		if !strings.HasPrefix(err.Error(), summary) {
+			t.Errorf("%v: error line %q, want it to start %q", args, err.Error(), summary)
 		}
-		if strings.Contains(out, denied) || strings.Contains(out+errOut, "hidden by policy") {
-			t.Errorf("%v: a refused read printed something:\nstdout %q\nstderr %q", args, out, errOut)
+		rule := fmt.Sprintf(`deny \"entity:%s\" [read]`, denied)
+		if len(args) == 3 {
+			rule = fmt.Sprintf(`  denied: read entity:%s — deny "entity:%s" [read] (line %d)`, denied, denied,
+				policyLineOf(t, policy, `"entity:`+denied+`"`))
+		}
+		if !strings.Contains(out, rule) || !strings.Contains(out, "policy_denied") {
+			t.Errorf("%v: the refusal report does not name %q:\n%s", args, rule, out)
+		}
+		if strings.Contains(out, `"state"`) || strings.Contains(out, "last_changed") || strings.Contains(out+errOut, "hidden by policy") {
+			t.Errorf("%v: a refused read printed something of the entity, or a trailer:\nstdout %q\nstderr %q", args, out, errOut)
 		}
 	}
 }
@@ -222,9 +231,9 @@ profiles:
       "entity:%s": [read]
 `, pgProfile, pgProfile, rig.Lights[0])
 	tpl := "{{ states('" + rig.Lights[0] + "') }}"
-	_, _, err := pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), base), "tpl", "eval", tpl)
-	if pgExitCode(err) != 1 || !strings.Contains(err.Error(), "read system:template") {
-		t.Fatalf("tpl eval under a read deny: %v, want refused on read system:template", err)
+	refused, _, err := pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), base), "tpl", "eval", tpl)
+	if pgExitCode(err) != 1 || !strings.Contains(refused, "  denied: read system:template — ") {
+		t.Fatalf("tpl eval under a read deny: %v, want refused on read system:template:\n%s", err, refused)
 	}
 	allowed := base + "    allow:\n      \"system:template\": [read]\n"
 	out, _, err := pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), allowed), "tpl", "eval", tpl)
@@ -296,9 +305,9 @@ profiles:
 `, pgProfile, pgProfile, urlPath)
 	dir := pgInstanceDir(t, inst.URL(), inst.Token(), policy)
 
-	_, _, err := pgReads(t, dir, "log")
-	if pgExitCode(err) != 1 || !strings.Contains(err.Error(), `deny "system:logs" [read]`) {
-		t.Errorf("log under a system:logs deny: %v, want refused", err)
+	logOut, _, err := pgReads(t, dir, "log")
+	if pgExitCode(err) != 1 || !strings.Contains(logOut, `  denied: read system:logs — deny "system:logs" [read]`) {
+		t.Errorf("log under a system:logs deny: %v, want refused:\n%s", err, logOut)
 	}
 
 	out, _, err := pgReads(t, dir, "dash", "show", urlPath, "--raw")

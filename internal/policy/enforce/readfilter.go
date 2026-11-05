@@ -29,10 +29,10 @@ var (
 	deniedListJSON = json.RawMessage(`["` + Denied + `"]`)
 )
 
-// ruleTemplateNeedsAllow decides `read system:template` when the profile
+// RuleTemplateNeedsAllow decides `read system:template` when the profile
 // denies some read and only its default allows it (D-143, M-3): a template can
 // read any state, so it needs an allow of its own.
-const ruleTemplateNeedsAllow = "system:template needs an explicit allow while the profile denies a read"
+const RuleTemplateNeedsAllow = "system:template needs an explicit allow while the profile denies a read"
 
 // ConfigFileFetcher is a Fetcher that can also read a config file's raw
 // content (through the companion). The read filter asks it which typed owner
@@ -141,7 +141,7 @@ func TemplateRead(pol *policy.Policy, r policy.Resource, v policy.Verdict) polic
 		return v
 	}
 	if v.Allowed && v.Rule == policy.RuleDefaultAllow {
-		v.Allowed, v.Rule, v.Line = false, ruleTemplateNeedsAllow, 0
+		v.Allowed, v.Rule, v.Line = false, RuleTemplateNeedsAllow, 0
 	}
 	return v
 }
@@ -191,6 +191,14 @@ func (s *Session) checkRead(req reqmap.Request, res reqmap.Result) error {
 // write's is, H-29): a command that reported it fails with it, and one that
 // carried on past it showed less, which the trailer counts.
 func (s *Session) refuseRead(ref *DeniedError) error {
+	// Reported like a denied write (D-155): `would read <what>`, every
+	// denied thing counted as checked.
+	names := make([]string, len(ref.Denied))
+	for i, d := range ref.Denied {
+		names[i] = d.Resource
+	}
+	ref.Action = "read " + strings.Join(names, ", ")
+	ref.Checked = max(ref.Checked, len(ref.Denied))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref.Written = append([]string{}, s.written...)

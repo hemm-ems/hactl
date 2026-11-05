@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -197,8 +198,20 @@ func assertReadRefused(t *testing.T, s *enforce.Session, v readVector, out []byt
 	if !errors.As(err, &ref) || !ref.Read {
 		t.Fatalf("%s: got %v (answer %s), want a read refusal naming %q", v.Why, err, out, v.Expect.Refused)
 	}
-	if !strings.Contains(ref.Error(), v.Expect.Refused) || ref.PolicyClass() != enforce.ClassDenied || ref.ExitCode() != 1 {
-		t.Errorf("%s: refusal %q (class %s), want policy_denied naming %q", v.Why, ref.Error(), ref.PolicyClass(), v.Expect.Refused)
+	named := false
+	for _, d := range ref.Denied {
+		named = named || strings.Contains(d.Text(), v.Expect.Refused)
+	}
+	if !named || ref.PolicyClass() != enforce.ClassDenied || ref.ExitCode() != 1 {
+		t.Errorf("%s: denied %v (class %s), want policy_denied naming %q", v.Why, ref.Denied, ref.PolicyClass(), v.Expect.Refused)
+	}
+	// Reported like a denied write (D-155): the D-119 count on the error
+	// line, `would read <what>` as the report's action.
+	if want := fmt.Sprintf("policy_denied: %d of %d resources denied (profile %s)", len(ref.Denied), ref.Checked, ref.Profile); !strings.HasPrefix(ref.Error(), want) {
+		t.Errorf("%s: error line %q, want it to start %q", v.Why, ref.Error(), want)
+	}
+	if !strings.HasPrefix(ref.Action, "read ") {
+		t.Errorf("%s: action %q, want `read <what>`", v.Why, ref.Action)
 	}
 	if hidden, masked, refused := s.ReadCounts(); refused != 1 || hidden != 0 || masked != 0 {
 		t.Errorf("%s: counts hidden %d masked %d refused %d, want one refused read", v.Why, hidden, masked, refused)
@@ -279,7 +292,7 @@ profiles:
 	} {
 		_, err := s.Filter(context.Background(), c.req, []byte(c.answer))
 		var ref *enforce.DeniedError
-		if !errors.As(err, &ref) || !ref.Read || !strings.Contains(ref.Error(), "fail-closed: the answer cannot be filtered") {
+		if !errors.As(err, &ref) || !ref.Read || len(ref.Denied) != 1 || !strings.HasPrefix(ref.Denied[0].Rule, "fail-closed: the answer cannot be filtered") {
 			t.Errorf("%s %s with %s: %v, want a fail-closed read refusal", c.req.Transport, c.req.Path+c.req.Type, c.answer, err)
 		}
 	}

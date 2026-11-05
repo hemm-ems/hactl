@@ -110,13 +110,10 @@ type DeniedError struct {
 // (profile <p>)`; a request-layer refusal adds what was already written.
 func (r *DeniedError) Error() string {
 	if r.Read {
-		// A refused read names what it denied, the rule and its line on
-		// the one line (manual "Enforcement (reads)").
-		texts := make([]string, len(r.Denied))
-		for i, d := range r.Denied {
-			texts[i] = d.Text()
-		}
-		return fmt.Sprintf("%s: %s (profile %s) — reading it is refused", ClassDenied, strings.Join(texts, "; "), r.Profile)
+		// A refused read is reported like a denied write (D-155): the
+		// count on stderr, the denials in the report on stdout.
+		checked := max(r.Checked, len(r.Denied))
+		return fmt.Sprintf("%s: %d of %d resources denied (profile %s) — reading it is refused", ClassDenied, len(r.Denied), checked, r.Profile)
 	}
 	// A request refused whole — unmapped, unmappable, a redirect hop that
 	// maps differently — checked no (resource, verb) pair; it counts as the
@@ -177,7 +174,9 @@ func (r *DeniedError) Hint() string {
 	var failClosed *Denial
 	for i, d := range r.Denied {
 		switch {
-		case d.Rule == policy.RuleDefaultDeny:
+		case d.Rule == policy.RuleDefaultDeny || d.Rule == RuleTemplateNeedsAllow:
+			// Nothing allows it: under default: deny, or system:template
+			// while the profile denies a read (D-143).
 			defaults = append(defaults, d)
 		case strings.HasPrefix(d.Rule, failClosedPrefix):
 			if failClosed == nil {

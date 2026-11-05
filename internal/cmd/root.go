@@ -399,6 +399,7 @@ func Execute() error {
 
 	executed, err := rootCmd.ExecuteC()
 	err = finishPolicySession(err)
+	renderReadRefusal(&capBuf, err)
 	markGeneratedScript(executed)
 	if err == nil {
 		// A preview that ran and succeeded is what authorizes the matching
@@ -518,6 +519,7 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	}
 	executed, execErr := rootCmd.ExecuteContextC(ctx)
 	err := finishPolicySession(execErr)
+	renderReadRefusal(&capBuf, err)
 	if err == nil && executed != nil {
 		// A preview that succeeded authorizes the matching --confirm here
 		// exactly as in Execute(): an MCP tool call runs through this entry

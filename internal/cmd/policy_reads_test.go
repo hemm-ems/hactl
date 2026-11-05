@@ -89,8 +89,9 @@ func TestReadTrailerInProseAndJSON(t *testing.T) {
 }
 
 // TestReadingOneDeniedThingIsRefused — `ent show` of a denied entity is
-// refused like a denied write: exit 1, policy_denied, the rule and its line;
-// nothing of it on stdout, no trailer.
+// refused like a denied write (D-155): exit 1, the D-119 count as the error
+// line, the refusal report on stdout naming the rule and its line — under
+// --json the refusal envelope — nothing of the entity's state, no trailer.
 func TestReadingOneDeniedThingIsRefused(t *testing.T) {
 	f := buildContractFixture(t)
 	writePolicyFile(t, f.dir, readsPolicy)
@@ -98,11 +99,39 @@ func TestReadingOneDeniedThingIsRefused(t *testing.T) {
 	if cliExitCode(err) != 1 || policyErrorClass(err) != enforce.ClassDenied {
 		t.Fatalf("ent show of a denied entity: exit %d class %q (%v)\n%s", cliExitCode(err), policyErrorClass(err), err, out)
 	}
-	if want := `read entity:binary_sensor.door — deny "entity:binary_sensor.*" [read] (line 6)`; !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal %q does not name %q", err.Error(), want)
+	if want := "policy_denied: 1 of 1 resources denied (profile agent)"; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("error line %q, want it to start %q", err.Error(), want)
 	}
-	if strings.Contains(out, "binary_sensor.door") || strings.Contains(out+errOut, "hidden by policy") {
-		t.Errorf("a refused read printed something of it, or a trailer:\nstdout %q\nstderr %q", out, errOut)
+	want := "policy_denied: would read entity:binary_sensor.door — refused by policy, nothing was written\n" +
+		"  denied: read entity:binary_sensor.door — deny \"entity:binary_sensor.*\" [read] (line 6)\n" +
+		"  checked: 1 resources, 1 denied\n" +
+		"  profile: agent (selected by active)\n" +
+		"  hint: the owner would change the rule on line 6 — report it; do not edit policy.yaml\n"
+	if out != want || errOut != "" {
+		t.Errorf("the refusal report:\n got %q\nwant %q\nstderr %q", out, want, errOut)
+	}
+
+	out, _, err = runReads(t, f.dir, "ent", "show", "binary_sensor.door", "--json")
+	if cliExitCode(err) != 1 {
+		t.Fatalf("--json: exit %d (%v)", cliExitCode(err), err)
+	}
+	var doc struct {
+		OK      *bool  `json:"ok"`
+		Error   string `json:"error"`
+		Action  string `json:"action"`
+		Details struct {
+			Policy struct {
+				Denied  []enforce.Denial `json:"denied"`
+				Checked int              `json:"checked"`
+			} `json:"policy"`
+		} `json:"details"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("--json: the refusal is not one JSON object: %v\n%s", jerr, out)
+	}
+	if doc.OK == nil || *doc.OK || doc.Error != enforce.ClassDenied || doc.Action != "read entity:binary_sensor.door" ||
+		doc.Details.Policy.Checked != 1 || len(doc.Details.Policy.Denied) != 1 || doc.Details.Policy.Denied[0].Line != 6 {
+		t.Errorf("--json refusal envelope:\n%s", out)
 	}
 }
 
@@ -112,9 +141,11 @@ func TestReadingOneDeniedThingIsRefused(t *testing.T) {
 func TestTplEvalNeedsSystemTemplate(t *testing.T) {
 	f := buildContractFixture(t)
 	writePolicyFile(t, f.dir, readsPolicy)
-	_, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}")
-	if policyErrorClass(err) != enforce.ClassDenied || !strings.Contains(err.Error(), "read system:template") {
-		t.Fatalf("tpl eval under a read deny: %v, want refused on read system:template", err)
+	out, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}")
+	want := "  denied: read system:template — " + enforce.RuleTemplateNeedsAllow + "\n"
+	if policyErrorClass(err) != enforce.ClassDenied || !strings.Contains(out, want) ||
+		!strings.Contains(out, "  hint: nothing allows system:template; the owner would add an allow") {
+		t.Fatalf("tpl eval under a read deny: %v, want refused on read system:template:\n%s", err, out)
 	}
 	writePolicyFile(t, f.dir, readsPolicy+"    allow:\n      \"system:template\": [read]\n")
 	if out, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}"); err != nil || !strings.Contains(out, "2") {

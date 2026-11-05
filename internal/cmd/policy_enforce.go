@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -202,6 +204,22 @@ func finishPolicySession(err error) error {
 		policyTrailer = readTrailer(hidden, masked, sess.Policy().Active())
 	}
 	return err
+}
+
+// renderReadRefusal makes a refused read the invocation's whole answer, as a
+// denied write's report is (D-155): the refusal report on stdout — under
+// --json the refusal envelope — in place of anything the command printed
+// before it, while the error's own line is the D-119 count on stderr. Any
+// other error leaves out untouched.
+func renderReadRefusal(out *bytes.Buffer, err error) {
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !ref.Read {
+		return
+	}
+	out.Reset()
+	if rerr := renderPolicyRefusal(out, ref); rerr != nil {
+		slog.Debug("rendering a read refusal", "error", rerr)
+	}
 }
 
 // readTrailer is the `hidden by policy` line (D-139): `hidden by policy: N
