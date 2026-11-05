@@ -83,7 +83,7 @@ func TestPolicyFileFlagCheck(t *testing.T) {
 	dir, path := draftInstance(t, draftDenyLocks)
 	var out bytes.Buffer
 	err := RunWithOutput([]string{"hactl", "--dir", dir, "policy", "check", "--file", path, "entity:lock.front_door", "control"}, &out)
-	if pgExit(err) != 1 || !strings.HasPrefix(out.String(), "denied: entity:lock.front_door control\n") ||
+	if pgExit(err) != 1 || !strings.HasPrefix(out.String(), "file: "+path+" (draft, not in effect)\ndenied: entity:lock.front_door control\n") ||
 		!strings.Contains(out.String(), "not enforced: a draft is not in effect\n") {
 		t.Errorf("check --file of a draft denial: exit %d\n%s", pgExit(err), out.String())
 	}
@@ -93,6 +93,18 @@ func TestPolicyFileFlagCheck(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"draft":true`) && !strings.Contains(out.String(), `"draft": true`) {
 		t.Errorf("check --file --json lacks draft true: %s", out.String())
+	}
+	// The write form says it reads a draft too.
+	out.Reset()
+	_ = RunWithOutput([]string{"hactl", "--dir", dir, "policy", "check", "--file", path, "entity:lock.front_door", "write"}, &out)
+	if !strings.HasPrefix(out.String(), "file: "+path+" (draft, not in effect)\n") || !strings.Contains(out.String(), "not enforced: a draft is not in effect\n") {
+		t.Errorf("check --file … write does not say it read a draft:\n%s", out.String())
+	}
+	// Without --file there is no file: line (the answer is unchanged).
+	out.Reset()
+	_ = RunWithOutput([]string{"hactl", "--dir", dir, "policy", "check", "entity:lock.front_door", "control"}, &out)
+	if strings.HasPrefix(out.String(), "file:") {
+		t.Errorf("check without --file grew a file: line:\n%s", out.String())
 	}
 	// policy.yaml (absent) still allows it: --file never changed the instance.
 	out.Reset()

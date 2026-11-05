@@ -509,6 +509,9 @@ func runPolicyCheck(ctx context.Context, w io.Writer, resource, verb, as string,
 			return err
 		}
 	} else {
+		if doc.Draft {
+			_, _ = fmt.Fprintf(w, "file: %s\n", fileText(pol))
+		}
 		if doc.WhatIf {
 			_, _ = fmt.Fprintf(w, "what-if: --as %s (the effective profile is unchanged)\n", pol.Active())
 		}
@@ -628,6 +631,9 @@ func renderPolicyCheckWrite(w io.Writer, pol *policy.Policy, res policy.Resource
 		}
 	} else {
 		var b strings.Builder
+		if doc.Draft {
+			fmt.Fprintf(&b, "file: %s\n", fileText(pol))
+		}
 		if doc.WhatIf {
 			fmt.Fprintf(&b, "what-if: --as %s (the effective profile is unchanged)\n", pol.Active())
 		}
