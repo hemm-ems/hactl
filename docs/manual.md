@@ -1275,7 +1275,7 @@ The id is Home Assistant's own identifier, written exactly as hactl prints it (a
 | `config_entry` | entry_id | `options` · `flow` |
 | `file` | companion-relative path, one or more segments | `block/<id>` |
 | `service` | `<domain>.<service>` | — |
-| `system` | one of `logs` `wireguard` `reload` `check_config` `cache` | `<domain>`, below `reload` only (`system:reload/automation`) |
+| `system` | one of `logs` `wireguard` `reload` `check_config` `cache` `template` | `<domain>`, below `reload` only (`system:reload/automation`) |
 
 - A sub-resource path may stop early: `entity:x/attr` is every attribute of `x`, `entity:x/registry` every registry field.
 - Sub-resource words (`attr`, `registry`, `views`, `block`, …) and the registry field names are literal: a misspelling is a broken file, not a rule that matches nothing.
@@ -1316,7 +1316,7 @@ The id is Home Assistant's own identifier, written exactly as hactl prints it (a
 | `service:<domain>.<service>` | control |
 | `system:wireguard` | control, edit |
 | `system:cache` | edit, delete |
-| every other address: `entity:<id>/state`, `/attr/<name>`, `/history`, `/stats`; `automation:<id>/trace`, `script:<id>/trace`; `helper:<domain>/<id>/config`; `dashboard:<url_path>/resources`; `config_entry:<id>/flow`; `file:<path>/block/<id>`; `system:logs`, `system:check_config`, `system:reload` | none — `read` only |
+| every other address: `entity:<id>/state`, `/attr/<name>`, `/history`, `/stats`; `automation:<id>/trace`, `script:<id>/trace`; `helper:<domain>/<id>/config`; `dashboard:<url_path>/resources`; `config_entry:<id>/flow`; `file:<path>/block/<id>`; `system:logs`, `system:check_config`, `system:reload`, `system:template` | none — `read` only |
 
 A verb written by name is kept as written, on any kind — the file is not broken, and a check of exactly that address still matches it — but a write verb that applies nowhere its pattern reaches (for a deny, counting the verbs that change it from above) decides nothing a command asks: `policy lint` reports it as `verb-not-applicable`, and a `write` that applies to nothing the same way. `policy check` accepts `write` and answers each write verb that applies at the resource (see `policy check`).
 

@@ -118,7 +118,7 @@ A rule is `"<resource pattern>": [verbs]` under `allow:` or `deny:`.
 | `config_entry` | entry_id | `config_entry:01J…/options` |
 | `file` | path in the config directory | `file:packages/**`, `file:automations.yaml/block/alarm` |
 | `service` | `<domain>.<service>` | `service:lock.unlock` |
-| `system` | `logs`, `wireguard`, `reload`, `check_config`, `cache` | `system:reload/automation` |
+| `system` | `logs`, `wireguard`, `reload`, `check_config`, `cache`, `template` | `system:reload/automation` |
 
 Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 `registry/<field>`, where field is one of `name`, `area_id`, `labels`, `icon`,
