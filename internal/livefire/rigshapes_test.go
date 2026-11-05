@@ -802,9 +802,12 @@ func TestRigFixtureCarriesEnergyPreferences(t *testing.T) {
 	}
 }
 
-// energySourceTypes is the closed set HA defines: data.py's
-// `type SourceType = GridSourceType | SolarSourceType | BatterySourceType |
-// GasSourceType | WaterSourceType`.
+// energySourceTypes are the source types the rig configures: the closed set
+// HA defined up to 2026.10 (data.py's `type SourceType = GridSourceType |
+// SolarSourceType | BatterySourceType | GasSourceType | WaterSourceType`).
+// HA 2026.11 added HomeSourceType (`home`); the rig leaves it out while the
+// CI still tests an HA that refuses it, and TestOracleEnergySourceTypes keeps
+// hactl's table complete.
 var energySourceTypes = []string{"grid", "solar", "battery", "gas", "water"}
 
 // TestRigFixtureSeededDevicesAreAnchored is rig capability R1's other half,
