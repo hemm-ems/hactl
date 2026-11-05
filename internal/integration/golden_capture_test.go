@@ -36,6 +36,10 @@ func TestGoldenIssues(t *testing.T) {
 }
 
 func TestGoldenCacheStatus(t *testing.T) {
+	// The golden is the status of an empty cache. Earlier tests share this
+	// instance and sync its cache, so it is emptied here rather than relying
+	// on the test that happens to run before (TestCacheClearAndStatus).
+	runHactl(t, "cache", "clear")
 	out := runHactl(t, "cache", "status")
 	assertGolden(t, "cache_status", out)
 }
