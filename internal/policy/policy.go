@@ -334,6 +334,30 @@ func (r Rule) Text() string {
 	return s
 }
 
+// Kind is the kind the rule's pattern names, "" for the bare pattern `*`,
+// which names every kind.
+func (r Rule) Kind() Kind {
+	if r.addr.any {
+		return ""
+	}
+	return r.addr.kind
+}
+
+// MatchesID reports whether the rule's pattern reaches kind k's id: its kind
+// and id match (`*` reaches everything), whatever its sub-resource path —
+// `entity:*/registry/entity_id` reaches every entity, through a part of it.
+// It is what `policy review` counts a rule's reach with.
+func (r Rule) MatchesID(k Kind, id string) bool {
+	if r.addr.any {
+		return true
+	}
+	return r.addr.kind == k && r.addr.matchID(id)
+}
+
+// OnPart reports whether the rule's pattern names a part of a resource (a
+// sub-resource path), not the resource as a whole.
+func (r Rule) OnPart() bool { return !r.addr.any && len(r.addr.sub) > 0 }
+
 // before is file order: line, then column — a total order over one file's
 // rules, so no answer depends on map order (H-16).
 func (r Rule) before(o Rule) bool {
@@ -827,26 +851,3 @@ func anyRefMatches(refs []Ref, values []string) bool {
 	return false
 }
 
-// Kind is the kind the rule's pattern names, "" for the bare pattern `*`,
-// which names every kind.
-func (r Rule) Kind() Kind {
-	if r.addr.any {
-		return ""
-	}
-	return r.addr.kind
-}
-
-// MatchesID reports whether the rule's pattern reaches kind k's id: its kind
-// and id match (`*` reaches everything), whatever its sub-resource path —
-// `entity:*/registry/entity_id` reaches every entity, through a part of it.
-// It is what `policy review` counts a rule's reach with.
-func (r Rule) MatchesID(k Kind, id string) bool {
-	if r.addr.any {
-		return true
-	}
-	return r.addr.kind == k && r.addr.matchID(id)
-}
-
-// OnPart reports whether the rule's pattern names a part of a resource (a
-// sub-resource path), not the resource as a whole.
-func (r Rule) OnPart() bool { return !r.addr.any && len(r.addr.sub) > 0 }

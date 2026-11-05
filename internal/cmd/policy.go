@@ -784,7 +784,8 @@ func runPolicyLint(ctx context.Context, w io.Writer, allowPartial bool, file str
 
 // lintReportRows converts a lint report to its --json rows.
 func lintReportRows(rep policy.LintReport) ([]policyLintFinding, []policyLintUnchecked) {
-	findings, unchecked := []policyLintFinding{}, []policyLintUnchecked{}
+	findings := make([]policyLintFinding, 0, len(rep.Findings))
+	unchecked := make([]policyLintUnchecked, 0, len(rep.Unchecked))
 	for _, f := range rep.Findings {
 		findings = append(findings, policyLintFinding{Code: f.Code, Profile: f.Profile, Rule: f.Rule, Line: f.Line, Message: f.Message})
 	}

@@ -152,7 +152,7 @@ func buildReview(ctx context.Context, cfg *config.Config, pol *policy.Policy) (r
 	defer inv.close()
 	ids := map[policy.Kind][]string{}
 	errs := map[policy.Kind]error{}
-	list := func(k policy.Kind) ([]string, error) {
+	var list reviewLister = func(k policy.Kind) ([]string, error) {
 		if got, ok := ids[k]; ok || errs[k] != nil {
 			return got, errs[k]
 		}
@@ -171,69 +171,96 @@ func buildReview(ctx context.Context, cfg *config.Config, pol *policy.Policy) (r
 
 	fetcher := enforce.NewHAFetcher(ctx, cfg.URL, cfg.Token, nil)
 	defer fetcher.Close()
-	live := fetcher.Live()
+	doc.Grants = reviewGrants(pol, list, fetcher.Live())
+	doc.Create = reviewCreates(pol)
+	doc.Never = reviewNevers(pol, list)
+	doc.Lint.Findings, doc.Lint.Unchecked = lintReportRows(policy.Lint(pol, inv))
+	return doc, nil
+}
 
-	type grantSpec struct {
-		kind     policy.Kind
-		verb     policy.Verb
-		sub      string // the address the verb is decided at, below each id
-		jsonSub  string // the sub the JSON names
-		label    string
-		byDomain bool
-	}
-	for _, g := range []grantSpec{
-		{policy.KindEntity, policy.Read, "", "", "see", true},
-		{policy.KindEntity, policy.Control, "", "", "switch", true},
-		{policy.KindEntity, policy.Edit, "registry", "registry", "edit", true},
-		{policy.KindAutomation, policy.Edit, "config", "config", "edit", false},
-		{policy.KindAutomation, policy.Delete, "", "", "delete", false},
-		{policy.KindScript, policy.Edit, "config", "config", "edit", false},
-		{policy.KindScript, policy.Delete, "", "", "delete", false},
-		{policy.KindScript, policy.Control, "run", "run", "run", false},
-		{policy.KindDashboard, policy.Edit, "", "", "edit", false},
-		{policy.KindDashboard, policy.Delete, "", "", "delete", false},
-		{policy.KindService, policy.Control, "", "", "call", true},
-	} {
+// reviewLister lists a kind's live ids once (sorted, unique) for a review.
+type reviewLister func(policy.Kind) ([]string, error)
+
+// reviewGrantSpec is one grant the review decides for every live id.
+type reviewGrantSpec struct {
+	kind     policy.Kind
+	verb     policy.Verb
+	sub      string // the address the verb is decided at, below each id
+	label    string
+	byDomain bool
+}
+
+// reviewGrantSpecs is D-162's fixed list, in the order the review prints it.
+var reviewGrantSpecs = []reviewGrantSpec{
+	{policy.KindEntity, policy.Read, "", "see", true},
+	{policy.KindEntity, policy.Control, "", "switch", true},
+	{policy.KindEntity, policy.Edit, "registry", "edit", true},
+	{policy.KindAutomation, policy.Edit, "config", "edit", false},
+	{policy.KindAutomation, policy.Delete, "", "delete", false},
+	{policy.KindScript, policy.Edit, "config", "edit", false},
+	{policy.KindScript, policy.Delete, "", "delete", false},
+	{policy.KindScript, policy.Control, "run", "run", false},
+	{policy.KindDashboard, policy.Edit, "", "edit", false},
+	{policy.KindDashboard, policy.Delete, "", "delete", false},
+	{policy.KindService, policy.Control, "", "call", true},
+}
+
+// reviewGrants decides every grant of reviewGrantSpecs for every live id.
+func reviewGrants(pol *policy.Policy, list reviewLister, live policy.Live) []reviewGrant {
+	out := make([]reviewGrant, 0, len(reviewGrantSpecs))
+	for _, g := range reviewGrantSpecs {
 		row := reviewGrant{
-			Kind: string(g.kind), Verb: g.verb.String(), Sub: g.jsonSub, Label: g.label,
+			Kind: string(g.kind), Verb: g.verb.String(), Sub: g.sub, Label: g.label,
 			IDs: []string{}, byDomain: g.byDomain, domains: map[string][2]int{},
 		}
 		all, err := list(g.kind)
 		if err != nil {
 			row.Unchecked = err.Error()
-			doc.Grants = append(doc.Grants, row)
+			out = append(out, row)
 			continue
 		}
 		row.Total = len(all)
 		for _, id := range all {
-			v := pol.Decide(policy.Resource{Kind: g.kind, ID: id, Sub: g.sub}, g.verb, live)
+			allowed := pol.Decide(policy.Resource{Kind: g.kind, ID: id, Sub: g.sub}, g.verb, live).Allowed
 			d := domainOf(id)
 			c := row.domains[d]
 			c[1]++
-			if v.Allowed {
+			if allowed {
 				row.Allowed++
 				row.IDs = append(row.IDs, id)
 				c[0]++
 			}
 			row.domains[d] = c
 		}
-		doc.Grants = append(doc.Grants, row)
+		out = append(out, row)
 	}
+	return out
+}
 
+// reviewCreates answers create per kind from the rules: any id when the
+// kind-wide verdict allows it, else the allows that grant it, else none.
+func reviewCreates(pol *policy.Policy) []reviewCreate {
+	var out []reviewCreate
 	for _, k := range []policy.Kind{policy.KindAutomation, policy.KindScript, policy.KindDashboard} {
 		row := reviewCreate{Kind: string(k), Rules: []policyPartialDeny{}}
 		if pol.DecideKindWide(k, "", policy.Create).Allowed {
 			row.Any = true
-		} else {
-			for _, r := range pol.Rules() {
-				if r.Effect == policy.Allow && (r.Kind() == k || r.Kind() == "") && !r.OnPart() && slices.Contains(r.Verbs, policy.Create) {
-					row.Rules = append(row.Rules, policyPartialDeny{Rule: r.Text(), Line: r.Line})
-				}
+			out = append(out, row)
+			continue
+		}
+		for _, r := range pol.Rules() {
+			if r.Effect == policy.Allow && (r.Kind() == k || r.Kind() == "") && !r.OnPart() && slices.Contains(r.Verbs, policy.Create) {
+				row.Rules = append(row.Rules, policyPartialDeny{Rule: r.Text(), Line: r.Line})
 			}
 		}
-		doc.Create = append(doc.Create, row)
+		out = append(out, row)
 	}
+	return out
+}
 
+// reviewNevers is every deny rule of the profile with what it reaches here.
+func reviewNevers(pol *policy.Policy, list reviewLister) []reviewNever {
+	out := []reviewNever{}
 	for _, r := range pol.Rules() {
 		if r.Effect != policy.Deny {
 			continue
@@ -241,7 +268,7 @@ func buildReview(ctx context.Context, cfg *config.Config, pol *policy.Policy) (r
 		row := reviewNever{Rule: r.Text(), Line: r.Line, Kind: string(r.Kind()), IDs: []string{}, onPart: r.OnPart()}
 		if r.Kind() == "" {
 			row.Kind = "*"
-			doc.Never = append(doc.Never, row)
+			out = append(out, row)
 			continue
 		}
 		all, err := list(r.Kind())
@@ -258,11 +285,9 @@ func buildReview(ctx context.Context, cfg *config.Config, pol *policy.Policy) (r
 				}
 			}
 		}
-		doc.Never = append(doc.Never, row)
+		out = append(out, row)
 	}
-
-	doc.Lint.Findings, doc.Lint.Unchecked = lintReportRows(policy.Lint(pol, inv))
-	return doc, nil
+	return out
 }
 
 // sortedUnique sorts ids and drops repeats (entity ids come from the states
@@ -348,81 +373,9 @@ func renderReview(doc reviewDoc) string {
 		b.WriteString("reads: not enforced yet — see is what the profile would allow\n")
 	}
 
-	section := ""
-	for _, g := range doc.Grants {
-		if g.Kind != section {
-			section = g.Kind
-			total := g.Total
-			if g.Unchecked != "" {
-				fmt.Fprintf(&b, "%s:\n", kindPlural(g.Kind))
-			} else {
-				fmt.Fprintf(&b, "%s (%d):\n", kindPlural(g.Kind), total)
-			}
-		}
-		label := g.Label
-		if g.Kind == string(policy.KindEntity) && g.Verb == policy.Edit.String() {
-			label = "edit (every registry field: rename, area, labels)"
-		}
-		if g.Unchecked != "" {
-			fmt.Fprintf(&b, "  %s: not checked: %s\n", label, g.Unchecked)
-			continue
-		}
-		fmt.Fprintf(&b, "  %s: %d of %d", label, g.Allowed, g.Total)
-		switch {
-		case g.Allowed == 0:
-		case g.byDomain:
-			b.WriteString(" — " + domainsText(g.domains))
-		default:
-			b.WriteString(" — " + namesText(g.Kind, g.IDs))
-		}
-		b.WriteString("\n")
-		if c, ok := createFor(doc, g); ok {
-			fmt.Fprintf(&b, "  create: %s\n", c)
-		}
-	}
-
-	if len(doc.Never) == 0 {
-		b.WriteString("never: no deny rules\n")
-	} else {
-		b.WriteString("never:\n")
-		for _, n := range doc.Never {
-			fmt.Fprintf(&b, "  %s (line %d): ", n.Rule, n.Line)
-			switch {
-			case n.Kind == "*":
-				b.WriteString("everything\n")
-			case n.Unchecked != "":
-				fmt.Fprintf(&b, "not checked: %s\n", n.Unchecked)
-			default:
-				fmt.Fprintf(&b, "%d %s", n.Matched, kindPlural(n.Kind))
-				if n.onPart {
-					b.WriteString(" (a part of each)")
-				}
-				if n.Matched > 0 {
-					b.WriteString(" — " + namesText(n.Kind, n.IDs))
-				}
-				b.WriteString("\n")
-			}
-		}
-	}
-
-	if len(doc.Lint.Findings) == 0 && len(doc.Lint.Unchecked) == 0 {
-		b.WriteString("lint: clean\n")
-	} else {
-		fmt.Fprintf(&b, "lint: %d finding(s), %d unchecked\n", len(doc.Lint.Findings), len(doc.Lint.Unchecked))
-		for _, f := range doc.Lint.Findings {
-			fmt.Fprintf(&b, "  %s  line %d", f.Code, f.Line)
-			if f.Profile != "" {
-				b.WriteString(" profile " + f.Profile)
-			}
-			if f.Rule != "" {
-				b.WriteString(" " + f.Rule)
-			}
-			fmt.Fprintf(&b, ": %s\n", f.Message)
-		}
-		for _, u := range doc.Lint.Unchecked {
-			fmt.Fprintf(&b, "  unchecked %s: %s\n", u.Kind, u.Reason)
-		}
-	}
+	renderReviewGrants(&b, doc)
+	renderReviewNever(&b, doc.Never)
+	renderReviewLint(&b, doc.Lint)
 	return b.String()
 }
 
@@ -472,4 +425,89 @@ func domainsText(domains map[string][2]int) string {
 		parts[i] = fmt.Sprintf("%s %d of %d", d, domains[d][0], domains[d][1])
 	}
 	return strings.Join(parts, ", ")
+}
+
+// renderReviewGrants prints the grant sections, each kind with its create line.
+func renderReviewGrants(b *strings.Builder, doc reviewDoc) {
+	section := ""
+	for _, g := range doc.Grants {
+		if g.Kind != section {
+			section = g.Kind
+			total := g.Total
+			if g.Unchecked != "" {
+				fmt.Fprintf(b, "%s:\n", kindPlural(g.Kind))
+			} else {
+				fmt.Fprintf(b, "%s (%d):\n", kindPlural(g.Kind), total)
+			}
+		}
+		label := g.Label
+		if g.Kind == string(policy.KindEntity) && g.Verb == policy.Edit.String() {
+			label = "edit (every registry field: rename, area, labels)"
+		}
+		if g.Unchecked != "" {
+			fmt.Fprintf(b, "  %s: not checked: %s\n", label, g.Unchecked)
+			continue
+		}
+		fmt.Fprintf(b, "  %s: %d of %d", label, g.Allowed, g.Total)
+		switch {
+		case g.Allowed == 0:
+		case g.byDomain:
+			b.WriteString(" — " + domainsText(g.domains))
+		default:
+			b.WriteString(" — " + namesText(g.Kind, g.IDs))
+		}
+		b.WriteString("\n")
+		if c, ok := createFor(doc, g); ok {
+			fmt.Fprintf(b, "  create: %s\n", c)
+		}
+	}
+}
+
+// renderReviewNever prints every deny rule with what it reaches.
+func renderReviewNever(b *strings.Builder, never []reviewNever) {
+	if len(never) == 0 {
+		b.WriteString("never: no deny rules\n")
+	} else {
+		b.WriteString("never:\n")
+		for _, n := range never {
+			fmt.Fprintf(b, "  %s (line %d): ", n.Rule, n.Line)
+			switch {
+			case n.Kind == "*":
+				b.WriteString("everything\n")
+			case n.Unchecked != "":
+				fmt.Fprintf(b, "not checked: %s\n", n.Unchecked)
+			default:
+				fmt.Fprintf(b, "%d %s", n.Matched, kindPlural(n.Kind))
+				if n.onPart {
+					b.WriteString(" (a part of each)")
+				}
+				if n.Matched > 0 {
+					b.WriteString(" — " + namesText(n.Kind, n.IDs))
+				}
+				b.WriteString("\n")
+			}
+		}
+	}
+}
+
+// renderReviewLint prints the profile's lint, or clean.
+func renderReviewLint(b *strings.Builder, lint reviewLint) {
+	if len(lint.Findings) == 0 && len(lint.Unchecked) == 0 {
+		b.WriteString("lint: clean\n")
+	} else {
+		fmt.Fprintf(b, "lint: %d finding(s), %d unchecked\n", len(lint.Findings), len(lint.Unchecked))
+		for _, f := range lint.Findings {
+			fmt.Fprintf(b, "  %s  line %d", f.Code, f.Line)
+			if f.Profile != "" {
+				b.WriteString(" profile " + f.Profile)
+			}
+			if f.Rule != "" {
+				b.WriteString(" " + f.Rule)
+			}
+			fmt.Fprintf(b, ": %s\n", f.Message)
+		}
+		for _, u := range lint.Unchecked {
+			fmt.Fprintf(b, "  unchecked %s: %s\n", u.Kind, u.Reason)
+		}
+	}
 }

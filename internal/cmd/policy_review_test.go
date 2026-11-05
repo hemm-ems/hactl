@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,32 +26,27 @@ profiles:
 `
 
 type reviewJSON struct {
-	File     string `json:"file"`
-	Draft    bool   `json:"draft"`
-	Profile  string `json:"profile"`
-	AllowAll bool   `json:"allow_all"`
-	Indirect string `json:"indirect"`
-	Grants   []struct {
-		Kind, Verb, Sub, Label string
-		Allowed, Total         int
-		IDs                    []string
-		Unchecked              string
-	} `json:"grants"`
-	Create []struct {
-		Kind  string
-		Any   bool
+	File     string        `json:"file"`
+	Draft    bool          `json:"draft"`
+	Profile  string        `json:"profile"`
+	AllowAll bool          `json:"allow_all"`
+	Indirect string        `json:"indirect"`
+	Grants   []reviewGrant `json:"grants"`
+	Create   []struct {
+		Kind  string `json:"kind"`
+		Any   bool   `json:"any"`
 		Rules []struct {
-			Rule string
-			Line int
-		}
+			Rule string `json:"rule"`
+			Line int    `json:"line"`
+		} `json:"rules"`
 	} `json:"create"`
 	Never []struct {
-		Rule      string
-		Line      int
-		Kind      string
-		Matched   int
-		IDs       []string
-		Unchecked string
+		Rule      string   `json:"rule"`
+		Line      int      `json:"line"`
+		Kind      string   `json:"kind"`
+		Matched   int      `json:"matched"`
+		IDs       []string `json:"ids"`
+		Unchecked string   `json:"unchecked"`
 	} `json:"never"`
 	Lint struct {
 		Findings  []json.RawMessage `json:"findings"`
@@ -67,21 +63,33 @@ func (d reviewJSON) grant(kind, verb, sub string) (allowed, total int, ids []str
 	return 0, 0, nil, false
 }
 
-// D-162: review counts what the draft's profile allows on the live instance —
-// real ids from Home Assistant, decided by the same evaluator enforcement uses.
-func TestPolicyReviewCountsTheDraftOnTheInstance(t *testing.T) {
+// reviewRig is the policy rig with reviewDraft beside its (absent) policy.
+func reviewRig(t *testing.T) *cmdTestServer {
+	t.Helper()
 	ts := policyRig(t, "")
 	if err := os.WriteFile(filepath.Join(ts.dir, "policy.draft.yaml"), []byte(reviewDraft), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return ts
+}
+
+func decodeReview(t *testing.T, ts *cmdTestServer) reviewJSON {
+	t.Helper()
 	out, err := runPolicyCLI(t, ts.dir, "policy", "review", "--file", "policy.draft.yaml", "--json")
 	if err != nil {
 		t.Fatalf("review: %v\n%s", err, out)
 	}
 	var d reviewJSON
-	if err := json.Unmarshal([]byte(out), &d); err != nil {
-		t.Fatalf("review --json: %v\n%s", err, out)
+	if jsonErr := json.Unmarshal([]byte(out), &d); jsonErr != nil {
+		t.Fatalf("review --json: %v\n%s", jsonErr, out)
 	}
+	return d
+}
+
+// D-162: review counts what the draft's profile allows on the live instance —
+// real ids from Home Assistant, decided by the same evaluator enforcement uses.
+func TestPolicyReviewCountsTheDraftOnTheInstance(t *testing.T) {
+	d := decodeReview(t, reviewRig(t))
 	if !d.Draft || d.Profile != "agent" || d.AllowAll || d.Indirect != "checked" {
 		t.Errorf("header: draft=%v profile=%q allow_all=%v indirect=%q", d.Draft, d.Profile, d.AllowAll, d.Indirect)
 	}
@@ -105,25 +113,30 @@ func TestPolicyReviewCountsTheDraftOnTheInstance(t *testing.T) {
 	if a, n, ids, _ := d.grant("dashboard", "delete", ""); n != 2 || a != 0 || len(ids) != 0 {
 		t.Errorf("dashboard delete: %d of %d, want 0 of 2 (default and main)", a, n)
 	}
-	var autoCreate bool
+}
+
+// D-162: create is answered from the rules, never is every deny with what it
+// reaches here.
+func TestPolicyReviewCreateAndNever(t *testing.T) {
+	d := decodeReview(t, reviewRig(t))
+	creates := map[string]string{}
 	for _, c := range d.Create {
-		if c.Kind == "automation" {
-			autoCreate = true
-			if c.Any || len(c.Rules) != 1 || c.Rules[0].Line != 10 {
-				t.Errorf("automation create: %+v, want only the pg_* allow on line 10", c)
-			}
-		}
-		if c.Kind == "script" && (c.Any || len(c.Rules) != 0) {
-			t.Errorf("script create: %+v, want no", c)
+		creates[c.Kind] = fmt.Sprintf("any=%v rules=%d", c.Any, len(c.Rules))
+		if c.Kind == "automation" && (len(c.Rules) != 1 || c.Rules[0].Line != 10) {
+			t.Errorf("automation create: %+v, want only the pg_* allow on line 10", c)
 		}
 	}
-	if !autoCreate {
-		t.Error("no create row for automations")
+	if creates["automation"] != "any=false rules=1" || creates["script"] != "any=false rules=0" {
+		t.Errorf("create rows: %v", creates)
 	}
 	if len(d.Never) != 2 || d.Never[0].Line != 12 || d.Never[0].Matched != 1 || !slices.Equal(d.Never[0].IDs, []string{"lock.front_door"}) || d.Never[1].Matched != 8 {
 		t.Errorf("never: %+v", d.Never)
 	}
+}
 
+// D-162: the text answer, for the owner.
+func TestPolicyReviewText(t *testing.T) {
+	ts := reviewRig(t)
 	text, err := runPolicyCLI(t, ts.dir, "policy", "review", "--file", "policy.draft.yaml")
 	if err != nil {
 		t.Fatalf("review text: %v", err)
@@ -137,6 +150,7 @@ func TestPolicyReviewCountsTheDraftOnTheInstance(t *testing.T) {
 		"  create: only what allow \"automation:pg_*\" [edit create delete] (line 10) allows\n",
 		"  deny \"entity:lock.*\" [read write] (line 12): 1 entities — lock.front_door\n",
 		"(a part of each)",
+		"lint: 1 finding(s), 0 unchecked\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("review text lacks %q:\n%s", want, text)
@@ -153,16 +167,16 @@ func TestPolicyReviewEdges(t *testing.T) {
 	if err != nil || !strings.Contains(out, "ALLOW-ALL") {
 		t.Errorf("review without a policy: err=%v\n%s", err, out)
 	}
-	if err := os.WriteFile(filepath.Join(ts.dir, "bad.yaml"), []byte("version: 1\nactive: nobody\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if writeErr := os.WriteFile(filepath.Join(ts.dir, "bad.yaml"), []byte("version: 1\nactive: nobody\n"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	out, err = runPolicyCLI(t, ts.dir, "policy", "review", "--file", "bad.yaml")
 	if cliExitCode(err) != 1 || !strings.Contains(out, "policy_broken: "+filepath.Join(ts.dir, "bad.yaml")) {
 		t.Errorf("review of a broken draft: exit %d\n%s", cliExitCode(err), out)
 	}
 	dead := instanceAt(t, closedHAURL(t))
-	if err := os.WriteFile(filepath.Join(dead, "d.yaml"), []byte(reviewDraft), 0o600); err != nil {
-		t.Fatal(err)
+	if writeErr := os.WriteFile(filepath.Join(dead, "d.yaml"), []byte(reviewDraft), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	out, err = runPolicyCLI(t, dead, "policy", "review", "--file", "d.yaml")
 	if cliExitCode(err) != 1 || !strings.Contains(err.Error(), "not reachable") || out != "" {
