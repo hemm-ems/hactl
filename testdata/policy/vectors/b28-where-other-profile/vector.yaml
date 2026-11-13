@@ -1,0 +1,11 @@
+{
+  "clause": "D-60: a `where` key naming an allow pattern of ANOTHER profile",
+  "load_error": {
+    "problems": [
+      {
+        "line": 12
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+    deny:
+      "entity:device_tracker.*/attr/latitude": [read]
+      "entity:*/registry": [read]

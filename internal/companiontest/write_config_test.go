@@ -5,11 +5,11 @@ package companiontest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -156,10 +156,14 @@ func assertHAConfirmedReload(t *testing.T, step, reloadDomain, out string) {
 	ctx := context.Background()
 	service := reloadDomain + ".reload"
 	var registered string
-	if exists, err := haapi.New(haURL, haToken).ServiceExists(ctx, reloadDomain, "reload"); err != nil {
+	_, err := haapi.New(haURL, haToken).LookupService(ctx, reloadDomain, "reload")
+	switch {
+	case errors.Is(err, haapi.ErrServiceNotRegistered):
+		registered = "false"
+	case err != nil:
 		registered = fmt.Sprintf("could not check (%v)", err)
-	} else {
-		registered = strconv.FormatBool(exists)
+	default:
+		registered = "true"
 	}
 	t.Errorf("HA confirmed nothing after %s:\n%s\nHA has %s registered: %s\n%s",
 		step, out, service, registered, containerDiagnostics(ctx))
@@ -557,7 +561,7 @@ func TestE2EHelperWriteRoundTripCLI(t *testing.T) {
 	)
 
 	t.Cleanup(func() {
-		_, _ = testClient.DeleteHelper(ctx, id)
+		_, _ = testClient.DeleteHelper(ctx, id, "")
 	})
 
 	content := "" +

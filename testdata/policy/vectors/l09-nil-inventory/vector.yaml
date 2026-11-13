@@ -1,0 +1,24 @@
+{
+  "clause": "Lint with no inventory: every kind a rule names is Unchecked `no live instance`; non-live findings are still reported",
+  "lint": {
+    "nil_inventory": true,
+    "findings": [
+      {
+        "code": "redundant-allow",
+        "profile": "agent",
+        "rule": "allow \"entity:light.*\" [control]",
+        "line": 6
+      }
+    ],
+    "unchecked": [
+      {
+        "kind": "entity",
+        "reason": "no live instance"
+      },
+      {
+        "kind": "automation",
+        "reason": "no live instance"
+      }
+    ]
+  }
+}

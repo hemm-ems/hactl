@@ -83,6 +83,17 @@ var FamilySections = map[string][]string{
 	"energy":    {"### Energy"},
 	"ref":       {"### References (find and rename entity_ids)"},
 	"grep":      {"### Term search (`grep`)"},
+	"policy":    {"### Policy (permission guardrail)"},
+}
+
+// ReferenceSections maps a family to its reference sections: the full
+// contract a caller working under the family does not need on every session,
+// so no command delivers it — `rtfm --reference <family>` prints it, and plain
+// `rtfm` prints it as part of the whole manual (D-121). No heading here may
+// also be a core or family heading. tools.py maps none either: its delivery
+// sends the how-to only, exactly as FamilySections does.
+var ReferenceSections = map[string][]string{
+	"policy": {"### Policy reference"},
 }
 
 // Aliases maps top-level commands onto the family whose sections cover them.
@@ -166,7 +177,7 @@ func FamilyLabel(family string) string {
 func Families() []string {
 	return []string{
 		"auto", "cache", "companion", "config", "dash", "device", "energy",
-		"ent", "grep", "health", "helper", "label", "log", "ref", "script", "svc", "tpl",
+		"ent", "grep", "health", "helper", "label", "log", "policy", "ref", "script", "svc", "tpl",
 	}
 }
 

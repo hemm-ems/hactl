@@ -46,5 +46,8 @@ func TestMain(m *testing.M) {
 	if idlessHA != nil {
 		idlessHA.Stop()
 	}
+	if policyEnforceHA != nil {
+		policyEnforceHA.Stop()
+	}
 	os.Exit(exitCode)
 }

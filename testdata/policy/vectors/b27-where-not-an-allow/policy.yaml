@@ -1,0 +1,12 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:light.*": [control]
+    deny:
+      "entity:lock.*": [control]
+    where:
+      "entity:lock.*": { area: wohnzimmer }
+      "entity:switch.*": { area: wohnzimmer }

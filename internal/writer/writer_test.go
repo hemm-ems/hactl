@@ -496,7 +496,7 @@ func TestWriter_Apply_DryRun(t *testing.T) {
 	w := writerFor(srv, backupDir)
 
 	// confirm=false → dry run
-	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
+	result, err := applyFile(context.Background(), w, "test_auto", localFile, false)
 	if err != nil {
 		t.Fatalf("Apply dry-run failed: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestWriter_Apply_Confirm(t *testing.T) {
 	w := writerFor(srv, backupDir)
 
 	// confirm=true → actually writes
-	result, err := w.Apply(context.Background(), "test_auto", localFile, true)
+	result, err := applyFile(context.Background(), w, "test_auto", localFile, true)
 	if err != nil {
 		t.Fatalf("Apply confirm failed: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestWriter_Apply_InvalidYAML(t *testing.T) {
 	backupDir := t.TempDir()
 	w := writerFor(srv, backupDir)
 
-	result, err := w.Apply(context.Background(), "test_auto", localFile, false)
+	result, err := applyFile(context.Background(), w, "test_auto", localFile, false)
 
 	// An unparseable local file is a refusal, not a dry run: Apply has to name
 	// the parse as the reason and hand back no result for the caller to print.
@@ -605,7 +605,7 @@ func TestWriter_Apply_MissingFile(t *testing.T) {
 
 	w := writerFor(srv, t.TempDir())
 
-	_, err := w.Apply(context.Background(), "test_auto", "/nonexistent/file.yaml", false)
+	_, err := applyFile(context.Background(), w, "test_auto", "/nonexistent/file.yaml", false)
 	if err == nil {
 		t.Fatal("expected error for missing local file, got nil")
 	}
@@ -762,7 +762,7 @@ func TestWriter_Apply_BackupFailureAborts(t *testing.T) {
 	}
 	w := writerFor(srv, filepath.Join(blocker, "backups"))
 
-	_, err := w.Apply(context.Background(), "test_auto", localFile, true)
+	_, err := applyFile(context.Background(), w, "test_auto", localFile, true)
 	if err == nil {
 		t.Fatal("Apply succeeded despite an unwritable backup dir; want an error")
 	}
@@ -968,7 +968,7 @@ mode: single
 			got, strings.Join(diff.Lines, "\n"))
 	}
 
-	if _, err := wr.Apply(context.Background(), "pg_probe", localFile, true); err != nil {
+	if _, err := applyFile(context.Background(), wr, "pg_probe", localFile, true); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	mu.Lock()
@@ -1010,4 +1010,14 @@ func TestChangedLinesCountsChangesNotContext(t *testing.T) {
 	if HasChanges([]string{" a", " b", "… 3 unchanged lines …"}) {
 		t.Error("HasChanges = true on a diff of context only")
 	}
+}
+
+// applyFile is the path form of ApplyContent the tests drive: the candidate
+// read once, as `auto apply` reads it.
+func applyFile(ctx context.Context, w *Writer, automationID, localPath string, confirm bool) (*ApplyResult, error) {
+	data, err := ReadCandidate(localPath)
+	if err != nil {
+		return nil, err
+	}
+	return w.ApplyContent(ctx, automationID, data, confirm)
 }

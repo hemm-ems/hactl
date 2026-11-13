@@ -1,12 +1,17 @@
 package haapi
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // INVARIANTS.md H-23 — every connection hactl opens is bounded by the caller's
@@ -134,12 +139,82 @@ func originGuard(baseURL string) func(*http.Request, []*http.Request) error {
 func HTTPClient(baseURL string) *http.Client {
 	return &http.Client{
 		Timeout: DefaultTimeout,
-		Transport: &http.Transport{
+		Transport: &gatedTransport{base: &http.Transport{
 			Proxy:       http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{Timeout: dialBound()}).DialContext,
-		},
+		}},
 		CheckRedirect: originGuard(baseURL),
 	}
+}
+
+// gatedTransport is the policy hook of the shared HTTP transport (H-29): the
+// one place every HTTP request of the process passes, HA REST and companion
+// alike.
+//
+// The clients decide each logical request themselves, before their retry loop,
+// and mark its context (reqgate.WithChecked): the companion client by its
+// logical route, so that a companion request riding Home Assistant's Ingress is
+// never mapped a second time as HA REST (R-15). This hook therefore lets a
+// marked request through when it is the request that was decided — the first
+// attempt or a retry — and maps a redirect hop again: same mapping, through;
+// another mapping, refused (D-74). A request nobody marked is decided here.
+// With no gate installed it forwards everything untouched (D-58).
+type gatedTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip decides, then forwards. A refusal is returned as the transport's
+// error, so the request never leaves the process.
+func (t *gatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return t.base.RoundTrip(req)
+	}
+	mark, marked := reqgate.CheckedFrom(req.Context())
+	if marked && strings.EqualFold(req.Method, mark.Request.Method) && wirePath(req.URL) == mark.WirePath {
+		return t.base.RoundTrip(req)
+	}
+	body, err := replayableBody(req)
+	if err != nil {
+		return nil, err
+	}
+	if marked {
+		path, inside := strings.CutPrefix(wirePath(req.URL), mark.Prefix)
+		if !inside || !strings.HasPrefix(path, "/") {
+			return nil, fmt.Errorf("policy: a redirect left the %s client's own path %q (fail closed)", mark.Request.Transport, mark.Prefix)
+		}
+		if mark.Prefix == "" {
+			path = wirePath(req.URL)
+		}
+		hop := reqmap.Request{Transport: mark.Request.Transport, Method: req.Method, Path: path, Body: body}
+		if err := g.CheckHop(req.Context(), mark.Request, hop); err != nil {
+			return nil, err
+		}
+		return t.base.RoundTrip(req)
+	}
+	if err := g.Check(req.Context(), reqmap.Request{Transport: reqmap.REST, Method: req.Method, Path: wirePath(req.URL), Body: body}); err != nil {
+		return nil, err
+	}
+	return t.base.RoundTrip(req)
+}
+
+// replayableBody returns a copy of the request's body without consuming the
+// one the base transport will send: through GetBody when the request has it,
+// and nil for a request without a body. A body that cannot be copied is a
+// request that cannot be decided — refused (fail closed).
+func replayableBody(req *http.Request) ([]byte, error) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return nil, nil
+	}
+	if req.GetBody == nil {
+		return nil, errors.New("policy: a request body that cannot be replayed cannot be decided (fail closed)")
+	}
+	rc, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("policy: reading the request body to decide it: %w", err)
+	}
+	defer func() { _ = rc.Close() }()
+	return io.ReadAll(rc)
 }
 
 // redirectFromHandshake reads the cause out of a failed WebSocket upgrade.

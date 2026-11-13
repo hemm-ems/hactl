@@ -1,0 +1,6 @@
+clause: "Manual evaluation: when several rules of the deciding kind match, the one named is the first in the file (lowest line)"
+cases:
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: 'allow "entity:*.front_door" [read]', line: 7, profile: agent}
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:*_door" [control]', line: 10, profile: agent}
+  - {resource: "entity:lock.back", verb: read, allowed: true, rule: 'allow "entity:lock.*" [read]', line: 8, profile: agent}
+  - {resource: "entity:lock.back", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}

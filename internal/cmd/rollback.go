@@ -88,15 +88,26 @@ func runRollback(ctx context.Context, w io.Writer, automationID string) error {
 		automationID = resolved
 	}
 
-	if !flagRollbackConfirm {
+	// The policy plan: edit on the automation the backup restores, + create on
+	// the backup's own id when it differs (E-5, D-78). The backup is found
+	// locally, as the preview always found it; under --confirm only while a
+	// profile is in effect, so a run without one asks nothing new (D-58).
+	if !flagRollbackConfirm || policyInEffect() {
 		plan, planErr := writer.New(client, nil, nil, backupDir).PlanRollback(automationID)
 		if planErr != nil {
 			return planErr
 		}
-		return dryRun("roll back automation").
-			with("automation", plan.AutomationID).
-			with("from_backup", plan.BackupPath).
-			render(w)
+		note, checkErr := checkWritePlan(w, !flagRollbackConfirm, autoRollbackPlan(plan.AutomationID, plan.BackupPath))
+		if checkErr != nil {
+			return checkErr
+		}
+		if !flagRollbackConfirm {
+			return dryRun("roll back automation").
+				with("automation", plan.AutomationID).
+				with("from_backup", plan.BackupPath).
+				withPolicy(note).
+				render(w)
+		}
 	}
 
 	// Connect WebSocket for reload (optional)

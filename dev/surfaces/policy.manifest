@@ -1,0 +1,875 @@
+# policy — every request hactl sends carries a policy verdict, and every write
+# command checks its whole plan before the first write (INVARIANTS.md H-29,
+# DRAFT; SPEC-permissions.md §4).
+#
+# STATUS: GATED (stage 2a). TestPolicySurfaceIsClosed (internal/cmd) derives
+# both halves below from the source and the live cobra tree and fails on an
+# unclassified, stale or phantom line, as every surface does, and when either
+# half derives empty. TestPolicyManifestIsInLockstepWithTheClassifier
+# (internal/cmd) holds the request lines in lockstep with the classifier's row
+# table (internal/policy/reqmap.Rows: same keys, same kind of row as the `map:`
+# comment says) and the companion lines with companion.Endpoints;
+# TestEveryPolicyRequestRowHasAVector (internal/surfaceaudit) holds them in
+# lockstep with the request vectors (testdata/policy/requests/vectors.json),
+# written from this file before the classifier existed. A request line is
+# `proven` once a named test asserts its mapping. The hooks that apply the
+# classifier to every live request (the gated websocket connection, the REST
+# and companion clients before their retry loops, the shared RoundTripper) are
+# built (stage 2b core) and proven by TestEveryWebsocketSendPassesTheGate,
+# TestRESTRequestGetsOneVerdictBeforeItsRetries,
+# TestCompanionRequestGetsOneVerdictOnEveryTransport and
+# TestUnmappedMutatingRequestIsRefused, not by these lines. A command line
+# stays debt until the command checks its plan through the plan API
+# (checkWritePlan, internal/cmd/policy_enforce.go) and registers its --confirm
+# run in TestEveryConfirmedRequestIsInThePlan; label create is the first, the
+# typed family (auto|script|tpl|helper apply, create, delete, rollback) next.
+#
+# --- what a site is ----------------------------------------------------------
+#
+# Two families of site, one key grammar each. The extractor derives both; the
+# keys below are the contract it has to produce.
+#
+#   ws <type>                         every WS command type hactl sends: the
+#                                     sendCommand callers AND the direct
+#                                     conn.WriteJSON sends (trace/list,
+#                                     trace/get, validate_config,
+#                                     system_log/list, auth). A hook in
+#                                     sendCommand alone misses five of them.
+#   ws supervisor/api <METHOD> <endpoint>
+#                                     supervisor/api is a generic proxy, so it
+#                                     is keyed on (method, endpoint), never on
+#                                     the type alone. Any other pair is
+#                                     unmapped, hence refused.
+#   rest <METHOD> <path template>     every haapi.Client path; a path built by
+#                                     concatenation is written with {name}
+#                                     placeholders. The query string is not
+#                                     part of the key (?return_response=true is
+#                                     the same row).
+#   companion <METHOD> <path>         every operation companion.Client sends
+#                                     (companion.Endpoints, each one in the
+#                                     vendored spec testdata/companion-v1.yaml),
+#                                     plus a scan that no Client method builds
+#                                     a path outside it; keyed by the LOGICAL
+#                                     route — never by the wire URL, which
+#                                     under Ingress is
+#                                     /api/hassio_ingress/<token>/v1/… on the
+#                                     same HTTP transport as HA REST. A spec
+#                                     route hactl never calls is no site
+#                                     (D-81: the dead client methods are
+#                                     deleted, their rows with them).
+#                                     Companion requests are checked in
+#                                     companion.Client, before the retry loop,
+#                                     and marked so the shared RoundTripper
+#                                     hook skips them: one verdict per request
+#                                     on the direct URL and under Ingress
+#                                     alike (D-74).
+#   cmd <command path>                every write command, derived — never
+#                                     hand-listed (D-80): each --confirm
+#                                     command of the live cobra tree, plus
+#                                     every entrypoint that reaches a mapped
+#                                     write request or a system:cache write
+#                                     without --confirm (today config show's
+#                                     probe, config flow-inspect, cache
+#                                     clear|refresh), and the two that
+#                                     dispatch or bootstrap (mcp, setup).
+#                                     Reachability is over the product's SSA
+#                                     call graph from each command's Run and
+#                                     every hook cobra runs around it (its
+#                                     PreRun/PostRun, each persistent hook of
+#                                     it and its ancestors), through package
+#                                     func variables and interface calls too
+#                                     (surfaceaudit.PolicyCommandSites); the
+#                                     sinks are the client methods sending a
+#                                     write row's request plus the declared
+#                                     system:cache, dispatch and bootstrap
+#                                     APIs — named as APIs, never as commands.
+#
+# The request half reads every product file whatever its build constraints,
+# function bodies and package-level initialisers alike, and resolves net/http
+# by import and by type (a renamed import, a *http.Client's Do, a RoundTrip,
+# an http.Request literal). What it cannot key it refuses rather than skips: a
+# send taken as a value instead of called, a websocket write other than
+# WriteJSON, a WriteJSON message whose type is set after it is built, and an
+# HTTP request built outside the request builders.
+#
+# Test infrastructure is not product and is left out on purpose:
+# internal/hatest (auth, auth/long_lived_access_token, onboarding) and
+# internal/companiontest_discovery (a fake server). Neither is imported by a
+# non-test file.
+#
+# --- what a disposition says ------------------------------------------------
+#
+# The line format is the one every manifest uses (dev/surfaces/README.md). The
+# MAPPING lives in the comment above each line, in this shape:
+#
+#   map: <verb> <resource>[; <verb> <resource>…]   the (resource, verb) the
+#        request or plan is checked as; {x} is taken from the request, the
+#        body or the command's resolved target as the note says
+#   map: read-deferred-phase3 <resource>            a read: the row exists now,
+#        enforcement is phase 3 (D-54)
+#   map: exempt (<class>)                           no policy resource; always
+#        allowed, by an explicit row, never by default
+#
+# The disposition line records what is PROVEN:
+#
+#   proven: <Test>   a named test asserts this row's mapping (requests) or the
+#                    preview's refusal naming the rule (commands); a write
+#                    command without --confirm is proven by a refusal under a
+#                    deny naming the rule, a best-effort probe by its skip
+#                    with a note (D-80)
+#   exempt: <why>    the row is exempt by design (transport, probe, oracle)
+#   debt:   <why>    mapped on paper, nothing enforces or proves it yet
+#
+# When phase 2 lands a row's mapping, its line flips from debt to proven and
+# the comment above it stays: the comment is the contract, the line its proof.
+#
+# Every mapping applies only while a profile is in effect (D-74; D-58: with no
+# profile nothing is checked and nothing extra is sent).
+#
+# Unmapped at runtime (a site this file does not name): a websocket type, or a
+# request of any HTTP method other than GET, is treated as mutating and
+# refused (fail closed, E-9); an unmapped GET is allowed in phase 2 and
+# refused from phase 3 (D-74). The gate makes both a build failure first.
+#
+# Whole-path rule, before any row is matched (D-74, R-8): the request path —
+# every segment, placeholder or literal — holds no `.` or `..` segment and no
+# %2F or %5C, and each {name} matches exactly one segment; otherwise the
+# request is unmappable. Every id a mapping takes from a request is then parsed
+# with the policy grammar (D-67, D-68, D-69); one that does not parse makes the
+# request unmappable too. An unmappable write is refused, never canonicalised.
+#
+# One verdict and one audit line per logical request, decided before any retry
+# loop; a same-origin redirect hop is mapped again, and a hop that maps
+# differently is refused (D-74). What a row relies on from an earlier read (a
+# stored dashboard config, a verified automation id, a checked ref/replace dry
+# run) is trusted only within the same command invocation and under the same
+# loaded policy, by content hash — never for the life of the process (D-72).
+#
+# The ceiling is the number of rows not yet proven. Phase 2 is done when every
+# write row (map: control|edit|create|delete) and every cmd row is proven;
+# what may remain is read-deferred-phase3. The ceiling may fall without
+# ceremony and may only rise by editing this line on purpose. Stage 2b
+# (2026-11-01) proved every write and cmd row; what remained was the 45
+# read-deferred-phase3 rows. Raised to 46 on purpose (2026-11-01): `policy
+# lint`'s template enumeration brought back GET /v1/config/templates, a
+# read-deferred-phase3 listing (D-116). Every write and cmd row stays proven.
+#ceiling 46
+
+# =============================================================================
+# WS — Home Assistant websocket
+# =============================================================================
+
+# --- transport, oracle ---------------------------------------------------------
+
+# map: exempt (transport). GET /api/websocket upgrade, then {type: auth}. Sent
+# by every WS client, before any command. D-60: a command refused for a broken
+# policy refuses before this dial, not after.
+ws auth = exempt: the session handshake carries the token and no Home Assistant resource; a fail-closed check here would refuse every websocket command
+
+# map: exempt (transport). Companion discovery when companion_url is not set.
+ws supervisor/api GET /addons = exempt: companion transport discovery — lists add-ons to find the companion, reads and changes no Home Assistant resource
+
+# map: exempt (transport). Companion discovery, second step; slug from /addons.
+ws supervisor/api GET /addons/{slug}/info = exempt: companion transport discovery — reads the companion add-on's own ingress entry, no Home Assistant resource
+
+# map: exempt (transport). POST on the wire: issues the Ingress session cookie
+# every companion request over Ingress needs (applyIngressAuth), previews
+# included, and again on a 401 retry. Never counts as a write in preview parity.
+ws supervisor/api POST /ingress/session = exempt: an Ingress auth session is transport plumbing — a mutating method that changes no Home Assistant resource
+
+# map: exempt (policy oracle). The policy check's own question for E-1 (D-59):
+# haapi.WSClient.ExtractFromTarget, asked by the request layer while it maps a
+# service call, with expand_group: true and never with entity_id: all; no
+# answer or an error answer is `fail-closed: reach unknown`. It must never be
+# gated by the call it serves.
+ws extract_from_target = exempt: the policy check's own oracle for a service call's reach (D-59) — reads the target's references and changes nothing
+
+# --- writes ----------------------------------------------------------------------
+
+# map: edit entity:{entity_id}/registry/{field} for each changed key. Wire key ->
+# grammar field: labels -> labels; area_id -> area_id (null = clear, still edit);
+# name, icon, disabled_by 1:1 (not sent today); new_entity_id -> entity_id PLUS
+# create entity:{new_entity_id} (E-5). Any other key (hidden_by, aliases,
+# options, device_class, …) has no grammar field: unmapped, refused.
+# Callers: ent set-label, ent set-area, ent rename.
+ws config/entity_registry/update = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete entity:{entity_id}. The orphan cleanup after auto|script|helper|tpl
+# delete (orphan.go). Today best-effort and slog.Warn-only: a refusal here must
+# be an error, never a log line — the command layer pre-checks it (see the cmd
+# rows), so a refusal at this layer means the preview was wrong.
+ws config/entity_registry/remove = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit device:{device_id}/registry/{field} for each changed key: area_id,
+# labels, name_by_user. Any other key: unmapped, refused.
+ws config/device_registry/update = proven: TestEveryWriteRequestHasAMapping
+
+# map: create on EVERY label id (kind-wide check, D-75; reported as `label:*`
+# with kind_wide). The request carries only a name; the label_id is minted by
+# Home Assistant.
+ws config/label_registry/create = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete label:{label_id} + the cascade as a deliberate superset (D-76):
+# edit entity:{e}/registry/labels and edit device:{d}/registry/labels for
+# every current holder, edit area:{a} for every area holding it — enumerated
+# from the registry lists, never from a claim about what HA strips.
+ws config/label_registry/delete = proven: TestEveryWriteRequestHasAMapping
+
+# map: create on EVERY area id (kind-wide, D-75). floor_id placement is the new
+# area's own field; floor:{floor_id} is not checked.
+ws config/area_registry/create = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete area:{area_id} + the cascade as a deliberate superset (D-76):
+# edit entity:{e}/registry/area_id and edit device:{d}/registry/area_id for
+# every entity and device whose own area_id is it.
+ws config/area_registry/delete = proven: TestEveryWriteRequestHasAMapping
+
+# map: create on EVERY floor id (kind-wide, D-75).
+ws config/floor_registry/create = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete floor:{floor_id} + edit area:{a} for every area on that floor
+# (the cascade as a deliberate superset, D-76).
+ws config/floor_registry/delete = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit dashboard:{url_path}/views/{path} per changed view, create per added
+# view, delete per removed view, edit dashboard:{url_path} for changed non-view
+# keys — diffed against the stored config the same invocation read for that
+# url_path (every save is preceded by its snapshot read; D-72). A changed view
+# without a `path`, or no prior read: edit dashboard:{url_path} as a whole
+# (D-66 as refined: any view deny for edit makes that denied). url_path absent
+# or `lovelace` canonicalises to the default dashboard, `dashboard:`.
+ws lovelace/config/save = proven: TestEveryWriteRequestHasAMapping
+
+# map: create dashboard:{url_path} (url_path is sent explicitly).
+ws lovelace/dashboards/create = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete dashboard:{url_path}, url_path resolved from the wire's
+# dashboard_id through the lovelace/dashboards/list the same invocation read
+# (D-72). No such read in this invocation: unmappable, refused.
+ws lovelace/dashboards/delete = proven: TestEveryWriteRequestHasAMapping
+
+# --- reads (phase 3) ---------------------------------------------------------------
+
+# map: read-deferred-phase3 automation|script:{item_id}/trace per returned row
+# (listing). Direct WriteJSON site.
+ws trace/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 {domain}:{item_id}/trace. Direct WriteJSON site.
+ws trace/get = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 system:check_config. Pure schema validation of a
+# candidate, sent in previews too: never refused by a write check. Direct
+# WriteJSON site. The candidate's references are E-3, phase 4.
+ws validate_config = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 system:logs. Direct WriteJSON site.
+ws system_log/list = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 system:logs (Q: no kind fits repair issues).
+ws repairs/list_issues = debt: read-deferred-phase3 — kind undecided, system:logs proposed
+
+# map: read-deferred-phase3 listing entity:{entity_id}/registry per row.
+ws config/entity_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 listing area:{area_id} per row.
+ws config/area_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 listing label:{label_id} per row.
+ws config/label_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 listing floor:{floor_id} per row.
+ws config/floor_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3, no policy resource (HA users, used to render a
+# user_id as a name). Q: auxiliary disposition or a new kind.
+ws config/auth/list = debt: read-deferred-phase3 — no kind fits Home Assistant users yet
+
+# map: read-deferred-phase3 listing device:{device_id}/registry per row.
+ws config/device_registry/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 listing dashboard:{url_path} per row. Also the
+# id-to-url_path source for lovelace/dashboards/delete.
+ws lovelace/dashboards/list = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 dashboard:{url_path} ("" or absent = dashboard:).
+ws lovelace/config = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3, no policy resource (integration manifests).
+ws manifest/list = debt: read-deferred-phase3 — no kind fits integration manifests yet
+
+# map: read-deferred-phase3 dashboard:/resources (Q: resources are one global
+# list, the grammar hangs them under a dashboard).
+ws lovelace/resources = debt: read-deferred-phase3 — the dashboard id for a global list is undecided
+
+# map: read-deferred-phase3 entity:{statistic_id}/stats; an external statistic
+# (domain:name) has no address.
+ws recorder/get_statistics_metadata = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 entity:{statistic_id}/stats.
+ws recorder/statistics_during_period = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 listing entity:{statistic_id}/stats per row.
+ws recorder/list_statistic_ids = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3, no kind fits (Q). Proposal: read
+# entity:{stat}/stats for each statistic the prefs name.
+ws energy/get_prefs = debt: read-deferred-phase3 — no kind fits the energy preferences yet
+
+# =============================================================================
+# REST — Home Assistant HTTP API (haapi.Client)
+# =============================================================================
+
+# map: control service:{domain}.{service} ALWAYS (E-2; it follows D-52 like
+# any resource — never skipped because the entity checks passed, D-73)
+# + control entity:{e} for the reach (E-1, D-59 as refined):
+#   - {domain} is one domain's entity service only if it is not
+#     `homeassistant` and has live entities: then the reach is
+#     extract_from_target(the data's entity_id/device_id/area_id/floor_id/
+#     label_id, expand_group: true) restricted to {domain} and available
+#     entities; otherwise (homeassistant.*, a platform service such as
+#     zwave_js.*, anything unclassifiable) the WHOLE referenced set.
+#   - entity_id: all, in any case -> every live entity of {domain} (entity
+#     service) or every live entity of every domain (otherwise); never sent
+#     to extract_from_target.
+#   - no answer, or an error answer -> refused, `fail-closed: reach unknown`.
+# + control entity:{e} for every mapping key and every string value of the
+# data, at any depth, that names a live entity (scene.apply's
+# `entities: {lock.x: unlocked}` is a key; D-73).
+# + homeassistant.turn_on|turn_off|toggle: control service:{d}.{service} for
+# every domain d in the reach (HA fans out per domain, D-59).
+# + every service that can start a script (script.turn_on, script.toggle,
+# script.{x}, homeassistant.turn_on|toggle): control script:{id}/run for every
+# script entity in the reach, id that entity's entity-registry unique_id, which
+# is the script's config key and survives a registry rename and script.reload;
+# for script.{x}, x itself, since the per-script service stays named by the
+# config key after a rename (oracle: D-84,
+# TestOracleYAMLScriptUniqueIDIsConfigKey).
+# + control entity:{m} for every member the live state of a checked entity
+# lists in its `entity_id` attribute (a light/switch/... group, a scene),
+# recursively — extract_from_target expands only group.* (D-106).
+# + a DENY-ONLY control on the typed address of every checked entity: an
+# automation's config id (state attribute `id`), a script's config key, a
+# helper (registry platform = its domain) by unique_id and object id, a
+# template entity (registry platform template) by unique_id and each suffix
+# after `-`; registries unread -> that kind wide, deny-only (D-107).
+# No selector and no entity in the data -> the service check alone. No
+# system:reload/{domain} for <domain>.reload (D-73). The query
+# (?return_response=true) does not make it a read. Callers: svc call, script
+# run (script.turn_on), script apply (script.reload) — hactl's own service
+# calls are checked like any (D-73).
+rest POST /api/services/{domain}/{service} = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete config_entry:{entry_id} + delete entity:{e} and device:{d} for
+# every registry row naming this entry — the cascade as a deliberate superset
+# (D-76; a device with other entries too is still checked). DELETE is retried
+# on 5xx: one verdict per logical request, not per attempt.
+rest DELETE /api/config/config_entries/entry/{entry_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit config_entry:{body.handler}/options. Starting an options flow can
+# already persist (a flow that answers create_entry without a form), so start
+# is edit. config options --confirm and config show's probe send the same
+# request; the probe checks first and skips itself when denied (cmd row,
+# D-79). Two client functions (StartOptionsFlow, StartOptionsFlowOnce) share
+# the row.
+rest POST /api/config/config_entries/options/flow = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit config_entry:{handler}/options, handler read from the start
+# response this invocation holds; without one, edit on every config_entry
+# id's options (kind-wide, D-75 shape — over-deny). The GET below is itself a
+# write now (D-74), so it is no lookup. An options flow's `handler` is the
+# config entry's entry_id, never its domain — in the start answer, in GET
+# options/flow/{flow_id} and in a step's create_entry answer (oracle: D-83,
+# TestOracleOptionsFlowHandlerIsEntryID), so it is the address for this row
+# and the two that share it below.
+rest POST /api/config/config_entries/options/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit config_entry:{handler}/options — the same verb as the start that
+# created the flow; it aborts config show's probe. Not delete: a read-only
+# probe must not leave dangling flows behind.
+rest DELETE /api/config/config_entries/options/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: create on EVERY config_entry id (kind-wide, D-75; a new entry has no id
+# until HA answers). The domain is body.handler. StartConfigFlowOnce is the
+# caller; the retrying StartConfigFlow had none and is deleted (D-81).
+rest POST /api/config/config_entries/flow = proven: TestEveryWriteRequestHasAMapping
+
+# map: create AND edit on EVERY config_entry id (kind-wide). The flow may be a
+# user/discovery flow (create) or a reauth/reconfigure flow of an existing
+# entry (edit), and the request carries only flow_id; the superset needs no
+# knowledge of the flow's source (D-75).
+rest POST /api/config/config_entries/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: create AND edit on EVERY config_entry id (kind-wide) — the matching
+# write of the POST step, not a read (D-74, R-5): HA's GET handler runs the
+# flow's current step (async_configure with no input, per the contract
+# review's reading of HA's FlowManagerResourceView.get), so a GET can finish a
+# flow. Sent by config flow-inspect and by config flow-step's preview; both
+# check it before sending.
+rest GET /api/config/config_entries/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit config_entry:{handler}/options, handler as for the options step
+# above (start response this invocation holds, else kind-wide on every
+# entry's options) — the matching write, not a read (D-74, R-5). The handler
+# is the entry_id here too (D-83).
+rest GET /api/config/config_entries/options/flow/{flow_id} = proven: TestEveryWriteRequestHasAMapping
+
+# map: read-deferred-phase3, no resource (integration catalog). Sent only by
+# flow-start's dry run, so it must never be stricter than the confirm.
+rest GET /api/config/config_entries/flow_handlers = debt: read-deferred-phase3 — no kind fits the integration catalog yet
+
+# map: read-deferred-phase3 listing config_entry:{entry_id} per row.
+rest GET /api/config/config_entries/entry = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 config_entry:{entry_id} (data and options in one
+# opaque body: a partial read verdict skips it rather than masks).
+rest GET /api/diagnostics/config_entry/{entry_id} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 listing entity:{entity_id}/state and /attr/* per row.
+rest GET /api/states = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 entity:{entity_id}/state + /attr/*.
+rest GET /api/states/{entity_id} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 entity:{filter_entity_id}/history (a query param).
+rest GET /api/history/period/{start} = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 entity:{entity}/history with entity=, else
+# entity:{row}/history per row (E-6 wide read).
+rest GET /api/logbook/{start} = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 system:logs.
+rest GET /api/error_log = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 listing service:{domain}.{service} per row.
+rest GET /api/services = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3, no resource (E-6 documented: Jinja reads any
+# state). A POST that is a read: this row is what keeps a method-based
+# classifier from refusing tpl eval.
+rest POST /api/template = debt: read-deferred-phase3 — a wide read E-6 documents, never a write
+
+# map: read-deferred-phase3, no resource (core config). Holds the home's
+# latitude/longitude, so phase 3 must decide it rather than exempt it.
+rest GET /api/config = debt: read-deferred-phase3 — undecided; it carries the home location
+
+# map: exempt (probe). API liveness and auth probe of setup and health.
+rest GET /api/ = exempt: the API liveness probe answers "API running" and nothing about any Home Assistant resource
+
+# =============================================================================
+# companion — the vendored spec's operations, by logical route
+# =============================================================================
+
+# map: exempt (probe). Auth-exempt liveness route.
+companion GET /v1/health = exempt: the companion's own liveness probe — it reports the add-on, never a Home Assistant resource
+
+# map: exempt (probe). Capability flags only.
+companion GET /v1/status = exempt: the companion's capability flags (supervisor reachable, config writable), no Home Assistant data
+
+# map: exempt (probe). Which file a helper create would write and whether HA
+# reads it; sent by helper create's preview only, after its create check.
+companion GET /v1/config/wiring = exempt: a layout probe answering where a helper create would land; the create itself is checked on its own row
+
+# map: edit on every file:{changes[].location} of the plan (E-7) + for each
+# change whose location and path name a typed owner (the automation entry,
+# script key or template entity the change's path lies in, in a file of the
+# wired include graph): edit automation:{id}/config | script:{key}/config |
+# template:{uid}/config; a change to an `id:` or `unique_id:` value is a
+# rename (E-5): edit the old address + create the new one (D-77, R-3). A
+# change whose path names no typed owner: edit file:{location} only.
+# The body's dry_run defaults to TRUE when absent: the body is decoded.
+# dry_run:true -> the same resources, same verb (preview parity by
+# construction, D-74). dry_run:false is allowed only after a dry_run:true of
+# the same {old, new} in the same invocation, under the same policy (content
+# hash, D-72), whose every resource was checked. The window between the two
+# is documented, not closed (D-77, R-4; H-29 "does not claim"): a location in
+# the confirmed response outside the checked plan is reported after the fact
+# — exit 1, policy_denied, rule `fail-closed: written outside the checked
+# plan`, listed in `written`.
+companion POST /v1/ref/replace = proven: TestEveryWriteRequestHasAMapping
+
+# map: create template:{uid} for every unique_id the YAML body declares (bare
+# item or full block). An entity in the block without unique_id has no
+# address: refused while a profile is in effect (D-78, `fail-closed: template
+# entity without unique_id`).
+companion POST /v1/config/template = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete template:{id}.
+companion DELETE /v1/config/template = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit script:{id}/config. The companion pins the body to ?id (a different
+# wrapper key is a 400), so no hidden rename. dry_run variant checked the same.
+companion PUT /v1/config/script = proven: TestEveryWriteRequestHasAMapping
+
+# map: create script:{the body's single top-level key}.
+companion POST /v1/config/script = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete script:{id} (exact key match, no alias fallback).
+companion DELETE /v1/config/script = proven: TestEveryWriteRequestHasAMapping
+
+# map: edit automation:{id}/config + create automation:{body.id} when the
+# body's id differs (put_automation replaces the entry verbatim and never
+# compares: a hidden rename, E-5). A body with no `id`, or a non-string one,
+# is unmappable and refused while a profile is in effect (D-78, R-6): it
+# would leave an automation no deny on automation:{id} matches. dry_run
+# variant checked the same.
+companion PUT /v1/config/automation = proven: TestEveryWriteRequestHasAMapping
+
+# map: create automation:{body.id} (the companion 400s without an id).
+companion POST /v1/config/automation = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete automation:{id} ONLY when {id} was verified as a config id by a
+# GET /v1/config/automation in the same invocation, directly before the delete
+# (D-72). delete_automation falls back to the alias and then a live
+# entity_id, so an unverified ?id= may name another automation: unmappable,
+# refused (an automation without a config id: D-78).
+companion DELETE /v1/config/automation = proven: TestEveryWriteRequestHasAMapping
+
+# map: create helper:{?domain}/{the body's single top-level key}.
+companion POST /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
+
+# map: delete helper:{domain}/{id}. `helper delete` sends the &domain= its
+# plan checked (the domain the companion's GET resolved) — always, with or
+# without a profile (D-123, which supersedes D-92's profile-only domain). A
+# domain-less mutating helper request is unmapped, refused.
+companion DELETE /v1/config/helper = proven: TestEveryWriteRequestHasAMapping
+
+# (PUT /v1/config/helper, PUT /v1/config/file, PUT /v1/config/template,
+# POST /v1/ha/reload/{domain}, GET /v1/config/scripts|automations: no rows —
+# their client methods have no product caller and are deleted in phase 2,
+# D-81. GET /v1/config/templates came back with `policy lint`'s template
+# enumeration (D-116); its row is below. The companion's implicit reload
+# inside its own write routes is not a request hactl sends and is not
+# checked; documented.)
+
+# map: edit system:wireguard (the tunnel is not addressable).
+companion POST /v1/wireguard/config = proven: TestEveryWriteRequestHasAMapping
+
+# map: control system:wireguard.
+companion POST /v1/wireguard/start = proven: TestEveryWriteRequestHasAMapping
+
+# map: control system:wireguard.
+companion POST /v1/wireguard/stop = proven: TestEveryWriteRequestHasAMapping
+
+# map: read-deferred-phase3 system:check_config (D-74). A POST that changes
+# nothing (it runs HA's config check); sent by `health --check-config`, a read
+# command — never refused by a write check.
+# Whether HA's check_config leaves a side effect on an invalid config is
+# recorded unknown; it does not change this row while the check is read.
+companion POST /v1/ha/check-config = debt: read-deferred-phase3 — a POST that is a read, mapped explicitly
+
+# map: read-deferred-phase3 listing file:{path} per row.
+companion GET /v1/config/files = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 file:{path} (+ every file it !includes when
+# resolve=true; known only from the response).
+companion GET /v1/config/file = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 file:{path}/block/{id} (id, alias or [n] address one
+# block: phase 3 reads the canonical id from the response).
+companion GET /v1/config/block = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 entity:{entity_id}; wide read over file:** (E-6).
+companion GET /v1/related/entity = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+
+# map: read-deferred-phase3, wide read; each hit file:{location}.
+companion GET /v1/ref/scan = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+
+# map: read-deferred-phase3, wide read; each hit file:{location}.
+companion GET /v1/ref/grep = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+
+# map: read-deferred-phase3, wide read; each row file:{location}.
+companion GET /v1/ref/entities = debt: read-deferred-phase3 — a wide read, row filtering is phase 3
+
+# map: read-deferred-phase3 listing template:{unique_id} per row. Sent by
+# `policy lint` to enumerate template ids (D-116), a read.
+companion GET /v1/config/templates = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 template:{id}/config.
+companion GET /v1/config/template = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 script:{id}/config.
+companion GET /v1/config/script = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 automation:{id}/config. Also the verification the
+# DELETE row depends on.
+companion GET /v1/config/automation = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 listing helper:{domain}/{id}.
+companion GET /v1/config/helpers = debt: read-deferred-phase3 — the listing row exists, row filtering is phase 3
+
+# map: read-deferred-phase3 helper:{response domain}/{response id}/config (the
+# domain is not in the request: response-side, phase 3).
+companion GET /v1/config/helper = debt: read-deferred-phase3 — the address is in the response, phase 3
+
+# map: read-deferred-phase3 system:wireguard.
+companion GET /v1/wireguard/status = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# map: read-deferred-phase3 system:logs (the add-on's own log shares the id
+# with HA core's log).
+companion GET /v1/logs = debt: read-deferred-phase3 — mapping row only, enforcement is phase 3
+
+# =============================================================================
+# cmd — the command layer: the plan, checked in the preview (preview parity)
+# =============================================================================
+#
+# Each row names what the PREVIEW checks, before it renders and before any
+# write. --confirm checks the same set again before its first write; a denial
+# in either names the rule. A proof is a test asserting the preview refuses
+# with the rule named AND the confirmed run — with a witness present, since a
+# denied preview records none and the confirm guard refuses a --confirm
+# without one (D-80) — refuses identically with nothing written. Coverage: a
+# --confirm run under allow-all against a recording transport yields request
+# verdicts that are a subset of the row's plan (D-80). Rows without --confirm
+# are proven as the header says.
+
+# map: exactly the REST POST /api/services row above, computed in the preview
+# (extract_from_target in the preview too): control service:{domain}.{service}
+# + control on the reach (D-59 as refined: whole set unless one domain's
+# entity service; `all` in any case) + every live entity id that is a key or
+# a string value anywhere in --data + for homeassistant.turn_on|turn_off|
+# toggle, control service:{d}.{service} per domain in the reach. Reach
+# unanswerable or an error answer -> refused (D-73).
+# svc call script.{x} | script.turn_on | script.toggle | homeassistant.turn_on
+# | homeassistant.toggle -> also control script:{x}/run for every script it
+# starts: for script.{x}, x is the service name itself (the per-script service
+# keeps the config key after a registry rename, so no lookup); for a script
+# entity in the reach, x is its entity-registry unique_id, which is the config
+# key, also for a renamed entity (oracle: D-84,
+# TestOracleYAMLScriptUniqueIDIsConfigKey).
+# Built (stage 2b svc): the plan is addServiceCall, the request layer's own
+# mapping of the request --confirm sends, checked before the preview renders
+# and again before the call; reach unknown -> fail-closed: reach unknown.
+# Request verdicts ⊆ plan: TestEveryConfirmedRequestIsInThePlan (area, fan-out
+# with a script, platform service with all, --data entities, per-script
+# service, --return). Also TestSvcCallChecksTheServiceAlways (E-2, R-10),
+# TestSvcCallReachOfOtherServices (R-1), TestSvcCallFanOutAndScriptRuns (R-2,
+# D-84), TestSvcCallScansDataForEntities, TestSvcCallPerScriptServiceChecksItsRun,
+# TestSvcCallReachUnknownIsRefused, TestSvcCallConfirmAfterAPassingPreviewSaysSo
+# and TestServiceFamilyNoProfileIsByteIdentical (D-58).
+cmd hactl svc call = proven: TestSvcCallRefusedByItsReach
+
+# map: control script:{config id}/run + control service:script.turn_on +
+# control entity:script.{id}. All three in the preview (existence read today).
+# The argument is an entity id (the command prefixes `script.` and reads the
+# state), so the config id is that entity's entity-registry unique_id — the
+# config key, also after a registry rename (D-84), as for svc call above.
+# Built (stage 2b svc): addScriptRun — the script.turn_on call as the request
+# layer maps it, plus control entity:script.{x} and, when the reach names no
+# script entity whose key could be read, control script:*/run (kind-wide, a
+# superset; D-90). Also TestScriptRunPlanWithoutAReachAnswerStillChecksTheRun
+# and TestEveryConfirmedRequestIsInThePlan.
+cmd hactl script run = proven: TestScriptRunPlan
+
+# map: edit script:{id}/config + control service:script.reload (hactl sends the
+# reload itself after the write; checked like any service, D-73). Both before
+# the companion PUT.
+# Built (stage 2b svc): scriptApplyPlan, checked before the diff is printed
+# and before the companion's dry-run PUT (preview) or the backup and write
+# (--confirm); a no-op apply writes nothing and checks no plan (D-90). Also
+# TestEveryConfirmedRequestIsInThePlan and TestScriptApplyRefusedByItsPlan
+# (typed family: refused identically in preview and --confirm).
+cmd hactl script apply = proven: TestScriptApplyPlanChecksTheReload
+
+# map: create script:{the file's single top-level key} (the preview already
+# extracts it).
+cmd hactl script create = proven: TestScriptCreateRefusedByItsPlan
+
+# map: delete script:{id} + delete entity:script.{id} when registered (the
+# orphan; the preview reads the registry for it while a profile is in effect,
+# the confirmed run always did).
+cmd hactl script delete = proven: TestScriptDeleteRefusedByItsPlan
+
+# map: edit automation:{config id}/config; + create automation:{candidate id}
+# when the file's id differs from the target (E-5, D-78). A candidate with no
+# `id:`, or a non-string one, is refused while a profile is in effect (D-78,
+# R-6). Refusing a mismatch outright, with or without a policy, is a separate
+# issue (D-58 keeps no-policy runs byte-identical).
+cmd hactl auto apply = proven: TestAutoApplyRefusedByItsPlan
+
+# map: create automation:{candidate id}, parsed from the file in the preview
+# and under --confirm; a file without a usable id is refused while a profile is
+# in effect (`fail-closed: automation without a config id`, D-78).
+cmd hactl auto create = proven: TestAutoCreateRefusedByItsPlan
+
+# map: delete automation:{config id} + delete entity:{live entity_id} (orphan).
+# The id is a config id only when the companion's GET answered with that very
+# id (the request layer's own proof, D-72). An automation without a config id
+# (a YAML entry resolved by alias or entity id) is refused while a profile is
+# in effect (`fail-closed: automation has no config id`, D-78).
+cmd hactl auto delete = proven: TestAutoDeleteRefusedByItsPlan
+
+# map: edit automation:{config id | id from the newest backup's filename}/config,
+# + create automation:{backup bytes' id} when it differs; backup bytes with no
+# `id:` or a non-string one are refused while a profile is in effect (D-78).
+# PlanRollback is local: the check runs on what it finds, in the preview and,
+# while a profile is in effect, again under --confirm before the PUT.
+cmd hactl auto rollback = proven: TestAutoRollbackRefusedByItsPlan
+
+# map: as auto rollback (deprecated alias, a separate cobra node).
+cmd hactl rollback = proven: TestRollbackRefusedByItsPlan
+
+# map: create template:{uid} for every unique_id the file declares (a bare item
+# or each item of each entity-domain list of a block, enumerated in the
+# preview); an entity without unique_id refuses the create while a profile is
+# in effect (`fail-closed: template entity without unique_id`, D-78).
+cmd hactl tpl create = proven: TestTplCreateRefusedByItsPlan
+
+# map: delete template:{uid} + delete entity:{e} for every registered entity of
+# that unique_id (already resolved before the preview).
+cmd hactl tpl delete = proven: TestTplDeleteRefusedByItsPlan
+
+# map: create helper:{domain}/{id}; checked before the wiring probe.
+cmd hactl helper create = proven: TestHelperCreateRefusedByItsPlan
+
+# map: delete helper:{domain}/{id} + delete entity:{domain}.{id} when registered
+# (orphan; the preview reads the registry for it while a profile is in effect).
+# Always sends &domain=, with or without a profile (D-123).
+cmd hactl helper delete = proven: TestHelperDeleteRefusedByItsPlan
+
+# map: create on every area id (kind-wide, D-75; reported as `area:*`).
+cmd hactl area create = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: delete area:{area_id} + edit entity:{e}/registry/area_id and edit
+# device:{d}/registry/area_id for every entity and device whose own area_id
+# is it — the cascade as a deliberate superset, enumerated in the preview
+# (D-76).
+cmd hactl area delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: create on every floor id (kind-wide, D-75).
+cmd hactl floor create = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: delete floor:{floor_id} + edit area:{a} for every area on it (the
+# cascade as a deliberate superset, D-76).
+cmd hactl floor delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: create on every label id (kind-wide, D-75). The reference command of
+# the plan API (stage 2b): its preview and --confirm check the plan before the
+# first write, and its confirmed requests are held to the plan (R-12).
+cmd hactl label create = proven: TestLabelCreateRefusedByItsPlan
+
+# map: delete label:{label_id} + edit entity:{e}/registry/labels, edit
+# device:{d}/registry/labels and edit area:{a} for every current holder (the
+# cascade as a deliberate superset, D-76).
+cmd hactl label delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: per view against the stored config: edit|create|delete
+# dashboard:{u}/views/{path}, edit dashboard:{u} for non-view keys and
+# path-less views; no stored config -> edit dashboard:{u}, which any view
+# deny for edit refuses (D-66 as refined). `lovelace` and "" are dashboard:.
+# Built (stage 2b): the stored config is read in the preview too, only while
+# a profile is in effect; an unreadable one is checked whole.
+cmd hactl dash save = proven: TestDashSaveRefusedByItsPlan
+
+# map: edit dashboard:{u}/views/{path} for each view holding a changed path;
+# edit dashboard:{u} for changes outside views or in a path-less view.
+cmd hactl dash replace = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
+
+# map: create dashboard:{--url-path}.
+cmd hactl dash create = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
+
+# map: delete dashboard:{url_path}.
+cmd hactl dash delete = proven: TestDashReplaceCreateDeleteRefusedByTheirPlans
+
+# map: edit file:{location} for every distinct location of a companion
+# ref/replace dry run + the typed owner of every change its path names, with
+# id:/unique_id: changes as renames (edit old + create new) — the companion
+# row above (D-77) + edit dashboard:{u}[/views/{v}] for every writable
+# dashboard of the plan. E-7: any denial refuses the whole command, preview and
+# confirm; --allow-partial never overrides a denial. The confirmed run issues
+# the dry run first, checks, then writes, in one invocation; a location
+# written outside the checked plan is reported after the fact (D-77).
+# Built (stage 2b): each change is placed in its typed owner by reading the
+# file it lies in (reqmap.RefChangeOwners — by the entry's shape, a superset
+# where the path is ambiguous), in every entry sharing the changed node
+# through a YAML anchor (D-104), and in every entry that pulls the file in
+# with an !include (reqmap.RefChangeIncluderOwners over the listed config
+# files, D-105); a file it cannot read or place refuses the plan
+# (`fail-closed: typed owner unknown`). The placed plan is recorded with
+# the session, so the request layer maps the confirmed write through it.
+cmd hactl ref replace = proven: TestRefReplaceRefusedByItsPlan
+
+# map: edit entity:{old}/registry/entity_id + create entity:{new} (E-5) + every
+# resource of the ref replace plan above (E-7) — all before the registry
+# update, which is the first write. The preview lists them (today it counts).
+# Built (stage 2b): the preview and --confirm both ask the companion for the
+# rewrite's dry run under a profile; the confirmed rewrite after the registry
+# update is sent through that checked plan, without a second dry run.
+cmd hactl ent rename = proven: TestEntRenameRefusedByItsPlan
+
+# map: edit entity:{entity_id}/registry/labels. Assigning a label is not
+# editing label:{id}.
+cmd hactl ent set-label = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit entity:{entity_id}/registry/area_id (--clear too).
+cmd hactl ent set-area = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit device:{device_id}/registry/area_id (device resolved by id or name).
+cmd hactl device set-area = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit device:{device_id}/registry/labels.
+cmd hactl device set-label = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: delete config_entry:{entry_id} + delete entity:{e}, device:{d} for every
+# registry row naming the entry — the cascade as a deliberate superset,
+# enumerated in the preview (D-76).
+cmd hactl config delete = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit config_entry:{entry_id}/options.
+cmd hactl config options = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: create on every config_entry id (kind-wide, D-75; a new entry has no
+# id until HA answers).
+cmd hactl config flow-start = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: --options: edit config_entry:{handler}/options (the handler is the
+# entry_id, D-83; kind-wide on every entry's options when this invocation
+# holds no start response naming the handler); otherwise create and edit on
+# every config_entry id (D-75). The preview's own GET of the flow is that same
+# write (D-74), so the check runs before it.
+cmd hactl config flow-step = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: a command without --confirm that drives a flow: its GET runs the
+# flow's current step (D-74, R-5), so it checks the matching write before
+# sending — without --options create and edit on every config_entry id, with
+# --options edit config_entry:{handler}/options (kind-wide when the handler is
+# unknown). Denied -> refused, naming the rule (it has nothing else to do).
+cmd hactl config flow-inspect = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit system:wireguard. The preview contacts nothing; the check is local.
+# Built (stage 2b, integration): wireguardPlan, checked after the .conf is read
+# and before the preview renders or the push is sent. Also
+# TestWireguardAllowedRunPostsOnce, TestWireguardWithoutAProfileIsUnchanged
+# (D-58) and TestEveryConfirmedRequestIsInThePlan.
+cmd hactl companion wireguard config = proven: TestWireguardRefusedByItsPlan
+
+# map: control system:wireguard. Built like config's.
+cmd hactl companion wireguard up = proven: TestWireguardRefusedByItsPlan
+
+# map: control system:wireguard. Built like config's.
+cmd hactl companion wireguard down = proven: TestWireguardRefusedByItsPlan
+
+# map: (read command) the options-flow probe is checked as edit
+# config_entry:{entry_id}/options BEFORE it is sent; denied -> the probe is
+# skipped with a note, never a refusal of config show (D-79).
+cmd hactl config show = proven: TestConfigShowProbeSkippedWhenDenied
+
+# map: delete system:cache (local only, sends nothing; D-79). The audit log
+# survives it.
+cmd hactl cache clear = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: edit system:cache (local write; its HA requests are phase-3 reads;
+# D-79). hactl's implicit bookkeeping writes — id cache, log and timeseries
+# caches, the confirm witness, backups, the instance lock, the audit log — are
+# exempt and are no write site.
+cmd hactl cache refresh = proven: TestRegistryFamilyRefusesItsPlanNamingTheRule
+
+# map: exempt (bootstrap). Writes <instance>/.env and probes GET /api/; no
+# policy resource. A broken policy.yaml refuses it like every command outside
+# D-60's exempt list (D-60 as refined).
+cmd hactl setup = exempt: setup writes the instance's own .env and touches no policy resource; it is never available over MCP
+
+# map: exempt (dispatcher). Each tool call runs one command in-process and is
+# checked as that command, with the policy loaded per call; --allow-writes is
+# checked first, then a broken file, then the policy (D-62, D-72). A broken
+# file refuses each call outside D-60's exempt list; the server starts.
+cmd hactl mcp = exempt: the server checks nothing itself — every dispatched call is checked as the command it runs

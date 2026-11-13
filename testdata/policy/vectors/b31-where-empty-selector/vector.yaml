@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: an empty selector; manual format: a selector value is a string or a NON-EMPTY list",
+  "load_error": {
+    "problems": [
+      {
+        "line": 10
+      },
+      {
+        "line": 11
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

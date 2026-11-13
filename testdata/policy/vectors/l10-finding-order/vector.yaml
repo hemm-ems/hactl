@@ -1,0 +1,32 @@
+{
+  "clause": "Lint findings are ordered by line, then code, profile and rule",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "lock.a",
+        "light.b"
+      ]
+    },
+    "findings": [
+      {
+        "code": "no-match",
+        "profile": "agent",
+        "rule": "deny \"entity:lokc.*\" [write]",
+        "line": 6
+      },
+      {
+        "code": "no-match",
+        "profile": "agent",
+        "rule": "allow \"entity:ligth.*\" [control]",
+        "line": 8
+      },
+      {
+        "code": "redundant-allow",
+        "profile": "agent",
+        "rule": "allow \"entity:ligth.*\" [control]",
+        "line": 8
+      }
+    ],
+    "unchecked": []
+  }
+}

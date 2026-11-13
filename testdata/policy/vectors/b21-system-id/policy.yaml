@@ -1,0 +1,8 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "system:nope": [read]
+      "system:x*": [read]

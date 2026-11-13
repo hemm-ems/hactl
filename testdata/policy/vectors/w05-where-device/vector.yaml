@@ -1,0 +1,19 @@
+clause: "D-55: a selector on a device pattern reads the device's own area and labels; it covers the device's sub-resources; no Live never grants"
+live:
+  devices:
+    dev_garage: {area: {id: garage, name: Garage}, labels: [{id: agent_ok, name: Agent OK}]}
+    dev_garage_nolabel: {area: {id: garage, name: Garage}}
+    dev_house: {area: {id: haus, name: Haus}, labels: [{id: agent_ok, name: Agent OK}]}
+cases:
+  - {resource: "device:dev_garage", verb: edit, allowed: true, rule: 'allow "device:*" [edit] where area=garage label=agent_ok', line: 7}
+  - {resource: "device:dev_garage/registry/labels", verb: edit, allowed: true, rule: 'allow "device:*" [edit] where area=garage label=agent_ok', line: 7}
+  - {resource: "device:dev_garage_nolabel", verb: edit, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "device:dev_house", verb: edit, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - resource: "device:dev_garage"
+    verb: edit
+    live: {mode: nil}
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 1
+    notes_contains: [["where not evaluated", '"device:*"']]

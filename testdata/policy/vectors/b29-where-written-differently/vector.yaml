@@ -1,0 +1,11 @@
+{
+  "clause": "D-60 / manual format: a `where` key is written exactly as in `allow`; a differently-cased spelling is not that allow pattern",
+  "load_error": {
+    "problems": [
+      {
+        "line": 9
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

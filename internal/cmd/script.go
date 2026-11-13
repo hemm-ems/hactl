@@ -21,6 +21,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 	"github.com/hemm-ems/hactl/internal/writer"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
@@ -617,6 +618,19 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 			asPreview(!flagScriptConfirm).
 			render(w)
 	}
+
+	// The policy plan (H-29's command layer), checked before the diff is
+	// printed and before the companion's dry-run PUT, which the request layer
+	// maps like the real write (D-74): the write itself, and the script.reload
+	// hactl sends on its own after it (D-73) — so a profile that may edit the
+	// script but not reload scripts is refused up front, never after a write
+	// that HA then does not activate. Same plan in the preview and under
+	// --confirm; nothing with no profile in effect (D-58).
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptApplyPlan(ctx, candidate.ID))
+	if err != nil {
+		return err
+	}
+
 	if !flagJSON {
 		_, _ = fmt.Fprintln(w, "diff:")
 		for _, line := range diff {
@@ -651,6 +665,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 		return dryRun("apply script").
 			with("script", candidate.ID).
 			with("validation", scriptValidation).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -664,7 +679,7 @@ func runScriptApply(ctx context.Context, w io.Writer, scriptID string) error {
 	}
 
 	reloaded := false
-	if _, reloadErr := client.CallService(ctx, "script", "reload", nil); reloadErr != nil {
+	if _, reloadErr := client.CallService(ctx, scriptReloadDomain, scriptReloadService, nil); reloadErr != nil {
 		slog.Warn("script reload failed, config was written but not activated", "error", reloadErr)
 	} else {
 		reloaded = true
@@ -836,21 +851,30 @@ func runScriptRun(ctx context.Context, w io.Writer, scriptID string) error {
 
 	// Verify the script entity exists before calling the service (also in
 	// dry-run, so the preview is truthful about what would run).
-	if _, err := client.GetState(ctx, entityID); err != nil {
+	if _, stateErr := client.GetState(ctx, entityID); stateErr != nil {
 		return fmt.Errorf("script not found: %s", entityID)
+	}
+
+	// The policy plan (H-29's command layer): the script.turn_on call this
+	// command sends, mapped as the request layer maps it — the service, the
+	// script entity and its run, script:<config key>/run (D-73, D-84) —
+	// checked in the preview and again before the call. Nothing with no
+	// profile in effect (D-58).
+	note, err := checkWritePlan(w, !flagScriptConfirm, newWritePlan("execute "+entityID).addScriptRun(ctx, entityID))
+	if err != nil {
+		return err
 	}
 
 	if !flagScriptConfirm {
 		return dryRun("execute "+entityID).
 			with("entity_id", entityID).
 			with("via", "script.turn_on").
+			withPolicy(note).
 			withHint("use --confirm to run it").
 			render(w)
 	}
 
-	if _, err := client.CallService(ctx, "script", "turn_on", map[string]any{
-		"entity_id": entityID,
-	}); err != nil {
+	if _, err := client.CallService(ctx, "script", "turn_on", scriptRunData(entityID)); err != nil {
 		return fmt.Errorf("running script %s: %w", entityID, err)
 	}
 
@@ -881,6 +905,12 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
+	// The plan: create on the file's top-level key, as the companion keys it.
+	note, err := checkWritePlan(w, !flagScriptConfirm, scriptCreatePlan(content))
+	if err != nil {
+		return err
+	}
+
 	if !flagScriptConfirm {
 		if _, connErr := connectCompanion(ctx); connErr != nil {
 			return connErr
@@ -889,6 +919,7 @@ func runScriptCreate(ctx context.Context, w io.Writer) error {
 			with("id", candidate.ID).
 			with("file", flagScriptFile).
 			with("bytes", len(data)).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -947,16 +978,26 @@ func runScriptDelete(ctx context.Context, w io.Writer, scriptID string) error {
 		return fmt.Errorf("script %q not found (use 'script ls' to see available scripts): %w", scriptID, err)
 	}
 
+	// Resolve while the entity is still real; afterwards a registry entry is
+	// indistinguishable from an older ghost. The preview resolves it too while
+	// a profile is in effect, because the cleanup is part of the plan (D-78);
+	// without one it stays the confirmed run's read (D-58).
+	orphan := ""
+	if flagScriptConfirm || policyInEffect() {
+		orphan = registeredEntityID(ctx, cfg, "script."+normalizeScriptID(scriptID))
+	}
+	note, err := checkWritePlan(w, !flagScriptConfirm, deletePlan("delete script", policy.KindScript, scriptID, orphan))
+	if err != nil {
+		return err
+	}
+
 	if !flagScriptConfirm {
 		return dryRun("delete script").
 			with("id", remote.ID).
 			with("bytes", len(remote.Content)).
+			withPolicy(note).
 			render(w)
 	}
-
-	// Resolve while the entity is still real; afterwards a registry entry is
-	// indistinguishable from an older ghost.
-	orphan := registeredEntityID(ctx, cfg, "script."+normalizeScriptID(scriptID))
 
 	if _, err := cc.DeleteScriptDef(ctx, scriptID); err != nil {
 		return fmt.Errorf("deleting script: %w", err)

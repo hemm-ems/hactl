@@ -1,0 +1,6 @@
+clause: "D-60 / manual: a `where` keyed by a pattern that is a DENY of the same profile (and no allow) is broken — a selector narrows allows only"
+load_error:
+  file_is_policy_yaml: true
+  count: 1
+  problems:
+    - {line: 11}

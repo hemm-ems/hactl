@@ -1,0 +1,8 @@
+clause: "Manual matching + selectors: a where value globs like a pattern, and `?` is one character, so `K?che` holds for the area NAMED K\u00fcche"
+live:
+  entities:
+    light.k: {area: {id: kueche, name: "K\u00fcche"}}
+    light.b: {area: {id: bad, name: Bad}}
+cases:
+  - {resource: "entity:light.k", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=K?che', line: 7}
+  - {resource: "entity:light.b", verb: control, allowed: false, rule: "default: deny", line: 0}

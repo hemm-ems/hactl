@@ -1,0 +1,456 @@
+== auto apply
+-- stdout
+diff:
+ id: heating
+-alias: Heating
++alias: Heating (eco)
+ triggers: []
+ actions: []
+dry-run: would apply automation
+  automation:    heating
+  config_id:     heating
+  validation:    ok (HA validate_config)
+  changed_lines: 2
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=true&id=heating
+-- ws
+validate_config ×1
+== auto apply --confirm
+-- stdout
+diff:
+ id: heating
+-alias: Heating
++alias: Heating (eco)
+ triggers: []
+ actions: []
+
+validation: ok (HA validate_config)
+applied: heating
+backup:  <dir>/backups/<stamp>_heating.yaml
+reload:  ok
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=false&id=heating
+-- ws
+validate_config ×1
+== auto apply rename
+-- stdout
+diff:
+-id: heating
++id: heating_v2
+ alias: Heating
+ triggers: []
+ actions: []
+dry-run: would apply automation
+  automation:    heating
+  config_id:     heating
+  validation:    ok (HA validate_config)
+  changed_lines: 2
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=true&id=heating
+-- ws
+validate_config ×1
+== auto apply rename --confirm
+-- stdout
+diff:
+-id: heating
++id: heating_v2
+ alias: Heating
+ triggers: []
+ actions: []
+
+validation: ok (HA validate_config)
+applied: heating
+backup:  <dir>/backups/<stamp>_heating.yaml
+reload:  ok
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=false&id=heating
+-- ws
+validate_config ×1
+== auto apply without id
+-- stdout
+diff:
+-id: heating
+ alias: Heating
+ triggers: []
+ actions: []
+dry-run: would apply automation
+  automation:    heating
+  config_id:     heating
+  validation:    ok (HA validate_config)
+  changed_lines: 1
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=true&id=heating
+-- ws
+validate_config ×1
+== auto apply without id --confirm
+-- stdout
+diff:
+-id: heating
+ alias: Heating
+ triggers: []
+ actions: []
+
+validation: ok (HA validate_config)
+applied: heating
+backup:  <dir>/backups/<stamp>_heating.yaml
+reload:  ok
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+GET /v1/config/automation?id=heating
+PUT /v1/config/automation?dry_run=false&id=heating
+-- ws
+validate_config ×1
+== auto create
+-- stdout
+dry-run: would create automation
+  file:       <dir>/auto_new.yaml
+  bytes:      46
+  validation: ok (HA validate_config)
+use --confirm to apply
+-- error
+<nil>
+-- http
+-- ws
+validate_config ×1
+== auto create --confirm
+-- stdout
+
+validation: ok (HA validate_config)
+created automation "hall"
+entity_id: automation.hall
+note: live entity_id (automation.hall) differs from config id (hall) — HA derives entity_id from alias, not id
+-- error
+<nil>
+-- http
+POST /v1/config/automation
+-- ws
+validate_config ×1
+== auto delete
+-- stdout
+dry-run: would delete automation
+  id:        heating
+  config_id: heating
+  entity_id: automation.heating
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+-- ws
+== auto delete --confirm
+-- stdout
+deleted automation "heating"
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=heating
+DELETE /v1/config/automation?id=heating
+-- ws
+config/entity_registry/remove ×1
+== auto delete without config id
+-- stdout
+dry-run: would delete automation
+  id:        legacy
+  entity_id: automation.legacy
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=automation.legacy
+-- ws
+== auto delete without config id --confirm
+-- stdout
+deleted automation "legacy"
+-- error
+<nil>
+-- http
+GET /api/states
+GET /v1/config/automation?id=automation.legacy
+DELETE /v1/config/automation?id=automation.legacy
+-- ws
+config/entity_registry/remove ×1
+== auto rollback
+-- stdout
+dry-run: would roll back automation
+  automation:  heating
+  from_backup: <dir>/backups/<stamp>_heating.yaml
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+-- ws
+== auto rollback --confirm
+-- stdout
+rolled back: heating
+from backup: <dir>/backups/<stamp>_heating.yaml
+reload:      ok
+-- error
+<nil>
+-- http
+GET /api/states
+PUT /v1/config/automation?dry_run=false&id=heating
+-- ws
+== rollback
+-- stdout
+dry-run: would roll back automation
+  automation:  heating
+  from_backup: <dir>/backups/<stamp>_heating.yaml
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /api/states
+-- ws
+== rollback --confirm
+-- stdout
+rolled back: heating
+from backup: <dir>/backups/<stamp>_heating.yaml
+reload:      ok
+-- error
+<nil>
+-- http
+GET /api/states
+PUT /v1/config/automation?dry_run=false&id=heating
+-- ws
+== script apply
+-- stdout
+diff:
+-alias: Wake Up
++alias: Wake Up (slow)
+ sequence:
+-    - delay: "00:00:01"
++    - delay: "00:00:02"
+dry-run: would apply script
+  script:     wakeup
+  validation: ok (HA validate_config)
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /v1/config/script?id=wakeup
+PUT /v1/config/script?dry_run=true&id=wakeup
+-- ws
+validate_config ×1
+== script apply --confirm
+-- stdout
+diff:
+-alias: Wake Up
++alias: Wake Up (slow)
+ sequence:
+-    - delay: "00:00:01"
++    - delay: "00:00:02"
+
+validation: ok (HA validate_config)
+applied: wakeup
+backup:  <dir>/backups/<stamp>_script_wakeup.yaml
+reload:  ok
+state:   script.wakeup off
+-- error
+<nil>
+-- http
+GET /v1/config/script?id=wakeup
+PUT /v1/config/script?dry_run=false&id=wakeup
+POST /api/services/script/reload
+GET /api/states/script.wakeup
+-- ws
+validate_config ×1
+== script create
+-- stdout
+dry-run: would create script
+  id:    morning
+  file:  <dir>/script_new.yaml
+  bytes: 58
+use --confirm to apply
+-- error
+<nil>
+-- http
+-- ws
+== script create --confirm
+-- stdout
+created script "morning"
+-- error
+<nil>
+-- http
+POST /v1/config/script
+-- ws
+== script delete
+-- stdout
+dry-run: would delete script
+  id:    wakeup
+  bytes: 57
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /v1/config/script?id=wakeup
+-- ws
+== script delete --confirm
+-- stdout
+deleted script "wakeup"
+-- error
+<nil>
+-- http
+GET /v1/config/script?id=wakeup
+DELETE /v1/config/script?id=wakeup
+-- ws
+config/entity_registry/list ×1
+config/entity_registry/remove ×1
+== tpl create
+-- stdout
+dry-run: would create template
+  file:   <dir>/tpl_new.yaml
+  shape:  entity item
+  domain: sensor
+  bytes:  55
+use --confirm to apply
+-- error
+<nil>
+-- http
+-- ws
+== tpl create --confirm
+-- stdout
+created template "hall_temp" (domain=sensor)
+-- error
+<nil>
+-- http
+POST /v1/config/template?domain=sensor
+-- ws
+== tpl create block
+-- stdout
+dry-run: would create template
+  file:    <dir>/tpl_block.yaml
+  shape:   state-based block
+  domains: sensor, binary_sensor
+  bytes:   171
+use --confirm to apply
+-- error
+<nil>
+-- http
+-- ws
+== tpl create block --confirm
+-- stdout
+created template "sensor"
+-- error
+<nil>
+-- http
+POST /v1/config/template?domain=sensor
+-- ws
+== tpl create without unique_id
+-- stdout
+dry-run: would create template
+  file:    <dir>/tpl_nouid.yaml
+  shape:   state-based block
+  domains: sensor
+  bytes:   86
+use --confirm to apply
+-- error
+<nil>
+-- http
+-- ws
+== tpl create without unique_id --confirm
+-- stdout
+created template "sensor"
+-- error
+<nil>
+-- http
+POST /v1/config/template?domain=sensor
+-- ws
+== tpl delete
+-- stdout
+dry-run: would delete template
+  unique_id: room_temp
+  entities:  sensor.room_temp
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /v1/config/template?id=room_temp
+-- ws
+config/entity_registry/list ×1
+== tpl delete --confirm
+-- stdout
+deleted template "room_temp"
+-- error
+<nil>
+-- http
+GET /v1/config/template?id=room_temp
+DELETE /v1/config/template?id=room_temp
+-- ws
+config/entity_registry/list ×1
+config/entity_registry/remove ×1
+== helper create
+-- stdout
+dry-run: would create helper
+  id:     party_mode
+  domain: input_boolean
+  file:   <dir>/helper_new.yaml
+  bytes:  31
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /v1/config/wiring?domain=input_boolean
+-- ws
+== helper create --confirm
+-- stdout
+created helper "party_mode" (domain=input_boolean)
+entity_id: input_boolean.party_mode
+-- error
+<nil>
+-- http
+POST /v1/config/helper?domain=input_boolean
+-- ws
+== helper delete
+-- stdout
+dry-run: would delete helper
+  id:     guest_mode
+  domain: input_boolean
+use --confirm to apply
+-- error
+<nil>
+-- http
+GET /v1/config/helper?id=guest_mode
+-- ws
+== helper delete --confirm
+-- stdout
+deleted helper "guest_mode"
+-- error
+<nil>
+-- http
+GET /v1/config/helper?id=guest_mode
+DELETE /v1/config/helper?domain=input_boolean&id=guest_mode
+-- ws
+config/entity_registry/list ×1
+config/entity_registry/remove ×1

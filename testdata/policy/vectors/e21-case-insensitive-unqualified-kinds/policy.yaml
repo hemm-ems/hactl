@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "automation:PG_Heating": [read]
+      "device:ABC123": [edit]
+      "script:Morning": [control]
+      "file:Packages/Heating.yaml": [edit]
+      "area:Wohnzimmer": [read]

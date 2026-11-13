@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:ligth.*": [read]
+      "entity:kitchen*": [read]
+      "entity:light.*": [read]

@@ -5,6 +5,8 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
@@ -210,7 +212,7 @@ func assertTraceGetRoundTrip(t *testing.T, ws *haapi.WSClient, ctx context.Conte
 }
 
 // TestContract_AutomationConfigAPI calls the endpoint it names —
-// GET /api/config/automation/config/<id> via GetAutomationConfig — for the
+// GET /api/config/automation/config/<id>, asked directly — for the
 // basic fixture's `climate_schedule` automation and asserts the decoded config
 // carries the real document fields. The previous version ran `auto ls` (a
 // different, states-API endpoint) and asserted nothing but that its output was
@@ -223,11 +225,27 @@ func assertTraceGetRoundTrip(t *testing.T, ws *haapi.WSClient, ctx context.Conte
 // authored fixture may still use the legacy singular keys — accept either.
 func TestContract_AutomationConfigAPI(t *testing.T) {
 	cfg := loadConfig(t)
-	client := haapi.New(cfg.URL, cfg.Token)
 
-	raw, err := client.GetAutomationConfig(context.Background(), "climate_schedule")
+	// Asked outside every hactl client: no product command reads this API
+	// (since #128; D-81 deleted the client method), and the Docker tiers use it
+	// as H-12's independent read path, so its shape is pinned here directly.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		cfg.URL+"/api/config/automation/config/climate_schedule", http.NoBody)
 	if err != nil {
-		t.Fatalf("GetAutomationConfig(climate_schedule): %v", err)
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/config/automation/config/climate_schedule: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the automation config: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/config/automation/config/climate_schedule: HTTP %d: %s", resp.StatusCode, raw)
 	}
 
 	var got struct {

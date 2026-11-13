@@ -1,0 +1,11 @@
+{
+  "clause": "D-60 (everything the format does not define): `profiles` is a mapping of name to profile; a list is not",
+  "load_error": {
+    "problems": [
+      {
+        "line_positive": true
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}
