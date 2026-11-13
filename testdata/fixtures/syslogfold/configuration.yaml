@@ -1,0 +1,31 @@
+# syslogfold fixture — the oracle rig for how Home Assistant's system log
+# groups the "Referenced … are missing" warning (B-16, D-131/D-132).
+#
+# Question it answers: when two scripts each aim a step at a different missing
+# entity, does system_log/list keep two entries, each with its own time, or
+# one entry for both lines? `script run --confirm` attributes a line to a run
+# by its time, so the answer decides what it can claim. It has its own
+# instance because the answer is written into the log for good: a shared
+# instance would carry the second line into every later test that reads it.
+
+homeassistant:
+  name: Syslog Fold Oracle
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+
+default_config:
+
+logger:
+  default: warning
+
+script: !include scripts.yaml
+
+# The service the scripts call has to exist, or the step fails on a missing
+# service instead of reaching the entity lookup that logs the warning.
+input_boolean:
+  fold_present:
+    name: Fold Present

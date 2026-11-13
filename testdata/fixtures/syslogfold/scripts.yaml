@@ -1,0 +1,17 @@
+# Two scripts, one service, two different entities that do not exist. Never
+# run by anything but TestOracleSystemLogGroupsMissingTargetWarnings.
+fold_missing_a:
+  alias: Fold Missing A
+  sequence:
+    - service: input_boolean.toggle
+      target:
+        entity_id: input_boolean.fold_no_such_a
+  mode: single
+
+fold_missing_b:
+  alias: Fold Missing B
+  sequence:
+    - service: input_boolean.toggle
+      target:
+        entity_id: input_boolean.fold_no_such_b
+  mode: single
