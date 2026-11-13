@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+      "file:packages/**": [edit]
+      "template:*": [read]
+      "config_entry:abc/options": [edit]

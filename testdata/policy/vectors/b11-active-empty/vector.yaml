@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: `active` empty",
+  "load_error": {
+    "problems": [
+      {
+        "line": 2,
+        "contains": [
+          "active"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

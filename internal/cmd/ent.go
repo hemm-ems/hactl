@@ -21,6 +21,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
+	"github.com/hemm-ems/hactl/internal/glob"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
@@ -1343,55 +1344,18 @@ func filterEntitiesByDomain(states []entityState, domain string) []entityState {
 // it. A value with a dot that is not a domain — a device named "Sonos v1.2" —
 // gains an anchor it has no use for, which is a false positive in the
 // permissive direction on a filter and cannot turn a match into a miss.
+//
+// The glob engine itself lives in internal/glob, shared with the policy
+// evaluator (one matcher, never two). Only the substring convenience for a
+// wildcard-free pattern is the filter's own.
 func matchPattern(s, pattern string) bool {
 	if pattern == "" {
 		return s == ""
 	}
-	s, pattern = strings.ToLower(s), strings.ToLower(pattern)
-	if !strings.ContainsAny(pattern, "*?") {
-		return strings.Contains(s, pattern)
+	if !glob.HasWildcard(pattern) {
+		return strings.Contains(strings.ToLower(s), strings.ToLower(pattern))
 	}
-	if matchGlob(s, pattern) {
-		return true
-	}
-	if _, unqualified, found := strings.Cut(s, "."); found {
-		return matchGlob(unqualified, pattern)
-	}
-	return false
-}
-
-func matchGlob(s, pattern string) bool {
-	for len(pattern) > 0 {
-		switch pattern[0] {
-		case '*':
-			// Skip consecutive stars
-			for len(pattern) > 0 && pattern[0] == '*' {
-				pattern = pattern[1:]
-			}
-			if len(pattern) == 0 {
-				return true
-			}
-			for i := range len(s) + 1 {
-				if matchGlob(s[i:], pattern) {
-					return true
-				}
-			}
-			return false
-		case '?':
-			if len(s) == 0 {
-				return false
-			}
-			s = s[1:]
-			pattern = pattern[1:]
-		default:
-			if len(s) == 0 || s[0] != pattern[0] {
-				return false
-			}
-			s = s[1:]
-			pattern = pattern[1:]
-		}
-	}
-	return len(s) == 0
+	return glob.MatchQualified(s, pattern)
 }
 
 // entStateWidth is how wide the state column renders for a reader; the machine

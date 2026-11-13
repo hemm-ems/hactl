@@ -471,6 +471,9 @@ func contractPosArgs(f *contractFixture) map[string][]string {
 		"dash grep":           {"light.kitchen"},
 		"log show":            {f.logShowID},
 		"tpl eval":            {"{{ 1 + 1 }}"},
+		"policy show":         nil,
+		"policy check":        {"entity:light.kitchen", "read"},
+		"policy lint":         nil,
 
 		// The eight the deleted companionRequired list used to skip. They are
 		// ordinary rows here — the only thing that made them special was the

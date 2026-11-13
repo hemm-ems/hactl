@@ -83,6 +83,7 @@ var FamilySections = map[string][]string{
 	"energy":    {"### Energy"},
 	"ref":       {"### References (find and rename entity_ids)"},
 	"grep":      {"### Term search (`grep`)"},
+	"policy":    {"### Policy (permission guardrail)"},
 }
 
 // Aliases maps top-level commands onto the family whose sections cover them.
@@ -166,7 +167,7 @@ func FamilyLabel(family string) string {
 func Families() []string {
 	return []string{
 		"auto", "cache", "companion", "config", "dash", "device", "energy",
-		"ent", "grep", "health", "helper", "label", "log", "ref", "script", "svc", "tpl",
+		"ent", "grep", "health", "helper", "label", "log", "policy", "ref", "script", "svc", "tpl",
 	}
 }
 

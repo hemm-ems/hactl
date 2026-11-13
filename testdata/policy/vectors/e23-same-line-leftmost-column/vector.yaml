@@ -1,0 +1,5 @@
+clause: "D-52 (confirmed 2026-10-31): the first in the file is the lowest line, then the leftmost column — two rules of a flow mapping share a line, and the one written first is named (not the one whose pattern sorts first)"
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: true, rule: 'allow "entity:light.*" [read]', line: 6}
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 7}
+  - {resource: "entity:sensor.t", verb: control, allowed: false, rule: 'deny "entity:*" [control]', line: 7}

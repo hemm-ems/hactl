@@ -1,0 +1,5 @@
+clause: "D-55 / manual selectors: a LABEL selector that cannot be evaluated (Live error) does not match — on an entity and on a device pattern — and the verdict notes it"
+live: {mode: error, error: "label registry: connection refused"}
+cases:
+  - {resource: "entity:light.x", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 1, notes_contains: [['"entity:light.*"']]}
+  - {resource: "device:d1", verb: edit, allowed: false, rule: "default: deny", line: 0, notes: 1, notes_contains: [['"device:*"']]}

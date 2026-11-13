@@ -109,6 +109,30 @@ type ServiceDomain struct {
 // which is the distinction the probe exists to preserve.
 var ErrServiceNotRegistered = errors.New("service not registered in Home Assistant")
 
+// ServiceList returns every domain GET /api/services reports, with its
+// services. An empty list is an error, not an answer: a live Home Assistant
+// always registers services, so an empty list is the absence of an answer
+// (H-7) — reporting it as "no such service" would refuse calls that work, and
+// reporting it as "no services" would turn every service rule into a lint
+// no-match.
+func (c *Client) ServiceList(ctx context.Context) ([]ServiceDomain, error) {
+	body, err := c.doGet(ctx, "/api/services")
+	if err != nil {
+		return nil, err
+	}
+	var domains []ServiceDomain
+	if unmarshalErr := json.Unmarshal(body, &domains); unmarshalErr != nil {
+		return nil, fmt.Errorf("parsing /api/services: %w", unmarshalErr)
+	}
+	if degErr := degeneracy.Check("/api/services", &domains); degErr != nil {
+		return nil, degErr
+	}
+	if len(domains) == 0 {
+		return nil, errors.New("/api/services returned no domains")
+	}
+	return domains, nil
+}
+
 // ServiceExists reports whether Home Assistant has a service registered under
 // domain.service. It is LookupService with the descriptor dropped, kept for
 // callers that only need the yes/no (the integration tiers probing for a
@@ -142,23 +166,9 @@ func (c *Client) ServiceExists(ctx context.Context, domain, service string) (boo
 // missing service as ErrServiceNotRegistered, so the caller can distinguish
 // "HA says no such service" from "we could not ask".
 func (c *Client) LookupService(ctx context.Context, domain, service string) (*ServiceDescriptor, error) {
-	body, err := c.doGet(ctx, "/api/services")
+	domains, err := c.ServiceList(ctx)
 	if err != nil {
 		return nil, err
-	}
-	var domains []ServiceDomain
-	if unmarshalErr := json.Unmarshal(body, &domains); unmarshalErr != nil {
-		return nil, fmt.Errorf("parsing /api/services: %w", unmarshalErr)
-	}
-	if degErr := degeneracy.Check("/api/services", &domains); degErr != nil {
-		return nil, degErr
-	}
-	// A live Home Assistant always registers services, so an empty list is not
-	// the answer "no such service" — it is the absence of an answer, and
-	// reporting it as the former would refuse calls that work (H-7). The
-	// caller warns and proceeds unverified.
-	if len(domains) == 0 {
-		return nil, errors.New("/api/services returned no domains")
 	}
 	for _, d := range domains {
 		if d.Domain != domain {

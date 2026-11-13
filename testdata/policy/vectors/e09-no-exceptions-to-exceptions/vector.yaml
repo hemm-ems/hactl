@@ -1,0 +1,5 @@
+clause: "D-52: no exceptions to exceptions — an allow on a child cannot reopen what a deny on the parent closed"
+cases:
+  - {resource: "entity:lock.front_door/attr/battery_level", verb: read, allowed: false, rule: 'deny "entity:lock.*" [read]', line: 10, profile: agent}
+  - {resource: "entity:lock.front_door", verb: read, allowed: false, rule: 'deny "entity:lock.*" [read]', line: 10, profile: agent}
+  - {resource: "entity:light.kitchen/attr/brightness", verb: read, allowed: true, rule: 'allow "entity:*" [read]', line: 7, profile: agent}

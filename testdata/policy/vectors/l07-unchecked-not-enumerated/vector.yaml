@@ -1,0 +1,25 @@
+{
+  "clause": "Lint: a kind the inventory does not enumerate is Unchecked with reason `not enumerated`, in Kinds() order, and never reported clean or no-match",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "light.kitchen"
+      ]
+    },
+    "findings": [],
+    "unchecked": [
+      {
+        "kind": "template",
+        "reason": "not enumerated"
+      },
+      {
+        "kind": "config_entry",
+        "reason": "not enumerated"
+      },
+      {
+        "kind": "file",
+        "reason": "not enumerated"
+      }
+    ]
+  }
+}

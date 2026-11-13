@@ -1,0 +1,20 @@
+{
+  "clause": "D-60: an unknown sub-resource word (misspelt, belonging to another kind, or not lowercase) is a broken file, not a rule that matches nothing",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "attrs"
+        ]
+      },
+      {
+        "line": 8
+      },
+      {
+        "line": 9
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

@@ -1,0 +1,6 @@
+version: 1
+active: open
+profiles:
+  open:
+    deny:
+      "entity:*/registry/entity_id": [edit]

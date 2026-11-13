@@ -1,0 +1,7 @@
+clause: "D-52 clause 1: a profile that declares `default: deny` denies what no rule matched"
+view: {exists: true, selected_by: active, active: agent, allow_all: false, default: deny, profiles: [agent]}
+cases:
+  - {resource: "entity:sensor.temp", verb: read, allowed: true, rule: 'allow "entity:sensor.*" [read]', line: 7, profile: agent}
+  - {resource: "entity:light.kitchen", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "entity:sensor.temp", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}
+  - {resource: "automation:pg_heating", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}
