@@ -337,10 +337,12 @@ action:
 }
 
 // ---------------------------------------------------------------------------
-// E-5 for auto apply: a different id: is a rename; no id: is refused.
+// E-5 for auto apply under D-130: a file whose id: differs (a rename) or is
+// missing never reaches the policy — it is refused before the plan, with or
+// without a profile, and HA keeps the automation as it was.
 // ---------------------------------------------------------------------------
 
-func TestE2EPolicyAutoApplyRenameNeedsCreateCLI(t *testing.T) {
+func TestE2EPolicyAutoApplyForeignIDRefusedBeforeThePlanCLI(t *testing.T) {
 	const (
 		id      = "pg_policy_ap"
 		renamed = "pg_policy_ap_renamed"
@@ -370,49 +372,45 @@ func TestE2EPolicyAutoApplyRenameNeedsCreateCLI(t *testing.T) {
 		return cfg.Alias
 	}
 
-	policy := pgE2EPolicy(fmt.Sprintf("    deny:\n      \"automation:%s\": [create]\n", renamed))
-	dir := policyE2EDir(t, policy)
-
+	// Under a profile that would even allow the rename (allow-all), and under
+	// one that denies creating the new id: the same D-130 refusal, so the
+	// verdict does not depend on the policy.
+	profiles := map[string]string{
+		"allow-all":   openE2EPolicy,
+		"deny new id": pgE2EPolicy(fmt.Sprintf("    deny:\n      \"automation:%s\": [create]\n", renamed)),
+	}
 	renamedFile := writeTempYAML(t, "renamed.yaml", body("id: "+renamed+"\n", "PG Policy Apply Renamed"))
-	assertE2ERefused(t, dir, []string{"auto", "apply", id, "-f", renamedFile}, e2eDenied{
-		Resource: "automation:" + renamed, Verb: "create",
-		Rule: fmt.Sprintf(`deny "automation:%s" [create]`, renamed),
-		Line: policyLineOfE2E(t, policy, `"automation:`+renamed+`"`),
-	})
-	if got := aliasInHA(); got != "PG Policy Apply" {
-		t.Errorf("refused apply changed %s's alias to %q", id, got)
-	}
-	if _, err := haAutomationConfig(ctx, renamed); err == nil {
-		t.Errorf("refused apply created automation %s", renamed)
-	}
-
-	// No id: at all — the write's identity is not pinned, so it is refused
-	// while a profile is in effect (D-78), fail-closed: no rule decided it.
 	idless := writeTempYAML(t, "idless.yaml", body("", "PG Policy Apply Idless"))
-	for _, confirm := range []bool{false, true} {
-		args := []string{"auto", "apply", id, "-f", idless, "--json"}
-		if confirm {
-			args = append(args, "--confirm")
+	for name, policy := range profiles {
+		dir := policyE2EDir(t, policy)
+		for _, tc := range []struct {
+			file, want string
+		}{
+			{renamedFile, fmt.Sprintf(`has id %q, not the config id of the automation it would replace`, renamed)},
+			{idless, `has no id, not the config id of the automation it would replace`},
+		} {
+			for _, confirm := range []bool{false, true} {
+				args := []string{"auto", "apply", id, "-f", tc.file}
+				if confirm {
+					args = append(args, "--confirm")
+				}
+				out, errOut, code := runPolicyE2E(t, dir, nil, args...)
+				if code != 1 || !strings.Contains(errOut, tc.want) {
+					t.Errorf("%s: hactl %v: exit %d, want 1 with %q on stderr\nstdout: %s\nstderr: %s", name, args, code, tc.want, out, errOut)
+				}
+			}
 		}
-		out, _, code := runPolicyE2E(t, dir, nil, args...)
-		if code != 1 {
-			t.Errorf("hactl %v: exit %d, want 1 — an apply with no id: is refused under a profile\n%s", args, code, out)
-			continue
+		if got := aliasInHA(); got != "PG Policy Apply" {
+			t.Errorf("%s: a refused apply changed %s's alias to %q", name, id, got)
 		}
-		r := decodeE2ERefusal(t, fmt.Sprintf("hactl %v", args), out, !confirm)
-		if !slices.ContainsFunc(r.Details.Policy.Denied, func(d e2eDenied) bool {
-			return strings.HasPrefix(d.Rule, "fail-closed: ") && d.Line == 0
-		}) {
-			t.Errorf("hactl %v: no fail-closed denial in %+v", args, r.Details.Policy.Denied)
+		if _, err := haAutomationConfig(ctx, renamed); err == nil {
+			t.Errorf("%s: a refused apply created automation %s", name, renamed)
 		}
-	}
-	if got := aliasInHA(); got != "PG Policy Apply" {
-		t.Errorf("refused id-less apply changed %s's alias to %q", id, got)
 	}
 
-	// The same id: under the same profile is a plain edit, allowed.
+	// The same id: under the deny profile is a plain edit, allowed.
 	same := writeTempYAML(t, "same.yaml", body("id: "+id+"\n", "PG Policy Apply Edited"))
-	assertE2EAllowed(t, dir, "auto", "apply", id, "-f", same)
+	assertE2EAllowed(t, policyE2EDir(t, profiles["deny new id"]), "auto", "apply", id, "-f", same)
 	if got := aliasInHA(); got != "PG Policy Apply Edited" {
 		t.Errorf("allowed apply: alias in HA is %q, want PG Policy Apply Edited", got)
 	}
