@@ -377,7 +377,10 @@ ws energy/get_prefs = proven: TestEveryReadRowIsEnforced
 # system:reload/{domain} for <domain>.reload (D-73). The query
 # (?return_response=true) does not make it a read. Callers: svc call, script
 # run (script.turn_on), script apply (script.reload) — hactl's own service
-# calls are checked like any (D-73).
+# calls are checked like any (D-73). Its answer is shown, never written back,
+# so it is filtered like a read in every command (D-182): each changed state
+# by read entity:{e} (dropped) and its state and attributes (masked), each
+# service_response entry keyed by an entity id by read entity:{e} (dropped).
 rest POST /api/services/{domain}/{service} = proven: TestEveryWriteRequestHasAMapping
 
 # map: delete config_entry:{entry_id} + delete entity:{e} and device:{d} for

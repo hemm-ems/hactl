@@ -187,6 +187,14 @@ func (s *Session) checkRead(req reqmap.Request, res reqmap.Result) error {
 	return s.refuseRead(ref)
 }
 
+// CheckCachedRead decides what a read command shows from hactl's own cache
+// instead of asking Home Assistant: no request carries it past the request
+// layer, so the command asks here, under the same read rules, and a denial
+// is refused like any read (D-155). Reads are not audited (D-146).
+func (s *Session) CheckCachedRead(checks []reqmap.Check) error {
+	return s.checkRead(reqmap.Request{Transport: "cache", Method: "GET", Path: "ids.json"}, reqmap.Result{Checks: checks})
+}
+
 // refuseRead records a refused read. It is not the invocation's refusal (a
 // write's is, H-29): a command that reported it fails with it, and one that
 // carried on past it showed less, which the trailer counts.
@@ -208,8 +216,17 @@ func (s *Session) refuseRead(ref *DeniedError) error {
 
 // Filter implements reqgate.Gate: the answer to a read, filtered (D-138).
 func (s *Session) Filter(ctx context.Context, req reqmap.Request, resp []byte) ([]byte, error) {
-	if isOwn(ctx) || s.writeCommand {
-		return resp, nil // the session's own question, or a write's own read (D-82)
+	if isOwn(ctx) {
+		return resp, nil // the session's own question
+	}
+	// A write's answer that a command only prints (D-182) is filtered like
+	// a read's, in every command: nothing writes it back, so what it shows
+	// follows the read rules while the write it answers already happened.
+	if spec := reqmap.AnswerFilter(req); spec.Kind != reqmap.FilterNone {
+		return s.filterShownAnswer(ctx, spec, resp), nil
+	}
+	if s.writeCommand {
+		return resp, nil // a write's own read (D-82)
 	}
 	// A read's mapping needs no fact (the row and the request decide it), so
 	// the answer is classified without asking anything: a write's answer is
@@ -234,6 +251,83 @@ func (s *Session) Filter(ctx context.Context, req reqmap.Request, resp []byte) (
 	}
 	s.countKeys(f.hiddenKeys, f.anon, f.maskedKeys)
 	return out, nil
+}
+
+// filterShownAnswer filters the answer to a write that a command prints
+// (D-182). It never fails: the write it answers has happened, and an error
+// here would report a completed write as failed. An answer the filter cannot
+// read is withheld instead — replaced by an empty answer of its shape and
+// counted as one hidden row — never shown unchecked (D-141).
+func (s *Session) filterShownAnswer(ctx context.Context, spec reqmap.ReadFilter, resp []byte) []byte {
+	f := &answerFilter{s: s, ctx: ctx, spec: spec}
+	out, err := f.apply(resp)
+	if err != nil {
+		s.countKeys(nil, 1, nil)
+		return withheldAnswer(resp)
+	}
+	s.countKeys(f.hiddenKeys, f.anon, f.maskedKeys)
+	return out
+}
+
+// withheldAnswer is the empty answer of resp's shape: `{}` for an object,
+// `[]` for anything else.
+func withheldAnswer(resp []byte) []byte {
+	if t := bytes.TrimSpace(resp); len(t) > 0 && t[0] == '{' {
+		return []byte("{}")
+	}
+	return []byte("[]")
+}
+
+// serviceCall filters the answer to a service call (D-182): the list of
+// states Home Assistant reports changed during the call, or — asked with
+// return_response — an object holding that list as `changed_states` beside
+// the service's `service_response`. A changed state is filtered as a state
+// row; a `service_response` entry keyed by an entity id (an entity service
+// answers per entity) is dropped when `read entity:<e>` is denied. Any other
+// key is the service's own and passes as it is.
+func (f *answerFilter) serviceCall(resp []byte) ([]byte, error) {
+	if t := bytes.TrimSpace(resp); len(t) > 0 && t[0] == '[' {
+		return f.list(resp, "", f.stateRow)
+	}
+	return f.object(resp, func(o map[string]json.RawMessage) (bool, error) {
+		if err := f.listField(o, "changed_states", f.stateRow); err != nil {
+			return false, err
+		}
+		raw, ok := o["service_response"]
+		if !ok || isNull(raw) {
+			return true, nil
+		}
+		t := bytes.TrimSpace(raw)
+		if len(t) == 0 || t[0] != '{' {
+			return true, nil
+		}
+		var byKey map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &byKey); err != nil {
+			return false, fmt.Errorf("service_response is not an object: %w", err)
+		}
+		dropped := 0
+		for key := range byKey {
+			if _, err := policy.ParseResource("entity:" + key); err != nil || !strings.Contains(key, ".") {
+				continue // not an entity id: the service's own key
+			}
+			f.keyed = false
+			if !f.keep(policy.KindEntity, key, "") {
+				delete(byKey, key)
+				f.hidden++
+				dropped++
+			}
+		}
+		if dropped == 0 {
+			return true, nil
+		}
+		f.dirty = true
+		b, err := marshal(byKey)
+		if err != nil {
+			return false, err
+		}
+		o["service_response"] = b
+		return true, nil
+	})
 }
 
 // answerFilter filters one answer, counting what it drops and masks.
@@ -347,6 +441,8 @@ func (f *answerFilter) apply(resp []byte) ([]byte, error) {
 		})
 	case reqmap.FilterHelper:
 		return f.object(resp, f.helper)
+	case reqmap.FilterServiceCall:
+		return f.serviceCall(resp)
 	}
 	return nil, fmt.Errorf("no filter for answers of kind %q", f.spec.Kind)
 }

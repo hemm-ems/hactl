@@ -75,6 +75,7 @@ internal/policy/enforce/readfilter.go:(*answerFilter).list = proven: TestReadFil
 internal/policy/enforce/readfilter.go:(*answerFilter).listField = proven: TestReadFilterRefusesAnAnswerItCannotRead
 internal/policy/enforce/readfilter.go:(*answerFilter).object = proven: TestReadFilterRefusesAnAnswerItCannotRead
 internal/policy/enforce/readfilter.go:(*answerFilter).refHits = proven: TestReadFilterRefusesAnAnswerItCannotRead
+internal/policy/enforce/readfilter.go:(*answerFilter).serviceCall = proven: TestAShownAnswerFilterNeverFailsTheWrite
 internal/policy/enforce/readfilter.go:(*answerFilter).serviceDomain = proven: TestReadFilterRefusesAnAnswerItCannotRead
 internal/policy/enforce/readfilter.go:(*answerFilter).statistics = proven: TestReadFilterRefusesAnAnswerItCannotRead
 internal/policy/enforce/readfilter.go:decodeRow = proven: TestReadFilterRefusesAnAnswerItCannotRead

@@ -21,6 +21,10 @@ type row struct {
 	disp      Disposition
 	mapFn     mapper
 	why       string // Exempt rows: why no resource applies
+	// answer is how a Write row's answer is filtered for display (D-182): an
+	// answer the command only prints, never writes back. FilterNone for every
+	// other row.
+	answer ReadFilter
 }
 
 // mutating is the row's own answer to "can this change anything".
@@ -43,6 +47,13 @@ func restRow(method, tmpl string, disp Disposition, fn mapper) *row {
 
 func compRow(method, route string, disp Disposition, fn mapper) *row {
 	return &row{key: "companion " + method + " " + route, transport: Companion, method: method, tmpl: splitPath(route), disp: disp, mapFn: fn}
+}
+
+// shownAnswer marks a Write row whose answer a command prints and never
+// writes back: it is filtered like a read's (D-182).
+func shownAnswer(r *row, kind FilterKind) *row {
+	r.answer = ReadFilter{Kind: kind}
+	return r
 }
 
 func exempt(r *row, why string) *row {
@@ -100,7 +111,7 @@ var (
 	}
 
 	restRows = []*row{
-		restRow("POST", "/api/services/{domain}/{service}", Write, mapServiceCall),
+		shownAnswer(restRow("POST", "/api/services/{domain}/{service}", Write, mapServiceCall), FilterServiceCall),
 		restRow("DELETE", "/api/config/config_entries/entry/{entry_id}", Write, mapConfigEntryDelete),
 		restRow("POST", "/api/config/config_entries/options/flow", Write, mapOptionsFlowStart),
 		restRow("POST", "/api/config/config_entries/options/flow/{flow_id}", Write, mapOptionsFlowStep),
