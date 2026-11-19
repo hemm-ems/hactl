@@ -90,6 +90,13 @@ const (
 	// FilterHelper — companion GET /v1/config/helper: the address is in the
 	// answer; `read helper:<domain>/<id>/config` refuses it.
 	FilterHelper FilterKind = "helper"
+	// FilterServiceCall — the answer to a service call (POST
+	// /api/services/<d>/<s>), a write's answer (D-182): the states Home
+	// Assistant reports changed during the call, filtered as FilterStates —
+	// a list, or `changed_states` beside `service_response` with
+	// ?return_response; each `service_response` entry keyed by an entity id
+	// is dropped by `read entity:<e>`.
+	FilterServiceCall FilterKind = "service_call"
 )
 
 // ReadFilter is a read's answer handling: its shape and the request facts the
@@ -323,4 +330,38 @@ func readRefHits(rows string) mapper {
 	return func(*call) (mapping, error) {
 		return mapping{filter: ReadFilter{Kind: FilterRefHits, Rows: rows}}, nil
 	}
+}
+
+// AnswerFilter is how the answer to a Write request is filtered before a
+// command decodes it (D-182): the filter of a row whose answer a command only
+// prints — never writes back — or FilterNone. It needs no fact: the row alone
+// decides it, so the session does not map the write a second time.
+func AnswerFilter(req Request) ReadFilter {
+	var rows []*row
+	switch req.Transport {
+	case REST:
+		rows = restRows
+	case Companion:
+		rows = companionRows
+	default:
+		return ReadFilter{}
+	}
+	rawPath, _, _ := strings.Cut(req.Path, "?")
+	segs, err := checkWholePath(rawPath)
+	if err != nil {
+		return ReadFilter{}
+	}
+	method := upper(req.Method)
+	for _, r := range rows {
+		if r.method != method {
+			continue
+		}
+		if _, ok := r.matchStrict(segs); ok {
+			if r.disp != Write {
+				return ReadFilter{}
+			}
+			return r.answer
+		}
+	}
+	return ReadFilter{}
 }

@@ -500,8 +500,9 @@ stderr. A few things worth knowing:
 - **Wide reads are filtered per hit.** `grep` and `ref scan` drop a hit in a
   file you may not read, or in an automation, script or template entity whose
   config you may not read; `log` needs `read` on `system:logs` as a whole, and a
-  logbook row needs `read` on its entity. Raw file contents (`config file`) are
-  checked as the file, not redacted.
+  logbook row needs `read` on its entity. `log show` of an id from an
+  earlier `log` needs `read` on `system:logs` too. Raw file contents
+  (`config file`) are checked as the file, not redacted.
 - **`tpl eval` needs `system:template`.** A template can read any state, so
   while your profile denies any read, `tpl eval` needs
   `"system:template": [read]` allowed explicitly.
@@ -511,6 +512,22 @@ stderr. A few things worth knowing:
   something without `read` — the write works, and its preview may show what
   it changes — while every read command still hides it. Saving a dashboard
   without a view you may not read (which would delete it) is refused.
+- **What a write prints about other things is filtered where it can be.**
+  `svc call --confirm` lists only the changed entities you may read, and
+  `svc call --return` leaves out the response for an entity you may not read;
+  the trailer counts them. What a write command prints about the thing it
+  changes is not filtered: its name and current values, the diff `auto apply`
+  and `script apply` show, the files and views `ref replace`, `ent rename` and
+  `dash replace` would rewrite (other automations' files among them), and the
+  current options a `config options` form offers. Nor is a refusal's
+  explanation, which can name an entity's area and labels.
+- **Whether something exists can show through.** `helper show` and
+  `helper cat` refuse a helper you may not read but say `not found` for one
+  that does not exist, and `config block` does the same for a block addressed
+  by its alias or position. A write command's preview says `not found` for a
+  missing target and shows its plan — allowed or refused — for an existing
+  one, whatever you may read. A listing says how many things it left out.
+  None of these shows what the thing holds.
 
 **Over MCP**, `hactl mcp` without `--allow-writes` still refuses every write
 first; with `--allow-writes`, the policy decides each one as on the command

@@ -19,6 +19,8 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 	"github.com/hemm-ems/hactl/pkg/ids"
 )
 
@@ -223,6 +225,15 @@ func runLogShow(_ context.Context, w io.Writer, logID string) error {
 		return fmt.Errorf("invalid log ID: %s (expected log:<hash>)", logID)
 	}
 
+	// The entry is printed from cache/ids.json, not asked of Home Assistant,
+	// so no request filters it: an id an earlier run minted — the owner's, or
+	// one under a wider profile — would print under a profile that may not
+	// read the log. It is the log's text, so it needs `read system:logs`,
+	// like `log` itself (D-142, D-182).
+	if err := checkCachedLogRead(); err != nil {
+		return err
+	}
+
 	idsPath := filepath.Join(cfg.Dir, "cache", "ids.json")
 	reg := ids.NewRegistry(idsPath)
 	if loadErr := reg.Load(); loadErr != nil {
@@ -397,4 +408,17 @@ func applyLogSince(entries []analyze.LogEntry, sinceSet bool) ([]analyze.LogEntr
 		return nil, err
 	}
 	return analyze.FilterSince(entries, time.Now().Add(-d)), nil
+}
+
+// checkCachedLogRead decides `read system:logs` for a log entry served from
+// the local id cache; nil while no profile is in effect (D-58).
+func checkCachedLogRead() error {
+	if policySession == nil {
+		return nil
+	}
+	r, err := policy.ParseResource("system:logs")
+	if err != nil {
+		return err
+	}
+	return policySession.CheckCachedRead([]reqmap.Check{{Verb: policy.Read, Resource: r}})
 }
