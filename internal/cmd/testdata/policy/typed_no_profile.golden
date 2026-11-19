@@ -44,90 +44,36 @@ PUT /v1/config/automation?dry_run=false&id=heating
 validate_config ×1
 == auto apply rename
 -- stdout
-diff:
--id: heating
-+id: heating_v2
- alias: Heating
- triggers: []
- actions: []
-dry-run: would apply automation
-  automation:    heating
-  config_id:     heating
-  validation:    ok (HA validate_config)
-  changed_lines: 2
-use --confirm to apply
 -- error
-<nil>
+file <dir>/auto_rename.yaml has id "heating_v2", not the config id of the automation it would replace ("heating"): writing it would replace heating with a different automation. To give the automation a new config id, run `hactl auto create -f <dir>/auto_rename.yaml`, then `hactl auto delete heating`; to rename its entity, run `hactl ent rename`
 -- http
 GET /api/states
 GET /v1/config/automation?id=heating
-PUT /v1/config/automation?dry_run=true&id=heating
 -- ws
-validate_config ×1
 == auto apply rename --confirm
 -- stdout
-diff:
--id: heating
-+id: heating_v2
- alias: Heating
- triggers: []
- actions: []
-
-validation: ok (HA validate_config)
-applied: heating
-backup:  <dir>/backups/<stamp>_heating.yaml
-reload:  ok
 -- error
-<nil>
+file <dir>/auto_rename.yaml has id "heating_v2", not the config id of the automation it would replace ("heating"): writing it would replace heating with a different automation. To give the automation a new config id, run `hactl auto create -f <dir>/auto_rename.yaml`, then `hactl auto delete heating`; to rename its entity, run `hactl ent rename`
 -- http
 GET /api/states
 GET /v1/config/automation?id=heating
-GET /v1/config/automation?id=heating
-PUT /v1/config/automation?dry_run=false&id=heating
 -- ws
-validate_config ×1
 == auto apply without id
 -- stdout
-diff:
--id: heating
- alias: Heating
- triggers: []
- actions: []
-dry-run: would apply automation
-  automation:    heating
-  config_id:     heating
-  validation:    ok (HA validate_config)
-  changed_lines: 1
-use --confirm to apply
 -- error
-<nil>
+file <dir>/auto_noid.yaml has no id, not the config id of the automation it would replace ("heating"): writing it would replace heating with a different automation. To give the automation a new config id, run `hactl auto create -f <dir>/auto_noid.yaml`, then `hactl auto delete heating`; to rename its entity, run `hactl ent rename`
 -- http
 GET /api/states
 GET /v1/config/automation?id=heating
-PUT /v1/config/automation?dry_run=true&id=heating
 -- ws
-validate_config ×1
 == auto apply without id --confirm
 -- stdout
-diff:
--id: heating
- alias: Heating
- triggers: []
- actions: []
-
-validation: ok (HA validate_config)
-applied: heating
-backup:  <dir>/backups/<stamp>_heating.yaml
-reload:  ok
 -- error
-<nil>
+file <dir>/auto_noid.yaml has no id, not the config id of the automation it would replace ("heating"): writing it would replace heating with a different automation. To give the automation a new config id, run `hactl auto create -f <dir>/auto_noid.yaml`, then `hactl auto delete heating`; to rename its entity, run `hactl ent rename`
 -- http
 GET /api/states
 GET /v1/config/automation?id=heating
-GET /v1/config/automation?id=heating
-PUT /v1/config/automation?dry_run=false&id=heating
 -- ws
-validate_config ×1
 == auto create
 -- stdout
 dry-run: would create automation
@@ -146,7 +92,6 @@ validate_config ×1
 validation: ok (HA validate_config)
 created automation "hall"
 entity_id: automation.hall
-note: live entity_id (automation.hall) differs from config id (hall) — HA derives entity_id from alias, not id
 -- error
 <nil>
 -- http

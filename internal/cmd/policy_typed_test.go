@@ -17,15 +17,6 @@ import (
 // create, delete and rollback — refused before the first write, the same in
 // the preview and under --confirm, naming the rule.
 
-// typedRollbackRename restores a backup whose own id is not the automation it
-// is filed under (a hidden rename, E-5): it is the newest backup of heating.
-var typedRollbackRename = typedCommand{"auto rollback rename", []string{"auto", "rollback", "heating"}}
-
-func writeRenameBackup(t *testing.T, r *typedRig) {
-	t.Helper()
-	r.write(t, "backups/2026-11-01T10-00-00.000000_heating.yaml", typedFiles["backup_rename.yaml"])
-}
-
 // typedPolicy is a one-rule deny profile: the rule is on line 6.
 func typedPolicy(pattern, verb string) string {
 	return fmt.Sprintf("version: 1\nactive: agent\nprofiles:\n  agent:\n    deny:\n      %q: [%s]\n", pattern, verb)
@@ -108,26 +99,14 @@ func runTypedRefusal(t *testing.T, tc typedRefusal) {
 	}
 }
 
-// TestAutoApplyRefusedByItsPlan: edit on the target's config; + create on the
-// file's id when it differs (E-5, D-78) — a deny on the new id stops the
-// rename; a file without an id is refused under any profile (R-6).
+// TestAutoApplyRefusedByItsPlan: edit on the target's config. A file whose
+// `id:` differs or is missing never reaches the plan: D-130 refuses it with or
+// without a policy (the identity tests and the no-profile golden hold that).
 func TestAutoApplyRefusedByItsPlan(t *testing.T) {
-	for _, tc := range []typedRefusal{
-		{
-			cmd: typedCommands[0], policy: typedPolicy("automation:heating/config", "edit"), action: "apply automation", checks: 1,
-			denied: []string{`edit automation:heating/config — deny "automation:heating/config" [edit] (line 6)`},
-		},
-		{
-			cmd: typedCommands[1], policy: typedPolicy("automation:heating_v*", "create"), action: "apply automation", checks: 2,
-			denied: []string{`create automation:heating_v2 — deny "automation:heating_v*" [create] (line 6)`},
-		},
-		{
-			cmd: typedCommands[2], policy: policyAllowEverything, action: "apply automation", checks: 2,
-			denied: []string{"create automation:(no id) — fail-closed: automation without a config id"},
-		},
-	} {
-		t.Run(tc.cmd.name, func(t *testing.T) { runTypedRefusal(t, tc) })
-	}
+	runTypedRefusal(t, typedRefusal{
+		cmd: typedCommands[0], policy: typedPolicy("automation:heating/config", "edit"), action: "apply automation", checks: 1,
+		denied: []string{`edit automation:heating/config — deny "automation:heating/config" [edit] (line 6)`},
+	})
 }
 
 // TestAutoCreateRefusedByItsPlan: create on the id the file declares.
@@ -161,21 +140,13 @@ func TestAutoDeleteRefusedByItsPlan(t *testing.T) {
 }
 
 // TestAutoRollbackRefusedByItsPlan: edit on the automation the backup
-// restores; + create on the backup's own id when it differs (E-5).
+// restores. A backup whose own `id:` differs is refused before the plan, with
+// or without a policy (D-130).
 func TestAutoRollbackRefusedByItsPlan(t *testing.T) {
-	for _, tc := range []typedRefusal{
-		{
-			cmd: typedCommands[6], policy: typedPolicy("automation:heating", "edit"), action: "roll back automation", checks: 1,
-			denied: []string{`edit automation:heating/config — deny "automation:heating" [edit] (line 6)`},
-		},
-		{
-			cmd: typedRollbackRename, setup: writeRenameBackup, policy: typedPolicy("automation:heating_old", "create"),
-			action: "roll back automation", checks: 2,
-			denied: []string{`create automation:heating_old — deny "automation:heating_old" [create] (line 6)`},
-		},
-	} {
-		t.Run(tc.cmd.name, func(t *testing.T) { runTypedRefusal(t, tc) })
-	}
+	runTypedRefusal(t, typedRefusal{
+		cmd: typedCommands[6], policy: typedPolicy("automation:heating", "edit"), action: "roll back automation", checks: 1,
+		denied: []string{`edit automation:heating/config — deny "automation:heating" [edit] (line 6)`},
+	})
 }
 
 // TestRollbackRefusedByItsPlan: the deprecated alias checks what auto
@@ -273,7 +244,7 @@ func TestHelperDeleteRefusedByItsPlan(t *testing.T) {
 
 // typedChecked is each allowed command's plan size under allow-all.
 var typedChecked = map[string]int{
-	"auto apply": 1, "auto apply rename": 2, "auto create": 1, "auto delete": 2,
+	"auto apply": 1, "auto create": 1, "auto delete": 2,
 	"auto rollback": 1, "rollback": 1, "script apply": 2, "script create": 1, "script delete": 2,
 	"tpl create": 1, "tpl create block": 3, "tpl delete": 2, "helper create": 1, "helper delete": 2,
 }
@@ -343,13 +314,12 @@ func TestHelperDeleteNamesTheCheckedDomain(t *testing.T) {
 // The R-12 registration: each allowed typed --confirm run, on the family's rig,
 // under allow-all — its request-layer verdicts must be a subset of its plan.
 func init() {
-	cases := make([]typedCommand, 0, len(typedCommands)+1)
+	cases := make([]typedCommand, 0, len(typedCommands))
 	for _, c := range typedCommands {
 		if _, ok := typedChecked[c.name]; ok {
 			cases = append(cases, c)
 		}
 	}
-	cases = append(cases, typedRollbackRename)
 	for _, c := range cases {
 		confirmedCoverageCases = append(confirmedCoverageCases, confirmedCoverageCase{
 			name: c.name,
@@ -357,9 +327,6 @@ func init() {
 				t.Helper()
 				t.Setenv("HACTL_MANUAL_MODE", "off")
 				r := newTypedRig(t)
-				if c.name == typedRollbackRename.name {
-					writeRenameBackup(t, r)
-				}
 				return r.ts.dir, c.argsIn(t, r, "--confirm")
 			},
 		})
