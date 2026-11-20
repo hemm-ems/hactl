@@ -619,7 +619,8 @@ func TestWriter_Rollback(t *testing.T) {
 	backupDir := t.TempDir()
 	// Create a backup file
 	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
-	backupYAML := `alias: Backup Version
+	backupYAML := `id: test_auto
+alias: Backup Version
 trigger: []
 condition: []
 action: []
@@ -646,7 +647,7 @@ func TestWriter_Rollback_EmptyID(t *testing.T) {
 
 	backupDir := t.TempDir()
 	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_mystery_auto.yaml")
-	if err := os.WriteFile(backupFile, []byte("alias: Mystery\n"), 0o600); err != nil {
+	if err := os.WriteFile(backupFile, []byte("id: mystery_auto\nalias: Mystery\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -796,7 +797,7 @@ func TestWriter_Rollback_ReportsAFailedReload(t *testing.T) {
 
 	backupDir := t.TempDir()
 	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
-	if err := os.WriteFile(backupFile, []byte("alias: Backup Version\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(backupFile, []byte("id: test_auto\nalias: Backup Version\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

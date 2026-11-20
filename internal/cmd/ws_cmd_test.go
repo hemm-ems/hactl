@@ -1916,7 +1916,7 @@ func TestRunRollback_WithBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
-	if err := os.WriteFile(backupFile, []byte("alias: Backup\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(backupFile, []byte("id: test_auto\nalias: Backup\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1934,7 +1934,7 @@ func TestRunRollback_WithBackup(t *testing.T) {
 	}
 	// An undo restores what was taken: the backup's own bytes go back, not a
 	// re-serialization of them.
-	if want := "alias: Backup\ntrigger: []\ncondition: []\naction: []\n"; *written != want {
+	if want := "id: test_auto\nalias: Backup\ntrigger: []\ncondition: []\naction: []\n"; *written != want {
 		t.Errorf("rollback wrote %q, want the backup file verbatim %q", *written, want)
 	}
 }
@@ -1954,7 +1954,7 @@ func TestRunRollback_DryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupFile := filepath.Join(backupDir, "2026-01-01T09-00-00_test_auto.yaml")
-	if err := os.WriteFile(backupFile, []byte("alias: Backup\n"), 0o600); err != nil {
+	if err := os.WriteFile(backupFile, []byte("id: test_auto\nalias: Backup\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3867,7 +3867,7 @@ func TestRunAutoApply_DryRun(t *testing.T) {
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "test_auto.yaml")
-	if err := os.WriteFile(localFile, []byte("alias: Updated\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(localFile, []byte("id: test_auto\nalias: Updated\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3894,13 +3894,13 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 	// catch. The reload is the companion's now — it reloads the domain as part
 	// of the same route and reports what happened, so a second reload call from
 	// hactl would be a second opinion nobody asked for.
-	handlers, written := withCompanionEntry(t, "alias: Old\ntrigger: []\ncondition: []\naction: []\n")
+	handlers, written := withCompanionEntry(t, "id: the_auto\nalias: Old\ntrigger: []\ncondition: []\naction: []\n")
 	ts := startCmdServer(t, map[string]any{}, handlers)
 	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
 	localFile := filepath.Join(ts.dir, "the_auto.yaml")
-	if err := os.WriteFile(localFile, []byte("alias: New\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(localFile, []byte("id: the_auto\nalias: New\ntrigger: []\ncondition: []\naction: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3922,7 +3922,7 @@ func TestRunAutoApply_Confirm(t *testing.T) {
 	if pushed == "" {
 		t.Fatal("confirmed apply never wrote the automation entry")
 	}
-	if want := "alias: New\ntrigger: []\ncondition: []\naction: []\n"; pushed != want {
+	if want := "id: the_auto\nalias: New\ntrigger: []\ncondition: []\naction: []\n"; pushed != want {
 		t.Errorf("wrote %q, want the local file verbatim %q", pushed, want)
 	}
 

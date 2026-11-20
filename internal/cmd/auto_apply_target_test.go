@@ -31,8 +31,10 @@ func autoApplyRig(t *testing.T) (localFile string) {
 	pointAtCompanion(t, ts)
 	withFlagDir(t, ts.dir)
 
+	// The candidate carries the target's config id, as `auto cat` prints it:
+	// a file of another identity is refused before any of this (D-130).
 	localFile = filepath.Join(ts.dir, "new.yaml")
-	if err := os.WriteFile(localFile, []byte("alias: Climate Schedule\ntrigger: []\ncondition: []\naction:\n  - delay: '00:00:05'\n"), 0o600); err != nil {
+	if err := os.WriteFile(localFile, []byte("id: '1712345678901'\nalias: Climate Schedule\ntrigger: []\ncondition: []\naction:\n  - delay: '00:00:05'\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return localFile

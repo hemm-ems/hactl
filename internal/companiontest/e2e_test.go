@@ -673,6 +673,12 @@ action:
 	if strings.Contains(out, "warning:") {
 		t.Errorf("did not expect a warning when HA confirms the write, got:\n%s", out)
 	}
+	// B-2 (live test 2026-11-01, F-13): the entity's object id is the config
+	// id here, so the "differs from config id" note must not appear — it used
+	// to compare the full entity_id with the bare id and fire on every create.
+	if strings.Contains(out, "differs from config id") {
+		t.Errorf("automation.e2e_create_test agrees with config id e2e_create_test, yet the result claims they differ:\n%s", out)
+	}
 }
 
 // TestE2EAutoCreateRefusesInvalidCLI verifies that `hactl auto create` runs the

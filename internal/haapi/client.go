@@ -175,9 +175,15 @@ func (c *Client) LookupService(ctx context.Context, domain, service string) (*Se
 
 // ServiceStateChange is one entry of the array POST /api/services answers with:
 // a state Home Assistant attributed to this very call, by context.
+//
+// LastUpdated is HA's own time for that state, as HA writes it (ISO 8601 with
+// an offset). It is the one clock reading a call's answer carries, which is
+// what `script run` times its run by when it reads HA's log afterwards
+// (D-131): the log is stamped on HA's clock, not on the caller's.
 type ServiceStateChange struct {
-	EntityID string `json:"entity_id"`
-	State    string `json:"state"`
+	EntityID    string `json:"entity_id"`
+	State       string `json:"state"`
+	LastUpdated string `json:"last_updated"`
 }
 
 // CallService calls POST /api/services/<domain>/<service> with optional service

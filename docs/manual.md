@@ -230,6 +230,8 @@ hactl auto delete climate_schedule --confirm    # delete via companion + reload
 
 Requires hactl-companion. YAML file format matches HA automation config (id, alias, trigger, condition, action).
 
+A confirmed create prints the automation's live `entity_id`. Home Assistant derives it from the alias, not from `id`, so the two can disagree: when the entity's object id (the part after `automation.`) is not the config id, the result adds `note: live entity_id (automation.<x>) differs from config id (<id>)`. When they agree there is no note.
+
 ### Scripts
 
 ```bash
@@ -246,6 +248,48 @@ hactl script run kino_start --confirm  # execute via script.turn_on
 `state` column: `off` = idle, `on` = currently running. `script cat` prints the
 `scripts.yaml` top-level-key form (`kino_start:` → definition), which is exactly
 what `script apply -f` accepts back.
+
+**What `executed` means.** It is Home Assistant's verdict: HA started the script
+and answered the call with success. HA does not check that the entities a step
+targets exist — a step aimed at a missing entity does nothing, the call still
+succeeds, and the script's trace shows a finished run without an error. The one
+place HA says so is its log, as a warning that does not name the script.
+`script run --confirm` reads that log once, right after the call returns, and
+passes each such line through verbatim:
+
+```
+executed script.pg_core_script
+warning: Home Assistant logged during this run: Referenced entities input_boolean.pg_core_flag_b are missing or not currently available
+```
+
+Under `--json` the same sentence is in `warnings`, and the exit code stays 0 —
+the script did run. If the log cannot be read, the run says `warning: could not
+read Home Assistant's log to check for missing targets: <reason>`; the absence
+of a warning is never taken as proof that nothing was missing. The check has
+limits: it sees only steps that ran before the call returned (anything after a
+`delay` or `wait` runs later — `hactl log --warnings` and the traces in `script
+show` cover those); a matching line another caller caused in the same moment is
+reported too, which is why it says "logged during this run"; and an instance
+whose `logger:` is set above `warning` logs nothing, so there is nothing to
+report. The dry run runs nothing and cannot know.
+
+Home Assistant's log groups these lines. Every missing reference is logged
+from one place, so the log keeps them as one entry with one time — the latest
+— and up to five different sentences, and a repeated sentence does not move
+within it. When that entry holds one sentence, the run passes it through as
+above. When it holds several, the log says that one of them was logged during
+the run but not which, and the run says exactly that, naming them all:
+
+```
+warning: Home Assistant logged during this run one of these lines, and its log does not say which: Referenced entities input_boolean.a are missing or not currently available; Referenced entities input_boolean.b are missing or not currently available
+```
+
+"During this run" is measured on Home Assistant's clock: from HA's own time
+stamp on the script's state in its answer to the call. If that answer carries
+no state of the script, there is no start to measure from, and the run says
+`warning: could not check Home Assistant's log for missing targets: its answer
+to the call carries no state of script.<id> to time the run by` instead of
+guessing.
 
 ### Scripts — create & delete
 
@@ -445,9 +489,17 @@ hactl auto rollback climate_schedule --confirm         # undo specific automatio
 
 ```
 
-**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write.
+**Safety:** `apply` and `rollback` without `--confirm` are always a dry-run and write nothing (no backup files either). The candidate's trigger/condition/action blocks are validated against HA's real config schema (WS `validate_config`) in both dry-run and confirm mode — an invalid config aborts before anything is written. On `--confirm`, a backup of the current config is saved to `backups/` before the write. The result names it (`backup: <path>`; `details.backup` under `--json`), and that is the only place it is reported: nothing about the backup goes to stderr at the default log level.
 
 **What the diff means, and what a write changes.** Both sides of the diff are the YAML text: the stored entry as `auto cat` prints it, and the file you pass. A confirmed apply writes **that file's bytes** into `automations.yaml` and leaves every other entry byte-identical — so key order and formatting are part of the diff, because they are part of what lands. Start from `hactl auto cat <id> > new.yaml` and edit; a hand-written file in a different style diffs as changed, and honestly so. `changed_lines` counts the `+`/`-` lines. If the entry cannot be spliced, the response says `reformatted: true` and the run warns that other entries' formatting may have moved.
+
+**Identity: the file's `id:` must be the target's config id.** A write replaces the target's entry with the file, so a file carrying another `id:` would not edit the automation you named — it would replace it with a different one, under a different config id. `apply` therefore refuses a file whose top-level `id:` differs from the target's config id, is missing, or is not a string (an unquoted number — quote it), and refuses it in the dry run already: exit 1, the error on stderr, empty stdout, nothing validated or written, no diff printed. `hactl auto cat <id> > new.yaml` starts you with the right id. The error names both ids and the deliberate paths:
+
+```
+file new.yaml has id "pg_other", not the config id of the automation it would replace ("pg_target"): writing it would replace pg_target with a different automation. To give the automation a new config id, run `hactl auto create -f new.yaml`, then `hactl auto delete pg_target`; to rename its entity, run `hactl ent rename`
+```
+
+A file without one reads `file new.yaml has no id, not the config id …`; a number reads `file new.yaml has id 1700000000000 (a number — quote it), not the config id …`. `rollback` applies the same rule to the backup it would restore, against the id it would restore it to: `backup <path> has id "pg_other", not the config id of the automation it would restore ("pg_target") …`, with the same paths. Nothing changes for a file whose `id:` matches.
 
 Both commands need **hactl-companion**: they write through its single-entry route. HA's own automation endpoint re-serializes the entire `automations.yaml` on every write, so there is deliberately no fallback — without a companion these two commands refuse rather than reformat the file.
 
