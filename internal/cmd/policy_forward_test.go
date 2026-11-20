@@ -8,9 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
-
-	"github.com/hemm-ems/hactl/internal/manual"
 )
 
 // Service calls past their target (manual "Service calls: reach"; D-106,
@@ -271,7 +268,7 @@ func TestWhereSelectorDecidesAWriteLive(t *testing.T) {
 	if err != nil || !strings.Contains(out, " 2 checked, allowed (profile agent)") {
 		t.Fatalf("a light in the allowed area: %v\n%s", err, out)
 	}
-	recordWitness(stateCacheDir(rig.dir), manual.SessionKey(), "hactl svc call", []string{"light.turn_on"}, time.Now())
+	recordPreview(t, rig.dir, "hactl svc call", []string{"light.turn_on"})
 
 	rig.registry.set(inArea("kueche"))
 	out, err = runPolicyCLI(t, rig.dir, append(args, "--confirm")...)

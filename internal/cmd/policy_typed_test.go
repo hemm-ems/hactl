@@ -72,6 +72,11 @@ func runTypedRefusal(t *testing.T, tc typedRefusal) {
 		if wantErr := fmt.Sprintf("policy_denied: %d of %d resources denied (profile agent)", len(tc.denied), tc.checks); err.Error() != wantErr {
 			t.Errorf("confirm %v: stderr line %q, want %q", confirm, err.Error(), wantErr)
 		}
+		// A confirmed run no preview of which passed says so first (D-215):
+		// the preview was refused. The rest is the preview's report.
+		if confirm {
+			out = strings.Replace(out, "  hint: no preview of this command passed under this policy; ", "  hint: ", 1)
+		}
 		if confirm && out != previewOut {
 			t.Errorf("the confirmed run refused differently from its preview:\n%s\n---\n%s", previewOut, out)
 		}

@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hemm-ems/hactl/internal/manual"
 )
 
 // Enforcement at the CLI entry points: what the audit log's `command` holds,
@@ -100,9 +103,15 @@ func TestMCPConfirmAfterItsDryRun(t *testing.T) {
 	if text, isErr := call("label create Garden"); isErr {
 		t.Fatalf("second dry run: %s", text)
 	}
+	// The dry run over MCP records the policy it passed under (D-215).
+	if !hasPolicyWitness(stateCacheDir(ts.dir), manual.SessionKey(), "hactl label create", []string{"Garden"}, policyIDOf(t, ts.dir), time.Now()) {
+		t.Error("a dry run over MCP recorded no witness of the policy it passed under")
+	}
+	// Under an edited policy that preview no longer counts: the refused
+	// --confirm says no preview passed under this policy (D-215).
 	writePolicyFile(t, ts.dir, policyDenySecretLabel)
 	text, isErr := call("label create Garden --confirm")
-	if !isErr || !strings.Contains(text, "policy_denied") || !strings.Contains(text, "hint: the preview had passed") {
-		t.Errorf("a --confirm refused after its preview passed, over MCP: error %v\n%s", isErr, text)
+	if !isErr || !strings.Contains(text, "policy_denied") || !strings.Contains(text, "hint: no preview of this command passed under this policy") {
+		t.Errorf("a --confirm refused under an edited policy, over MCP: error %v\n%s", isErr, text)
 	}
 }

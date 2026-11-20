@@ -94,9 +94,13 @@ type DeniedError struct {
 	// Written lists what had already been written when the refusal came:
 	// always empty for a plan refusal.
 	Written []string
-	// PreviewPassed is set on a refused --confirm whose preview had passed:
-	// something it depends on changed since (D-80).
+	// PreviewPassed is set on a refused --confirm whose preview had passed
+	// under the same profile and policy file: something it depends on
+	// changed since (D-80, D-215).
 	PreviewPassed bool
+	// PreviewMissing is set on a refused --confirm when no preview of the
+	// command passed under this profile and policy file (D-215).
+	PreviewMissing bool
 	// PlanAllowed is set on a request-layer refusal when the command had
 	// checked and allowed its plan: the plan was one resource short.
 	PlanAllowed bool
@@ -152,9 +156,13 @@ func (r *DeniedError) ExitCode() int { return 1 }
 func (r *DeniedError) PolicyClass() string { return ClassDenied }
 
 // previewPassedHint leads the hint of a refused --confirm whose preview had
-// passed (D-80).
-const previewPassedHint = "the preview had passed, and something it depends on changed since " +
-	"(the policy, an area or label, a service call's reach)"
+// passed under this policy (D-80, D-215).
+const previewPassedHint = "the preview had passed under this policy, and something it depends on changed since " +
+	"(an area or label, a service call's reach)"
+
+// previewMissingHint leads the hint of a refused --confirm no preview of
+// which passed under this policy (D-215).
+const previewMissingHint = "no preview of this command passed under this policy"
 
 // Hint is the refusal's closing line, built from the denials' causes (D-118):
 // whether the preview had passed, the lines of the deny rules that decided,
@@ -166,8 +174,11 @@ func (r *DeniedError) Hint() string {
 		return "hactl's own plan missed this request — a hactl bug to report; do not edit policy.yaml"
 	}
 	var parts []string
-	if r.PreviewPassed {
+	switch {
+	case r.PreviewPassed:
 		parts = append(parts, previewPassedHint)
+	case r.PreviewMissing:
+		parts = append(parts, previewMissingHint)
 	}
 	var lines []int
 	var defaults []Denial

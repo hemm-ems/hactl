@@ -412,7 +412,9 @@ func TestSvcCallReachUnknownIsRefused(t *testing.T) {
 // TestSvcCallConfirmAfterAPassingPreviewSaysSo (D-80, R-18, H-2's parity with a
 // witness present): a preview that passed, then a policy edited before
 // --confirm — the confirmed run is refused with the same rule the preview
-// would now name, says the preview had passed, and sends nothing.
+// would now name, sends nothing, and says no preview passed under this policy
+// (D-215: a preview counts only under the policy it passed under; before
+// D-215 it said the preview had passed).
 func TestSvcCallConfirmAfterAPassingPreviewSaysSo(t *testing.T) {
 	rig := startSvcRig(t, reachOf("light.a"))
 	writePolicyFile(t, rig.dir, policyAllowEverything)
@@ -430,8 +432,8 @@ func TestSvcCallConfirmAfterAPassingPreviewSaysSo(t *testing.T) {
 	if perr.Error() != cerr.Error() {
 		t.Errorf("preview and --confirm name different rules:\n%s\n%s", perr, cerr)
 	}
-	if !strings.Contains(confirmed, "  hint: the preview had passed") || strings.Contains(preview, "the preview had passed") {
-		t.Errorf("the refused --confirm does not say its preview had passed:\n%s", confirmed)
+	if !strings.Contains(confirmed, "  hint: no preview of this command passed under this policy") || strings.Contains(preview, "preview") {
+		t.Errorf("the refused --confirm under an edited policy does not say no preview passed under it:\n%s\n---\n%s", confirmed, preview)
 	}
 	if rig.posted("light/turn_on") != 0 {
 		t.Error("the refused --confirm called the service")

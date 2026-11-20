@@ -43,12 +43,19 @@ func TestDeniedErrorHintAndLine(t *testing.T) {
 					deflt("entity:light.a"), deny("entity:lock.x", 12), deflt("entity:light.b"),
 					failClosed("entity:z", "second"),
 				}},
-			hint: "the preview had passed, and something it depends on changed since (the policy, an area or label, a service call's reach); " +
+			hint: "the preview had passed under this policy, and something it depends on changed since (an area or label, a service call's reach); " +
 				"the owner would change the rule on line 12; " +
 				"nothing allows entity:light.a (and 1 more); the owner would add an allow; " +
 				"hactl could not check service:light.turn_on (reach unknown: timeout), so it refused; " +
 				"allowed: 1 of 6 checked resources, but the command is refused as a whole" + tail,
 			stderrLn: "policy_denied: 5 of 6 resources denied (profile agent)",
+		},
+		{
+			name: "no preview passed under this policy (D-215)",
+			ref: enforce.DeniedError{Layer: enforce.LayerCommand, Checked: 1, Profile: "p", PreviewMissing: true,
+				Denied: []enforce.Denial{deflt("label:*")}},
+			hint:     "no preview of this command passed under this policy; nothing allows label:*; the owner would add an allow" + tail,
+			stderrLn: "policy_denied: 1 of 1 resources denied (profile p)",
 		},
 		{
 			name: "everything denied: no allowed part",

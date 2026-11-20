@@ -736,7 +736,8 @@ func TestE2EPolicyRefusedPreviewRecordsNoWitnessCLI(t *testing.T) {
 // TestE2EPolicyPassedPreviewPromisesNothingCLI — D-80 with the confirm guard
 // live: a preview that passed authorises the --confirm only under the same
 // policy. --confirm re-reads the file, is refused by the deny added since,
-// and says the preview had passed.
+// and says no preview of it passed under this policy (D-215: before, it said
+// the preview had passed — under the policy since replaced).
 func TestE2EPolicyPassedPreviewPromisesNothingCLI(t *testing.T) {
 	cleanupWitnessLabel(t)
 	dir := policyE2EDir(t, openE2EPolicy)
@@ -757,8 +758,8 @@ func TestE2EPolicyPassedPreviewPromisesNothingCLI(t *testing.T) {
 	if !strings.Contains(out, want.textLine()) {
 		t.Errorf("--confirm was not refused by the changed policy (want %q):\nstdout:\n%s\nstderr:\n%s", want.textLine(), out, errOut)
 	}
-	if all := strings.ToLower(out + errOut); !strings.Contains(all, "preview") || !strings.Contains(all, "passed") {
-		t.Errorf("the refusal does not say the preview had passed (D-80):\nstdout:\n%s\nstderr:\n%s", out, errOut)
+	if !strings.Contains(out, "  hint: no preview of this command passed under this policy; ") || strings.Contains(out, "the preview had passed") {
+		t.Errorf("the refusal does not say no preview passed under this policy (D-215):\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
 	if witnessLabelExists(t) {
 		t.Errorf("label %q was created", pgWitnessLabel)

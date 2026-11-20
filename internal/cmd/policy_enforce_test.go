@@ -42,6 +42,27 @@ func writePolicyFile(t *testing.T, dir, body string) {
 	}
 }
 
+// policyIDOf is the witness id of the policy file in dir: its active
+// profile and content hash, as startPolicySession records it (D-215).
+func policyIDOf(t *testing.T, dir string) string {
+	t.Helper()
+	pol, err := policy.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pol.Active() + "@" + pol.Hash()
+}
+
+// recordPreview records the witnesses a passing preview of cmdPath args
+// leaves under the policy now in dir: the confirm guard's and the one keyed
+// by the policy (D-215).
+func recordPreview(t *testing.T, dir, cmdPath string, args []string) {
+	t.Helper()
+	now := time.Now()
+	recordWitness(stateCacheDir(dir), manual.SessionKey(), cmdPath, args, now)
+	recordPolicyWitness(stateCacheDir(dir), manual.SessionKey(), cmdPath, args, policyIDOf(t, dir), now)
+}
+
 func readAudit(t *testing.T, dir string) []map[string]any {
 	t.Helper()
 	f, err := os.Open(filepath.Clean(filepath.Join(dir, "cache", enforce.AuditFileName)))

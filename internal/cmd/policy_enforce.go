@@ -49,7 +49,15 @@ var (
 	policyInvocation struct {
 		cmdPath string
 		args    []string
+		// confirmable: the command has --confirm, so a refused run that
+		// is no preview says whether its preview passed (D-215).
+		confirmable bool
 	}
+	// policyWitnessID is the policy the running invocation is checked
+	// under — its active profile and the file's content hash — or "" when
+	// no profile is in effect. It outlives the session so the preview
+	// witness recorded after the command can name it (D-215).
+	policyWitnessID string
 	// policyRecorder, when a test sets it, sees every check a session makes
 	// (R-12's coverage harness). Production code never sets it.
 	policyRecorder enforce.Recorder
@@ -137,6 +145,7 @@ func policyExempt(cmd *cobra.Command) bool {
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
 	policyTrailer = trailerState{}
+	policyWitnessID = ""
 	// `policy lint` without a terminal reads its inventory through the
 	// active profile's read filter (D-173): it stays exempt from refusal
 	// (D-60), but while a profile is in effect it runs under the session.
@@ -202,6 +211,8 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	policySession = sess
 	policyUninstall = reqgate.Install(sess)
 	policyInvocation.cmdPath, policyInvocation.args = cmd.CommandPath(), append([]string(nil), args...)
+	policyInvocation.confirmable = cmd.Flags().Lookup("confirm") != nil
+	policyWitnessID = pol.Active() + "@" + pol.Hash()
 	return nil
 }
 
@@ -223,7 +234,7 @@ func endPolicySession() {
 		policySession.Close()
 	}
 	policySession, policyUninstall = nil, nil
-	policyInvocation.cmdPath, policyInvocation.args = "", nil
+	policyInvocation.cmdPath, policyInvocation.args, policyInvocation.confirmable = "", nil, false
 }
 
 // finishPolicySession ends the session and returns the invocation's result: a
@@ -548,12 +559,19 @@ func checkWritePlan(w io.Writer, dryRun bool, p *writePlan) (*planPolicyNote, er
 	if sess == nil {
 		return nil, nil //nolint:nilnil // no profile in effect: nothing is checked and the preview gets no note (D-58)
 	}
-	previewPassed := !dryRun && policyInvocation.cmdPath != "" &&
-		hasWitness(stateCacheDir(flagDir), manual.SessionKey(), policyInvocation.cmdPath, policyInvocation.args, time.Now())
+	// A refused --confirm says whether a preview of it passed under this
+	// policy — the same profile and file (D-80, D-215); a write without
+	// --confirm says neither.
+	confirmed := !dryRun && policyInvocation.cmdPath != "" && policyInvocation.confirmable
+	previewPassed := confirmed &&
+		hasPolicyWitness(stateCacheDir(flagDir), manual.SessionKey(), policyInvocation.cmdPath, policyInvocation.args, policyWitnessID, time.Now())
 	res, err := sess.CheckPlan(enforce.Plan{Action: p.action, Checks: p.checks, FailClosed: p.failClosed}, dryRun, previewPassed)
 	var ref *enforce.DeniedError
 	if err != nil && !errors.As(err, &ref) {
 		return nil, err
+	}
+	if ref != nil {
+		ref.PreviewMissing = confirmed && !previewPassed
 	}
 	if ref == nil {
 		return &planPolicyNote{Checked: res.Checked, Profile: res.Profile}, nil
