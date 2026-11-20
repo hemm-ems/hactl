@@ -159,9 +159,12 @@ func TestRegistryReachChecks(t *testing.T) {
 			want:   []string{"control entity:input_boolean.guard"},
 		},
 		{
-			name:   "a grep hit under no target key is no target",
+			// Under any key: a `variables:` value a templated target reads
+			// names it outside every target key (D-212).
+			name:   "an unplaced grep hit under no target key counts as targeting",
 			change: enforce.RegistryChange{EntityID: "input_boolean.guard", Labels: labels("fresh")},
 			grep:   map[string]enforce.ConfigGrepResult{"fresh": {Hits: []enforce.ConfigGrepHit{{Key: "name", MatchedValue: "fresh"}}}},
+			want:   []string{"control entity:input_boolean.guard"},
 		},
 		{
 			name:   "a truncated grep counts as targeting",
@@ -344,6 +347,9 @@ profiles:
 	auto := func(id, actions string) string {
 		return "id: " + id + "\ntriggers:\n  - trigger: time\n    at: '23:00'\nactions:\n" + actions
 	}
+	varAuto := "id: var_auto\nvariables:\n  lab: varlab\ntriggers:\n  - trigger: time\n    at: '23:00'\nactions:\n  - action: lock.lock\n    target:\n      label_id: \"{{ lab }}\"\n"
+	wholeTpl := "id: whole_tpl\nvariables:\n  tgt: {label_id: wholelab}\ntriggers:\n  - trigger: time\n    at: '23:00'\nactions:\n  - action: lock.lock\n    target: \"{{ tgt }}\"\n"
+	aliasOnly := "id: alias_only\nalias: aliased\ntriggers:\n  - trigger: time\n    at: '23:00'\nactions:\n  - action: light.turn_on\n    target: {entity_id: light.hall}\n"
 	newF := func(withServices bool) affectFetcher {
 		tf := &targetFetcher{
 			fakeFetcher: fakeFetcher{
@@ -352,9 +358,11 @@ profiles:
 					{EntityID: "script.hall_lock", UniqueID: "hall_lock"},
 				}}, complete: true,
 				live: []string{"lock.front_door", "light.hall", "automation.downstairs_off", "automation.hallway_area_lock",
-					"automation.lights_only", "automation.porch_watch", "automation.tpl", "automation.zw", "automation.gone", "script.hall_lock"},
+					"automation.lights_only", "automation.porch_watch", "automation.tpl", "automation.zw", "automation.gone", "script.hall_lock",
+					"automation.grep_auto", "automation.var_auto", "automation.alias_only", "automation.whole_tpl"},
 				autoIDs: map[string]string{"automation.downstairs_off": "downstairs_off", "automation.hallway_area_lock": "hallway_area_lock",
-					"automation.lights_only": "lights_only", "automation.porch_watch": "porch_watch", "automation.tpl": "tpl", "automation.zw": "zw"},
+					"automation.lights_only": "lights_only", "automation.porch_watch": "porch_watch", "automation.tpl": "tpl", "automation.zw": "zw",
+					"automation.grep_auto": "grep_auto", "automation.var_auto": "var_auto", "automation.alias_only": "alias_only", "automation.whole_tpl": "whole_tpl"},
 			},
 			related: map[string]map[string][]string{
 				"label:downstairs":  {"automation": {"automation.downstairs_off"}},
@@ -367,8 +375,11 @@ profiles:
 				"label:scripted":    {"script": {"script.hall_lock"}},
 			},
 			grep: map[string]enforce.ConfigGrepResult{
-				"grepped": {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[0].actions[0].target.label_id", Key: "label_id", MatchedValue: "grepped"}}},
-				"tplent":  {Hits: []enforce.ConfigGrepHit{{Location: "templates.yaml", Path: "[0].sensor[0].state", Key: "state", MatchedValue: "{{ label_entities('tplent') | count }}"}}},
+				"grepped":  {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[0].actions[0].target.label_id", Key: "label_id", MatchedValue: "grepped"}}},
+				"varlab":   {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[1].variables.lab", Key: "lab", MatchedValue: "varlab"}}},
+				"wholelab": {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[3].variables.tgt.label_id", Key: "label_id", MatchedValue: "wholelab"}}},
+				"aliased":  {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[2].alias", Key: "alias", MatchedValue: "aliased"}}},
+				"tplent":   {Hits: []enforce.ConfigGrepHit{{Location: "templates.yaml", Path: "[0].sensor[0].state", Key: "state", MatchedValue: "{{ label_entities('tplent') | count }}"}}},
 			},
 		}
 		f := affectFetcher{targetFetcher: tf, configs: map[string]string{
@@ -377,13 +388,17 @@ profiles:
 			"automation:lights_only":       auto("lights_only", "  - action: light.turn_on\n    target: {label_id: lightsonly}\n  - action: notify.notify\n    data: {message: lightsonly}\n"),
 			"automation:porch_watch": "id: porch_watch\ntriggers:\n  - trigger: state\n    entity_id: lock.porch\nconditions:\n  - condition: state\n    entity_id: lock.porch\n    state: locked\n" +
 				"actions:\n  - action: light.turn_on\n    target: {entity_id: light.hall}\n",
-			"automation:tpl":       auto("tpl", "  - action: light.turn_on\n    target:\n      label_id: \"{{ 'tpl' }}\"\n"),
-			"automation:zw":        auto("zw", "  - action: zwave_js.set_value\n    target: {label_id: zw}\n"),
-			"automation:grep_auto": auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"),
-			"script:hall_lock":     "sequence:\n  - action: lock.lock\n    data: {label_id: scripted}\n",
+			"automation:tpl":        auto("tpl", "  - action: light.turn_on\n    target:\n      label_id: \"{{ 'tpl' }}\"\n"),
+			"automation:zw":         auto("zw", "  - action: zwave_js.set_value\n    target: {label_id: zw}\n"),
+			"automation:grep_auto":  auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"),
+			"automation:var_auto":   varAuto,
+			"automation:alias_only": aliasOnly,
+			"automation:whole_tpl":  wholeTpl,
+			"script:hall_lock":      "sequence:\n  - action: lock.lock\n    data: {label_id: scripted}\n",
 		}, files: map[string]string{
-			"automations.yaml": "- " + strings.ReplaceAll(auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"), "\n", "\n  "),
-			"templates.yaml":   "- sensor:\n  - name: n\n    unique_id: n\n    state: \"{{ label_entities('tplent') | count }}\"\n",
+			"automations.yaml": "- " + strings.ReplaceAll(auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"), "\n", "\n  ") +
+				"\n- " + strings.ReplaceAll(varAuto, "\n", "\n  ") + "\n- " + strings.ReplaceAll(aliasOnly, "\n", "\n  ") + "\n- " + strings.ReplaceAll(wholeTpl, "\n", "\n  "),
+			"templates.yaml": "- sensor:\n  - name: n\n    unique_id: n\n    state: \"{{ label_entities('tplent') | count }}\"\n",
 		}}
 		if withServices {
 			f.services = map[string]map[string]bool{
@@ -411,6 +426,9 @@ profiles:
 		{"a config hactl cannot read", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("missing")}, true, "because automation.gone targets label:missing"},
 		{"a script naming the label in its data", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("scripted")}, true, "because script.hall_lock targets label:scripted"},
 		{"a grep hit placed in an automation is read as it", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("grepped")}, true, ""},
+		{"a variables value a templated target reads", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("varlab")}, true, "because automation.var_auto targets label:varlab"},
+		{"a whole target templated", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("wholelab")}, true, "because automation.whole_tpl targets label:wholelab"},
+		{"a grep hit placed in an automation's alias is read as it", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("aliased")}, true, ""},
 		{"a grep hit in a template entity counts", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("tplent")}, true, "-"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -281,9 +281,11 @@ func TestE2EPolicyAcceptance20261120Runs(t *testing.T) {
 	accRefused(t, house, []string{"svc", "call", "homeassistant.turn_on", "-d", `{"entity_id":"script.pg_acc_goodnight"}`}, lockDenied, viaGoodnight)
 	accRefused(t, house, []string{"svc", "call", "automation.trigger", "-d", `{"entity_id":"` + accNightAuto + `"}`},
 		lockDenied, "run of "+accNightAuto+": action at /actions/0")
-	// P_lights refuses them too (the lock is not among its allows).
-	accRefused(t, lights, []string{"script", "run", "pg_acc_goodnight"}, lockDenied)
-	accRefused(t, lights, []string{"svc", "call", "automation.trigger", "-d", `{"entity_id":"` + accNightAuto + `"}`}, lockDenied)
+	// P_lights refuses them too: it allows no script run and no trigger, so
+	// the start is refused by its own checks, the stored config unread.
+	accRefused(t, lights, []string{"script", "run", "pg_acc_goodnight"}, "control script:pg_acc_goodnight/run — default: deny")
+	accRefused(t, lights, []string{"svc", "call", "automation.trigger", "-d", `{"entity_id":"` + accNightAuto + `"}`},
+		"control service:automation.trigger — default: deny")
 
 	// An allowed script still runs.
 	huntSvc(t, "input_boolean", "turn_off", map[string]any{"entity_id": accAllowedRan})

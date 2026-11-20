@@ -39,9 +39,9 @@ type targeter struct {
 // (D-186) find the automations and scripts that name c; each one's stored
 // config is read, and c counts as targeted for domain when an action whose
 // target or data names c can affect domain (actionAffects). An answer hactl
-// cannot get, a config it cannot read, c named inside a template, and a grep
-// hit outside every automation and script (a template entity) count for every
-// domain.
+// cannot get, a config it cannot read, a templated target or name, and a
+// grep hit — under any key — outside every automation and script (a template
+// entity) count for every domain.
 func (s *Session) askTargeted(ctx context.Context, c container, domain string) targeting {
 	tf, ok := s.fetcher.(TargetFetcher)
 	if !ok || s.fetcher == nil {
@@ -68,10 +68,10 @@ func (s *Session) askTargeted(ctx context.Context, c container, domain string) t
 		if res.Truncated {
 			return targeting{targeted: true}
 		}
+		// Every hit counts, under any key: a `variables:` value a templated
+		// target reads (`lab: x` … `label_id: "{{ lab }}"`) names c outside
+		// every target key (found by the rehunt, TestE2EPolicyRehuntLabelTargetForms).
 		for _, h := range res.Hits {
-			if !targetKeys[h.Key] && !strings.Contains(h.MatchedValue, "{{") && !strings.Contains(h.MatchedValue, "{%") {
-				continue
-			}
 			owners, placed := s.grepOwners(ctx, h)
 			if !placed {
 				return targeting{targeted: true} // a template entity, or a hit hactl cannot place
@@ -223,7 +223,7 @@ func templateNames(v any, id string) bool {
 			}
 		}
 	case string:
-		return (strings.Contains(t, "{{") || strings.Contains(t, "{%")) && strings.Contains(t, id)
+		return isTemplate(t) && strings.Contains(t, id)
 	}
 	return false
 }
@@ -251,6 +251,8 @@ func walkSteps(v any, visit func(service string, step map[string]any)) {
 
 // stepNames reports whether an action step's target selectors — at its top
 // level, under `target` or under `data` — name id, as one value or in a list.
+// A templated selector, or a templated `target`/`data` as a whole, may name
+// any id: a variable can hold it (`label_id: "{{ lab }}"`).
 func stepNames(step map[string]any, id string) bool {
 	in := func(m map[string]any) bool {
 		for k := range targetKeys {
@@ -273,16 +275,28 @@ func stepNames(step map[string]any, id string) bool {
 		return true
 	}
 	for _, k := range []string{"target", "data"} {
-		if m, ok := step[k].(map[string]any); ok && in(m) {
-			return true
+		switch m := step[k].(type) {
+		case map[string]any:
+			if in(m) {
+				return true
+			}
+		case string:
+			if isTemplate(m) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+func isTemplate(v string) bool { return strings.Contains(v, "{{") || strings.Contains(v, "{%") }
+
 // namesID reports whether a selector value names id: the value itself, or
 // one of its comma-separated parts.
 func namesID(v, id string) bool {
+	if isTemplate(v) {
+		return true
+	}
 	for p := range strings.SplitSeq(v, ",") {
 		if strings.TrimSpace(p) == id {
 			return true
