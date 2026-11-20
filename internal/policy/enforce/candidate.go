@@ -136,15 +136,58 @@ func (s *Session) candidateRead(c reqmap.Check, why string) *Denial {
 		d.Rule += why
 		return &d
 	case c.Whole && v.Partial:
-		d := denial(c, v)
-		if len(v.PartialDenies) > 0 {
-			d.Rule, d.Line = v.PartialDenies[0].Rule, v.PartialDenies[0].Line
+		ref, denied := s.wholeRead(c, v)
+		if !denied {
+			return nil
 		}
-		d.Rule += why
+		d := denial(c, v)
+		d.Rule, d.Line = ref.Rule+why, ref.Line
 		d.Partial = true
 		return &d
 	}
 	return nil
+}
+
+// wholeRead decides a whole read whose verdict is partial (D-66, D-198):
+// whether a denied part refuses it, and the rule that decided that part.
+// For an entity's state object only the parts its live state holds count —
+// `state` and each attribute it has, in that order, attributes by name
+// (D-209). Anything else — an entity without a live state, live states not
+// read or without their attribute names, a resource that is no state object
+// — counts every denied part, as before: the first partial deny.
+func (s *Session) wholeRead(c reqmap.Check, v policy.Verdict) (policy.RuleRef, bool) {
+	first := policy.RuleRef{Rule: v.Rule, Line: v.Line}
+	if len(v.PartialDenies) > 0 {
+		first = v.PartialDenies[0]
+	}
+	if c.Resource.Kind != policy.KindEntity || c.Resource.Sub != "" || c.KindWide {
+		return first, true
+	}
+	s.mu.Lock()
+	var attrs []string
+	held := false
+	if s.cache.liveRead && s.cache.live != nil && s.cache.live.Attributes != nil {
+		attrs, held = s.cache.live.Attributes[c.Resource.ID]
+	}
+	s.mu.Unlock()
+	if !held {
+		return first, true
+	}
+	parts := make([]string, 0, len(attrs)+1)
+	parts = append(parts, "state")
+	for _, a := range attrs {
+		parts = append(parts, "attr/"+a)
+	}
+	for _, p := range parts {
+		pv, ok := s.readVerdict(policy.KindEntity, c.Resource.ID, p)
+		switch {
+		case !ok:
+			return first, true // a part hactl cannot address: as before
+		case !pv.Allowed:
+			return policy.RuleRef{Rule: pv.Rule, Line: pv.Line}, true
+		}
+	}
+	return policy.RuleRef{}, false
 }
 
 // blueprintReader reads a blueprint file through the fetcher, as the

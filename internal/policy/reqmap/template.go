@@ -404,6 +404,9 @@ var nameArgFilters = map[string]struct {
 }
 
 func (a *tplAnalysis) filter(f jFilter) {
+	if a.projection(f) {
+		return
+	}
 	if unsafeTemplateFilters[f.name] {
 		a.reading(f.name, append([]jNode{f.arg}, f.args.pos...), f.args, "filter "+f.name)
 		return

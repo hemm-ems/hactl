@@ -2,6 +2,7 @@ package enforce_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -145,5 +146,98 @@ profiles:
 	req.Body = []byte(`{"template":"{{ states('light.a') }}"}`)
 	if err := s.Check(context.Background(), req); err != nil {
 		t.Errorf("tpl eval of an allowed state: %v", err)
+	}
+}
+
+// TestWholeReadCountsOnlyLiveParts (D-209): under a deny of every entity's
+// latitude, a whole read of a state object is refused only when the live
+// state holds a denied part — a light without latitude passes, a person with
+// one is refused naming the latitude rule; an entity without a live state,
+// and live states read without their attribute names, refuse as before. The
+// same holds for a written candidate.
+func TestWholeReadCountsOnlyLiveParts(t *testing.T) {
+	const pol = `version: 1
+active: house
+profiles:
+  house:
+    deny:
+      "entity:lock.front_door": [control]
+      "entity:*/attr/latitude": [read]
+      "entity:*/attr/longitude": [read]
+`
+	fetcher := func(withAttrs bool) *fakeFetcher {
+		f := &fakeFetcher{reg: &reqmap.Registries{}, complete: true,
+			live: []string{"light.hall", "person.anna"}}
+		if withAttrs {
+			f.attrs = map[string][]string{
+				"light.hall":  {"brightness", "friendly_name"},
+				"person.anna": {"friendly_name", "latitude", "longitude"},
+			}
+		}
+		return f
+	}
+	eval := func(f *fakeFetcher, tpl string) error {
+		t.Helper()
+		s, _ := newSession(t, pol, f)
+		body, _ := json.Marshal(map[string]string{"template": tpl})
+		return s.Check(context.Background(), reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/template", Body: body})
+	}
+	refusedBy := func(err error, resource, rule string) bool {
+		var ref *enforce.DeniedError
+		return errors.As(err, &ref) && slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool {
+			return d.Resource == resource && strings.HasPrefix(d.Rule, rule) && d.Partial
+		})
+	}
+	const lat = `deny "entity:*/attr/latitude" [read]`
+	if err := eval(fetcher(true), "{{ states.light.hall }}"); err != nil {
+		t.Errorf("a whole light without latitude: %v", err)
+	}
+	if err := eval(fetcher(true), "{{ states.person.anna }}"); !refusedBy(err, "entity:person.anna", lat) {
+		t.Errorf("a whole person with latitude: %v, want refused by %s", err, lat)
+	}
+	// The manual's name search reads names and existence, never a latitude;
+	// the lights-still-on list reads each light's state and name.
+	for _, tpl := range []string{
+		"{{ states | selectattr('name','search','(?i)anna') | map(attribute='entity_id') | list }}",
+		"{{ states.light | selectattr('state','eq','on') | map(attribute='name') | join(', ') }}",
+		"{{ states.light | selectattr('state','eq','on') | list }}",
+	} {
+		if err := eval(fetcher(true), tpl); err != nil {
+			t.Errorf("%s: %v", tpl, err)
+		}
+	}
+	var ref *enforce.DeniedError
+	if err := eval(fetcher(true), "{{ states.person | map(attribute='attributes.latitude') | list }}"); !errors.As(err, &ref) ||
+		len(ref.Denied) != 1 || ref.Denied[0].Resource != "entity:person.anna/attr/latitude" {
+		t.Errorf("a person's latitude: %v, want refused naming entity:person.anna/attr/latitude", err)
+	}
+	if err := eval(fetcher(true), "{{ states.person | list }}"); !refusedBy(err, "entity:person.anna", lat) {
+		t.Errorf("every person whole: %v, want refused by %s", err, lat)
+	}
+	if err := eval(fetcher(true), "{{ states.light.ghost }}"); !refusedBy(err, "entity:light.ghost", lat) {
+		t.Errorf("an entity without a live state: %v, want refused as before", err)
+	}
+	if err := eval(fetcher(false), "{{ states.light.hall }}"); !refusedBy(err, "entity:light.hall", lat) {
+		t.Errorf("live states without attribute names: %v, want refused as before", err)
+	}
+
+	// A written candidate decides alike.
+	cand := func(tpl string) []enforce.Denial {
+		t.Helper()
+		s, _ := newSession(t, pol, fetcher(true))
+		_, d := s.CandidateChecks(context.Background(), "automation", []byte(`
+id: pg_whole
+triggers: [{trigger: time, at: "07:00"}]
+actions:
+  - action: notify.notify
+    data: {message: "`+tpl+`"}
+`))
+		return d
+	}
+	if d := cand("{{ states.light.hall }}"); len(d) != 0 {
+		t.Errorf("a candidate's whole light without latitude: %+v", d)
+	}
+	if d := cand("{{ states.person.anna }}"); len(d) != 1 || d[0].Resource != "entity:person.anna" || !strings.HasPrefix(d[0].Rule, lat) {
+		t.Errorf("a candidate's whole person: %+v, want one refusal by %s", d, lat)
 	}
 }

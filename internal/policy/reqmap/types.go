@@ -229,6 +229,10 @@ type LiveStates struct {
 	// AutomationIDs maps a live automation entity to its config id, the
 	// state's `id` attribute (D-107). Absent = the automation has none.
 	AutomationIDs map[string]string
+	// Attributes maps every live entity to its attribute names, sorted —
+	// the parts a whole read of its state object reads besides `state`
+	// (D-209). nil = not known: a whole read counts every denied part.
+	Attributes map[string][]string
 }
 
 // Reach is an `extract_from_target` answer: the entity ids the target

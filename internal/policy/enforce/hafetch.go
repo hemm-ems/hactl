@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -117,11 +119,8 @@ func (f *HAFetcher) LiveStates(ctx context.Context) (*reqmap.LiveStates, error) 
 		return nil, err
 	}
 	var states []struct {
-		EntityID   string `json:"entity_id"`
-		Attributes struct {
-			EntityID any `json:"entity_id"`
-			ID       any `json:"id"`
-		} `json:"attributes"`
+		EntityID   string                     `json:"entity_id"`
+		Attributes map[string]json.RawMessage `json:"attributes"`
 	}
 	if err := json.Unmarshal(body, &states); err != nil {
 		return nil, fmt.Errorf("parsing /api/states: %w", err)
@@ -130,18 +129,27 @@ func (f *HAFetcher) LiveStates(ctx context.Context) (*reqmap.LiveStates, error) 
 		EntityIDs:     make([]string, 0, len(states)),
 		Members:       map[string][]string{},
 		AutomationIDs: map[string]string{},
+		Attributes:    make(map[string][]string, len(states)),
 	}
 	for _, s := range states {
 		if s.EntityID == "" {
 			return nil, errors.New("/api/states holds a state without an entity_id")
 		}
 		out.EntityIDs = append(out.EntityIDs, s.EntityID)
-		if m := memberIDs(s.Attributes.EntityID); len(m) > 0 {
+		var members, id any
+		if raw, ok := s.Attributes["entity_id"]; ok {
+			_ = json.Unmarshal(raw, &members)
+		}
+		if raw, ok := s.Attributes["id"]; ok {
+			_ = json.Unmarshal(raw, &id)
+		}
+		if m := memberIDs(members); len(m) > 0 {
 			out.Members[s.EntityID] = m
 		}
-		if id, ok := s.Attributes.ID.(string); ok && id != "" && strings.HasPrefix(s.EntityID, "automation.") {
+		if id, ok := id.(string); ok && id != "" && strings.HasPrefix(s.EntityID, "automation.") {
 			out.AutomationIDs[s.EntityID] = id
 		}
+		out.Attributes[s.EntityID] = slices.Sorted(maps.Keys(s.Attributes))
 	}
 	return out, nil
 }

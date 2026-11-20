@@ -62,7 +62,22 @@ func TestTemplateReads(t *testing.T) {
 		{"{{ is_state('sun.sun', 'below_horizon') }}", []string{sunState}, nil},
 		{"Sun is {{ states('sun.sun') }}", []string{sunState}, nil},
 		{"Lights still on: {{ states.light | selectattr('state','eq','on') | map(attribute='name') | join(', ') }}",
-			[]string{"read entity:light.a whole", "read entity:light.b whole"}, nil},
+			[]string{"read entity:light.a/attr/friendly_name", "read entity:light.a/state", "read entity:light.b/attr/friendly_name", "read entity:light.b/state"}, nil},
+		// a projection reads what it selects by and what it maps (D-209)
+		{"{{ states | selectattr('name','search','(?i)lock') | map(attribute='entity_id') | list }}",
+			[]string{"read entity:group.g", "read entity:group.g/attr/friendly_name", "read entity:input_boolean.pg_hunt_guard",
+				"read entity:input_boolean.pg_hunt_guard/attr/friendly_name", "read entity:light.a", "read entity:light.a/attr/friendly_name",
+				"read entity:light.b", "read entity:light.b/attr/friendly_name", "read entity:lock.front", "read entity:lock.front/attr/friendly_name",
+				"read entity:person.p", "read entity:person.p/attr/friendly_name", "read entity:sensor.l", "read entity:sensor.l/attr/friendly_name",
+				"read entity:sun.sun", "read entity:sun.sun/attr/friendly_name", "read entity:zone.home", "read entity:zone.home/attr/friendly_name"}, nil},
+		{"{{ states.lock | sort(attribute='last_changed') | map(attribute='attributes.battery') | list }}",
+			[]string{"read entity:lock.front/attr/battery", "read entity:lock.front/state"}, nil},
+		{"{{ states.person | map(attribute='attributes.latitude') | list }}", []string{"read entity:person.p/attr/latitude"}, nil},
+		{"{{ states.person | map(attribute='context') | list }}", []string{"read entity:person.p whole"}, nil},
+		// not a projection: the objects themselves, or a test that reads state
+		{"{{ states.light | selectattr('state','eq','on') | list }}", []string{"read entity:light.a whole", "read entity:light.b whole"}, nil},
+		{"{{ states.light | rejectattr('entity_id', 'is_state', 'on') | map(attribute='name') | list }}",
+			[]string{"read entity:light.a whole", "read entity:light.b whole"}, []string{"test is_state (through rejectattr)"}},
 		{"{{ now().hour }}", nil, nil},
 		{"{{ 255 if now().hour < 20 else 80 }}", nil, nil},
 		// the state object, by what follows it

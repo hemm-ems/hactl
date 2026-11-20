@@ -40,6 +40,7 @@ type fakeFetcher struct {
 	live     []string
 	members  map[string][]string
 	autoIDs  map[string]string
+	attrs    map[string][]string
 	liveErr  error
 	reach    map[string][]string // key: json of target
 	reachErr error
@@ -58,7 +59,7 @@ func (f *fakeFetcher) LiveStates(context.Context) (*reqmap.LiveStates, error) {
 	if f.liveErr != nil {
 		return nil, f.liveErr
 	}
-	return &reqmap.LiveStates{EntityIDs: f.live, Members: f.members, AutomationIDs: f.autoIDs}, nil
+	return &reqmap.LiveStates{EntityIDs: f.live, Members: f.members, AutomationIDs: f.autoIDs, Attributes: f.attrs}, nil
 }
 
 func (f *fakeFetcher) Reach(_ context.Context, target map[string]any) ([]string, error) {

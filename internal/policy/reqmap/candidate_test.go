@@ -319,7 +319,9 @@ sensor:
 	for _, r := range u.TemplateReads {
 		got = append(got, r.Check.String()+"@"+r.Path)
 	}
-	want = []string{"read entity:input_boolean.guard/attr/friendly_name@/sensor/0/state", "read entity:input_boolean.guard@/sensor/1/state"}
+	// b reads each boolean's name and existence, not the whole state (D-209).
+	want = []string{"read entity:input_boolean.guard/attr/friendly_name@/sensor/0/state",
+		"read entity:input_boolean.guard/attr/friendly_name@/sensor/1/state", "read entity:input_boolean.guard@/sensor/1/state"}
 	if !slices.Equal(got, want) {
 		t.Errorf("reads = %q, want %q", got, want)
 	}

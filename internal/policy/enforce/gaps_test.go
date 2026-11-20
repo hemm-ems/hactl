@@ -186,4 +186,8 @@ func TestHAFetcherReadsMembersAndAutomationIDs(t *testing.T) {
 	if len(live.EntityIDs) != 5 {
 		t.Errorf("entity ids = %v", live.EntityIDs)
 	}
+	// Every live state's attribute names, sorted, for a whole read (D-209).
+	if got := fmt.Sprint(live.Attributes); got != "map[automation.heat:[id] automation.noid:[] light.a:[] light.group:[entity_id] scene.s:[entity_id id]]" {
+		t.Errorf("attributes = %s", got)
+	}
 }

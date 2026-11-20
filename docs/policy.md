@@ -627,7 +627,10 @@ stderr. A few things worth knowing:
   whole (`{{ states.light.hall }}`, `expand(…)`) is refused when a part of
   that entity it holds is denied — its state, or an attribute it has: a deny
   on every `latitude` refuses `{{ states.person | list }}`, not
-  `{{ states.light | list }}`. A loop over a list of ids
+  `{{ states.light | list }}`. A list that ends in `map(attribute='…')`
+  reads only what it maps and what it selects or sorts by on the way:
+  `{{ states | selectattr('name', 'search', 'anna') | map(attribute='entity_id') | list }}`
+  reads each entity's name, never its coordinates. A loop over a list of ids
   (`{% for e in ['light.a', 'light.b'] %}`) reads each of them. A template whose reads hactl cannot tell needs
   `"system:template": [read]` allowed by that exact name — `"*": [read]`,
   `"system:*": [read]` and the default do not grant it. `policy check read

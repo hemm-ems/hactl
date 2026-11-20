@@ -187,11 +187,22 @@ func (s *Session) checkRead(req reqmap.Request, res reqmap.Result) error {
 			ref.Denied = append(ref.Denied, denial(c, v))
 		case (res.Whole || c.Whole) && v.Partial:
 			// One opaque body — or a state object a template reads whole
-			// (D-198) — cannot be masked: a denied part refuses it.
-			d := denial(c, v)
+			// (D-198) — cannot be masked: a denied part refuses it; of a
+			// state object, a part its live state holds (D-209).
+			rr, denied := policy.RuleRef{}, true
 			if len(v.PartialDenies) > 0 {
-				d.Rule, d.Line = v.PartialDenies[0].Rule, v.PartialDenies[0].Line
+				rr = v.PartialDenies[0]
+			} else {
+				rr = policy.RuleRef{Rule: v.Rule, Line: v.Line}
 			}
+			if c.Whole && !res.Whole {
+				rr, denied = s.wholeRead(c, v)
+			}
+			if !denied {
+				continue
+			}
+			d := denial(c, v)
+			d.Rule, d.Line = rr.Rule, rr.Line
 			d.Partial = true
 			ref.Denied = append(ref.Denied, d)
 		}

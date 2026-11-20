@@ -434,6 +434,110 @@ func (a *tplAnalysis) statesChain(steps []jStep) {
 	a.stateObject(construct+"."+obj, strings.ToLower(key+"."+obj), steps[2:])
 }
 
+// projection: `map(attribute='p')` over a list of state objects, narrowed
+// on the way by `selectattr`/`rejectattr('q'[, test, …])`, `sort(attribute=
+// 'q')` and `list` (D-209). Its answer holds only each object's p, so it
+// reads p and every q of each live entity of the list — `states | selectattr(
+// 'name', 'search', 'x') | map(attribute='entity_id')` reads each
+// friendly_name and existence, never a whole state. The list is `states` or
+// `states.<domain>`; ok false for any other shape, which the other rules read.
+func (a *tplAnalysis) projection(f jFilter) bool {
+	p, ok := kwAttribute(f, "map")
+	if !ok {
+		return false
+	}
+	paths := []string{p}
+	var extra []jNode
+	n := f.arg
+	for {
+		g, isFilter := n.(jFilter)
+		if !isFilter {
+			break
+		}
+		switch g.name {
+		case "selectattr", "rejectattr":
+			if len(g.args.pos) == 0 || len(g.args.kwName) > 0 || len(g.args.dyn) > 0 {
+				return false
+			}
+			q, isStr := constString(g.args.pos[0])
+			if !isStr {
+				return false
+			}
+			if len(g.args.pos) > 1 {
+				test, isTest := constString(g.args.pos[1])
+				if !isTest || !safeTemplateTests[test] || unsafeTemplateTests[test] {
+					return false
+				}
+				extra = append(extra, g.args.pos[2:]...)
+			}
+			paths = append(paths, q)
+		case "sort":
+			q, isSort := kwAttribute(g, "sort")
+			if !isSort {
+				return false
+			}
+			paths = append(paths, q)
+		case "list":
+			if len(g.args.all()) > 0 {
+				return false
+			}
+		default:
+			return false
+		}
+		n = g.arg
+	}
+	construct, ids, ok := a.stateList(n)
+	if !ok {
+		return false
+	}
+	a.nodes(extra)
+	for _, id := range ids {
+		for _, q := range paths {
+			steps := []jStep{}
+			for part := range strings.SplitSeq(q, ".") {
+				steps = append(steps, jStep{attr: part, named: true})
+			}
+			a.stateObject(construct, strings.ToLower(id), steps)
+		}
+	}
+	return true
+}
+
+// kwAttribute is p of `<name>(attribute='p')` with no other argument.
+func kwAttribute(f jFilter, name string) (string, bool) {
+	if f.name != name || len(f.args.pos) > 0 || len(f.args.dyn) > 0 || len(f.args.kwName) != 1 || f.args.kwName[0] != "attribute" {
+		return "", false
+	}
+	return constString(f.args.kwVal[0])
+}
+
+func constString(n jNode) (string, bool) {
+	c, ok := n.(jConst)
+	if !ok {
+		return "", false
+	}
+	s, ok := c.v.(string)
+	return s, ok && s != ""
+}
+
+// stateList is `states` or `states.<domain>` as a list of the live entities
+// it holds; ok false for anything else or while the live set is unread.
+func (a *tplAnalysis) stateList(n jNode) (construct string, ids []string, ok bool) {
+	root, steps, flat := flatten(n)
+	if !flat || root != "states" || !a.global(root) || len(steps) > 1 {
+		return "", nil, false
+	}
+	construct, domain := "states", ""
+	if len(steps) == 1 {
+		if !steps[0].named || steps[0].attr == "" || strings.Contains(steps[0].attr, ".") {
+			return "", nil, false
+		}
+		construct, domain = "states."+steps[0].attr, steps[0].attr
+	}
+	ids, ok = a.liveOf(domain)
+	return construct, ids, ok
+}
+
 // wholeDomain reads the whole of every live entity of domain ("" = all).
 func (a *tplAnalysis) wholeDomain(construct, domain string) {
 	ids, ok := a.liveOf(domain)
