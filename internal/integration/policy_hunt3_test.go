@@ -20,8 +20,7 @@ import (
 
 const h3ReloadProfile = `    default: deny
     allow:
-      "entity:*": [read]
-      "entity:light.bed_light": [control]
+      "entity:*": [read, control]
       "service:homeassistant.*": [control]
       "service:light.*": [control]
     deny:
@@ -55,9 +54,16 @@ func TestPolicyHunt3ReloadConfigEntry(t *testing.T) {
 	dir := pgInstanceDir(t, inst.URL(), inst.Token(), huntPolicy(h3ReloadProfile))
 	demo := demoEntryID(t, inst)
 
-	cases := []struct{ name, data string }{
-		{"by entry_id", fmt.Sprintf(`{"entry_id":%q}`, demo)},
-		{"by allowed entity target", `{"entity_id":"light.bed_light"}`},
+	// By entity target: Home Assistant 2026.11 still reloads the entries of
+	// a target's entities, but no longer declares the target fields, so
+	// hactl refuses the call as an undeclared field before any policy check;
+	// held either way.
+	cases := []struct {
+		name, data string
+		policy     bool
+	}{
+		{"by entry_id", fmt.Sprintf(`{"entry_id":%q}`, demo), true},
+		{"by allowed entity target", `{"entity_id":"light.bed_light"}`, false},
 	}
 	for _, k := range cases {
 		pgCallService(t, inst, "light", "turn_off", map[string]any{"entity_id": "light.ceiling_lights"})
@@ -78,7 +84,7 @@ func TestPolicyHunt3ReloadConfigEntry(t *testing.T) {
 		rhVerdict(t, fmt.Sprintf("reload_config_entry %s (preview=%d confirm=%d) → light.ceiling_lights %s→%s, lock.front_door %s→%s",
 			k.name, pc, oc, before, after, lockBefore, lockAfter),
 			oc == 0 && (after != before || lockAfter != lockBefore), rep)
-		if pc == 0 || oc == 0 || !strings.Contains(rep, "entity:light.ceiling_lights") {
+		if pc == 0 || oc == 0 || (k.policy && !strings.Contains(rep, "entity:light.ceiling_lights")) {
 			t.Errorf("reload_config_entry %s: want refused naming entity:light.ceiling_lights (D-200)\n      %s", k.name, rep)
 		}
 	}

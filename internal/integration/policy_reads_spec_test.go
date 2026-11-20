@@ -654,16 +654,19 @@ profiles:
 }
 
 // ---------------------------------------------------------------------------
-// Case 6 — `tpl eval` needs `read system:template` while any read is denied.
+// Case 6 — `tpl eval` of a template whose reads hactl cannot name needs
+// `read system:template` while any read is denied.
 // ---------------------------------------------------------------------------
 
-// TestPolicyReadsSpecTplEvalNeedsSystemTemplate — a template can read any
-// state, so while the profile denies some read `tpl eval` is refused unless
-// `"system:template": [read]` is allowed (D-143, M-3); allowed, it runs.
+// TestPolicyReadsSpecTplEvalNeedsSystemTemplate — a template whose entity
+// id is computed can read any state, so while the profile denies some read
+// `tpl eval` of it is refused unless `"system:template": [read]` is allowed
+// (D-143, M-3); allowed, it runs. A template naming its read is checked as
+// that read instead (D-198).
 func TestPolicyReadsSpecTplEvalNeedsSystemTemplate(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	bin := pgReadsBinary(t)
-	const tpl = "{{ states('lock.pg_policy_lock') }}"
+	const tpl = "{{ states(now().year > 2000 and 'lock.pg_policy_lock' or 'x') }}"
 	args := []string{"tpl", "eval", tpl}
 
 	t.Run("default deny", func(t *testing.T) {
@@ -671,6 +674,9 @@ func TestPolicyReadsSpecTplEvalNeedsSystemTemplate(t *testing.T) {
 		assertReadRefused(t, bin, dir, args, pgDenied{
 			Resource: "system:template", Verb: "read", Rule: "default: deny",
 		}, true)
+		assertReadRefused(t, bin, dir, []string{"tpl", "eval", "{{ states('lock.pg_policy_lock') }}"}, pgDenied{
+			Resource: "entity:lock.pg_policy_lock/state", Verb: "read",
+		}, false)
 	})
 
 	t.Run("default allow", func(t *testing.T) {
