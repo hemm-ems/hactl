@@ -68,7 +68,7 @@
   },
   {
    "id": "trace-get-allowed",
-   "why": "a trace of a readable automation passes as it is",
+   "why": "a trace of a readable automation whose config reads nothing denied passes as it is (D-208: byte-identical)",
    "row": "ws trace/get",
    "policy": "reader",
    "request": {
@@ -81,18 +81,307 @@
     }
    },
    "answer": {
+    "domain": "automation",
+    "item_id": "morning_light",
+    "run_id": "r1",
     "trace": {
-     "x": 1
+     "action/0": [
+      {
+       "result": {
+        "params": {
+         "domain": "light",
+         "service": "turn_on",
+         "entity_id": "light.desk"
+        }
+       },
+       "changed_variables": {
+        "x": 1
+       }
+      }
+     ]
+    },
+    "config": {
+     "id": "morning_light",
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "light.desk"
+       }
+      }
+     ]
     }
    },
    "expect": {
     "answer": {
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1",
      "trace": {
-      "x": 1
+      "action/0": [
+       {
+        "result": {
+         "params": {
+          "domain": "light",
+          "service": "turn_on",
+          "entity_id": "light.desk"
+         }
+        },
+        "changed_variables": {
+         "x": 1
+        }
+       }
+      ]
+     },
+     "config": {
+      "id": "morning_light",
+      "actions": [
+       {
+        "action": "light.turn_on",
+        "target": {
+         "entity_id": "light.desk"
+        }
+       }
+      ]
      }
     },
     "hidden": 0,
     "masked": 0
+   }
+  },
+  {
+   "id": "trace-get-config-reads-denied",
+   "why": "a trace whose config's template reads something denied (D-198) has every leaf of each step's changed_variables and result read <denied>, keys, lists and nesting kept; counted once (D-208)",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1"
+    }
+   },
+   "answer": {
+    "domain": "automation",
+    "item_id": "morning_light",
+    "run_id": "r1",
+    "trace": {
+     "trigger/0": [
+      {
+       "changed_variables": {
+        "trigger": {
+         "platform": "time",
+         "now": "2026-11-20T23:00:00+00:00"
+        }
+       }
+      }
+     ],
+     "action/0": [
+      {
+       "changed_variables": {
+        "door": "unlocked",
+        "n": 2,
+        "flags": [
+         true,
+         null
+        ],
+        "empty": {}
+       },
+       "result": {
+        "params": {
+         "domain": "notify",
+         "service": "notify",
+         "service_data": {
+          "message": "door unlocked"
+         }
+        }
+       }
+      }
+     ]
+    },
+    "config": {
+     "id": "morning_light",
+     "variables": {
+      "door": "{{ states('lock.front_door') }}"
+     },
+     "actions": [
+      {
+       "action": "notify.notify",
+       "data": {
+        "message": "door {{ door }}"
+       }
+      }
+     ]
+    }
+   },
+   "expect": {
+    "answer": {
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1",
+     "trace": {
+      "trigger/0": [
+       {
+        "changed_variables": {
+         "trigger": {
+          "platform": "<denied>",
+          "now": "<denied>"
+         }
+        }
+       }
+      ],
+      "action/0": [
+       {
+        "changed_variables": {
+         "door": "<denied>",
+         "n": "<denied>",
+         "flags": [
+          "<denied>",
+          "<denied>"
+         ],
+         "empty": {}
+        },
+        "result": {
+         "params": {
+          "domain": "<denied>",
+          "service": "<denied>",
+          "service_data": {
+           "message": "<denied>"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "config": {
+      "id": "morning_light",
+      "variables": {
+       "door": "{{ states('lock.front_door') }}"
+      },
+      "actions": [
+       {
+        "action": "notify.notify",
+        "data": {
+         "message": "door {{ door }}"
+        }
+       }
+      ]
+     }
+    },
+    "hidden": 0,
+    "masked": 1
+   }
+  },
+  {
+   "id": "trace-get-config-compares-denied",
+   "why": "a trace whose config compares a denied entity in a condition (D-202) is masked the same way (D-208); the condition itself, shaped like a state object of the denied lock, reads <denied> by D-196 and counts on its own",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1"
+    }
+   },
+   "answer": {
+    "domain": "automation",
+    "item_id": "morning_light",
+    "run_id": "r1",
+    "trace": {
+     "condition/0": [
+      {
+       "result": {
+        "result": true
+       }
+      }
+     ]
+    },
+    "config": {
+     "id": "morning_light",
+     "conditions": [
+      {
+       "condition": "state",
+       "entity_id": "lock.front_door",
+       "state": "unlocked"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "answer": {
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1",
+     "trace": {
+      "condition/0": [
+       {
+        "result": {
+         "result": "<denied>"
+        }
+       }
+      ]
+     },
+     "config": {
+      "id": "morning_light",
+      "conditions": [
+       "<denied>"
+      ]
+     }
+    },
+    "hidden": 0,
+    "masked": 2
+   }
+  },
+  {
+   "id": "trace-get-no-config",
+   "why": "a trace answer without a config cannot show what it reads: its step values read <denied> (D-208)",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1"
+    }
+   },
+   "answer": {
+    "domain": "automation",
+    "item_id": "morning_light",
+    "run_id": "r1",
+    "trace": {
+     "action/0": [
+      {
+       "changed_variables": {
+        "v": "52.37"
+       }
+      }
+     ]
+    }
+   },
+   "expect": {
+    "answer": {
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1",
+     "trace": {
+      "action/0": [
+       {
+        "changed_variables": {
+         "v": "<denied>"
+        }
+       }
+      ]
+     }
+    },
+    "hidden": 0,
+    "masked": 1
    }
   },
   {

@@ -700,8 +700,12 @@ func (f *answerFilter) fileRow(raw json.RawMessage) (json.RawMessage, bool, erro
 }
 
 // traceRun masks one trace/get answer (D-196): each of its values is walked
-// by maskEntities.
+// by maskEntities — after, when the trace's own config reads something the
+// profile denies, every value its steps hold is masked (D-208).
 func (f *answerFilter) traceRun(o map[string]json.RawMessage) (bool, error) {
+	if f.traceValuesDenied(o) {
+		f.maskTraceValues(o)
+	}
 	for k, v := range o {
 		if nv, changed := f.maskEntities(v); changed {
 			o[k] = nv
@@ -709,6 +713,162 @@ func (f *answerFilter) traceRun(o map[string]json.RawMessage) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// traceValuesDenied reports whether a trace's step values must be masked
+// (D-208): its config — blueprint expanded (D-185) — reads, through a
+// template (D-198) or a compared value (D-202), something the profile denies
+// reading, or holds a construct hactl cannot name the reads of (D-188), a
+// blueprint it cannot expand or a part it cannot decide, while the profile
+// denies some read. A profile that denies no read never masks; a trace
+// without a readable config, or whose facts cannot be read, does.
+func (f *answerFilter) traceValuesDenied(o map[string]json.RawMessage) bool {
+	s := f.s
+	if !deniesSomeRead(s.pol) {
+		return false
+	}
+	raw, have := o["config"]
+	if !have || isNull(raw) {
+		return true
+	}
+	var doc any
+	if json.Unmarshal(raw, &doc) != nil {
+		return true
+	}
+	domain, _ := stringField(o, "domain")
+	if domain == "" {
+		domain = "automation"
+	}
+	doc, unexpanded := reqmap.ExpandBlueprints(doc, domain, s.blueprintReader(f.ctx))
+	s.gather(f.ctx, reqmap.Request{}, needs{live: true, registries: true})
+	s.mu.Lock()
+	var live *reqmap.LiveStates
+	var reg *reqmap.Registries
+	if s.cache.liveRead {
+		live = s.cache.live
+	}
+	if s.cache.regRead {
+		reg = s.cache.registries
+	}
+	s.mu.Unlock()
+	if live == nil {
+		return true
+	}
+	use := reqmap.CandidateUses(doc, live, reg)
+	if len(unexpanded)+len(use.Undecidable)+len(use.Templates) > 0 {
+		return true
+	}
+	for _, r := range append(use.TemplateReads, use.Compared...) {
+		if s.candidateRead(r.Check, "") != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// deniesSomeRead reports whether the profile in effect denies any read: a
+// deny rule listing read, or `default: deny`.
+func deniesSomeRead(pol *policy.Policy) bool {
+	if pol == nil || !pol.InEffect() {
+		return false
+	}
+	if pol.Default() == policy.Deny {
+		return true
+	}
+	for _, rule := range pol.Rules() {
+		if rule.Effect == policy.Deny && slices.Contains(rule.Verbs, policy.Read) {
+			return true
+		}
+	}
+	return false
+}
+
+// maskTraceValues replaces every leaf value of each trace step's
+// `changed_variables` and `result` by <denied>, keys, lists and nesting kept
+// (D-208); the trace counts once as masked, when anything was replaced.
+func (f *answerFilter) maskTraceValues(o map[string]json.RawMessage) {
+	raw, have := o["trace"]
+	if !have {
+		return
+	}
+	var steps map[string][]map[string]json.RawMessage
+	if json.Unmarshal(raw, &steps) != nil {
+		// Not the step lists hactl knows: withheld whole, still a trace.
+		if !isNull(raw) && string(bytes.TrimSpace(raw)) != "{}" {
+			o["trace"] = deniedJSON
+			f.countTraceValues(o)
+		}
+		return
+	}
+	changed := false
+	for _, list := range steps {
+		for _, step := range list {
+			for _, k := range []string{"changed_variables", "result"} {
+				v, ok := step[k]
+				if !ok {
+					continue
+				}
+				var x any
+				if json.Unmarshal(v, &x) != nil {
+					step[k] = deniedJSON
+					changed = true
+					continue
+				}
+				if leafMask(&x) {
+					b, err := marshal(x)
+					if err != nil {
+						b = deniedJSON
+					}
+					step[k] = b
+					changed = true
+				}
+			}
+		}
+	}
+	if !changed {
+		return
+	}
+	b, err := marshal(steps)
+	if err != nil {
+		b = deniedJSON
+	}
+	o["trace"] = b
+	f.countTraceValues(o)
+}
+
+// countTraceValues counts a trace whose values were masked once, by its run.
+func (f *answerFilter) countTraceValues(o map[string]json.RawMessage) {
+	f.masked++
+	f.dirty = true
+	domain, _ := stringField(o, "domain")
+	item, _ := stringField(o, "item_id")
+	run, _ := stringField(o, "run_id")
+	f.maskedKeys = append(f.maskedKeys, domain+":"+item+"/trace/"+run+"/values")
+}
+
+// leafMask replaces every scalar in *v by <denied>, maps and lists kept;
+// changed is whether anything was replaced.
+func leafMask(v *any) bool {
+	switch t := (*v).(type) {
+	case map[string]any:
+		changed := false
+		for k, x := range t {
+			if leafMask(&x) {
+				t[k] = x
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for i := range t {
+			changed = leafMask(&t[i]) || changed
+		}
+		return changed
+	default:
+		*v = Denied
+		return true
+	}
 }
 
 // maskEntities masks, anywhere in a trace document, what is an entity's

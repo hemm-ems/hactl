@@ -538,3 +538,101 @@ func TestLogbookRowWithoutEntityIsShown(t *testing.T) {
 		t.Errorf("hidden %d, want 1 (the row whose entity_id is not a string)", hidden)
 	}
 }
+
+// TestFilterTraceMasksValuesWhenConfigReadsDenied (D-208): the acceptance
+// case — hallway_motion's variable `anna_where` computed from person.anna's
+// latitude and longitude under a profile denying every latitude — reads
+// <denied> in the trace, keys kept; a trace whose config reads nothing denied,
+// and any trace under a profile that denies no read, come back byte for byte.
+func TestFilterTraceMasksValuesWhenConfigReadsDenied(t *testing.T) {
+	const house = `version: 1
+active: house
+profiles:
+  house:
+    deny:
+      "entity:*/attr/latitude": [read]
+      "entity:*/attr/longitude": [read]
+      "entity:lock.*": [control]
+`
+	const lightsOnly = `version: 1
+active: lights
+profiles:
+  lights:
+    deny:
+      "entity:lock.*": [control]
+`
+	trace := func(item, config string) []byte {
+		return []byte(`{"domain":"automation","item_id":"` + item + `","run_id":"r1","trace":{"trigger/0":[{"path":"trigger/0","changed_variables":{"trigger":{"platform":"state","to_state":null}}}],` +
+			`"action/0":[{"path":"action/0","changed_variables":{"anna_where":"52.37,4.89","n":[1,2.5]},"result":{"params":{"domain":"notify","service":"notify","service_data":{"message":"Anna at 52.37,4.89"}}}}]},` +
+			`"config":` + config + `}`)
+	}
+	const hallway = `{"id":"hallway_motion","triggers":[{"trigger":"state","entity_id":"binary_sensor.hall_motion"}],` +
+		`"variables":{"anna_where":"{{ state_attr('person.anna','latitude') }},{{ state_attr('person.anna','longitude') }}"},` +
+		`"actions":[{"action":"notify.notify","data":{"message":"Anna at {{ anna_where }}"}}]}`
+	const unrelated = `{"id":"porch","triggers":[{"trigger":"state","entity_id":"binary_sensor.hall_motion"}],"actions":[{"action":"light.turn_on","target":{"entity_id":"light.hall"},"data":{"brightness":"{{ 40 + 2 }}"}}]}`
+	const opaque = `{"id":"opaque","actions":[{"action":"notify.notify","data":{"message":"{{ states | count }}"}}]}`
+	const blueprint = `{"id":"bp","use_blueprint":{"path":"missing.yaml","input":{}}}`
+	const unnamed = `{"id":"unnamed","actions":[{"action":"notify.notify","data":{"message":"{{ x | from_json }}"}}]}`
+	fetcher := func() *fakeFetcher {
+		return &fakeFetcher{live: []string{"person.anna", "light.hall", "binary_sensor.hall_motion"},
+			attrs: map[string][]string{"person.anna": {"latitude", "longitude", "friendly_name"}}, reg: &reqmap.Registries{}, complete: true}
+	}
+	req := reqmap.Request{Transport: reqmap.WS, Type: "trace/get", Params: map[string]any{"domain": "automation", "item_id": "x", "run_id": "r1"}}
+	for _, c := range []struct {
+		name, policy, config string
+		masked               bool
+	}{
+		{"a template reads a denied attribute", house, hallway, true},
+		{"a config that reads nothing denied", house, unrelated, false},
+		{"a construct hactl cannot name the reads of", house, opaque, true},
+		{"a blueprint hactl cannot expand", house, blueprint, true},
+		{"a name hactl cannot resolve", house, unnamed, true},
+		{"no config", house, "null", true},
+		{"a profile that denies no read, no config", lightsOnly, "null", false},
+		{"a profile that denies no read, a blueprint hactl cannot expand", lightsOnly, blueprint, false},
+		{"a profile that denies no read", lightsOnly, hallway, false},
+		{"a profile that denies no read, an opaque template", lightsOnly, opaque, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newSession(t, c.policy, fetcher())
+			in := trace("hallway_motion", c.config)
+			out, err := s.Filter(context.Background(), req, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, masked, _ := s.ReadCounts()
+			if !c.masked {
+				if string(out) != string(in) || masked != 0 {
+					t.Errorf("changed (masked %d):\n %s\n %s", masked, out, in)
+				}
+				return
+			}
+			var got struct {
+				Trace  map[string][]map[string]any `json:"trace"`
+				Config json.RawMessage             `json:"config"`
+			}
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatal(err)
+			}
+			step := got.Trace["action/0"][0]
+			want := map[string]any{"anna_where": enforce.Denied, "n": []any{enforce.Denied, enforce.Denied}}
+			if !reflect.DeepEqual(step["changed_variables"], want) {
+				t.Errorf("changed_variables %v, want %v", step["changed_variables"], want)
+			}
+			if !strings.Contains(string(out), `"service_data":{"message":"<denied>"}`) || strings.Contains(string(out), "52.37,4.89\"") ||
+				!strings.Contains(string(out), `"to_state":"<denied>"`) || step["path"] != "action/0" {
+				t.Errorf("answer %s", out)
+			}
+			if masked != 1 {
+				t.Errorf("masked %d, want the trace once", masked)
+			}
+		})
+	}
+
+	// A trace that is not the step lists hactl knows is withheld whole.
+	s, _ := newSession(t, house, fetcher())
+	out, err := s.Filter(context.Background(), req, []byte(`{"domain":"automation","item_id":"h","run_id":"r1","trace":{"x":1},"config":`+hallway+`}`))
+	if err != nil || !strings.Contains(string(out), `"trace":"<denied>"`) {
+		t.Errorf("a trace of another shape: %s, %v", out, err)
+	}
+}
