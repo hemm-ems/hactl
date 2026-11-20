@@ -102,6 +102,10 @@ type Check struct {
 	// state object a template reads (D-198): a deny on any part of it refuses
 	// the read, which is never masked. It renders like any check.
 	Whole bool
+	// Via says how a run reaches the check (D-207): `run of script.x: action
+	// at /sequence/1`. "" for a check the request makes itself. Not part of
+	// the check's identity; it renders after a refusal's rule.
+	Via string
 }
 
 // Target renders the checked resource: the address, or `<kind>:*[/<sub>]` for
@@ -148,10 +152,32 @@ type Result struct {
 	Rule string
 	// Detail is the human-readable why behind Rule or behind an exemption.
 	Detail string
+	// Runs are the stored scripts and automations a service call starts
+	// (D-207): what each one's config does is checked like a candidate's.
+	// Sorted, each once.
+	Runs []Run
 	// PlanFromResponse marks a companion ref/replace dry run: the request
 	// writes nothing, and its plan is the response, mapped by
 	// [RefReplaceChecks] before any confirmed write relies on it (D-77).
 	PlanFromResponse bool
+}
+
+// Run is one stored config a service call starts (D-207): a script by its
+// config key (the entity registry unique_id, D-84), an automation by its
+// config id, else its entity id (D-78). ID is "" for a script entity whose
+// config key the registries do not hold: its config cannot be read.
+type Run struct {
+	Kind     string // "script" or "automation"
+	ID       string
+	EntityID string
+}
+
+// Name is how a refusal names the run: its entity id, else <kind>.<id>.
+func (r Run) Name() string {
+	if r.EntityID != "" {
+		return r.EntityID
+	}
+	return r.Kind + "." + r.ID
 }
 
 // Refused reports whether the request must be refused whatever the policy says
@@ -346,6 +372,11 @@ func (s *checkSet) add(c Check) {
 			return
 		}
 		c.Whole = c.Whole || have.Whole
+		// The direct reason stays: a check the request makes itself, else
+		// the first run that reached it.
+		if have.Via == "" || c.Via != "" {
+			c.Via = have.Via
+		}
 	}
 	s.m[c.String()] = c
 }

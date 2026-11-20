@@ -1,9 +1,11 @@
 package reqmap
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -76,6 +78,7 @@ func (c *call) fact() *Facts {
 // mapping is what a row's mapper answers.
 type mapping struct {
 	checks       []Check
+	runs         []Run
 	fromResponse bool
 	// filter and whole are a read's answer handling (W-2).
 	filter ReadFilter
@@ -240,9 +243,22 @@ func (r *row) apply(c *call) Result {
 	set := newCheckSet()
 	set.addAll(m.checks)
 	res.Checks = set.list()
+	res.Runs = sortedRuns(m.runs)
 	res.PlanFromResponse = m.fromResponse
 	res.Filter, res.Whole = m.filter, m.whole
 	return res
+}
+
+// sortedRuns is runs sorted by kind, id and entity, each once.
+func sortedRuns(runs []Run) []Run {
+	if len(runs) == 0 {
+		return nil
+	}
+	out := slices.Clone(runs)
+	slices.SortFunc(out, func(a, b Run) int {
+		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.ID, b.ID), cmp.Compare(a.EntityID, b.EntityID))
+	})
+	return slices.Compact(out)
 }
 
 // checkWholePath applies R-8 before any row is matched: no `.` or `..`

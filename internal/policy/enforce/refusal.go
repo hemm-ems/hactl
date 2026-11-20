@@ -58,6 +58,9 @@ type Denial struct {
 	// UnmetWhere are the narrowed allows tried whose selector did not hold
 	// (D-112), present only when there are any.
 	UnmetWhere []policy.UnmetWhere `json:"unmet_where,omitempty"`
+	// Via is how a run reaches the denied pair (D-207): `run of
+	// script.goodnight: action at /sequence/1`; "" for the request's own.
+	Via string `json:"via,omitempty"`
 }
 
 // Text renders `<verb> <resource> — <rule> (line <n>)`, the form of the
@@ -65,8 +68,17 @@ type Denial struct {
 func (d Denial) Text() string {
 	s := strings.TrimSpace(d.Verb + " " + d.Resource)
 	s += " — " + d.Rule
+	return s + d.after()
+}
+
+// after is what follows a denial's rule: its line and its run path.
+func (d Denial) after() string {
+	s := ""
 	if d.Line > 0 {
 		s += fmt.Sprintf(" (line %d)", d.Line)
+	}
+	if d.Via != "" {
+		s += " (" + d.Via + ")"
 	}
 	return s
 }

@@ -195,6 +195,7 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	comp := policyCompanion()
 	fetcher.SetConfigFileReader(policyConfigFileReader(comp))
 	fetcher.SetConfigGrep(policyConfigGrep(comp))
+	fetcher.SetStoredConfigReader(policyStoredConfig(comp))
 	sess, err := enforce.New(enforce.Options{
 		Policy:      pol,
 		InstanceDir: dir,
@@ -399,6 +400,34 @@ func policyConfigGrep(comp func(ctx context.Context) (*companion.Client, error))
 			out.Hits = append(out.Hits, enforce.ConfigGrepHit{Location: h.Location, Key: h.Key, MatchedValue: h.MatchedValue})
 		}
 		return out, nil
+	}
+}
+
+// policyStoredConfig reads a script's or automation's stored config through
+// the companion, as `script cat` and `auto cat` read it, for what a run does
+// (D-207), as the session's own read. Any failure — no companion included —
+// is an error: the run is then refused (fail-closed).
+func policyStoredConfig(comp func(ctx context.Context) (*companion.Client, error)) func(ctx context.Context, kind, id string) ([]byte, error) {
+	return func(ctx context.Context, kind, id string) ([]byte, error) {
+		cc, err := comp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		switch kind {
+		case "script":
+			r, err := cc.GetScriptDef(reqgate.Own(ctx), id)
+			if err != nil {
+				return nil, err
+			}
+			return []byte(r.Content), nil
+		case "automation":
+			r, err := cc.GetAutomationDef(reqgate.Own(ctx), id)
+			if err != nil {
+				return nil, err
+			}
+			return []byte(r.Content), nil
+		}
+		return nil, fmt.Errorf("no stored config of kind %q", kind)
 	}
 }
 

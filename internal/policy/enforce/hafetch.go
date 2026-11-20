@@ -43,6 +43,9 @@ type HAFetcher struct {
 	// configGrep finds a container id in the config files through the
 	// companion, for a relabel's targets (D-186); nil = it cannot.
 	configGrep func(ctx context.Context, id string) (ConfigGrepResult, error)
+	// storedConfig reads a script's or automation's stored config through
+	// the companion, for a run's checks (D-207); nil = it cannot.
+	storedConfig func(ctx context.Context, kind, id string) ([]byte, error)
 }
 
 // NewHAFetcher answers from the instance at url with token. A non-nil cfgErr
@@ -82,6 +85,25 @@ func (f *HAFetcher) ConfigGrep(ctx context.Context, id string) (ConfigGrepResult
 		return ConfigGrepResult{}, ErrNoCompanion
 	}
 	return grep(own(ctx), id)
+}
+
+// SetStoredConfigReader lets the fetcher read stored configs
+// (StoredConfigFetcher).
+func (f *HAFetcher) SetStoredConfigReader(read func(ctx context.Context, kind, id string) ([]byte, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.storedConfig = read
+}
+
+// StoredConfig implements StoredConfigFetcher.
+func (f *HAFetcher) StoredConfig(ctx context.Context, kind, id string) ([]byte, error) {
+	f.mu.Lock()
+	read := f.storedConfig
+	f.mu.Unlock()
+	if read == nil {
+		return nil, errors.New("stored configs cannot be read in this invocation")
+	}
+	return read(own(ctx), kind, id)
 }
 
 // SetConfigFileReader lets the fetcher read config files (ConfigFileFetcher).

@@ -380,6 +380,17 @@ func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Resul
 			res.Checks = reqmap.MergeChecks(res.Checks, more)
 		}
 	}
+	if res.Disposition == reqmap.Write && len(res.Runs) > 0 {
+		// What the scripts and automations it starts do is part of the
+		// call (D-207).
+		more, denials := s.runChecks(ctx, res.Runs)
+		if len(denials) > 0 {
+			d := denials[0]
+			return reqmap.Result{Disposition: reqmap.Unmappable, Row: res.Row, Mutating: true,
+				Rule: d.Rule + d.after(), Detail: "what the run does cannot be decided: " + d.Verb + " " + d.Resource}
+		}
+		res.Checks = reqmap.MergeChecks(res.Checks, more)
+	}
 	domain, isCandidate := reqmap.CandidateRows[res.Row]
 	if res.Disposition != reqmap.Write || !isCandidate {
 		return res
@@ -611,7 +622,7 @@ func (s *Session) unreadViewDelete(c reqmap.Check) (policy.Verdict, bool) {
 func denial(c reqmap.Check, v policy.Verdict) Denial {
 	return Denial{
 		Resource: c.Target(), Verb: c.Verb.String(), Rule: v.Rule, Line: v.Line,
-		Partial: v.Partial, KindWide: c.KindWide, UnmetWhere: unmetWhere(v),
+		Partial: v.Partial, KindWide: c.KindWide, UnmetWhere: unmetWhere(v), Via: c.Via,
 	}
 }
 

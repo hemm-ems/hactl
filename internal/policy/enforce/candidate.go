@@ -49,6 +49,16 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 	if err := yaml.Unmarshal(candidate, &doc); err != nil {
 		return nil, []Denial{{Resource: "candidate", Verb: policy.Control.String(), Rule: reqmap.RuleCandidateUnreadable}}
 	}
+	return s.candidateDoc(ctx, domain, doc, nil)
+}
+
+// candidateDoc is CandidateChecks of a parsed candidate. via, when set,
+// renders a run path (D-207) from a place in the candidate ("" for none):
+// every check and denial then carries it.
+func (s *Session) candidateDoc(ctx context.Context, domain string, doc any, via func(path string) string) ([]reqmap.Check, []Denial) {
+	if !s.pol.IndirectChecked() {
+		return nil, nil
+	}
 	// A blueprint's actions are in its file: check what it expands to (D-185).
 	doc, unexpanded := reqmap.ExpandBlueprints(doc, domain, s.blueprintReader(ctx))
 	s.gather(ctx, reqmap.Request{}, needs{live: true, registries: true})
@@ -75,6 +85,11 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 			d.Resource += " (action at " + a.Path + ")"
 			denials = append(denials, *d)
 			continue
+		}
+		if via != nil {
+			for i := range cs {
+				cs[i].Via = joinVia(via("action at "+a.Path), cs[i].Via)
+			}
 		}
 		checks = append(checks, cs...)
 	}
@@ -123,7 +138,25 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 	for _, u := range append(unexpanded, use.Undecidable...) {
 		denials = append(denials, Denial{Resource: "candidate " + u.Path, Verb: policy.Control.String(), Rule: u.Rule})
 	}
+	if via != nil {
+		for i := range checks {
+			if checks[i].Via == "" {
+				checks[i].Via = via("")
+			}
+		}
+		for i := range denials {
+			denials[i].Via = joinVia(via(""), denials[i].Via)
+		}
+	}
 	return dedupeChecks(checks), denials
+}
+
+// joinVia is a run path followed by the one it leads into.
+func joinVia(outer, inner string) string {
+	if inner == "" {
+		return outer
+	}
+	return outer + " → " + inner
 }
 
 // candidateRead decides one read a candidate makes: nil when allowed, else

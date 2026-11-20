@@ -183,7 +183,9 @@ func walkData(v any, visit func(string)) {
 //     every script it starts — <x> itself for script.<x>, the entity
 //     registry unique_id of each script entity in the reach otherwise (the
 //     config key, D-84); a script entity whose unique_id this invocation did
-//     not read is checked as every script's run (kind-wide, an over-deny).
+//     not read is checked as every script's run (kind-wide, an over-deny);
+//   - every script and automation the call starts is a Run (D-207): the
+//     session checks what its stored config does.
 //
 // No answer, or an error answer, to the reach question, and a call naming a
 // target or data without the live set, is `fail-closed: reach unknown`.
@@ -199,11 +201,15 @@ func mapServiceCall(c *call) (mapping, error) {
 	}
 	cs := &cascade{out: []Check{svc}}
 	cs.out = append(cs.out, perScriptRun(domain, service)...)
+	var runs []Run
+	if domain == "script" && !scriptStartServices[service] && !scriptNonRunServices[service] {
+		runs = append(runs, Run{Kind: "script", ID: service})
+	}
 	sel := selectors(data)
 	fields, mapped := lookupService(mappedServices, domain+"."+service)
 	if len(sel) == 0 && len(data) == 0 && !mapped {
 		// No selector and no entity in the data: the service check alone.
-		return mapping{checks: cs.out}, nil
+		return mapping{checks: cs.out, runs: runs}, nil
 	}
 
 	f := c.fact()
@@ -241,9 +247,28 @@ func mapServiceCall(c *call) (mapping, error) {
 	}
 	if (domain == "script" || domain == "homeassistant") && scriptStartServices[service] {
 		cs.addScriptRuns(ids, f.Registries)
+		for _, id := range ids {
+			if strings.HasPrefix(id, "script.") {
+				runs = append(runs, Run{Kind: "script", ID: scriptUniqueID(f.Registries, id), EntityID: id})
+			}
+		}
+	}
+	if domain == "automation" && service == "trigger" {
+		// automation.trigger runs the actions — past the conditions unless
+		// skip_condition is false, and the conditions are reads checked
+		// anyway (D-207, TestOracleRunsStartWhatTheyName).
+		for _, id := range ids {
+			if strings.HasPrefix(id, "automation.") {
+				cid := f.Live.AutomationIDs[id]
+				if cid == "" {
+					cid = id
+				}
+				runs = append(runs, Run{Kind: "automation", ID: cid, EntityID: id})
+			}
+		}
 	}
 	cs.addTypedControl(reached, f.Live, f.Registries)
-	return mapping{checks: cs.out}, cs.err
+	return mapping{checks: cs.out, runs: runs}, cs.err
 }
 
 // affectedBy keeps of sorted ids those a homeassistant.<service> fan-out
