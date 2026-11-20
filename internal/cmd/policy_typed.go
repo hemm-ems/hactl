@@ -42,12 +42,15 @@ const (
 // cannot be read off it. The request layer adds the same to the companion
 // write (enforce.Session.CandidateChecks, one function for both). With no
 // profile in effect, or `indirect: unchecked` (D-135), it adds nothing.
-func (p *writePlan) addCandidate(ctx context.Context, candidate []byte) *writePlan {
+//
+// domain is what the candidate is written as — automation, script or
+// template: a `use_blueprint` in it is read from that blueprint folder (D-185).
+func (p *writePlan) addCandidate(ctx context.Context, domain string, candidate []byte) *writePlan {
 	sess := policySession
 	if sess == nil {
 		return p
 	}
-	checks, denials := sess.CandidateChecks(ctx, candidate)
+	checks, denials := sess.CandidateChecks(ctx, domain, candidate)
 	p.checks = append(p.checks, checks...)
 	p.failClosed = append(p.failClosed, denials...)
 	return p
@@ -134,7 +137,7 @@ func autoRollbackPlan(ctx context.Context, target, backupPath string) *writePlan
 	p := newWritePlan(typedRollBackAutomationAction).add(policy.Edit, policy.KindAutomation, target, "config")
 	if data, ok := readCandidate(p, policy.Create, string(policy.KindAutomation)+":"+typedNoID, backupPath); ok {
 		p.addRenameOf(target, data)
-		p.addCandidate(ctx, data)
+		p.addCandidate(ctx, "automation", data)
 	}
 	return p
 }

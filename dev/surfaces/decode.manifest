@@ -82,3 +82,4 @@ internal/policy/enforce/readfilter.go:decodeRow = proven: TestReadFilterRefusesA
 internal/policy/enforce/readfilter.go:(*answerFilter).maskState = exempt: decodes a state's attributes only to mask them by name; attributes that are no object are masked whole (`<denied>`), so a decode that yields nothing never shows an unchecked value
 internal/policy/enforce/readfilter.go:stringField = exempt: reads one string field of a row to address it; absent, null or not a string answers "no address", and a row without one is hidden (D-141), never shown unchecked
 internal/policy/enforce/readfilter.go:energyStats = exempt: collects the statistic and entity ids an energy source names; a value that is not a string names nothing, and the source is still decided by every id that did decode — the command re-decodes the filtered answer at its own sweep-governed site
+internal/policy/reqmap/blueprint.go:decodeBlueprint = proven: TestBlueprintExpansion

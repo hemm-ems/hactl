@@ -364,11 +364,12 @@ func (s *Session) StoredDashboard(ctx context.Context, urlPath string) (raw json
 // not read yet.
 func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Result {
 	res := s.classifyRow(ctx, req)
-	if res.Disposition != reqmap.Write || !reqmap.CandidateRows[res.Row] {
+	domain, isCandidate := reqmap.CandidateRows[res.Row]
+	if res.Disposition != reqmap.Write || !isCandidate {
 		return res
 	}
 	// The body is a candidate: what it would do is part of the write (W-1).
-	more, denials := s.CandidateChecks(ctx, req.Body)
+	more, denials := s.CandidateChecks(ctx, domain, req.Body)
 	if len(denials) > 0 {
 		return reqmap.Result{Disposition: reqmap.Unmappable, Row: res.Row, Mutating: true,
 			Rule: denials[0].Rule, Detail: "the candidate's effect cannot be decided: " + denials[0].Resource}
