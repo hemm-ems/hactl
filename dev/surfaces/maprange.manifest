@@ -94,5 +94,7 @@ internal/policy/enforce/readfilter.go:energyStats = exempt: collects ids an ener
 internal/surfaceaudit/policy.go:productFiles = exempt: collects the union of every release target's product files into a set whose keys are sort.Strings-ed before anything parses or reports them
 internal/policy/reqmap/candidate.go:CandidateUses = proven: TestCandidateUsesIsCanonical
 internal/policy/reqmap/candidate.go:sortedMapKeys = proven: TestCandidateUsesIsCanonical
+internal/policy/enforce/relabel.go:gainedContainers = exempt: builds each entity's gained containers as a set difference and sorts every list by its string before anything reads it
+internal/policy/enforce/relabel.go:sortedKeysOf = exempt: collects a map's keys and sort.Strings them before returning; the caller sees one order
 internal/policy/reqmap/servicefields.go:ServiceTable = exempt: builds a map from service to class for the service surface gate, which only looks keys up; no order reaches any output
 internal/policy/reqmap/servicefields.go:sortedKeys = exempt: collects a set's keys and sort.Strings them before returning; the caller sees one order

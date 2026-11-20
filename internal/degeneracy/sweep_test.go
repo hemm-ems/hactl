@@ -153,6 +153,7 @@ var uncheckedDecodeSites = map[string]string{ //nolint:gosec // decode-site keys
 	// absent config_entries makes the answer incomplete; an outgoing message
 	// without a string type cannot be mapped and is refused.
 	"internal/haapi/websocket.go:ExtractFromTarget:answer": "an absent referenced_entities is refused, never read as empty (D-73)",
+	"internal/haapi/websocket.go:SearchRelated:answer":     "an answer that is no mapping is an error, which the relabel check counts as targeting (D-186); an empty mapping is Home Assistant's own nothing-related",
 	"internal/haapi/websocket.go:DeviceConfigEntries:rows": "an absent config_entries marks the answer incomplete; the cascade is then checked kind-wide (D-76)",
 	"internal/haapi/websocket.go:wsRequest:m":              "decodes hactl's own outgoing message; a message without a string type is refused",
 	// The three legs of reading a modern HA form field's type (#82). None can

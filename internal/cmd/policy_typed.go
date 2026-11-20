@@ -56,6 +56,23 @@ func (p *writePlan) addCandidate(ctx context.Context, domain string, candidate [
 	return p
 }
 
+// addRegistryReach adds what a registry edit makes reachable (D-186):
+// control on each entity it puts under a label, an area or a floor — or gives
+// an entity id — that an automation, a script or a template entity targets.
+// The request layer adds the same to the registry update
+// (enforce.Session.RegistryReachChecks, one function for both). With no
+// profile in effect it adds nothing.
+func (p *writePlan) addRegistryReach(ctx context.Context, change enforce.RegistryChange) *writePlan {
+	sess := policySession
+	if sess == nil {
+		return p
+	}
+	checks, denials := sess.RegistryReachChecks(ctx, change)
+	p.checks = append(p.checks, checks...)
+	p.failClosed = append(p.failClosed, denials...)
+	return p
+}
+
 // policyInEffect reports whether this invocation enforces a policy: a profile
 // is in effect and its session runs. Work a plan needs that the command would
 // not otherwise do — a registry read in a preview, a backup lookup before the

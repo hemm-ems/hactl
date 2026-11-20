@@ -187,6 +187,14 @@ ws supervisor/api POST /ingress/session = exempt: an Ingress auth session is tra
 # gated by the call it serves.
 ws extract_from_target = exempt: the policy check's own oracle for a service call's reach (D-59) — reads the target's references and changes nothing
 
+# map: exempt (policy oracle). The policy check's own question for a registry
+# edit (D-186): haapi.WSClient.SearchRelated, asked by the plan and the request
+# layer while they check `ent|device set-label|set-area` and `ent rename` —
+# which automations and scripts target a label, area, floor or entity id the
+# entity is about to be reachable through. No answer counts as targeting. It
+# must never be gated by the edit it serves.
+ws search/related = exempt: the policy check's own oracle for a relabel (D-186) — reads which automations and scripts target a container and changes nothing
+
 # map: write — refused while a profile is in effect (fail-closed: owner only).
 # auth/long_lived_access_token mints a token for the connection's own user;
 # only `hactl agent add` sends it, the owner's command, which runs without a

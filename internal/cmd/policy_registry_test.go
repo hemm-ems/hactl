@@ -98,6 +98,9 @@ func registryRigWS() map[string]any {
 		"config/floor_registry/delete":  nil,
 		"trace/list":                    []any{},
 		"system_log/list":               []any{},
+		// Nothing targets any container here: a relabel adds no control check
+		// (D-186); TestRelabelIntoATargetedContainerNeedsControl asks the other way.
+		"search/related": map[string]any{},
 	}
 }
 
@@ -638,4 +641,52 @@ func init() {
 			name: c.name, args: c.args, ws: registryRigWS(), http: registryRigHTTP(nil),
 		})
 	}
+}
+
+// TestRelabelIntoATargetedContainerNeedsControl (D-186, hunt F5): when an
+// automation targets the label, area or device a registry edit puts an entity
+// under, the edit's plan holds control on that entity — so a profile denying
+// control on it refuses the edit, in the preview and under --confirm, and the
+// update is never sent. Removing a label adds no container and stays allowed.
+func TestRelabelIntoATargetedContainerNeedsControl(t *testing.T) {
+	wsAnswers := registryRigWS()
+	wsAnswers["search/related"] = map[string]any{"automation": []string{"automation.pg_label"}}
+	for _, tc := range []struct {
+		args   []string
+		denied string
+		write  string
+	}{
+		{[]string{"ent", "set-label", "light.a", "secret"}, "control entity:light.a", "config/entity_registry/update"},
+		{[]string{"ent", "set-area", "light.a", "attic"}, "control entity:light.a", "config/entity_registry/update"},
+		{[]string{"device", "set-label", "Bridge", "secret"}, "control entity:light.a", "config/device_registry/update"},
+		{[]string{"device", "set-area", "Bridge", "attic"}, "control entity:light.b", "config/device_registry/update"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			rig := &registryRig{}
+			rig.cmdTestServer = startCmdServer(t, wsAnswers, registryRigHTTP(nil))
+			writePolicyFile(t, rig.dir, denyPolicy(`"entity:light.*": [control]`))
+			for _, args := range [][]string{tc.args, append(slices.Clone(tc.args), "--confirm")} {
+				out, err := runPolicyCLI(t, rig.dir, args...)
+				if cliExitCode(err) != 1 || !strings.Contains(out, "  denied: "+tc.denied+" — deny ") {
+					t.Errorf("%v: exit %d (%v), want a refusal naming %s:\n%s", args, cliExitCode(err), err, tc.denied, out)
+				}
+			}
+			if n := rig.sent(tc.write); n != 0 {
+				t.Errorf("a refused relabel sent %s %d time(s)", tc.write, n)
+			}
+		})
+	}
+
+	t.Run("removing a label is tidying", func(t *testing.T) {
+		rig := &registryRig{}
+		rig.cmdTestServer = startCmdServer(t, wsAnswers, registryRigHTTP(nil))
+		writePolicyFile(t, rig.dir, denyPolicy(`"entity:light.*": [control]`))
+		out, err := runPolicyCLI(t, rig.dir, "ent", "set-label", "light.a", "--remove", "night", "--confirm")
+		if err != nil {
+			t.Fatalf("removing a label: %v\n%s", err, out)
+		}
+		if n := rig.sent("config/entity_registry/update"); n != 1 {
+			t.Errorf("the update was sent %d time(s), want 1", n)
+		}
+	})
 }

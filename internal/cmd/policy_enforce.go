@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -171,7 +172,9 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 		url, token = cfg.URL, cfg.Token
 	}
 	fetcher := enforce.NewHAFetcher(invocationContext(cmd), url, token, cfgErr)
-	fetcher.SetConfigFileReader(policyConfigFileReader())
+	comp := policyCompanion()
+	fetcher.SetConfigFileReader(policyConfigFileReader(comp))
+	fetcher.SetConfigGrep(policyConfigGrep(comp))
 	sess, err := enforce.New(enforce.Options{
 		Policy:      pol,
 		InstanceDir: dir,
@@ -294,23 +297,61 @@ func writePolicyTrailer(stdout, stderr io.Writer) {
 	_, _ = fmt.Fprintln(stdout, line)
 }
 
-// policyConfigFileReader reads a config file's raw content through the
-// companion for the read filter (D-142), connecting once, on the first file,
-// as the session's own read.
-func policyConfigFileReader() func(ctx context.Context, location string) ([]byte, error) {
+// policyCompanion connects to the companion once, on the first question the
+// policy session asks it, as the session's own.
+func policyCompanion() func(ctx context.Context) (*companion.Client, error) {
 	var (
 		mu        sync.Mutex
 		cc        *companion.Client
 		connErr   error
 		connected bool
 	)
-	return func(ctx context.Context, location string) ([]byte, error) {
+	return func(ctx context.Context) (*companion.Client, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if !connected {
 			connected = true
 			cc, connErr = connectCompanion(reqgate.Own(ctx))
 		}
+		return cc, connErr
+	}
+}
+
+// policyConfigGrep searches the config files for a container id, whole word,
+// through the companion, for a relabel's targets (D-186). An instance with no
+// companion add-on (or no Supervisor) answers enforce.ErrNoCompanion — the
+// documented limit — and any other failure is an error, which counts as
+// targeting.
+func policyConfigGrep(comp func(ctx context.Context) (*companion.Client, error)) func(ctx context.Context, id string) (enforce.ConfigGrepResult, error) {
+	return func(ctx context.Context, id string) (enforce.ConfigGrepResult, error) {
+		cc, err := comp(ctx)
+		if err != nil {
+			var de *companion.DiscoveryError
+			if errors.As(err, &de) && (de.Reason == companion.ReasonAddonMissing || de.Reason == companion.ReasonProtocolMismatch) {
+				return enforce.ConfigGrepResult{}, enforce.ErrNoCompanion
+			}
+			return enforce.ConfigGrepResult{}, err
+		}
+		r, err := cc.RefGrep(reqgate.Own(ctx), `\b`+regexp.QuoteMeta(id)+`\b`, true, false)
+		if err != nil {
+			return enforce.ConfigGrepResult{}, err
+		}
+		// A file the walk skipped may name the id: counted as more hits than
+		// were returned, so as targeting.
+		out := enforce.ConfigGrepResult{Truncated: r.Truncated || len(r.Skipped) > 0}
+		for _, h := range r.Hits {
+			out.Hits = append(out.Hits, enforce.ConfigGrepHit{Location: h.Location, Key: h.Key, MatchedValue: h.MatchedValue})
+		}
+		return out, nil
+	}
+}
+
+// policyConfigFileReader reads a config file's raw content through the
+// companion for the read filter (D-142) and a blueprint (D-185), as the
+// session's own read.
+func policyConfigFileReader(comp func(ctx context.Context) (*companion.Client, error)) func(ctx context.Context, location string) ([]byte, error) {
+	return func(ctx context.Context, location string) ([]byte, error) {
+		cc, connErr := comp(ctx)
 		if connErr != nil {
 			return nil, connErr
 		}

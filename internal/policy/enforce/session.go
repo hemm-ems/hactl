@@ -80,6 +80,10 @@ type Session struct {
 	// decides the same address many times.
 	vmu      sync.Mutex
 	verdicts map[string]cachedVerdict
+
+	// targeted is whether anything targets a container, asked once per
+	// invocation (D-186); guarded by mu.
+	targeted map[string]bool
 }
 
 // New starts a session. It refuses a policy that puts no profile in effect:
@@ -364,6 +368,18 @@ func (s *Session) StoredDashboard(ctx context.Context, urlPath string) (raw json
 // not read yet.
 func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Result {
 	res := s.classifyRow(ctx, req)
+	if res.Disposition == reqmap.Write {
+		// A registry edit that puts an entity under a targeted container needs
+		// control on it (D-186).
+		if ch, ok := registryChangeOf(res.Row, req.Params); ok {
+			more, denials := s.RegistryReachChecks(ctx, ch)
+			if len(denials) > 0 {
+				return reqmap.Result{Disposition: reqmap.Unmappable, Row: res.Row, Mutating: true,
+					Rule: denials[0].Rule, Detail: "what the registry edit makes reachable cannot be decided: " + denials[0].Resource}
+			}
+			res.Checks = reqmap.MergeChecks(res.Checks, more)
+		}
+	}
 	domain, isCandidate := reqmap.CandidateRows[res.Row]
 	if res.Disposition != reqmap.Write || !isCandidate {
 		return res
