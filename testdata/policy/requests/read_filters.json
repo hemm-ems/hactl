@@ -4,7 +4,8 @@
   "reader": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n",
   "templater": "version: 1\nactive: reader\nprofiles:\n  reader:\n    deny:\n      \"entity:lock.*\": [read]\n      \"entity:sensor.temp/attr/secret\": [read]\n      \"entity:sensor.temp/registry/labels\": [read]\n      \"entity:sensor.temp/registry/area_id\": [read]\n      \"entity:light.kitchen/state\": [read]\n      \"entity:light.kitchen/history\": [read]\n      \"entity:sensor.power/stats\": [read]\n      \"entity:zone.home/attr/latitude\": [read]\n      \"device:dev_lock\": [read]\n      \"device:dev_hue1/registry/name_by_user\": [read]\n      \"area:vault\": [read]\n      \"label:secret\": [read]\n      \"floor:basement\": [read]\n      \"dashboard:private\": [read]\n      \"dashboard:main/views/secret\": [read]\n      \"automation:prod_*\": [read]\n      \"script:wipe\": [read]\n      \"template:tpl_secret\": [read]\n      \"helper:input_boolean/alarm\": [read]\n      \"config_entry:01ZWAVE\": [read]\n      \"config_entry:01HUEENTRY/options\": [read]\n      \"service:lock.*\": [read]\n      \"file:secrets.yaml\": [read]\n      \"file:template.yaml/block/tpl_secret\": [read]\n      \"system:logs\": [read]\n      \"system:wireguard\": [read]\n      \"system:check_config\": [read]\n    allow:\n      \"system:template\": [read]\n",
   "open": "version: 1\nactive: open\nprofiles:\n  open:\n    deny:\n      \"entity:lock.*\": [control]\n",
-  "blind": "version: 1\nactive: blind\nprofiles:\n  blind:\n    default: deny\n"
+  "blind": "version: 1\nactive: blind\nprofiles:\n  blind:\n    default: deny\n",
+  "readall": "version: 1\nactive: readall\nprofiles:\n  readall:\n    default: deny\n    allow:\n      \"*\": [read]\n"
  },
  "vectors": [
   {
@@ -92,6 +93,105 @@
     },
     "hidden": 0,
     "masked": 0
+   }
+  },
+  {
+   "id": "trace-get-masked",
+   "why": "inside a readable trace, a state object of an entity the profile may not read reads <denied> whole, a part of one it may read in part is masked, and an entity_id naming one reads <denied> (D-196); counted once per address",
+   "row": "ws trace/get",
+   "policy": "reader",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "trace/get",
+     "domain": "automation",
+     "item_id": "morning_light",
+     "run_id": "r1"
+    }
+   },
+   "answer": {
+    "trace": {
+     "trigger/0": [
+      {
+       "changed_variables": {
+        "trigger": {
+         "platform": "state",
+         "entity_id": "lock.front_door",
+         "to_state": {
+          "entity_id": "lock.front_door",
+          "state": "unlocked",
+          "attributes": {
+           "friendly_name": "Front door"
+          }
+         },
+         "from_state": {
+          "entity_id": "light.kitchen",
+          "state": "on",
+          "attributes": {}
+         }
+        }
+       }
+      }
+     ],
+     "action/0": [
+      {
+       "result": {
+        "params": {
+         "domain": "light",
+         "service": "turn_on",
+         "entity_id": [
+          "light.desk",
+          "lock.back_door"
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "config": {
+     "id": "morning_light"
+    }
+   },
+   "expect": {
+    "answer": {
+     "trace": {
+      "trigger/0": [
+       {
+        "changed_variables": {
+         "trigger": {
+          "platform": "state",
+          "entity_id": "<denied>",
+          "to_state": "<denied>",
+          "from_state": {
+           "entity_id": "light.kitchen",
+           "state": "<denied>",
+           "attributes": {}
+          }
+         }
+        }
+       }
+      ],
+      "action/0": [
+       {
+        "result": {
+         "params": {
+          "domain": "light",
+          "service": "turn_on",
+          "entity_id": [
+           "light.desk",
+           "<denied>"
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "config": {
+      "id": "morning_light"
+     }
+    },
+    "hidden": 0,
+    "masked": 3
    }
   },
   {
@@ -1002,6 +1102,53 @@
    }
   },
   {
+   "id": "logbook-context",
+   "why": "a readable row's context entity the profile may not read is masked: its id, name and state (D-196); counted once, by the context entity",
+   "row": "rest GET /api/logbook/{start}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/logbook/2026-11-01"
+   },
+   "answer": [
+    {
+     "entity_id": "light.desk",
+     "state": "on",
+     "context_entity_id": "lock.front_door",
+     "context_entity_id_name": "Front door",
+     "context_state": "unlocked",
+     "context_event_type": "state_changed"
+    },
+    {
+     "entity_id": "light.desk",
+     "state": "off",
+     "context_entity_id": "automation.morning",
+     "context_name": "Morning"
+    }
+   ],
+   "expect": {
+    "answer": [
+     {
+      "entity_id": "light.desk",
+      "state": "on",
+      "context_entity_id": "<denied>",
+      "context_entity_id_name": "<denied>",
+      "context_state": "<denied>",
+      "context_event_type": "state_changed"
+     },
+     {
+      "entity_id": "light.desk",
+      "state": "off",
+      "context_entity_id": "automation.morning",
+      "context_name": "Morning"
+     }
+    ],
+    "hidden": 0,
+    "masked": 1
+   }
+  },
+  {
    "id": "error-log",
    "why": "the error log is read system:logs",
    "row": "rest GET /api/error_log",
@@ -1055,7 +1202,7 @@
   },
   {
    "id": "template-denied",
-   "why": "tpl eval needs an explicit allow of system:template while the profile denies a read (D-143)",
+   "why": "tpl eval needs an allow of system:template by its exact name while the profile denies anything (D-143, D-190)",
    "row": "rest POST /api/template",
    "policy": "reader",
    "request": {
@@ -1065,7 +1212,7 @@
     "body": "{\"template\":\"{{ 1 }}\"}"
    },
    "expect": {
-    "refused": "system:template needs an explicit allow"
+    "refused": "system:template needs an allow by its exact name"
    }
   },
   {
@@ -1088,7 +1235,7 @@
   },
   {
    "id": "template-open",
-   "why": "a profile that denies no read needs no allow for tpl eval",
+   "why": "a profile that denies anything — here only a control — needs the exact allow for tpl eval too (D-190)",
    "row": "rest POST /api/template",
    "policy": "open",
    "request": {
@@ -1097,11 +1244,23 @@
     "path": "/api/template",
     "body": "{\"template\":\"{{ 1 }}\"}"
    },
-   "answer": "1",
    "expect": {
-    "answer": "1",
-    "hidden": 0,
-    "masked": 0
+    "refused": "system:template needs an allow by its exact name"
+   }
+  },
+  {
+   "id": "template-wildcard",
+   "why": "a wildcard read allow never grants system:template while the profile denies anything (D-190)",
+   "row": "rest POST /api/template",
+   "policy": "readall",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ 1 }}\"}"
+   },
+   "expect": {
+    "refused": "system:template needs an allow by its exact name"
    }
   },
   {

@@ -220,6 +220,7 @@ func mapServiceCall(c *call) (mapping, error) {
 	}
 	if mapped {
 		// Fields that address entities by another name (D-184).
+		cs.service, cs.reached = domain+"."+service, reached
 		fields(cs, data, live, f.Registries)
 	}
 	if domain == "homeassistant" && homeassistantFanOut[service] {

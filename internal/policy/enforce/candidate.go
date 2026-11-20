@@ -24,6 +24,11 @@ const RuleLiveUnread = "fail-closed: live entities unread"
 //   - every other live entity the candidate mentions needs read;
 //   - what cannot be read off the candidate (a templated service name or
 //     target, a device action's entity that does not resolve) refuses it;
+//   - a template construct that can read state (a state function, an unsafe
+//     filter or test, a variable assigned from one, D-188) needs `read
+//     system:template` (D-190); a template that does not parse refuses it;
+//     a data field naming entities that holds a template hactl cannot fold
+//     refuses it (D-189);
 //   - a `use_blueprint` is checked as what it expands to: the blueprint of
 //     domain (automation, script, template) read through the fetcher, its
 //     `!input`s substituted (D-185); one that cannot be expanded refuses it.
@@ -79,6 +84,19 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 	for _, id := range use.Read {
 		if c, ok := entityCheck(policy.Read, id); ok {
 			checks = append(checks, c)
+		}
+	}
+	// A template construct that can read state needs `read system:template`
+	// (D-188, D-190): decided here, so the refusal names the construct.
+	if len(use.Templates) > 0 {
+		tpl := reqmap.Check{Verb: policy.Read, Resource: policy.Resource{Kind: policy.KindSystem, ID: "template"}}
+		if v := s.decideRead(tpl); v.Allowed {
+			checks = append(checks, tpl)
+		} else {
+			for _, u := range use.Templates {
+				denials = append(denials, Denial{Resource: tpl.Resource.String(), Verb: policy.Read.String(),
+					Rule: v.Rule + " — the template at " + u.Path + " uses " + u.Construct, Line: v.Line})
+			}
 		}
 	}
 	for _, u := range append(unexpanded, use.Undecidable...) {

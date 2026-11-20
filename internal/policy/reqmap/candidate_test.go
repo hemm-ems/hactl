@@ -1,6 +1,7 @@
 package reqmap_test
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -191,3 +192,113 @@ triggers:
 		t.Errorf("read = %q, want %q", first.Read, want)
 	}
 }
+
+// TestCandidateUsesFoldsTemplatedData — D-189 (re-hunt 2026-11-20, B1): a
+// template in a field that names entities is folded to what it renders when
+// it uses only literals, operators and the candidate's own variables; the
+// action is then checked on the folded data. One that cannot be folded
+// refuses the candidate.
+func TestCandidateUsesFoldsTemplatedData(t *testing.T) {
+	u := reqmap.CandidateUses(candidateDoc(t, `
+actions:
+  - action: scene.apply
+    data:
+      entities: "{{ {'input_boolean.guard': 'on'} }}"
+  - action: scene.apply
+    data:
+      entities: "{{ {('input_boolean.' ~ 'guard'): 'on'} }}"
+  - variables:
+      e: input_boolean.guard
+  - action: scene.apply
+    data:
+      entities: "{{ {e: 'on'} }}"
+  - action: group.set
+    data:
+      object_id: pg_tg
+      entities: "{{ ['input_boolean.' ~ 'guard'] }}"
+  - action: scene.create
+    data:
+      scene_id: pg_ts
+      entities: "{{ {('input_boolean.' ~ 'guard'): 'on'} }}"
+  - action: notify.mobile
+    data:
+      message: "{{ now() }} {{ e }}"
+  - action: scene.apply
+    data:
+      entities: "{{ {trigger.entity_id: 'on'} }}"
+`), candLive, candReg)
+	guardOn := map[string]any{"input_boolean.guard": "on"}
+	for i, want := range []map[string]any{
+		{"entities": guardOn},
+		{"entities": guardOn},
+		{"entities": guardOn},
+		{"object_id": "pg_tg", "entities": []any{"input_boolean.guard"}},
+		{"scene_id": "pg_ts", "entities": guardOn},
+	} {
+		if got := u.Actions[i].Data; !reflectEqual(got, want) {
+			t.Errorf("action %d (%s.%s): data %#v, want %#v", i, u.Actions[i].Domain, u.Actions[i].Service, got, want)
+		}
+	}
+	want := []string{reqmap.RuleActionDataTemplate + "@/actions/7/entities"}
+	if got := rulesOf(u); !slices.Equal(got, want) {
+		t.Errorf("undecidable = %q, want %q", got, want)
+	}
+	if len(u.Templates) != 0 {
+		t.Errorf("unsafe templates %+v, want none: every one uses safe constructs only", u.Templates)
+	}
+}
+
+// TestCandidateUsesRecordsUnsafeTemplates — D-188 (B5, B6): every template
+// construct that can read state is recorded with its path, variables
+// assigned from one included; a template that does not parse refuses.
+func TestCandidateUsesRecordsUnsafeTemplates(t *testing.T) {
+	u := reqmap.CandidateUses(candidateDoc(t, `
+sensor:
+  - name: a
+    unique_id: a
+    state: "{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}"
+  - name: b
+    unique_id: b
+    state: "{{ states.input_boolean | selectattr('object_id', 'search', 'secr') | map(attribute='name') | join(',') }}"
+  - name: c
+    unique_id: c
+    state: "{{ now().hour }}"
+  - name: d
+    unique_id: d
+    state: "{{ (1 + }}"
+`), candLive, candReg)
+	got := make([]string, 0, len(u.Templates))
+	for _, x := range u.Templates {
+		got = append(got, x.Construct+"@"+x.Path)
+	}
+	want := []string{"state_attr@/sensor/0/state", "states@/sensor/1/state"}
+	if !slices.Equal(got, want) {
+		t.Errorf("unsafe = %q, want %q", got, want)
+	}
+	if r := rulesOf(u); !slices.Equal(r, []string{reqmap.RuleTemplateUnparsable + "@/sensor/3/state"}) {
+		t.Errorf("undecidable = %q, want the unparsable template refused", r)
+	}
+
+	u = reqmap.CandidateUses(candidateDoc(t, `
+triggers:
+  - trigger: event
+    event_type: pg_fire
+actions:
+  - variables:
+      s: "{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}"
+  - action: logbook.log
+    data:
+      name: x
+      message: "{{ s }}"
+`), candLive, candReg)
+	got = make([]string, 0, len(u.Templates))
+	for _, x := range u.Templates {
+		got = append(got, x.Construct+"@"+x.Path)
+	}
+	want = []string{"state_attr@/actions/0/variables/s", "variable s (from state_attr)@/actions/1/data/message"}
+	if !slices.Equal(got, want) {
+		t.Errorf("unsafe = %q, want %q", got, want)
+	}
+}
+
+func reflectEqual(a, b any) bool { return reflect.DeepEqual(a, b) }

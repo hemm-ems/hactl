@@ -45,6 +45,11 @@ const (
 	FilterDashboardConfig FilterKind = "dashboard_config"
 	// FilterTraces — trace/list, by `read <domain>:<item_id>/trace`.
 	FilterTraces FilterKind = "traces"
+	// FilterTrace — trace/get: one run, read whole by `read
+	// <domain>:<item_id>/trace`; inside it, every state object and every
+	// `entity_id` value of an entity the profile may not read is masked
+	// (D-196), the state of one it may read in part masked as in a listing.
+	FilterTrace FilterKind = "trace"
 	// FilterStatisticIDs — recorder/list_statistic_ids and
 	// recorder/get_statistics_metadata rows, by `read entity:<statistic_id>/stats`;
 	// an external statistic (`domain:name`) has no address and is hidden.
@@ -158,7 +163,7 @@ func readTraceGet(c *call) (mapping, error) {
 		return mapping{}, fmt.Errorf("trace domain %q is neither automation nor script", domain)
 	}
 	ch, err := check(policy.Read, policy.Kind(domain), item, "trace")
-	return mapping{checks: []Check{ch}}, err
+	return mapping{checks: []Check{ch}, filter: ReadFilter{Kind: FilterTrace}}, err
 }
 
 // readDashboardConfig reads dashboard:<u> whole and drops the views a deny

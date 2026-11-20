@@ -299,7 +299,8 @@ func TestAgentLsListsEachAgentsOwnPolicy(t *testing.T) {
 }
 
 // D-172 (#4): under read enforcement the read-only starter hides nothing —
-// `"*": [read]` covers every kind, system:template and system:logs included —
+// `"*": [read]` covers every kind, system:logs included, and system:template
+// is allowed by its exact name (D-190, D-197) —
 // so listings print no `hidden by policy` trailer, and every write is denied.
 func TestStarterPolicyHidesNothingUnderReadEnforcement(t *testing.T) {
 	withoutOwnerTerminal(t)

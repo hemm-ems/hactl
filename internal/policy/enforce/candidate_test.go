@@ -199,3 +199,38 @@ func TestCandidateChecksExpandBlueprints(t *testing.T) {
 		t.Errorf("no reader: denials = %+v, want %s", denials, reqmap.RuleBlueprintUnexpandable)
 	}
 }
+
+// TestCandidateChecksAskSystemTemplateForUnsafeTemplates — D-188, D-190: a
+// template construct that can read state needs `read system:template`, which
+// only an allow by that exact name grants while the profile denies anything;
+// the refusal names the construct and where it is. A template of safe
+// constructs only needs nothing more.
+func TestCandidateChecksAskSystemTemplateForUnsafeTemplates(t *testing.T) {
+	f := func() *fakeFetcher {
+		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.hall"}}
+	}
+	cand := []byte("sensor:\n  - unique_id: pg_x\n    state: \"{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}\"\n")
+	s, _ := newSession(t, candidatePolicy, f())
+	_, denials := s.CandidateChecks(context.Background(), "template", cand)
+	if len(denials) != 1 || denials[0].Resource != "system:template" || denials[0].Verb != "read" ||
+		!strings.HasPrefix(denials[0].Rule, "default: deny") || !strings.Contains(denials[0].Rule, "uses state_attr") ||
+		!strings.Contains(denials[0].Rule, "/sensor/0/state") {
+		t.Errorf("an unsafe template under a denying profile: denials = %+v", denials)
+	}
+	wild := strings.Replace(candidatePolicy, "    allow:\n", "    allow:\n      \"system:*\": [read]\n", 1)
+	s, _ = newSession(t, wild, f())
+	if _, denials = s.CandidateChecks(context.Background(), "template", cand); len(denials) != 1 || !strings.HasPrefix(denials[0].Rule, enforce.RuleTemplateNeedsAllow) {
+		t.Errorf("a wildcard granted system:template: denials = %+v", denials)
+	}
+	exact := strings.Replace(candidatePolicy, "    allow:\n", "    allow:\n      \"system:template\": [read]\n", 1)
+	s, _ = newSession(t, exact, f())
+	checks, denials := s.CandidateChecks(context.Background(), "template", cand)
+	if len(denials) != 0 || !slices.Contains(candidateCheckStrings(checks), "read system:template") {
+		t.Errorf("the exact allow: checks %q, denials %+v", candidateCheckStrings(checks), denials)
+	}
+	s, _ = newSession(t, candidatePolicy, f())
+	checks, denials = s.CandidateChecks(context.Background(), "template", []byte("sensor:\n  - unique_id: pg_y\n    state: \"{{ now().hour + 1 }}\"\n"))
+	if len(denials) != 0 || slices.Contains(candidateCheckStrings(checks), "read system:template") {
+		t.Errorf("a safe template: checks %q, denials %+v", candidateCheckStrings(checks), denials)
+	}
+}

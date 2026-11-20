@@ -138,6 +138,10 @@ func kindWideCreate(kind policy.Kind) mapper {
 type cascade struct {
 	out []Check
 	err error
+	// service and reached are set for a service call's mapped fields: the
+	// `<domain>.<service>` called and every entity its reach reached.
+	service string
+	reached []string
 }
 
 func (cs *cascade) add(v policy.Verb, kind policy.Kind, id, sub string) {

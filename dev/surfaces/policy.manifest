@@ -273,7 +273,8 @@ ws lovelace/dashboards/delete = proven: TestEveryWriteRequestHasAMapping
 ws trace/list = proven: TestEveryReadRowIsEnforced
 
 # map: read {domain}:{item_id}/trace, refused when denied. Direct WriteJSON
-# site. The trace's own content (the states it recorded) is not redacted.
+# site. Inside the trace, every state and entity_id of an entity the profile
+# may not read is masked (D-196); a value a template computed is not.
 ws trace/get = proven: TestEveryReadRowIsEnforced
 
 # map: read system:check_config, refused when denied. Pure schema validation
@@ -481,9 +482,9 @@ rest GET /api/error_log = proven: TestEveryReadRowIsEnforced
 # without one is dropped.
 rest GET /api/services = proven: TestEveryReadRowIsEnforced
 
-# map: read system:template (D-143), refused when denied. A POST that is a
-# read: Jinja reads any state, so while the profile denies some read it needs
-# an explicit allow — the profile default does not grant it.
+# map: read system:template (D-143, D-190), refused when denied. A POST that
+# is a read: Jinja reads any state, so while the profile denies anything it
+# needs an allow by its exact name — a wildcard or the default never grants it.
 rest POST /api/template = proven: TestEveryReadRowIsEnforced
 
 # map: read, the home's location (latitude, longitude, elevation, radius)

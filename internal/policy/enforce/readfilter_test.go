@@ -298,24 +298,30 @@ profiles:
 	}
 }
 
-// TestTemplateReadNeedsAnAllowOnlyWhileAReadIsDenied — D-143 as a pure rule,
-// shared by the request layer and `policy check`.
-func TestTemplateReadNeedsAnAllowOnlyWhileAReadIsDenied(t *testing.T) {
+// TestTemplateReadNeedsAnExactAllowWhileAnythingIsDenied — D-190 (tightening
+// D-143) as a pure rule, shared by the request layer and `policy check`:
+// while the profile denies anything, only an allow naming system:template
+// exactly grants it — never a wildcard, never the default.
+func TestTemplateReadNeedsAnExactAllowWhileAnythingIsDenied(t *testing.T) {
 	tpl := policy.Resource{Kind: policy.KindSystem, ID: "template"}
 	for _, c := range []struct {
 		name, body string
-		deniesRead bool
+		deniesAny  bool
 		allowed    bool
 	}{
-		{"no read denied", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [control]\n", false, true},
+		{"nothing denied", "version: 1\nactive: a\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n", false, true},
+		{"only a control denied", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [control]\n", true, false},
 		{"a read denied, the default allows", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", true, false},
-		{"a read denied, an explicit allow", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n    allow:\n      \"system:template\": [read]\n", true, true},
+		{"a read denied, an exact allow", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n    allow:\n      \"system:template\": [read]\n", true, true},
 		{"default deny without an allow", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:*\": [read]\n", true, false},
-		{"default deny reading everything", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"*\": [read]\n", false, true},
+		{"default deny, a wildcard reading everything", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"*\": [read]\n", true, false},
+		{"default deny, system:* read", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"system:*\": [read]\n", true, false},
+		{"default deny, the exact allow", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"*\": [read]\n      \"system:template\": [read]\n", true, true},
+		{"the exact allow loses to a deny", "version: 1\nactive: a\nprofiles:\n  a:\n    allow:\n      \"system:template\": [read]\n    deny:\n      \"system:*\": [read]\n", true, false},
 	} {
 		pol, _ := loadPolicy(t, c.body)
-		if got := enforce.DeniesAnyRead(pol); got != c.deniesRead {
-			t.Errorf("%s: DeniesAnyRead %v, want %v", c.name, got, c.deniesRead)
+		if got := enforce.DeniesAnything(pol); got != c.deniesAny {
+			t.Errorf("%s: DeniesAnything %v, want %v", c.name, got, c.deniesAny)
 		}
 		v := enforce.TemplateRead(pol, tpl, pol.Decide(tpl, policy.Read, nil))
 		if v.Allowed != c.allowed {

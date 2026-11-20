@@ -135,9 +135,9 @@ func TestReadingOneDeniedThingIsRefused(t *testing.T) {
 	}
 }
 
-// TestTplEvalNeedsSystemTemplate — D-143: while the profile denies a read,
-// `tpl eval` needs `read system:template` allowed explicitly; with it, or
-// under a profile that denies no read, it runs.
+// TestTplEvalNeedsSystemTemplate — D-143 as tightened by D-190: while the
+// profile denies anything, `tpl eval` needs `read system:template` allowed by
+// its exact name; with it, or under a profile that denies nothing, it runs.
 func TestTplEvalNeedsSystemTemplate(t *testing.T) {
 	f := buildContractFixture(t)
 	writePolicyFile(t, f.dir, readsPolicy)
@@ -152,8 +152,16 @@ func TestTplEvalNeedsSystemTemplate(t *testing.T) {
 		t.Errorf("tpl eval with system:template allowed: %v\n%s", err, out)
 	}
 	writePolicyFile(t, f.dir, "version: 1\nactive: agent\nprofiles:\n  agent:\n    deny:\n      \"entity:lock.*\": [control]\n")
+	if out, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}"); policyErrorClass(err) != enforce.ClassDenied || !strings.Contains(out, want) {
+		t.Errorf("tpl eval under a profile denying only a control: %v, want refused (D-190)\n%s", err, out)
+	}
+	writePolicyFile(t, f.dir, "version: 1\nactive: agent\nprofiles:\n  agent:\n    default: deny\n    allow:\n      \"*\": [read]\n")
+	if out, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}"); policyErrorClass(err) != enforce.ClassDenied || !strings.Contains(out, want) {
+		t.Errorf("tpl eval under a wildcard read allow: %v, want refused (D-190)\n%s", err, out)
+	}
+	writePolicyFile(t, f.dir, "version: 1\nactive: agent\nprofiles:\n  agent:\n    allow:\n      \"entity:*\": [read]\n")
 	if out, _, err := runReads(t, f.dir, "tpl", "eval", "{{ 1 + 1 }}"); err != nil || !strings.Contains(out, "2") {
-		t.Errorf("tpl eval under a profile denying no read: %v\n%s", err, out)
+		t.Errorf("tpl eval under a profile denying nothing: %v\n%s", err, out)
 	}
 }
 

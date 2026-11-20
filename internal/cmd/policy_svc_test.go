@@ -79,7 +79,7 @@ func (rig *svcRig) fixtures(reach any) (map[string]any, map[string]http.HandlerF
 	}
 	services := `[
 	 {"domain":"light","services":{"turn_on":{"fields":{},"target":{"entity":[{"domain":["light"]}]}}}},
-	 {"domain":"homeassistant","services":{"turn_on":{"fields":{},"target":{}},"restart":{"fields":{}}}},
+	 {"domain":"homeassistant","services":{"turn_on":{"fields":{},"target":{}},"restart":{"fields":{}},"check_config":{"fields":{}}}},
 	 {"domain":"scene","services":{"apply":{"fields":{}}}},
 	 {"domain":"script","services":{"turn_on":{"fields":{},"target":{}},"reload":{"fields":{}},"morning":{"fields":{}}}},
 	 {"domain":"zwave_js","services":{"clear_lock_usercode":{"fields":{},"target":{}}}}
@@ -259,21 +259,21 @@ func TestSvcCallChecksTheServiceAlways(t *testing.T) {
 
 	writePolicyFile(t, rig.dir, svcPolicy(`    deny:`, `      "entity:lock.*": [control]`))
 	before := rig.commandCount("extract_from_target")
-	plan, out, err := planOf(t, rig.dir, "svc", "call", "homeassistant.restart")
+	plan, out, err := planOf(t, rig.dir, "svc", "call", "homeassistant.check_config")
 	if err != nil || !hasPolicyNote(out, 1) {
 		t.Fatalf("a default-allow profile must allow a service no deny matches: %v\n%s", err, out)
 	}
-	if !slices.Equal(plan, []string{"control service:homeassistant.restart"}) {
+	if !slices.Equal(plan, []string{"control service:homeassistant.check_config"}) {
 		t.Errorf("target-less plan = %q, want the service check alone", plan)
 	}
 	if rig.commandCount("extract_from_target") != before {
 		t.Error("a call with no target asked Home Assistant for its reach")
 	}
 
-	writePolicyFile(t, rig.dir, svcPolicy(`    deny:`, `      "service:homeassistant.restart": [control]`))
-	out, err = runPolicyCLI(t, rig.dir, "svc", "call", "homeassistant.restart", "--confirm")
-	wantRefused(t, "deny on the service", out, err, `control service:homeassistant.restart — deny "service:homeassistant.restart" [control] (line 6)`)
-	if rig.posted("homeassistant/restart") != 0 {
+	writePolicyFile(t, rig.dir, svcPolicy(`    deny:`, `      "service:homeassistant.check_config": [control]`))
+	out, err = runPolicyCLI(t, rig.dir, "svc", "call", "homeassistant.check_config", "--confirm")
+	wantRefused(t, "deny on the service", out, err, `control service:homeassistant.check_config — deny "service:homeassistant.check_config" [control] (line 6)`)
+	if rig.posted("homeassistant/check_config") != 0 {
 		t.Error("a refused service was called")
 	}
 }

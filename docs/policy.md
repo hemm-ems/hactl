@@ -133,8 +133,8 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 [manual](manual.md#resources).
 
 The pattern `"*"` on its own matches every resource of every kind:
-`"*": [read]` lets the agent read everything, `"*": [write]` under `deny:`
-makes a read-only profile.
+`"*": [read]` lets the agent read everything but templates (see `tpl eval`
+below), `"*": [write]` under `deny:` makes a read-only profile.
 
 A `template:` is a template entity from YAML, addressed by its `unique_id`. A
 template helper made in the UI (Settings → Helpers) is a config entry, not a
@@ -423,10 +423,19 @@ A few things worth knowing:
   that.** `group.set` and `group.remove` act on `group.<object_id>`,
   `scene.create` on `scene.<scene_id>`, so each needs `control` on that group
   or scene. `recorder.purge_entities` deletes the history of every entity of
-  the `domains` it names and every entity its `entity_globs` match, and
+  the `domains` it names and every entity its `entity_globs` match (matched
+  exactly as Home Assistant does: `[!a]ock.*` matches `lock.front_door`), and
   `recorder.purge` of every entity, so they need `control` on each;
   `recorder.get_statistics` needs `read` on each entity's statistics. The
   `shopping_list` services change the shopping list's own entity.
+  `homeassistant.set_location` moves `zone.home`, so it needs `control` on
+  `zone.home`.
+- **Removing counts as deleting.** `scene.delete` and `group.remove` need
+  `delete` on the scene or group. Reloading scenes (`scene.reload`,
+  `homeassistant.reload_all`) removes every scene made at run time, and
+  restarting or stopping Home Assistant every runtime scene and group; hactl
+  cannot tell those from the others, so these need `delete` on every scene
+  (and, for a restart, every group).
 - **Some services act on things no field of the call names** — Assist's
   `conversation.process` does what a sentence means; `shell_command.*`,
   `python_script.*`, `rest_command.*` and `pyscript.*` do whatever they were
@@ -440,7 +449,14 @@ A few things worth knowing:
 - **What an automation, script or template entity you write would do is
   checked when you write it.** It needs `control` on everything its actions
   would switch, exactly as `svc call` would, and `read` on every other entity
-  it mentions. One built from a blueprint (`use_blueprint`) is checked as the
+  it mentions. hactl reads every template in it: one it can compute
+  (`{{ 'input_boolean.' ~ 'guard' }}`) is checked as what it renders to; one
+  it cannot compute where an action names entities is refused; and one that
+  can read state — `states`, `state_attr`, `is_state`, `expand`, an area or
+  label function, a macro, a name hactl does not know, or a variable set from
+  any of them — needs `"system:template": [read]` by that exact name. Time,
+  math, text and list functions need nothing. A template hactl cannot parse
+  is refused. One built from a blueprint (`use_blueprint`) is checked as the
   blueprint expands with your inputs and the blueprint's defaults: hactl reads
   the blueprint through the companion, and refuses the write if it cannot read
   or expand it. A later change to the blueprint file itself is not checked.
@@ -449,7 +465,8 @@ A few things worth knowing:
   needs `control` on that entity when an automation, script or template entity
   — yours or anyone's — targets the new label, area, floor or name: from then
   on, that automation switches it. Labelling and moving things nothing targets
-  needs only the label or area edit.
+  needs only the label or area edit. Deleting an area counts too: an entity in
+  it falls back to its device's area.
 - **Switching an automation, a script, a helper or a template entity also asks
   its own address.** `deny "automation:prod_*": [write]` refuses turning
   `prod_heating` off, not just editing it; the same goes for
@@ -545,8 +562,15 @@ stderr. A few things worth knowing:
   earlier `log` needs `read` on `system:logs` too. Raw file contents
   (`config file`) are checked as the file, not redacted.
 - **`tpl eval` needs `system:template`.** A template can read any state, so
-  while your profile denies any read, `tpl eval` needs
-  `"system:template": [read]` allowed explicitly.
+  while your profile denies anything, `tpl eval` needs
+  `"system:template": [read]` allowed by that exact name — `"*": [read]`,
+  `"system:*": [read]` and the default do not grant it. `policy check read
+  system:template` answers the same.
+- **Traces and the logbook are masked too.** In `trace show` (also `--full`
+  and `--json`) every state of an entity you may not read, and every
+  `entity_id` naming one, reads `<denied>`; in `changes`, the entity that
+  caused a row is masked when you may not read it. A value an automation's
+  own template computed from such an entity is not recognisable and shows.
 - **A write command's own reads are not filtered.** A command that changes
   something reads what it changes first; those reads belong to the write, and
   the write's own check decides it. So a profile may allow `edit` on

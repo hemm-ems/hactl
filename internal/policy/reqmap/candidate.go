@@ -47,6 +47,9 @@ type CandidateUse struct {
 	// Undecidable is what the candidate does that cannot be read off it, as
 	// `fail-closed: …` rules with the path they were found at.
 	Undecidable []CandidateUndecidable
+	// Templates is every unsafe construct the candidate's templates use
+	// (D-188): each needs `read system:template`.
+	Templates []TemplateUnsafe
 }
 
 // CandidateUndecidable is one part of a candidate whose effect hactl cannot
@@ -61,6 +64,12 @@ const (
 	RuleActionTargetTemplate   = "fail-closed: action target is a template"
 	RuleDeviceActionUnresolved = "fail-closed: device action target unresolved"
 	RuleCandidateUnreadable    = "fail-closed: candidate does not parse"
+	// RuleTemplateUnparsable refuses a template hactl cannot parse: what it
+	// reads cannot be stated (D-188).
+	RuleTemplateUnparsable = "fail-closed: template does not parse"
+	// RuleActionDataTemplate refuses a template in a data field that names
+	// entities when hactl cannot compute what it renders to (D-189).
+	RuleActionDataTemplate = "fail-closed: action data naming entities is a template"
 )
 
 // entityToken finds entity-id-shaped tokens in a string: `<domain>.<object>`
@@ -76,14 +85,16 @@ func isTemplate(s string) bool { return strings.Contains(s, "{{") || strings.Con
 // reg makes a device action undecidable, never unchecked; a nil live finds no
 // mention, which the caller must refuse rather than pass.
 func CandidateUses(candidate any, live *LiveStates, reg *Registries) CandidateUse {
-	w := &candWalker{live: live, reg: reg, read: map[string]bool{}, sw: map[string]bool{}}
+	w := &candWalker{live: live, reg: reg, read: map[string]bool{}, sw: map[string]bool{}, env: newTplEnv(candidate)}
 	if live != nil {
 		w.li = newLiveIndex(live.EntityIDs)
 	}
 	w.walk(candidate, "")
+	w.templates(candidate, "")
 	var u CandidateUse
 	u.Actions = w.actions
 	u.Undecidable = w.undecidable
+	u.Templates = w.unsafe
 	for id := range w.sw {
 		u.Switch = append(u.Switch, id)
 	}
@@ -104,6 +115,40 @@ type candWalker struct {
 	actions     []CandidateAction
 	undecidable []CandidateUndecidable
 	read, sw    map[string]bool
+	env         *tplEnv
+	unsafe      []TemplateUnsafe
+}
+
+// templates analyses every template in v, at any depth, keys included
+// (D-188): one that does not parse refuses the candidate; each unsafe
+// construct is recorded with its path.
+func (w *candWalker) templates(v any, path string) {
+	one := func(s, at string) {
+		if !isTemplate(s) {
+			return
+		}
+		tpl, err := parseJinja(s)
+		if err != nil {
+			w.fail(at, RuleTemplateUnparsable)
+			return
+		}
+		for _, c := range w.env.unsafeIn(tpl) {
+			w.unsafe = append(w.unsafe, TemplateUnsafe{Path: pathOrRoot(at), Construct: c})
+		}
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		for _, k := range sortedMapKeys(t) {
+			one(k, path+"/"+k)
+			w.templates(t[k], path+"/"+k)
+		}
+	case []any:
+		for i, e := range t {
+			w.templates(e, fmt.Sprintf("%s/%d", path, i))
+		}
+	case string:
+		one(t, path)
+	}
 }
 
 func (w *candWalker) fail(path, rule string) {
@@ -202,8 +247,64 @@ func (w *candWalker) action(m map[string]any, path string) bool {
 			w.mention(s)
 		}
 	})
-	w.actions = append(w.actions, CandidateAction{Domain: strings.ToLower(domain), Service: strings.ToLower(service), Data: data, Path: pathOrRoot(path)})
+	svc := strings.ToLower(domain) + "." + strings.ToLower(service)
+	// A template whose value hactl computes is checked as that value; one in
+	// a field that names entities it cannot compute refuses (D-189).
+	folded := map[string]any{}
+	for _, k := range sortedMapKeys(data) {
+		v, ok := w.env.foldData(data[k])
+		if !ok && EntityNamingField(svc, k) {
+			w.fail(path+"/"+k, RuleActionDataTemplate)
+			return true
+		}
+		folded[k] = v
+	}
+	w.actions = append(w.actions, CandidateAction{Domain: strings.ToLower(domain), Service: strings.ToLower(service), Data: folded, Path: pathOrRoot(path)})
 	return true
+}
+
+// foldData folds every template in a data value, keys included, as Home
+// Assistant renders it (render_complex): ok is false when one does not fold;
+// what does not fold is then kept as written.
+func (env *tplEnv) foldData(v any) (any, bool) {
+	switch t := v.(type) {
+	case string:
+		if !isTemplate(t) {
+			return t, true
+		}
+		tpl, err := parseJinja(t)
+		if err != nil || len(env.unsafeIn(tpl)) > 0 {
+			return t, false
+		}
+		if fv, ok := env.fold(tpl); ok {
+			return fv, true
+		}
+		return t, false
+	case map[string]any:
+		out := map[string]any{}
+		all := true
+		for _, k := range sortedMapKeys(t) {
+			fk, okk := env.foldData(k)
+			fv, okv := env.foldData(t[k])
+			ks, isStr := fk.(string)
+			if !isStr {
+				ks, okk = k, false
+			}
+			out[ks] = fv
+			all = all && okk && okv
+		}
+		return out, all
+	case []any:
+		out := make([]any, 0, len(t))
+		all := true
+		for _, e := range t {
+			fv, ok := env.foldData(e)
+			out = append(out, fv)
+			all = all && ok
+		}
+		return out, all
+	}
+	return v, true
 }
 
 // actionName is the service an action mapping names, and the key it is
