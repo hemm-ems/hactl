@@ -509,8 +509,12 @@ A few things worth knowing:
     denied: control entity:lock.front_door — deny "entity:lock.front_door" [control] (line 5) (run of script.goodnight: action at /sequence/1)
   ```
 
-  If hactl cannot read the stored config (no companion, for one), the run is
-  refused. What Home Assistant runs on its own — an automation firing on its
+  Without a companion, hactl reads the stored config from Home Assistant's
+  config API instead, which serves what `scripts.yaml` and `automations.yaml`
+  hold (what the UI edits). A script or automation defined anywhere else — a
+  package, an `!include` of another file — is readable only through the
+  companion: without it, and whenever hactl cannot read the stored config,
+  the run is refused. What Home Assistant runs on its own — an automation firing on its
   trigger at 23:30 — is not checked: only what the agent starts.
 - **Putting something where an automation looks counts as switching it.**
   Labelling an entity, moving it (or its device) to an area, or renaming it
