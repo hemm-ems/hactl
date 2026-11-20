@@ -33,9 +33,15 @@ profiles:
       "automation:pg_*":          [read, edit, create]
       "entity:*/registry/labels": [edit]
     deny:
-      "entity:lock.*":                         [read, write]
-      "entity:device_tracker.*/attr/latitude": [read]
+      "entity:lock.*":            [read, write]
+      "entity:*/attr/latitude":   [read]   # where anyone is: device trackers,
+      "entity:*/attr/longitude":  [read]   # persons, zones — every entity
 ```
+
+The two location rules cover every entity that carries coordinates — a
+`device_tracker`, a `person` (which repeats its tracker's coordinates), a
+`zone`. Denying `latitude` alone leaves `longitude` readable, and denying it on
+`device_tracker.*` alone leaves the same coordinates readable on `person.*`.
 
 Then ask it questions:
 
@@ -203,7 +209,7 @@ attributes. An allow on a sub-resource grants only that sub-resource:
 else about the entity.
 
 **Partly denied.** Suppose an entity is allowed, but something *inside* it is
-denied, like the latitude attribute in the example above. Then:
+denied, like the latitude and longitude attributes in the example above. Then:
 
 - **changing** the whole entity is denied, because it would touch the denied
   part — counting only denies whose verb can change what they protect, so a
@@ -214,7 +220,8 @@ denied, like the latitude attribute in the example above. Then:
 $ hactl policy check entity:device_tracker.jan read
 allowed: entity:device_tracker.jan read
 rule: allow "entity:*" [read] (line 7)
-partial: deny "entity:device_tracker.*/attr/latitude" [read] (line 13)
+partial: deny "entity:*/attr/latitude" [read] (line 13)
+partial: deny "entity:*/attr/longitude" [read] (line 14)
 ```
 
 ### Narrowing an allow by area or label
@@ -412,6 +419,37 @@ A few things worth knowing:
   own state, since Home Assistant's answer names the group or scene alone. If
   Home Assistant cannot tell hactl what a call would reach, the call is
   refused.
+- **Some services name what they act on another way, and are checked by
+  that.** `group.set` and `group.remove` act on `group.<object_id>`,
+  `scene.create` on `scene.<scene_id>`, so each needs `control` on that group
+  or scene. `recorder.purge_entities` deletes the history of every entity of
+  the `domains` it names and every entity its `entity_globs` match, and
+  `recorder.purge` of every entity, so they need `control` on each;
+  `recorder.get_statistics` needs `read` on each entity's statistics. The
+  `shopping_list` services change the shopping list's own entity.
+- **Some services act on things no field of the call names** — Assist's
+  `conversation.process` does what a sentence means; `shell_command.*`,
+  `python_script.*`, `rest_command.*` and `pyscript.*` do whatever they were
+  written to; `ai_task.*`, `assist_satellite.start_conversation`,
+  `file.read_file` and `device_tracker.see` too. While your profile denies
+  anything, such a service needs an allow by its **exact** name —
+  `"service:conversation.process": [control]` — and then may do whatever it
+  does: a wildcard such as `"service:*"` and the default never grant it. The
+  services of a custom integration are checked by their target and the entity
+  ids in their data only.
+- **What an automation, script or template entity you write would do is
+  checked when you write it.** It needs `control` on everything its actions
+  would switch, exactly as `svc call` would, and `read` on every other entity
+  it mentions. One built from a blueprint (`use_blueprint`) is checked as the
+  blueprint expands with your inputs and the blueprint's defaults: hactl reads
+  the blueprint through the companion, and refuses the write if it cannot read
+  or expand it. A later change to the blueprint file itself is not checked.
+- **Putting something where an automation looks counts as switching it.**
+  Labelling an entity, moving it (or its device) to an area, or renaming it
+  needs `control` on that entity when an automation, script or template entity
+  — yours or anyone's — targets the new label, area, floor or name: from then
+  on, that automation switches it. Labelling and moving things nothing targets
+  needs only the label or area edit.
 - **Switching an automation, a script, a helper or a template entity also asks
   its own address.** `deny "automation:prod_*": [write]` refuses turning
   `prod_heating` off, not just editing it; the same goes for
@@ -469,7 +507,10 @@ A few things worth knowing:
 - **Some side effects are not checked**, because they happen inside Home
   Assistant after an allowed write and hactl cannot list them in advance:
   the companion reloads what it wrote, and running a script lets that script
-  do whatever it does.
+  do whatever it does. A label, area or floor that changes outside hactl, a
+  group helper whose members change through its options, a template helper
+  made in the UI, and (without a companion) a YAML template entity are not
+  searched for what they target.
 
 **Every read is filtered before the command sees it.** A listing leaves out
 what the profile may not read and ends with a line saying how many it left out;
@@ -520,7 +561,15 @@ stderr. A few things worth knowing:
   and `script apply` show, the files and views `ref replace`, `ent rename` and
   `dash replace` would rewrite (other automations' files among them), and the
   current options a `config options` form offers. Nor is a refusal's
-  explanation, which can name an entity's area and labels.
+  explanation, which can name an entity's area and labels, and names every
+  entity it refused — also one you may not read that a service call's area or
+  label reaches.
+- **Devices and groups show what they hold.** A device whose entity you may
+  not read is still listed and shown by `device ls` and `device show`, with
+  its own name, which is often the entity's name too. A group's (a light
+  group's, a scene's) `entity_id` attribute lists its members' ids as they
+  are, also members you may not read; deny reading the group, or its
+  `attr/entity_id`, to hide them.
 - **Whether something exists can show through.** `helper show` and
   `helper cat` refuse a helper you may not read but say `not found` for one
   that does not exist, and `config block` does the same for a block addressed
