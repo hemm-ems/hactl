@@ -245,6 +245,7 @@ actions:
 // servicesFetcher is a fakeFetcher that also reads the service list (D-211).
 type servicesFetcher struct {
 	*fakeFetcher
+
 	services map[string]map[string]bool
 }
 

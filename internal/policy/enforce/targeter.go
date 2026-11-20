@@ -283,7 +283,7 @@ func stepNames(step map[string]any, id string) bool {
 // namesID reports whether a selector value names id: the value itself, or
 // one of its comma-separated parts.
 func namesID(v, id string) bool {
-	for _, p := range strings.Split(v, ",") {
+	for p := range strings.SplitSeq(v, ",") {
 		if strings.TrimSpace(p) == id {
 			return true
 		}

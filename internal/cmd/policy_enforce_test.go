@@ -53,11 +53,12 @@ func policyIDOf(t *testing.T, dir string) string {
 	return pol.Active() + "@" + pol.Hash()
 }
 
-// recordPreview records the witnesses a passing preview of cmdPath args
+// recordPreview records the witnesses a passing preview of `hactl svc call` args
 // leaves under the policy now in dir: the confirm guard's and the one keyed
 // by the policy (D-215).
-func recordPreview(t *testing.T, dir, cmdPath string, args []string) {
+func recordPreview(t *testing.T, dir string, args []string) {
 	t.Helper()
+	const cmdPath = "hactl svc call"
 	now := time.Now()
 	recordWitness(stateCacheDir(dir), manual.SessionKey(), cmdPath, args, now)
 	recordPolicyWitness(stateCacheDir(dir), manual.SessionKey(), cmdPath, args, policyIDOf(t, dir), now)

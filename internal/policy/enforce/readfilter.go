@@ -1123,7 +1123,7 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	// nothing a profile can deny: it is shown, its context decided as
 	// every row's (D-214).
 	e, ok := stringField(o, "entity_id")
-	if raw, has := o["entity_id"]; has && !ok && !isNull(raw) {
+	if v, has := o["entity_id"]; has && !ok && !isNull(v) {
 		return nil, false, nil // an entity_id hactl cannot read: unaddressable (D-141)
 	}
 	if ok && !f.s.readable(policy.KindEntity, e, "") {

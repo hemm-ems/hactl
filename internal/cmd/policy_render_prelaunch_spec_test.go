@@ -300,7 +300,7 @@ func TestRefusalHintSaysThePreviewHadPassed(t *testing.T) {
 	args := []string{"svc", "call", "light.turn_on", "--data", `{"area_id":"hall"}`}
 	// The preview passed under this very policy; what it depended on (the
 	// reach) changed since.
-	recordPreview(t, rig.dir, "hactl svc call", []string{"light.turn_on"})
+	recordPreview(t, rig.dir, []string{"light.turn_on"})
 	out, _ := runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
 	assertHint(t, "refused --confirm", out, "the preview had passed under this policy, and something it depends on changed since (an area or label, a service call's reach); "+
 		"the owner would change the rule on line 6; allowed: 1 of 2 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`")
@@ -322,7 +322,7 @@ func TestPreviewHintKeyedByPolicy(t *testing.T) {
 	if out, err := runPolicyCLI(t, rig.dir, args...); err != nil {
 		t.Fatalf("allowed preview: %v\n%s", err, out)
 	}
-	recordPreview(t, rig.dir, "hactl svc call", []string{"light.turn_on"})
+	recordPreview(t, rig.dir, []string{"light.turn_on"})
 	writePolicyFile(t, rig.dir, deny)
 	out, _ := runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
 	assertHint(t, "after a preview under another policy", out, "no preview of this command passed under this policy; "+rest)
@@ -330,7 +330,7 @@ func TestPreviewHintKeyedByPolicy(t *testing.T) {
 	preview, _ := runPolicyCLI(t, rig.dir, args...)
 	assertHint(t, "the refused preview", preview, rest)
 
-	recordPreview(t, rig.dir, "hactl svc call", []string{"light.turn_on"})
+	recordPreview(t, rig.dir, []string{"light.turn_on"})
 	out, _ = runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
 	assertHint(t, "after a preview under this policy", out, "the preview had passed under this policy, and something it depends on changed since (an area or label, a service call's reach); "+rest)
 }

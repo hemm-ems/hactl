@@ -514,14 +514,8 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 			s.mu.Unlock()
 		}
 	}
-	if need.services && c.services == nil {
-		if sf, ok := f.(ServicesFetcher); ok {
-			if svc, err := sf.Services(ctx); err == nil && len(svc) > 0 {
-				s.mu.Lock()
-				c.services = svc
-				s.mu.Unlock()
-			}
-		}
+	if need.services {
+		s.gatherServices(ctx, c)
 	}
 	if need.registries && !c.regRead && f != nil {
 		if reg, complete, err := f.Registries(ctx); err == nil {
@@ -575,6 +569,23 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 		return &reqmap.Reach{Err: err}
 	}
 	return &reqmap.Reach{EntityIDs: ids}
+}
+
+// gatherServices reads the service list once (D-211); an unread or empty
+// one stays nil, which every reader takes as "any domain may have it".
+func (s *Session) gatherServices(ctx context.Context, c *factCache) {
+	s.mu.Lock()
+	have := c.services != nil
+	s.mu.Unlock()
+	sf, ok := s.fetcher.(ServicesFetcher)
+	if have || !ok {
+		return
+	}
+	if svc, err := sf.Services(ctx); err == nil && len(svc) > 0 {
+		s.mu.Lock()
+		c.services = svc
+		s.mu.Unlock()
+	}
 }
 
 // decide answers one check: a concrete resource by Decide (where: selectors

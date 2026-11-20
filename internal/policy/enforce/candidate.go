@@ -105,9 +105,37 @@ func (s *Session) candidateDoc(ctx context.Context, domain string, doc any, via 
 			checks = append(checks, c)
 		}
 	}
-	// What templates read and conditions compare is decided here, so the
-	// refusal names the construct: a whole read is refused by a deny on any
-	// part (D-198).
+	rc, rd := s.candidateReads(use)
+	checks, denials = append(checks, rc...), append(denials, rd...)
+	for _, u := range append(unexpanded, use.Undecidable...) {
+		denials = append(denials, Denial{Resource: "candidate " + u.Path, Verb: policy.Control.String(), Rule: u.Rule})
+	}
+	if via != nil {
+		applyVia(checks, denials, via(""))
+	}
+	return dedupeChecks(checks), denials
+}
+
+// applyVia gives every check without a run path, and every denial, the
+// path outer (D-207).
+func applyVia(checks []reqmap.Check, denials []Denial, outer string) {
+	for i := range checks {
+		if checks[i].Via == "" {
+			checks[i].Via = outer
+		}
+	}
+	for i := range denials {
+		denials[i].Via = joinVia(outer, denials[i].Via)
+	}
+}
+
+// candidateReads decides what a candidate's templates read and its
+// conditions compare, so the refusal names the construct: a whole read is
+// refused by a deny on any part (D-198); a construct whose reach hactl cannot
+// name needs `read system:template` (D-188, D-190).
+func (s *Session) candidateReads(use reqmap.CandidateUse) ([]reqmap.Check, []Denial) {
+	var checks []reqmap.Check
+	var denials []Denial
 	for _, r := range use.TemplateReads {
 		if d := s.candidateRead(r.Check, " — the template at "+r.Path+" uses "+r.Construct); d != nil {
 			denials = append(denials, *d)
@@ -135,20 +163,7 @@ func (s *Session) candidateDoc(ctx context.Context, domain string, doc any, via 
 			}
 		}
 	}
-	for _, u := range append(unexpanded, use.Undecidable...) {
-		denials = append(denials, Denial{Resource: "candidate " + u.Path, Verb: policy.Control.String(), Rule: u.Rule})
-	}
-	if via != nil {
-		for i := range checks {
-			if checks[i].Via == "" {
-				checks[i].Via = via("")
-			}
-		}
-		for i := range denials {
-			denials[i].Via = joinVia(via(""), denials[i].Via)
-		}
-	}
-	return dedupeChecks(checks), denials
+	return checks, denials
 }
 
 // joinVia is a run path followed by the one it leads into.

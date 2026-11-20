@@ -247,6 +247,22 @@ func mapServiceCall(c *call) (mapping, error) {
 	}
 	if (domain == "script" || domain == "homeassistant") && scriptStartServices[service] {
 		cs.addScriptRuns(ids, f.Registries)
+	}
+	runs = append(runs, startedRuns(domain, service, ids, f)...)
+	cs.addTypedControl(reached, f.Live, f.Registries)
+	return mapping{checks: cs.out, runs: runs}, cs.err
+}
+
+// startedRuns is every script and automation of the reached ids that
+// domain.service starts (D-207): script.turn_on|toggle and
+// homeassistant.turn_on|toggle start the scripts by their config key (the
+// registry unique_id); automation.trigger runs an automation's actions — past
+// the conditions unless skip_condition is false, and the conditions are reads
+// checked anyway (TestOracleRunsStartWhatTheyName) — by its config id, else
+// its entity id.
+func startedRuns(domain, service string, ids []string, f *Facts) []Run {
+	var runs []Run
+	if (domain == "script" || domain == "homeassistant") && scriptStartServices[service] {
 		for _, id := range ids {
 			if strings.HasPrefix(id, "script.") {
 				runs = append(runs, Run{Kind: "script", ID: scriptUniqueID(f.Registries, id), EntityID: id})
@@ -254,9 +270,6 @@ func mapServiceCall(c *call) (mapping, error) {
 		}
 	}
 	if domain == "automation" && service == "trigger" {
-		// automation.trigger runs the actions — past the conditions unless
-		// skip_condition is false, and the conditions are reads checked
-		// anyway (D-207, TestOracleRunsStartWhatTheyName).
 		for _, id := range ids {
 			if strings.HasPrefix(id, "automation.") {
 				cid := f.Live.AutomationIDs[id]
@@ -267,8 +280,7 @@ func mapServiceCall(c *call) (mapping, error) {
 			}
 		}
 	}
-	cs.addTypedControl(reached, f.Live, f.Registries)
-	return mapping{checks: cs.out, runs: runs}, cs.err
+	return runs
 }
 
 // affectedBy keeps of sorted ids those a homeassistant.<service> fan-out

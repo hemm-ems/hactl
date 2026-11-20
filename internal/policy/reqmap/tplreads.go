@@ -456,21 +456,11 @@ func (a *tplAnalysis) projection(f jFilter) bool {
 		}
 		switch g.name {
 		case "selectattr", "rejectattr":
-			if len(g.args.pos) == 0 || len(g.args.kwName) > 0 || len(g.args.dyn) > 0 {
+			q, more, isSel := selectPath(g)
+			if !isSel {
 				return false
 			}
-			q, isStr := constString(g.args.pos[0])
-			if !isStr {
-				return false
-			}
-			if len(g.args.pos) > 1 {
-				test, isTest := constString(g.args.pos[1])
-				if !isTest || !safeTemplateTests[test] || unsafeTemplateTests[test] {
-					return false
-				}
-				extra = append(extra, g.args.pos[2:]...)
-			}
-			paths = append(paths, q)
+			paths, extra = append(paths, q), append(extra, more...)
 		case "sort":
 			q, isSort := kwAttribute(g, "sort")
 			if !isSort {
@@ -493,14 +483,40 @@ func (a *tplAnalysis) projection(f jFilter) bool {
 	a.nodes(extra)
 	for _, id := range ids {
 		for _, q := range paths {
-			steps := []jStep{}
-			for part := range strings.SplitSeq(q, ".") {
-				steps = append(steps, jStep{attr: part, named: true})
-			}
-			a.stateObject(construct, strings.ToLower(id), steps)
+			a.stateObject(construct, strings.ToLower(id), pathSteps(q))
 		}
 	}
 	return true
+}
+
+// selectPath is the attribute path q of `selectattr|rejectattr('q'[, test,
+// args…])` and the test's arguments; ok false for any other shape, or a test
+// that is not safe.
+func selectPath(g jFilter) (q string, extra []jNode, ok bool) {
+	if len(g.args.pos) == 0 || len(g.args.kwName) > 0 || len(g.args.dyn) > 0 {
+		return "", nil, false
+	}
+	q, ok = constString(g.args.pos[0])
+	if !ok {
+		return "", nil, false
+	}
+	if len(g.args.pos) > 1 {
+		test, isTest := constString(g.args.pos[1])
+		if !isTest || !safeTemplateTests[test] || unsafeTemplateTests[test] {
+			return "", nil, false
+		}
+		extra = g.args.pos[2:]
+	}
+	return q, extra, true
+}
+
+// pathSteps is a dotted attribute path as named steps.
+func pathSteps(q string) []jStep {
+	var steps []jStep
+	for part := range strings.SplitSeq(q, ".") {
+		steps = append(steps, jStep{attr: part, named: true})
+	}
+	return steps
 }
 
 // kwAttribute is p of `<name>(attribute='p')` with no other argument.

@@ -301,6 +301,7 @@ func TestRequestLayerChecksARelabel(t *testing.T) {
 // files and the service list (D-212).
 type affectFetcher struct {
 	*targetFetcher
+
 	configs  map[string]string
 	files    map[string]string
 	services map[string]map[string]bool
