@@ -342,3 +342,22 @@ func TestStarterPolicyHidesNothingUnderReadEnforcement(t *testing.T) {
 		t.Errorf("policy check system:template read under the starter: %v\n%s", err, out)
 	}
 }
+
+// TestStarterPolicyDrawsNoTemplateReadsFinding — D-206: the starter allows
+// reading everything, so its exact system:template allow lets a template
+// read nothing the profile denies.
+func TestStarterPolicyDrawsNoTemplateReadsFinding(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, policy.FileName), []byte(starterPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := policy.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range policy.Lint(p, nil).Findings {
+		if f.Code == policy.CodeTemplateReadsDenied {
+			t.Errorf("starter policy: %+v", f)
+		}
+	}
+}
