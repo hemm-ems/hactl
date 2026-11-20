@@ -41,7 +41,7 @@ internal/manual/state.go HowToPending             # orphan: a read-only "is this
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
 internal/policy/reqmap/servicefields.go FixedEntitiesOf     # harness: TestOracleSetLocationWritesZoneHome holds the fixed-entity table to what Home Assistant writes; the binary reads it through the mapped field checks
-internal/policy/reqmap/servicefields.go ReloadRemovesRuntime # harness: TestOracleReloadsRemoveRuntimeEntities and TestOracleRestartRemovesRuntimeEntities hold the reload table to Home Assistant; the binary reads it through the mapped field checks
+internal/policy/reqmap/jinja.go DecodeJinjaString # harness: TestOracleJinjaStringEscapes holds hactl's string-literal decoding to Home Assistant's; the binary decodes through lexString while folding templates
 internal/policy/reqmap/servicefields.go ServiceInventoryKey # harness: the service inventory's and manifest's key, used by TestServiceSurfaceIsClosed and the live inventory checks
 internal/policy/reqmap/servicefields.go ServiceTable        # harness: the classified services the service manifest must hold even when no test instance exposes them
 internal/policy/reqmap/tplfields.go TemplateFieldExemption # harness: TestOracleTemplateFieldsAreDispositioned holds the exempt-field table to the rig's /api/services; the binary reads the table through EntityNamingField
