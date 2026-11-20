@@ -114,7 +114,20 @@ type options struct {
 	timeout time.Duration
 }
 
-// WithImage overrides the default HA Docker image (default: stable).
+// imageFromEnv is the image an instance runs when its test names none:
+// HACTL_HA_IMAGE when set — the CI matrix's HA version — and stable otherwise.
+// Every instance follows it, so a "HA prev" job tests prev with every
+// fixture, not only with the ones whose getter remembered to pass the image
+// (before 2026-11-05 about ten did not, and silently ran stable).
+func imageFromEnv() string {
+	if img := os.Getenv("HACTL_HA_IMAGE"); img != "" {
+		return img
+	}
+	return defaultImage
+}
+
+// WithImage overrides the default HA Docker image (default: HACTL_HA_IMAGE,
+// else stable).
 func WithImage(image string) Option {
 	return func(o *options) { o.image = image }
 }
@@ -171,7 +184,7 @@ func StartShared(t *testing.T, opts ...Option) *Instance {
 
 func start(opts ...Option) (*Instance, error) {
 	o := &options{
-		image:   defaultImage,
+		image:   imageFromEnv(),
 		timeout: defaultTimeout,
 	}
 	for _, fn := range opts {

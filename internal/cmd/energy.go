@@ -151,6 +151,7 @@ type energyDirections struct{ From, To string }
 //	BatterySourceType.stat_rate       "positive when discharging, negative when charging"
 //	GasSourceType                     "the source of gas consumption"
 //	WaterSourceType                   "the source of water consumption"
+//	HomeSourceType.stat_energy_to     "the whole-home consumption meter" (HA 2026.11)
 //
 // Battery is the one type the three-word vocabulary could not describe
 // honestly, so it names what HA names (D-16): energy leaving the battery is a
@@ -167,6 +168,10 @@ var energyDirectionByType = map[string]energyDirections{
 	"battery": {From: "discharge", To: "charge"},
 	"gas":     {From: "consumption"},
 	"water":   {From: "consumption"},
+	// HA 2026.11: the whole-home consumption meter, a main-panel sensor that
+	// "does not touch any other calculation"; its one statistic is
+	// stat_energy_to, the energy delivered to the home.
+	"home": {To: "consumption"},
 }
 
 // energyDirectionUnknown is what a source type this build has never heard of
