@@ -104,6 +104,33 @@ func TestRegistryReachChecks(t *testing.T) {
 			want: []string{"control entity:input_boolean.guard"},
 		},
 		{
+			name:    "deleting an entity's own area drops it into its device's targeted area (D-195, B2)",
+			change:  enforce.RegistryChange{DeletedArea: "kitchen"},
+			related: map[string]map[string][]string{"area:hall": {"script": {"script.pg_hall"}}}, grepErr: enforce.ErrNoCompanion,
+			want: []string{"control entity:input_boolean.own_area"},
+		},
+		{
+			name:    "deleting an area nobody falls back from is the delete alone",
+			change:  enforce.RegistryChange{DeletedArea: "hall"},
+			related: map[string]map[string][]string{"area:hall": {"script": {"script.pg_hall"}}}, grepErr: enforce.ErrNoCompanion,
+		},
+		{
+			name:    "deleting a floor or a label takes containers away, adds none",
+			change:  enforce.RegistryChange{DeletedFloor: "ground"},
+			related: map[string]map[string][]string{"area:garden": {"script": {"script.x"}}}, relatedErr: errors.New("asked anyway"),
+		},
+		{
+			name:       "deleting a label adds no container",
+			change:     enforce.RegistryChange{DeletedLabel: "cosy"},
+			relatedErr: errors.New("asked anyway"),
+		},
+		{
+			name:    "clearing an entity's own area drops it into its device's targeted area",
+			change:  enforce.RegistryChange{EntityID: "input_boolean.own_area", AreaSet: true},
+			related: map[string]map[string][]string{"area:hall": {"script": {"script.pg_hall"}}}, grepErr: enforce.ErrNoCompanion,
+			want: []string{"control entity:input_boolean.own_area"},
+		},
+		{
 			name:    "a label nothing targets is tidying",
 			change:  enforce.RegistryChange{EntityID: "input_boolean.guard", Labels: labels("old", "fresh")},
 			related: cosyTargeted, grepErr: enforce.ErrNoCompanion,
@@ -256,5 +283,16 @@ func TestRequestLayerChecksARelabel(t *testing.T) {
 		return d.Resource == "entity:input_boolean.dev_guard" && d.Verb == "control"
 	}) {
 		t.Errorf("labelling a device whose entities include a control-denied one into a targeted label: Check = %v, want refused", err)
+	}
+	s, _ = newSession(t, strings.Replace(relabelPolicy, "    allow:\n", "    allow:\n      \"area:*\": [delete]\n", 1), &targetFetcher{fakeFetcher: fakeFetcher{reg: relabelRegistries(), complete: true},
+		related: map[string]map[string][]string{"area:hall": {"script": {"script.pg_hall"}}}, grepErr: enforce.ErrNoCompanion})
+	del := reqmap.Request{Transport: reqmap.WS, Type: "config/area_registry/delete", Params: map[string]any{"area_id": "kitchen"}}
+	if err := s.Check(context.Background(), del); !errors.As(err, &ref) || !slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool {
+		return d.Resource == "entity:input_boolean.own_area" && d.Verb == "control"
+	}) {
+		t.Errorf("deleting the area an entity falls back from into a targeted area: Check = %v, want refused on control entity:input_boolean.own_area", err)
+	}
+	if len(ref.Denied) != 1 {
+		t.Errorf("deleting the kitchen: denied %+v, want only the fallen-back entity", ref.Denied)
 	}
 }

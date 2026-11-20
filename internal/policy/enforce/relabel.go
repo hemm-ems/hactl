@@ -46,11 +46,17 @@ type TargetFetcher interface {
 }
 
 // RegistryChange is one registry edit, as a command or a
-// config/<entity|device>_registry/update message states it. Exactly one of
-// EntityID and DeviceID is set.
+// config/<entity|device>_registry/update or config/<area|floor|label>_registry/delete
+// message states it. Exactly one of EntityID, DeviceID, DeletedArea,
+// DeletedFloor and DeletedLabel is set.
 type RegistryChange struct {
 	EntityID string
 	DeviceID string
+	// DeletedArea, DeletedFloor, DeletedLabel: the edit deletes that area,
+	// floor or label (D-195).
+	DeletedArea  string
+	DeletedFloor string
+	DeletedLabel string
 	// Labels is the full label list the edit sets; nil leaves labels alone.
 	Labels *[]string
 	// AreaSet: the edit sets the area to AreaID ("" clears it).
@@ -64,9 +70,10 @@ type RegistryChange struct {
 // target (D-186).
 var targetKeys = map[string]bool{"label_id": true, "area_id": true, "floor_id": true, "device_id": true, "entity_id": true}
 
-// RegistryReachChecks is what a registry edit makes reachable (D-186): an
-// entity it puts under a label, an area (and so that area's floor and
-// labels), or a new entity id, that an automation, a script or a template
+// RegistryReachChecks is what a registry edit makes reachable (D-186, D-195):
+// an entity it puts under a label, an area (and so that area's floor and
+// labels — also by deleting the entity's own area, so that it falls back to
+// its device's), or a new entity id, that an automation, a script or a template
 // entity already targets, needs `control` — the targeting automation would
 // switch it the next time it runs, and nothing would check that then.
 //
@@ -89,8 +96,15 @@ func (s *Session) RegistryReachChecks(ctx context.Context, ch RegistryChange) ([
 	}
 	s.mu.Unlock()
 	subject := "entity:" + ch.EntityID
-	if ch.DeviceID != "" {
+	switch {
+	case ch.DeviceID != "":
 		subject = "device:" + ch.DeviceID
+	case ch.DeletedArea != "":
+		subject = "area:" + ch.DeletedArea
+	case ch.DeletedFloor != "":
+		subject = "floor:" + ch.DeletedFloor
+	case ch.DeletedLabel != "":
+		subject = "label:" + ch.DeletedLabel
 	}
 	if reg == nil {
 		return nil, []Denial{{Resource: subject, Verb: policy.Control.String(), Rule: RuleRegistriesUnread}}
@@ -128,64 +142,123 @@ type container struct{ kind, id string }
 func (c container) String() string { return c.kind + ":" + c.id }
 
 // gainedContainers maps each entity the edit affects to the containers it
-// is reachable through after the edit and was not before.
+// is reachable through after the edit and was not before: the registries as
+// they are, and as Home Assistant leaves them after the edit (D-186, D-195),
+// compared entity by entity.
 func gainedContainers(reg *reqmap.Registries, ch RegistryChange) map[string][]container {
-	idx := newRegIndex(reg)
+	next, ok := applyChange(reg, ch)
+	if !ok {
+		return nil // not in the registry: Home Assistant refuses the edit
+	}
+	before, after := newRegIndex(reg), newRegIndex(next)
 	out := map[string][]container{}
-	diff := func(id string, before, after map[string]container) {
+	for i, e := range reg.Entities {
+		n := next.Entities[i]
+		// A rename is checked on the entity the owner's rules name: its
+		// current id (the new id is checked as created, E-5).
+		id := e.EntityID
+		if ch.EntityID == e.EntityID && ch.NewEntityID != "" {
+			id = ch.NewEntityID
+		}
+		had := before.containersOf(e, before.devices[e.DeviceID], e.EntityID)
 		var gained []container
-		for k, c := range after {
-			if _, had := before[k]; !had {
+		for k, c := range after.containersOf(n, after.devices[n.DeviceID], id) {
+			if _, was := had[k]; !was {
 				gained = append(gained, c)
 			}
 		}
 		if len(gained) == 0 {
-			return
+			continue
 		}
 		sort.Slice(gained, func(i, j int) bool { return gained[i].String() < gained[j].String() })
-		out[id] = gained
+		out[e.EntityID] = gained
+	}
+	return out
+}
+
+// applyChange is the registries as Home Assistant leaves them after ch, in
+// the same order; ok is false when ch names a row that does not exist.
+//
+// Deleting an area clears it from every entity and device whose own area it
+// is; an entity whose own area is cleared is then in its device's area (Home
+// Assistant's area fallback) — the area delete that moves an entity into an
+// area a script targets (re-hunt 2026-11-20, B2). Deleting a floor clears it
+// from its areas; deleting a label removes it from every entity, device and
+// area holding it.
+func applyChange(reg *reqmap.Registries, ch RegistryChange) (*reqmap.Registries, bool) {
+	next := &reqmap.Registries{
+		Entities: slices.Clone(reg.Entities),
+		Devices:  slices.Clone(reg.Devices),
+		Areas:    slices.Clone(reg.Areas),
 	}
 	switch {
 	case ch.EntityID != "":
-		i := slices.IndexFunc(reg.Entities, func(e reqmap.RegistryEntity) bool { return e.EntityID == ch.EntityID })
+		i := slices.IndexFunc(next.Entities, func(e reqmap.RegistryEntity) bool { return e.EntityID == ch.EntityID })
 		if i < 0 {
-			return nil // not in the registry: Home Assistant refuses the edit
+			return nil, false
 		}
-		e := reg.Entities[i]
-		d := idx.devices[e.DeviceID]
-		next := e
-		if ch.Labels != nil {
-			next.Labels = *ch.Labels
-		}
-		if ch.AreaSet {
-			next.AreaID = ch.AreaID
-		}
-		// A rename is checked on the entity the owner's rules name: its
-		// current id (the new id is checked as created, E-5).
-		id := e.EntityID
-		if ch.NewEntityID != "" {
-			id = ch.NewEntityID
-		}
-		diff(e.EntityID, idx.containersOf(e, d, e.EntityID), idx.containersOf(next, d, id))
+		applyEdit(&next.Entities[i].Labels, &next.Entities[i].AreaID, ch)
 	case ch.DeviceID != "":
-		d, ok := idx.devices[ch.DeviceID]
-		if !ok {
-			return nil
+		i := slices.IndexFunc(next.Devices, func(d reqmap.RegistryDevice) bool { return d.ID == ch.DeviceID })
+		if i < 0 {
+			return nil, false
 		}
-		next := d
-		if ch.Labels != nil {
-			next.Labels = *ch.Labels
-		}
-		if ch.AreaSet {
-			next.AreaID = ch.AreaID
-		}
-		for _, e := range reg.Entities {
-			if e.DeviceID == ch.DeviceID {
-				diff(e.EntityID, idx.containersOf(e, d, e.EntityID), idx.containersOf(e, next, e.EntityID))
+		applyEdit(&next.Devices[i].Labels, &next.Devices[i].AreaID, ch)
+	case ch.DeletedArea != "":
+		deleteArea(next, ch.DeletedArea)
+	case ch.DeletedFloor != "":
+		for i := range next.Areas {
+			if next.Areas[i].FloorID == ch.DeletedFloor {
+				next.Areas[i].FloorID = ""
 			}
 		}
+	case ch.DeletedLabel != "":
+		deleteLabel(next, ch.DeletedLabel)
 	}
-	return out
+	return next, true
+}
+
+// applyEdit applies an entity's or device's label and area edit.
+func applyEdit(labels *[]string, area *string, ch RegistryChange) {
+	if ch.Labels != nil {
+		*labels = *ch.Labels
+	}
+	if ch.AreaSet {
+		*area = ch.AreaID
+	}
+}
+
+// deleteArea is Home Assistant's area delete: every entity and device in it
+// loses its area — an entity then falls back to its device's.
+func deleteArea(next *reqmap.Registries, area string) {
+	for i := range next.Entities {
+		if next.Entities[i].AreaID == area {
+			next.Entities[i].AreaID = ""
+		}
+	}
+	for i := range next.Devices {
+		if next.Devices[i].AreaID == area {
+			next.Devices[i].AreaID = ""
+		}
+	}
+	next.Areas = slices.DeleteFunc(next.Areas, func(a reqmap.RegistryArea) bool { return a.ID == area })
+}
+
+// deleteLabel is Home Assistant's label delete: every entity, device and area
+// loses the label.
+func deleteLabel(next *reqmap.Registries, label string) {
+	without := func(ls []string) []string {
+		return slices.DeleteFunc(slices.Clone(ls), func(x string) bool { return x == label })
+	}
+	for i := range next.Entities {
+		next.Entities[i].Labels = without(next.Entities[i].Labels)
+	}
+	for i := range next.Devices {
+		next.Devices[i].Labels = without(next.Devices[i].Labels)
+	}
+	for i := range next.Areas {
+		next.Areas[i].Labels = without(next.Areas[i].Labels)
+	}
 }
 
 // regIndex is the registries by id.
@@ -287,6 +360,15 @@ func registryChangeOf(row string, msg map[string]any) (RegistryChange, bool) {
 		ch.NewEntityID, _ = msg["new_entity_id"].(string)
 	case "ws config/device_registry/update":
 		ch.DeviceID, _ = msg["device_id"].(string)
+	case "ws config/area_registry/delete":
+		ch.DeletedArea, _ = msg["area_id"].(string)
+		return ch, ch.DeletedArea != ""
+	case "ws config/floor_registry/delete":
+		ch.DeletedFloor, _ = msg["floor_id"].(string)
+		return ch, ch.DeletedFloor != ""
+	case "ws config/label_registry/delete":
+		ch.DeletedLabel, _ = msg["label_id"].(string)
+		return ch, ch.DeletedLabel != ""
 	default:
 		return ch, false
 	}
