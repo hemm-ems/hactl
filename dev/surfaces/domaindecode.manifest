@@ -66,5 +66,4 @@ internal/cmd/ref.go:fetchStateEntityIDs = exempt: decodes the whole payload into
 
 # The policy gate's live entity set (H-29): it decodes each state's entity_id
 # and nothing else, so no domain's attribute type is part of its schema.
-internal/policy/enforce/hafetch.go:(*HAFetcher).LiveStates = exempt: decodes entity_id from every state and its entity_id and id attributes as `any` — no type is imposed on any attribute, so no domain's attribute shape can fail it (D-106, D-107)
-internal/policy/enforce/hafetch.go:anonymous struct at line 0.attributes struct{EntityID any "json:\"entity_id\""; ID any "json:\"id\""} = exempt: the two attributes the policy reads, both typed `any` and read by type switch — a domain whose entity_id or id attribute holds another shape decodes and is ignored, never fails the read
+internal/policy/enforce/hafetch.go:(*HAFetcher).LiveStates = exempt: decodes entity_id from every state and its attributes as raw JSON by name; only the entity_id and id attributes are decoded further, as `any` read by type switch, and the rest contribute their names alone (D-209) — no type is imposed on any attribute, so no domain's attribute shape can fail it (D-106, D-107)

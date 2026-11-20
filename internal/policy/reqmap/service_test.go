@@ -15,6 +15,18 @@ var liveStates = &reqmap.LiveStates{EntityIDs: []string{
 	"script.morning", "script.unregistered_uid", "scene.evening", "switch.fan",
 }}
 
+// haServices is the part of Home Assistant's service list the D-211 vectors
+// ask (observed HA 2026.11: lock and cover have no turn_on/turn_off/toggle).
+var haServices = map[string]map[string]bool{
+	"homeassistant": {"turn_on": true, "turn_off": true, "toggle": true},
+	"light":         {"turn_on": true, "turn_off": true, "toggle": true},
+	"switch":        {"turn_on": true, "turn_off": true, "toggle": true},
+	"script":        {"turn_on": true, "turn_off": true, "toggle": true},
+	"scene":         {"turn_on": true},
+	"lock":          {"lock": true, "unlock": true, "open": true},
+	"cover":         {"open_cover": true, "close_cover": true, "toggle": true},
+}
+
 func svcFacts(reach []string, err error) *reqmap.Facts {
 	f := &reqmap.Facts{Live: liveStates, Registries: registries}
 	if reach != nil || err != nil {
@@ -152,6 +164,59 @@ var serviceVectors = []vector{
 			"control entity:homeassistant.update_available", "control entity:light.kitchen", "control entity:lock.front_door",
 			"control service:homeassistant.turn_off", "control service:light.turn_off", "control service:lock.turn_off",
 		},
+	},
+	{
+		name: "homeassistant.turn_off reaches only the domains that have turn_off (D-211)",
+		req:  rest("POST", "/api/services/homeassistant/turn_off", `{"label_id":"downstairs"}`),
+		facts: func() *reqmap.Facts {
+			f := svcFacts([]string{"light.kitchen", "lock.front_door", "switch.fan"}, nil)
+			f.Services = haServices
+			return f
+		}(),
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control entity:light.kitchen", "control entity:switch.fan",
+			"control service:homeassistant.turn_off", "control service:light.turn_off", "control service:switch.turn_off",
+		},
+	},
+	{
+		name: "homeassistant.toggle naming a lock by entity id reaches nothing: the id is not counted again as data (D-211)",
+		req:  rest("POST", "/api/services/homeassistant/toggle", `{"entity_id":"lock.front_door","target":{"entity_id":["lock.back_door"]}}`),
+		facts: func() *reqmap.Facts {
+			f := svcFacts([]string{"lock.front_door", "lock.back_door"}, nil)
+			f.Services = haServices
+			return f
+		}(),
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control service:homeassistant.toggle"},
+	},
+	{
+		name: "homeassistant.turn_off on a group keeps its light, drops its lock; a scene's members stay (D-211, D-106)",
+		req:  rest("POST", "/api/services/homeassistant/turn_on", `{"entity_id":["group.mixed","scene.evening"]}`),
+		facts: &reqmap.Facts{
+			Live: &reqmap.LiveStates{
+				EntityIDs: []string{"group.mixed", "light.kitchen", "lock.front_door", "scene.evening"},
+				Members:   map[string][]string{"scene.evening": {"lock.front_door"}},
+			},
+			// extract_from_target expands an old-style group (D-106).
+			Reach:      &reqmap.Reach{EntityIDs: []string{"light.kitchen", "lock.front_door", "scene.evening"}},
+			Registries: &reqmap.Registries{},
+			Services:   haServices,
+		},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{
+			"control entity:light.kitchen", "control entity:lock.front_door", "control entity:scene.evening",
+			"control service:homeassistant.turn_on", "control service:light.turn_on", "control service:scene.turn_on",
+		},
+	},
+	{
+		name: "entity_id: all on homeassistant.turn_off is every live entity of an affected domain (D-211)",
+		req:  rest("POST", "/api/services/homeassistant/turn_off", `{"entity_id":"all"}`),
+		facts: &reqmap.Facts{Live: &reqmap.LiveStates{EntityIDs: []string{
+			"homeassistant.update_available", "light.kitchen", "lock.front_door",
+		}}, Registries: &reqmap.Registries{}, Services: haServices},
+		disp: reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.kitchen", "control service:homeassistant.turn_off", "control service:light.turn_off"},
 	},
 	{
 		name: "a script's run is looked up by its exact entity id, never a near-colliding one (D-84)",

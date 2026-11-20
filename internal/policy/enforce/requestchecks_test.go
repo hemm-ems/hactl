@@ -241,3 +241,69 @@ actions:
 		t.Errorf("a candidate's whole person: %+v, want one refusal by %s", d, lat)
 	}
 }
+
+// servicesFetcher is a fakeFetcher that also reads the service list (D-211).
+type servicesFetcher struct {
+	*fakeFetcher
+	services map[string]map[string]bool
+}
+
+func (f servicesFetcher) Services(context.Context) (map[string]map[string]bool, error) {
+	f.asked = append(f.asked, "services")
+	return f.services, nil
+}
+
+// TestHomeassistantFanOutReachesAffectedDomains (D-211): with Home
+// Assistant's service list read, homeassistant.turn_off on a label holding a
+// light and a denied lock is allowed — a lock has no turn_off — while
+// turn_on of a scene that applies the lock, and the same call without a
+// service list, stay refused naming the lock.
+func TestHomeassistantFanOutReachesAffectedDomains(t *testing.T) {
+	const pol = `version: 1
+active: house
+profiles:
+  house:
+    deny:
+      "entity:lock.front_door": [control]
+`
+	services := map[string]map[string]bool{
+		"homeassistant": {"turn_on": true, "turn_off": true, "toggle": true},
+		"light":         {"turn_on": true, "turn_off": true, "toggle": true},
+		"scene":         {"turn_on": true},
+		"lock":          {"lock": true, "unlock": true},
+	}
+	base := func() *fakeFetcher {
+		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true,
+			live:    []string{"light.hall", "lock.front_door", "scene.night"},
+			members: map[string][]string{"scene.night": {"lock.front_door"}},
+			reach: map[string][]string{
+				`{"label_id":["downstairs"]}`:   {"light.hall", "lock.front_door"},
+				`{"entity_id":["scene.night"]}`: {"scene.night"},
+			}}
+	}
+	call := func(f enforce.Fetcher, service, body string) error {
+		t.Helper()
+		s, _ := newSession(t, pol, f)
+		return s.Check(context.Background(), reqmap.Request{Transport: reqmap.REST, Method: "POST",
+			Path: "/api/services/homeassistant/" + service, Body: []byte(body)})
+	}
+	refusedForLock := func(err error) bool {
+		var ref *enforce.DeniedError
+		return errors.As(err, &ref) && slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool {
+			return d.Resource == "entity:lock.front_door"
+		})
+	}
+	f := servicesFetcher{base(), services}
+	if err := call(f, "turn_off", `{"label_id":"downstairs"}`); err != nil {
+		t.Errorf("homeassistant.turn_off on the label: %v, want allowed (a lock has no turn_off)", err)
+	}
+	if err := call(servicesFetcher{base(), services}, "toggle", `{"entity_id":"lock.front_door"}`); err != nil {
+		t.Errorf("homeassistant.toggle on the lock: %v, want allowed (a lock has no toggle)", err)
+	}
+	if err := call(servicesFetcher{base(), services}, "turn_on", `{"entity_id":"scene.night"}`); !refusedForLock(err) {
+		t.Errorf("homeassistant.turn_on of a scene applying the lock: %v, want refused for the lock", err)
+	}
+	if err := call(base(), "turn_off", `{"label_id":"downstairs"}`); !refusedForLock(err) {
+		t.Errorf("without a service list: %v, want refused for the lock (a superset)", err)
+	}
+}

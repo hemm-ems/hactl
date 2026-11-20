@@ -37,6 +37,14 @@ type Fetcher interface {
 	Close()
 }
 
+// ServicesFetcher is a Fetcher that also reads Home Assistant's service list
+// (GET /api/services) as domain → service names, which narrows a
+// homeassistant.turn_on|turn_off|toggle to the domains it reaches (D-211). A
+// fetcher without it leaves the reach unnarrowed — a superset.
+type ServicesFetcher interface {
+	Services(ctx context.Context) (map[string]map[string]bool, error)
+}
+
 // factCache holds what this invocation established, tagged with the hash of
 // the policy it was established under (D-72, R-7, A-8): a cache whose hash is
 // not the session's is dropped before it is read, so nothing verified under
@@ -53,6 +61,7 @@ type factCache struct {
 
 	live         *reqmap.LiveStates
 	liveRead     bool
+	services     map[string]map[string]bool
 	registries   *reqmap.Registries
 	regComplete  bool
 	regRead      bool
@@ -104,6 +113,7 @@ func (c *factCache) facts(reach *reqmap.Reach, cascadeRegistries bool) *reqmap.F
 	if c.liveRead {
 		f.Live = c.live
 	}
+	f.Services = c.services
 	if c.regRead && (c.regComplete || !cascadeRegistries) {
 		f.Registries = c.registries
 	}

@@ -102,6 +102,28 @@ func (f *HAFetcher) ConfigFile(ctx context.Context, location string) ([]byte, er
 	return read(own(ctx), location)
 }
 
+// Services implements ServicesFetcher: GET /api/services as domain →
+// service names (D-211), the session's own read.
+func (f *HAFetcher) Services(ctx context.Context) (map[string]map[string]bool, error) {
+	c, err := f.client()
+	if err != nil {
+		return nil, err
+	}
+	list, err := c.ServiceList(own(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]bool, len(list))
+	for _, d := range list {
+		names := make(map[string]bool, len(d.Services))
+		for svc := range d.Services {
+			names[svc] = true
+		}
+		out[d.Domain] = names
+	}
+	return out, nil
+}
+
 // LiveStates implements Fetcher: the entity ids of GET /api/states, each
 // state's `entity_id` attribute — the members a group, a group platform
 // entity or a scene forwards a call to (D-106) — and an automation's `id`

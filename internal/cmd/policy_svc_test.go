@@ -303,8 +303,19 @@ func TestSvcCallReachOfOtherServices(t *testing.T) {
 		t.Errorf("entity service with all: plan %q, want every light", plan)
 	}
 
-	out, err = runPolicyCLI(t, rig.dir, "svc", "call", "homeassistant.turn_on", "--data", `{"area_id":"hall"}`)
-	wantRefused(t, "homeassistant.turn_on on an area", out, err, lockDenied)
+	out, err = runPolicyCLI(t, rig.dir, "svc", "call", "zwave_js.clear_lock_usercode", "--data", `{"area_id":"hall"}`)
+	wantRefused(t, "platform service on an area", out, err, lockDenied)
+
+	// homeassistant.turn_on reaches only the domains that have turn_on: a
+	// lock has none, so the area's lock is not in its reach (D-211; this
+	// call was refused for the lock before).
+	plan, out, err = planOf(t, rig.dir, "svc", "call", "homeassistant.turn_on", "--data", `{"area_id":"hall"}`)
+	if err != nil {
+		t.Fatalf("homeassistant.turn_on on an area reaches no lock: %v\n%s", err, out)
+	}
+	if !slices.Equal(plan, []string{"control entity:light.a", "control service:homeassistant.turn_on", "control service:light.turn_on"}) {
+		t.Errorf("homeassistant.turn_on on an area: plan %q, want the light alone", plan)
+	}
 }
 
 // TestSvcCallFanOutAndScriptRuns (R-2, D-84): homeassistant.turn_on calls each

@@ -171,8 +171,11 @@ func walkData(v any, visit func(string)) {
 //     applied: an unavailable entity is checked too — a superset;
 //   - control entity:<e> for every mapping key and string value of the data,
 //     at any depth, that names a live entity;
-//   - homeassistant.turn_on|turn_off|toggle: control service:<d>.<service>
-//     for every domain d in the reach;
+//   - homeassistant.turn_on|turn_off|toggle: the reach keeps only the
+//     entities of a domain that has the service (D-211; Facts.Services, nil
+//     = unread: all of them), the target's own ids are not counted again as
+//     data, and control service:<d>.<service> is checked for every domain d
+//     of the kept reach;
 //   - a mapped service (D-184, servicefields.go): what its own fields address
 //     by another name — group.set's object_id, recorder.purge_entities'
 //     domains and globs, …;
@@ -212,8 +215,16 @@ func mapServiceCall(c *call) (mapping, error) {
 	if err != nil {
 		return mapping{}, err
 	}
+	fanOut := domain == "homeassistant" && homeassistantFanOut[service]
+	walked := any(data)
+	if fanOut {
+		// Home Assistant calls <d>.<service> per domain of the target and
+		// skips a domain without it (D-211): the target names nothing else.
+		ids = affectedBy(ids, service, f.Services)
+		walked = withoutTargets(data)
+	}
 	var named []string
-	walkData(data, func(s string) { named = append(named, live.names(s)...) })
+	walkData(walked, func(s string) { named = append(named, live.names(s)...) })
 	reached := forwardedTo(append(slices.Clone(ids), named...), f.Live.Members)
 	for _, id := range reached {
 		cs.add(policy.Control, policy.KindEntity, id, "")
@@ -223,7 +234,7 @@ func mapServiceCall(c *call) (mapping, error) {
 		cs.service, cs.reached = domain+"."+service, reached
 		fields(cs, data, live, f.Registries)
 	}
-	if domain == "homeassistant" && homeassistantFanOut[service] {
+	if fanOut {
 		for _, d := range domainsOf(ids) {
 			cs.add(policy.Control, policy.KindService, d+"."+service, "")
 		}
@@ -233,6 +244,44 @@ func mapServiceCall(c *call) (mapping, error) {
 	}
 	cs.addTypedControl(reached, f.Live, f.Registries)
 	return mapping{checks: cs.out}, cs.err
+}
+
+// affectedBy keeps of sorted ids those a homeassistant.<service> fan-out
+// changes: an entity of a domain other than `homeassistant` that has
+// <domain>.<service> in Home Assistant's service list (D-211, observed: a
+// lock, a cover and an alarm panel keep their state under
+// homeassistant.turn_off, in a group too). Without the list, every id — a
+// superset.
+func affectedBy(ids []string, service string, services map[string]map[string]bool) []string {
+	if services == nil {
+		return ids
+	}
+	var out []string
+	for _, id := range ids {
+		d, _, _ := strings.Cut(id, ".")
+		if d != "homeassistant" && services[d][service] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// withoutTargets is data without its target selectors, at the top level and
+// under `target`.
+func withoutTargets(data map[string]any) map[string]any {
+	out := make(map[string]any, len(data))
+	for k, v := range data {
+		if slices.Contains(targetKeys, k) {
+			continue
+		}
+		if k == "target" {
+			if t, ok := v.(map[string]any); ok {
+				v = withoutTargets(t)
+			}
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // forwardedTo is ids and, recursively, every entity a call on one of them is

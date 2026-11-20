@@ -421,6 +421,7 @@ func (s *Session) classifyRow(ctx context.Context, req reqmap.Request) reqmap.Re
 // needs are the facts a row's mapping reads.
 type needs struct {
 	live, reach, registries, cascade bool
+	services                         bool
 	dashboard                        bool
 	dashboardIDs                     bool
 }
@@ -437,6 +438,17 @@ func mappedServicePath(p string) bool {
 		return false
 	}
 	return reqmap.ServiceClassOf(strings.ToLower(domain)+"."+strings.ToLower(service)) == reqmap.ServiceMapped
+}
+
+// homeassistantFanOutPath reports whether a path calls
+// homeassistant.turn_on|turn_off|toggle, whose reach the service list
+// narrows (D-211).
+func homeassistantFanOutPath(p string) bool {
+	switch strings.ToLower(p) {
+	case "/api/services/homeassistant/turn_on", "/api/services/homeassistant/turn_off", "/api/services/homeassistant/toggle":
+		return true
+	}
+	return false
 }
 
 func needsOf(row string, req reqmap.Request) needs {
@@ -456,7 +468,8 @@ func needsOf(row string, req reqmap.Request) needs {
 		// entity's (D-107). A config entry reload names the entities it
 		// resets from them: only a complete read (D-200).
 		return needs{live: true, reach: true, registries: true,
-			cascade: strings.EqualFold(req.Path, "/api/services/homeassistant/reload_config_entry")}
+			cascade:  strings.EqualFold(req.Path, "/api/services/homeassistant/reload_config_entry"),
+			services: homeassistantFanOutPath(req.Path)}
 	case "rest POST /api/template":
 		// What a template reads is resolved against the live states (a
 		// domain's entities, a group's members) and the registries (an
@@ -488,6 +501,15 @@ func (s *Session) gather(ctx context.Context, req reqmap.Request, need needs) *r
 			s.mu.Lock()
 			c.live, c.liveRead = st, true
 			s.mu.Unlock()
+		}
+	}
+	if need.services && c.services == nil {
+		if sf, ok := f.(ServicesFetcher); ok {
+			if svc, err := sf.Services(ctx); err == nil && len(svc) > 0 {
+				s.mu.Lock()
+				c.services = svc
+				s.mu.Unlock()
+			}
 		}
 	}
 	if need.registries && !c.regRead && f != nil {

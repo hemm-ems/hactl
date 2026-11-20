@@ -212,6 +212,10 @@ type Facts struct {
 	// RefReplacePlans are the checked ref/replace dry runs of this
 	// invocation.
 	RefReplacePlans []RefReplacePlan
+	// Services is Home Assistant's service list (GET /api/services), domain
+	// → service names: which domains a homeassistant.turn_on|turn_off|toggle
+	// fans out to (D-211). Nil = not read: the reach is not narrowed.
+	Services map[string]map[string]bool
 	// IndirectUnchecked is the profile's `indirect: unchecked` (D-135): what
 	// a write makes automations, scripts and templates do is not checked.
 	IndirectUnchecked bool
