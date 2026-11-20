@@ -409,7 +409,7 @@ profiles:
 	}
 	f4 := &fakeFetcher{}
 	s4, _ := newSession(t, body, f4)
-	if err := s4.Check(context.Background(), reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/services/homeassistant/restart", Body: []byte(`{}`)}); err != nil {
+	if err := s4.Check(context.Background(), reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/services/homeassistant/check_config", Body: []byte(`{}`)}); err != nil {
 		t.Errorf("a target-less service was refused: %v", err)
 	}
 	if len(f4.asked) != 0 {
@@ -596,7 +596,7 @@ func TestServiceCallChecksIsTheRequestLayersMapping(t *testing.T) {
 	}
 	f3 := &fakeFetcher{}
 	s3, _ := newSession(t, policyAllowAll, f3)
-	if checks, denial := s3.ServiceCallChecks(context.Background(), "homeassistant", "restart", nil); denial != nil || len(checks) != 1 || len(f3.asked) != 0 {
+	if checks, denial := s3.ServiceCallChecks(context.Background(), "homeassistant", "check_config", nil); denial != nil || len(checks) != 1 || len(f3.asked) != 0 {
 		t.Errorf("a target-less call: %v %+v, asked %v", checks, denial, f3.asked)
 	}
 }

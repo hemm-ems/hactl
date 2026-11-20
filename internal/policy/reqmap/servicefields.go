@@ -2,7 +2,6 @@ package reqmap
 
 import (
 	"fmt"
-	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -50,12 +49,87 @@ type fieldMapper func(cs *cascade, data map[string]any, live *liveIndex, reg *Re
 // `<domain>.<service>` or `<domain>.*`.
 var mappedServices = map[string]fieldMapper{
 	"group.set":               objectIDField("group", "object_id"),
-	"group.remove":            objectIDField("group", "object_id"),
+	"group.remove":            removesObjectID("group", "object_id"),
 	"scene.create":            objectIDField("scene", "scene_id"),
 	"recorder.purge":          everyLiveEntity,
 	"recorder.purge_entities": purgeEntitiesFields,
 	"recorder.get_statistics": statisticIDsRead,
 	"shopping_list.*":         platformEntities("shopping_list", "todo"),
+	// Removing what a call names needs delete as well (D-194).
+	"scene.delete": deletesTarget("scene"),
+	// What a reload or a restart removes (D-193).
+	"scene.reload":             dropsRuntime,
+	"homeassistant.reload_all": dropsRuntime,
+	"homeassistant.restart":    dropsRuntime,
+	"homeassistant.stop":       dropsRuntime,
+	// What a call writes that no field names (D-191).
+	"homeassistant.set_location":       writesFixed,
+	"homeassistant.reload_core_config": writesFixed,
+}
+
+// runtimeDropped is, per service, the domains whose runtime-created entities
+// — what group.set and scene.create make, which nothing stores — the call
+// removes (D-193). Observed by TestOracleReloadsRemoveRuntimeEntities and
+// TestOracleRestartRemovesRuntimeEntities on HA 2026.11.2: scene.reload and
+// homeassistant.reload_all remove the scenes, a restart the scenes and the
+// groups; group.reload and every other reload neither. homeassistant.stop is
+// not observed (it ends the rig's Home Assistant): it is mapped as the first
+// half of a restart, after which neither exists.
+var runtimeDropped = map[string][]string{
+	"scene.reload":             {"scene"},
+	"homeassistant.reload_all": {"scene"},
+	"homeassistant.restart":    {"group", "scene"},
+	"homeassistant.stop":       {"group", "scene"},
+}
+
+// ReloadRemovesRuntime reports whether a service removes runtime-created
+// entities (D-193).
+func ReloadRemovesRuntime(name string) bool { return len(runtimeDropped[name]) > 0 }
+
+// dropsRuntime: a reload or restart removes every runtime-created entity of
+// the domains it drops, so each live entity of those domains needs delete —
+// every one, a superset: which were created at runtime is not on the live
+// state, and one from configuration comes back as it was.
+func dropsRuntime(cs *cascade, _ map[string]any, live *liveIndex, _ *Registries) {
+	for _, d := range runtimeDropped[cs.service] {
+		for _, id := range live.byDomain[d] {
+			cs.add(policy.Delete, policy.KindEntity, id, "")
+		}
+	}
+}
+
+// fixedEntities is, per service, the entities it writes although no field
+// names them (D-191): homeassistant.set_location moves the home zone
+// (TestOracleSetLocationWritesZoneHome). homeassistant.reload_core_config
+// re-reads the home's location from configuration.yaml and moves the home
+// zone to it — not observed (the rigs keep the location in storage, so a
+// reload moves nothing there): mapped as the superset, from Home Assistant's
+// code path (both end in the core-config update zone.home follows).
+var fixedEntities = map[string][]string{
+	"homeassistant.set_location":       {"zone.home"},
+	"homeassistant.reload_core_config": {"zone.home"},
+}
+
+// FixedEntitiesOf is what a service writes that no field names (D-191).
+func FixedEntitiesOf(name string) []string { return fixedEntities[name] }
+
+func writesFixed(cs *cascade, _ map[string]any, _ *liveIndex, _ *Registries) {
+	for _, id := range fixedEntities[cs.service] {
+		cs.add(policy.Control, policy.KindEntity, id, "")
+	}
+}
+
+// deletesTarget: a service that deletes the entities of domain its target
+// reaches (scene.delete) needs delete on each, beside the control every
+// reached entity needs (D-194).
+func deletesTarget(domain string) fieldMapper {
+	return func(cs *cascade, _ map[string]any, _ *liveIndex, _ *Registries) {
+		for _, id := range cs.reached {
+			if strings.HasPrefix(id, domain+".") {
+				cs.add(policy.Delete, policy.KindEntity, id, "")
+			}
+		}
+	}
 }
 
 // handMappedElsewhere are the services mapServiceCall maps by hand outside
@@ -141,6 +215,18 @@ func objectIDField(domain, field string) fieldMapper {
 	}
 }
 
+// removesObjectID is objectIDField for a call that removes the entity: it
+// needs delete as well (D-194).
+func removesObjectID(domain, field string) fieldMapper {
+	control := objectIDField(domain, field)
+	return func(cs *cascade, data map[string]any, live *liveIndex, reg *Registries) {
+		control(cs, data, live, reg)
+		if id := strings.ToLower(strings.TrimSpace(fmt.Sprint(data[field]))); data[field] != nil && id != "" {
+			cs.add(policy.Delete, policy.KindEntity, domain+"."+id, "")
+		}
+	}
+}
+
 // everyLiveEntity: recorder.purge deletes the history of every entity.
 func everyLiveEntity(cs *cascade, _ map[string]any, live *liveIndex, _ *Registries) {
 	for _, id := range live.all {
@@ -150,7 +236,9 @@ func everyLiveEntity(cs *cascade, _ map[string]any, live *liveIndex, _ *Registri
 
 // purgeEntitiesFields: recorder.purge_entities `domains` and `entity_globs`
 // name entities by domain and by glob; each live entity they match has its
-// history deleted. A glob hactl cannot parse matches every live entity.
+// history deleted. A glob matches as Home Assistant matches it (D-192,
+// fnmatchCase) — each glob as written, and each comma-separated part of it
+// as well (a superset); one Python would refuse matches every live entity.
 func purgeEntitiesFields(cs *cascade, data map[string]any, live *liveIndex, _ *Registries) {
 	matched := map[string]bool{}
 	for _, d := range stringList(data["domains"]) {
@@ -158,11 +246,10 @@ func purgeEntitiesFields(cs *cascade, data map[string]any, live *liveIndex, _ *R
 			matched[id] = true
 		}
 	}
-	for _, g := range stringList(data["entity_globs"]) {
-		g = strings.ToLower(strings.TrimSpace(g))
+	globs := append(anyStrings(data["entity_globs"]), stringList(data["entity_globs"])...)
+	for _, g := range globs {
 		for _, id := range live.all {
-			ok, err := path.Match(g, strings.ToLower(id))
-			if ok || err != nil {
+			if m, ok := fnmatchCase(g, id); m || !ok {
 				matched[id] = true
 			}
 		}

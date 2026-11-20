@@ -425,13 +425,30 @@ type needs struct {
 	dashboardIDs                     bool
 }
 
+// mappedServicePath reports whether a `/api/services/<domain>/<service>`
+// path calls a mapped service (D-184).
+func mappedServicePath(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/api/services/")
+	if !ok {
+		return false
+	}
+	domain, service, ok := strings.Cut(rest, "/")
+	if !ok {
+		return false
+	}
+	return reqmap.ServiceClassOf(strings.ToLower(domain)+"."+strings.ToLower(service)) == reqmap.ServiceMapped
+}
+
 func needsOf(row string, req reqmap.Request) needs {
 	switch row {
 	case "rest POST /api/services/{domain}/{service}":
 		// A call with no data names no target and no entity: its service
 		// check alone, nothing to ask (D-73).
+		// A mapped service reaches what its call does not name (a reload's
+		// scenes, set_location's home zone, D-191, D-193): the live set even
+		// then.
 		var data map[string]any
-		if json.Unmarshal(req.Body, &data) == nil && len(data) == 0 {
+		if json.Unmarshal(req.Body, &data) == nil && len(data) == 0 && !mappedServicePath(req.Path) {
 			return needs{}
 		}
 		// The registries name the typed address of every entity the call

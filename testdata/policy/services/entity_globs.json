@@ -1,0 +1,377 @@
+{
+ "generator": "homeassistant.helpers.entityfilter.generate_filter(include_entity_globs=[glob]), HA 2026.11.2",
+ "ids": [
+  "lock.front_door",
+  "lock.back_door",
+  "light.ceiling_lights",
+  "light.bed_light",
+  "sensor.lock_front_door",
+  "alock.front_door",
+  "block.front_door",
+  "lock.front_doors",
+  "lock.front_doo",
+  "lock.front_doo_",
+  "l0ck.front_door",
+  "lock.front_doo1",
+  "zock.front_door",
+  "lock.x",
+  "aock.x"
+ ],
+ "cases": [
+  {
+   "glob": "[!a]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "lock.front_doo[!a]",
+   "matches": [
+    "lock.front_door",
+    "lock.front_doo_",
+    "lock.front_doo1"
+   ]
+  },
+  {
+   "glob": "lock.*",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "lock.front_doors",
+    "lock.front_doo",
+    "lock.front_doo_",
+    "lock.front_doo1",
+    "lock.x"
+   ]
+  },
+  {
+   "glob": "LOCK.*",
+   "matches": []
+  },
+  {
+   "glob": "Lock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "lock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "*",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "light.ceiling_lights",
+    "light.bed_light",
+    "sensor.lock_front_door",
+    "alock.front_door",
+    "block.front_door",
+    "lock.front_doors",
+    "lock.front_doo",
+    "lock.front_doo_",
+    "l0ck.front_door",
+    "lock.front_doo1",
+    "zock.front_door",
+    "lock.x",
+    "aock.x"
+   ]
+  },
+  {
+   "glob": "?ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "lock.front_doo?",
+   "matches": [
+    "lock.front_door",
+    "lock.front_doo_",
+    "lock.front_doo1"
+   ]
+  },
+  {
+   "glob": "l*k.*",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "lock.front_doors",
+    "lock.front_doo",
+    "lock.front_doo_",
+    "l0ck.front_door",
+    "lock.front_doo1",
+    "lock.x"
+   ]
+  },
+  {
+   "glob": "[]]ock.x",
+   "matches": []
+  },
+  {
+   "glob": "[!]]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[]-a]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "[l]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[a-z]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[z-a]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "[!z-a]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[!]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "[ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "lock.front_door]",
+   "matches": []
+  },
+  {
+   "glob": "[l-]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[-l]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[!-]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[^l]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[\\l]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "\\lock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "lock\\.front_door",
+   "matches": []
+  },
+  {
+   "glob": "lock.front_door*",
+   "matches": [
+    "lock.front_door",
+    "lock.front_doors"
+   ]
+  },
+  {
+   "glob": "lock.front_door?",
+   "matches": [
+    "lock.front_doors"
+   ]
+  },
+  {
+   "glob": "*.front_door",
+   "matches": [
+    "lock.front_door",
+    "alock.front_door",
+    "block.front_door",
+    "l0ck.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "*door",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "sensor.lock_front_door",
+    "alock.front_door",
+    "block.front_door",
+    "l0ck.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "lock.[!f]*",
+   "matches": [
+    "lock.back_door",
+    "lock.x"
+   ]
+  },
+  {
+   "glob": "lock.[a-f]ront_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[a-c-z]ock.front_door",
+   "matches": [
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[l-l]ock.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "[--0]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "**",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "light.ceiling_lights",
+    "light.bed_light",
+    "sensor.lock_front_door",
+    "alock.front_door",
+    "block.front_door",
+    "lock.front_doors",
+    "lock.front_doo",
+    "lock.front_doo_",
+    "l0ck.front_door",
+    "lock.front_doo1",
+    "zock.front_door",
+    "lock.x",
+    "aock.x"
+   ]
+  },
+  {
+   "glob": "*.*",
+   "matches": [
+    "lock.front_door",
+    "lock.back_door",
+    "light.ceiling_lights",
+    "light.bed_light",
+    "sensor.lock_front_door",
+    "alock.front_door",
+    "block.front_door",
+    "lock.front_doors",
+    "lock.front_doo",
+    "lock.front_doo_",
+    "l0ck.front_door",
+    "lock.front_doo1",
+    "zock.front_door",
+    "lock.x",
+    "aock.x"
+   ]
+  },
+  {
+   "glob": "light.ceiling_lights",
+   "matches": [
+    "light.ceiling_lights"
+   ]
+  },
+  {
+   "glob": "light.*_lights",
+   "matches": [
+    "light.ceiling_lights"
+   ]
+  },
+  {
+   "glob": "[!a-k]ight.*",
+   "matches": [
+    "light.ceiling_lights",
+    "light.bed_light"
+   ]
+  },
+  {
+   "glob": "lock.front_door,light.x",
+   "matches": []
+  },
+  {
+   "glob": "lock.front_door ",
+   "matches": []
+  },
+  {
+   "glob": "  lock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "l[[]ock",
+   "matches": []
+  },
+  {
+   "glob": "[[]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "[!!]ock.front_door",
+   "matches": [
+    "lock.front_door",
+    "zock.front_door"
+   ]
+  },
+  {
+   "glob": "[a-]ock.front_door",
+   "matches": []
+  },
+  {
+   "glob": "lo[c-c-]k.front_door",
+   "matches": [
+    "lock.front_door"
+   ]
+  },
+  {
+   "glob": "l[!]o]ck.front_door",
+   "matches": [
+    "l0ck.front_door"
+   ]
+  },
+  {
+   "glob": "lock.front.door",
+   "matches": []
+  },
+  {
+   "glob": "lock.front?door",
+   "matches": [
+    "lock.front_door"
+   ]
+  }
+ ]
+}

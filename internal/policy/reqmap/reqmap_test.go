@@ -260,9 +260,9 @@ var writeVectors = []vector{
 	// --- REST ----------------------------------------------------------------
 	{
 		name: "a target-less service call is the service check alone",
-		req:  rest("POST", "/api/services/homeassistant/restart", ""),
+		req:  rest("POST", "/api/services/homeassistant/check_config", ""),
 		disp: reqmap.Write, row: "rest POST /api/services/{domain}/{service}",
-		checks: []string{"control service:homeassistant.restart"},
+		checks: []string{"control service:homeassistant.check_config"},
 	},
 	{
 		name:  "config entry delete deletes every entity and device naming the entry (D-76)",
