@@ -42,6 +42,16 @@ The two location rules cover every entity that carries coordinates — a
 `device_tracker`, a `person` (which repeats its tracker's coordinates), a
 `zone`. Denying `latitude` alone leaves `longitude` readable, and denying it on
 `device_tracker.*` alone leaves the same coordinates readable on `person.*`.
+They do not get in the way of templates over a whole domain of entities that
+hold no coordinates: `{{ states.light | selectattr('state', 'eq', 'on') | list }}`
+stays allowed, because no light has a `latitude`.
+
+Tip: also deny `edit` on the automations and scripts that keep the house safe
+— `"automation:night_lockup": [edit, delete]`, `"script:goodnight": [edit,
+delete]`. Running one is checked against what it does (see [What hactl
+enforces](#what-hactl-enforces)), so an agent that may not lock the door
+cannot run a script that does; but one allowed to edit it could change what it
+does for whoever runs it next — the owner, or Home Assistant at 23:30.
 
 Then ask it questions:
 
@@ -357,7 +367,11 @@ reports:
   the other way round;
 - `template-reads-denied`: an allow of `system:template` in a profile that
   denies reading anything — a template it lets through can read every state,
-  also what the profile denies.
+  also what the profile denies;
+- `control-without-service`: under `default: deny`, an allow of `control` on
+  a domain's entities (`entity:light.*`) with no allow of any service of that
+  domain — every service call on them is refused; add
+  `"service:light.*": [control]`.
 
 Lint checks ids against your instance: entities, devices, areas, floors,
 labels, automations, scripts, dashboards, services, helpers (YAML and the ones
@@ -400,9 +414,11 @@ unchecked; hactl then exits 1 and names that file.)
 
 A preview that passed is not a promise forever. `--confirm` checks again, with
 the policy file as it is then, the areas and labels as they are then, and the
-entities a service call reaches then. If you edited the policy, moved a lamp
-or relabelled something in between, `--confirm` can still be refused — and it
-says the preview had passed.
+entities a service call reaches then. If you moved a lamp or relabelled
+something in between, `--confirm` can still be refused — and it says the
+preview had passed under this policy. If the policy changed (another profile,
+an edited file), the earlier preview does not count: a refused `--confirm`
+then says no preview of this command passed under this policy.
 
 A few things worth knowing:
 
@@ -412,8 +428,13 @@ A few things worth knowing:
   are not one domain's own — `homeassistant.turn_on`, or an integration's
   service that acts on, say, your locks — are checked against *everything* the
   target names, in every domain, and `entity_id: all` then means every entity
-  you have. `homeassistant.turn_on` also needs each domain's own service
-  (`light.turn_on`, `script.turn_on`, …), and anything that starts a script
+  you have. `homeassistant.turn_on`, `turn_off` and `toggle` are the
+  exception: Home Assistant passes them on only to the domains that have a
+  service of that name and skips the rest — `homeassistant.turn_off` on a
+  label holding a light and a lock turns off the light and leaves the lock
+  — so hactl counts only those entities (it reads Home Assistant's service
+  list for that). They also need each such domain's own service
+  (`light.turn_off`, `script.turn_on`, …), and anything that starts a script
   needs that script's `run`. Entity ids anywhere in `--data` count too, so
   `scene.apply` with a lock in it needs `control` on the lock. A light group
   and a scene pass the call on to what they hold: turning on a light group
@@ -475,13 +496,34 @@ A few things worth knowing:
   blueprint expands with your inputs and the blueprint's defaults: hactl reads
   the blueprint through the companion, and refuses the write if it cannot read
   or expand it. A later change to the blueprint file itself is not checked.
+- **Running an automation or a script is checked like writing it.** `script
+  run goodnight`, `svc call script.goodnight`, `script.turn_on` (also through
+  `homeassistant.turn_on`) and `automation.trigger` read the stored config
+  of what they start, as `script cat` and `auto cat` do, and need everything
+  it would do — and what a script it starts would do, and so on. A profile
+  that may not lock the front door cannot run the script that locks it:
+
+  ```console
+  $ hactl script run goodnight
+  policy_denied: would execute script.goodnight — refused by policy, nothing was written
+    denied: control entity:lock.front_door — deny "entity:lock.front_door" [control] (line 5) (run of script.goodnight: action at /sequence/1)
+  ```
+
+  If hactl cannot read the stored config (no companion, for one), the run is
+  refused. What Home Assistant runs on its own — an automation firing on its
+  trigger at 23:30 — is not checked: only what the agent starts.
 - **Putting something where an automation looks counts as switching it.**
   Labelling an entity, moving it (or its device) to an area, or renaming it
   needs `control` on that entity when an automation, script or template entity
-  — yours or anyone's — targets the new label, area, floor or name: from then
-  on, that automation switches it. Labelling and moving things nothing targets
-  needs only the label or area edit. Deleting an area counts too: an entity in
-  it falls back to its device's area.
+  — yours or anyone's — targets the new label, area, floor or name with an
+  action that can switch it: from then on, that automation switches it. An
+  action of another domain does not count — `lock.lock` on the area
+  `hallway` does not switch a light moved there, and `homeassistant.turn_off`
+  on a label never switches a lock — nor does a label only a trigger or a
+  condition looks at. The refusal names the automation: `(because
+  automation.hallway_area_lock targets area:hallway)`. Labelling and moving
+  things nothing targets needs only the label or area edit. Deleting an area
+  counts too: an entity in it falls back to its device's area.
 - **Switching an automation, a script, a helper or a template entity also asks
   its own address.** `deny "automation:prod_*": [write]` refuses turning
   `prod_heating` off, not just editing it; the same goes for
@@ -538,15 +580,17 @@ A few things worth knowing:
   `create` blocks creating areas at all. The refusal names `area:*`.
 - **Some side effects are not checked**, because they happen inside Home
   Assistant after an allowed write and hactl cannot list them in advance:
-  the companion reloads what it wrote, running a script lets that script
-  do whatever it does, and reloading scenes or restarting Home Assistant
+  the companion reloads what it wrote, an automation that fires on its own
+  trigger does whatever it does (running one, or a script, *is* checked,
+  above), and reloading scenes or restarting Home Assistant
   drops the scenes and groups made at run time. A label, area or floor that changes outside hactl, a
   group helper whose members change through its options, a template helper
   made in the UI, and (without a companion) a YAML template entity are not
   searched for what they target.
 
 **Every read is filtered before the command sees it.** A listing leaves out
-what the profile may not read and ends with a line saying how many it left out;
+what the profile may not read and ends with a line saying how many it left out
+(and how many values it shows as `<denied>`);
 a part you may not read — an attribute, an entity's state, a registry field — is
 shown with its value `<denied>`; reading one thing you may not read is refused,
 naming the rule and its line:
@@ -580,8 +624,11 @@ stderr. A few things worth knowing:
 - **`tpl eval` is checked as what the template reads**, as a written
   template is: `{{ now().hour }}` needs nothing, `{{ states('sun.sun') }}`
   needs `read` on `sun.sun`'s state, and a template that uses an entity as a
-  whole (`{{ states.light.hall }}`, `expand(…)`) is refused when any part of
-  that entity is denied. A template whose reads hactl cannot tell needs
+  whole (`{{ states.light.hall }}`, `expand(…)`) is refused when a part of
+  that entity it holds is denied — its state, or an attribute it has: a deny
+  on every `latitude` refuses `{{ states.person | list }}`, not
+  `{{ states.light | list }}`. A loop over a list of ids
+  (`{% for e in ['light.a', 'light.b'] %}`) reads each of them. A template whose reads hactl cannot tell needs
   `"system:template": [read]` allowed by that exact name — `"*": [read]`,
   `"system:*": [read]` and the default do not grant it. `policy check read
   system:template` answers that last question. Such an allow lets templates
@@ -589,9 +636,12 @@ stderr. A few things worth knowing:
   (`template-reads-denied`) in a profile that denies reading anything.
 - **Traces and the logbook are masked too.** In `trace show` (also `--full`
   and `--json`) every state of an entity you may not read, and every
-  `entity_id` naming one, reads `<denied>`; in `changes`, the entity that
-  caused a row is masked when you may not read it. A value an automation's
-  own template computed from such an entity is not recognisable and shows.
+  `entity_id` naming one, reads `<denied>`; and when the traced automation or
+  script reads something you may not read (`state_attr('person.anna',
+  'latitude')`), every variable and every step result in the trace reads
+  `<denied>` too, since a value computed from it is not recognisable. In
+  `changes`, the entity that caused a row is masked when you may not read it;
+  Home Assistant's own rows (started, stopped) are shown.
 - **A write command's own reads are not filtered.** A command that changes
   something reads what it changes first; those reads belong to the write, and
   the write's own check decides it. So a profile may allow `edit` on
