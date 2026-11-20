@@ -1,0 +1,1436 @@
+{
+ "ai_task.clear_images": {
+  "fields": [
+   "days"
+  ],
+  "target": false
+ },
+ "ai_task.evaluate": {
+  "fields": [
+   "attachments",
+   "entity_id",
+   "questions",
+   "state",
+   "task_name"
+  ],
+  "target": false
+ },
+ "ai_task.generate_data": {
+  "fields": [
+   "attachments",
+   "entity_id",
+   "instructions",
+   "structure",
+   "task_name"
+  ],
+  "target": false
+ },
+ "ai_task.generate_image": {
+  "fields": [
+   "attachments",
+   "entity_id",
+   "instructions",
+   "task_name"
+  ],
+  "target": false
+ },
+ "alarm_control_panel.alarm_arm_away": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_arm_custom_bypass": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_arm_home": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_arm_night": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_arm_vacation": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_disarm": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "alarm_control_panel.alarm_trigger": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "assist_satellite.announce": {
+  "fields": [
+   "media_id",
+   "message",
+   "preannounce",
+   "preannounce_media_id"
+  ],
+  "target": true
+ },
+ "assist_satellite.ask_question": {
+  "fields": [
+   "answers",
+   "entity_id",
+   "preannounce",
+   "preannounce_media_id",
+   "question",
+   "question_media_id"
+  ],
+  "target": false
+ },
+ "assist_satellite.start_conversation": {
+  "fields": [
+   "extra_system_prompt",
+   "preannounce",
+   "preannounce_media_id",
+   "start_media_id",
+   "start_message"
+  ],
+  "target": true
+ },
+ "automation.reload": {
+  "fields": [],
+  "target": false
+ },
+ "automation.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "automation.trigger": {
+  "fields": [
+   "skip_condition"
+  ],
+  "target": true
+ },
+ "automation.turn_off": {
+  "fields": [
+   "stop_actions"
+  ],
+  "target": true
+ },
+ "automation.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "backup.create": {
+  "fields": [],
+  "target": false
+ },
+ "backup.create_automatic": {
+  "fields": [],
+  "target": false
+ },
+ "button.press": {
+  "fields": [],
+  "target": true
+ },
+ "calendar.create_event": {
+  "fields": [
+   "description",
+   "end_date",
+   "end_date_time",
+   "in",
+   "location",
+   "start_date",
+   "start_date_time",
+   "summary"
+  ],
+  "target": true
+ },
+ "calendar.get_events": {
+  "fields": [
+   "duration",
+   "end_date_time",
+   "start_date_time"
+  ],
+  "target": true
+ },
+ "camera.disable_motion_detection": {
+  "fields": [],
+  "target": true
+ },
+ "camera.enable_motion_detection": {
+  "fields": [],
+  "target": true
+ },
+ "camera.play_stream": {
+  "fields": [
+   "format",
+   "media_player"
+  ],
+  "target": true
+ },
+ "camera.record": {
+  "fields": [
+   "duration",
+   "filename",
+   "lookback"
+  ],
+  "target": true
+ },
+ "camera.snapshot": {
+  "fields": [
+   "filename"
+  ],
+  "target": true
+ },
+ "camera.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "camera.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "climate.set_fan_mode": {
+  "fields": [
+   "fan_mode"
+  ],
+  "target": true
+ },
+ "climate.set_humidity": {
+  "fields": [
+   "humidity"
+  ],
+  "target": true
+ },
+ "climate.set_hvac_mode": {
+  "fields": [
+   "hvac_mode"
+  ],
+  "target": true
+ },
+ "climate.set_preset_mode": {
+  "fields": [
+   "preset_mode"
+  ],
+  "target": true
+ },
+ "climate.set_swing_horizontal_mode": {
+  "fields": [
+   "swing_horizontal_mode"
+  ],
+  "target": true
+ },
+ "climate.set_swing_mode": {
+  "fields": [
+   "swing_mode"
+  ],
+  "target": true
+ },
+ "climate.set_temperature": {
+  "fields": [
+   "hvac_mode",
+   "target_temp_high",
+   "target_temp_low",
+   "temperature"
+  ],
+  "target": true
+ },
+ "climate.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "climate.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "climate.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "cloud.remote_connect": {
+  "fields": [],
+  "target": false
+ },
+ "cloud.remote_disconnect": {
+  "fields": [],
+  "target": false
+ },
+ "conversation.process": {
+  "fields": [
+   "agent_id",
+   "conversation_id",
+   "language",
+   "text"
+  ],
+  "target": false
+ },
+ "conversation.reload": {
+  "fields": [
+   "agent_id",
+   "language"
+  ],
+  "target": false
+ },
+ "counter.decrement": {
+  "fields": [],
+  "target": true
+ },
+ "counter.increment": {
+  "fields": [],
+  "target": true
+ },
+ "counter.reset": {
+  "fields": [],
+  "target": true
+ },
+ "counter.set_value": {
+  "fields": [
+   "value"
+  ],
+  "target": true
+ },
+ "cover.close_cover": {
+  "fields": [
+   "speed"
+  ],
+  "target": true
+ },
+ "cover.close_cover_tilt": {
+  "fields": [],
+  "target": true
+ },
+ "cover.open_cover": {
+  "fields": [
+   "speed"
+  ],
+  "target": true
+ },
+ "cover.open_cover_tilt": {
+  "fields": [],
+  "target": true
+ },
+ "cover.set_cover_position": {
+  "fields": [
+   "position",
+   "speed"
+  ],
+  "target": true
+ },
+ "cover.set_cover_tilt_position": {
+  "fields": [
+   "tilt_position"
+  ],
+  "target": true
+ },
+ "cover.stop_cover": {
+  "fields": [],
+  "target": true
+ },
+ "cover.stop_cover_tilt": {
+  "fields": [],
+  "target": true
+ },
+ "cover.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "cover.toggle_cover_tilt": {
+  "fields": [],
+  "target": true
+ },
+ "date.set_value": {
+  "fields": [
+   "date"
+  ],
+  "target": true
+ },
+ "datetime.set_value": {
+  "fields": [
+   "datetime"
+  ],
+  "target": true
+ },
+ "demo.randomize_device_tracker_data": {
+  "fields": [],
+  "target": false
+ },
+ "device_tracker.see": {
+  "fields": [
+   "battery",
+   "dev_id",
+   "gps",
+   "gps_accuracy",
+   "host_name",
+   "location_name",
+   "mac"
+  ],
+  "target": false
+ },
+ "fan.decrease_speed": {
+  "fields": [
+   "percentage_step"
+  ],
+  "target": true
+ },
+ "fan.increase_speed": {
+  "fields": [
+   "percentage_step"
+  ],
+  "target": true
+ },
+ "fan.oscillate": {
+  "fields": [
+   "oscillating"
+  ],
+  "target": true
+ },
+ "fan.set_direction": {
+  "fields": [
+   "direction"
+  ],
+  "target": true
+ },
+ "fan.set_percentage": {
+  "fields": [
+   "percentage"
+  ],
+  "target": true
+ },
+ "fan.set_preset_mode": {
+  "fields": [
+   "preset_mode"
+  ],
+  "target": true
+ },
+ "fan.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "fan.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "fan.turn_on": {
+  "fields": [
+   "percentage",
+   "preset_mode"
+  ],
+  "target": true
+ },
+ "ffmpeg.restart": {
+  "fields": [
+   "entity_id"
+  ],
+  "target": false
+ },
+ "ffmpeg.start": {
+  "fields": [
+   "entity_id"
+  ],
+  "target": false
+ },
+ "ffmpeg.stop": {
+  "fields": [
+   "entity_id"
+  ],
+  "target": false
+ },
+ "file.read_file": {
+  "fields": [
+   "file_encoding",
+   "file_name"
+  ],
+  "target": false
+ },
+ "frontend.reload_themes": {
+  "fields": [],
+  "target": false
+ },
+ "frontend.set_theme": {
+  "fields": [
+   "name",
+   "name_dark"
+  ],
+  "target": false
+ },
+ "group.reload": {
+  "fields": [],
+  "target": false
+ },
+ "group.remove": {
+  "fields": [
+   "object_id"
+  ],
+  "target": false
+ },
+ "group.set": {
+  "fields": [
+   "add_entities",
+   "all",
+   "entities",
+   "icon",
+   "name",
+   "object_id",
+   "remove_entities"
+  ],
+  "target": false
+ },
+ "homeassistant.check_config": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.reload_all": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.reload_config_entry": {
+  "fields": [
+   "entry_id"
+  ],
+  "target": false
+ },
+ "homeassistant.reload_core_config": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.reload_custom_templates": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.restart": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.save_persistent_states": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.set_location": {
+  "fields": [
+   "elevation",
+   "latitude",
+   "longitude"
+  ],
+  "target": false
+ },
+ "homeassistant.stop": {
+  "fields": [],
+  "target": false
+ },
+ "homeassistant.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "homeassistant.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "homeassistant.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "homeassistant.update_entity": {
+  "fields": [
+   "entity_id"
+  ],
+  "target": false
+ },
+ "humidifier.set_humidity": {
+  "fields": [
+   "humidity"
+  ],
+  "target": true
+ },
+ "humidifier.set_mode": {
+  "fields": [
+   "mode"
+  ],
+  "target": true
+ },
+ "humidifier.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "humidifier.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "humidifier.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "image.snapshot": {
+  "fields": [
+   "filename"
+  ],
+  "target": true
+ },
+ "image_processing.scan": {
+  "fields": [],
+  "target": true
+ },
+ "input_boolean.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_boolean.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "input_boolean.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "input_boolean.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "input_button.press": {
+  "fields": [],
+  "target": true
+ },
+ "input_button.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_datetime.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_datetime.set_datetime": {
+  "fields": [
+   "date",
+   "datetime",
+   "time",
+   "timestamp"
+  ],
+  "target": true
+ },
+ "input_number.decrement": {
+  "fields": [],
+  "target": true
+ },
+ "input_number.increment": {
+  "fields": [],
+  "target": true
+ },
+ "input_number.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_number.set_value": {
+  "fields": [
+   "value"
+  ],
+  "target": true
+ },
+ "input_select.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_select.select_first": {
+  "fields": [],
+  "target": true
+ },
+ "input_select.select_last": {
+  "fields": [],
+  "target": true
+ },
+ "input_select.select_next": {
+  "fields": [
+   "cycle"
+  ],
+  "target": true
+ },
+ "input_select.select_option": {
+  "fields": [
+   "option"
+  ],
+  "target": true
+ },
+ "input_select.select_previous": {
+  "fields": [
+   "cycle"
+  ],
+  "target": true
+ },
+ "input_select.set_options": {
+  "fields": [
+   "options"
+  ],
+  "target": true
+ },
+ "input_text.reload": {
+  "fields": [],
+  "target": false
+ },
+ "input_text.set_value": {
+  "fields": [
+   "value"
+  ],
+  "target": true
+ },
+ "lawn_mower.dock": {
+  "fields": [],
+  "target": true
+ },
+ "lawn_mower.pause": {
+  "fields": [],
+  "target": true
+ },
+ "lawn_mower.start_mowing": {
+  "fields": [],
+  "target": true
+ },
+ "lawn_mower.stop": {
+  "fields": [],
+  "target": true
+ },
+ "light.toggle": {
+  "fields": [
+   "brightness",
+   "brightness_pct",
+   "color_name",
+   "color_temp_kelvin",
+   "effect",
+   "flash",
+   "hs_color",
+   "profile",
+   "rgb_color",
+   "rgbw_color",
+   "rgbww_color",
+   "transition",
+   "white",
+   "xy_color"
+  ],
+  "target": true
+ },
+ "light.turn_off": {
+  "fields": [
+   "flash",
+   "transition"
+  ],
+  "target": true
+ },
+ "light.turn_on": {
+  "fields": [
+   "brightness",
+   "brightness_pct",
+   "brightness_step",
+   "brightness_step_pct",
+   "color_name",
+   "color_temp_kelvin",
+   "effect",
+   "flash",
+   "hs_color",
+   "profile",
+   "rgb_color",
+   "rgbw_color",
+   "rgbww_color",
+   "transition",
+   "white",
+   "xy_color"
+  ],
+  "target": true
+ },
+ "lock.lock": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "lock.open": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "lock.unlock": {
+  "fields": [
+   "code"
+  ],
+  "target": true
+ },
+ "logbook.log": {
+  "fields": [
+   "domain",
+   "entity_id",
+   "message",
+   "name"
+  ],
+  "target": false
+ },
+ "logger.set_default_level": {
+  "fields": [
+   "level"
+  ],
+  "target": false
+ },
+ "logger.set_level": {
+  "fields": [],
+  "target": false
+ },
+ "lovelace.reload_resources": {
+  "fields": [],
+  "target": false
+ },
+ "media_player.browse_media": {
+  "fields": [
+   "media_content_id",
+   "media_content_type"
+  ],
+  "target": true
+ },
+ "media_player.clear_playlist": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.join": {
+  "fields": [
+   "group_members"
+  ],
+  "target": true
+ },
+ "media_player.media_next_track": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.media_pause": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.media_play": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.media_play_pause": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.media_previous_track": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.media_seek": {
+  "fields": [
+   "seek_position"
+  ],
+  "target": true
+ },
+ "media_player.media_stop": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.play_media": {
+  "fields": [
+   "announce",
+   "enqueue",
+   "media"
+  ],
+  "target": true
+ },
+ "media_player.repeat_set": {
+  "fields": [
+   "repeat"
+  ],
+  "target": true
+ },
+ "media_player.search_media": {
+  "fields": [
+   "media_content_id",
+   "media_content_type",
+   "media_filter_classes",
+   "search_query"
+  ],
+  "target": true
+ },
+ "media_player.select_sound_mode": {
+  "fields": [
+   "sound_mode"
+  ],
+  "target": true
+ },
+ "media_player.select_source": {
+  "fields": [
+   "source"
+  ],
+  "target": true
+ },
+ "media_player.shuffle_set": {
+  "fields": [
+   "shuffle"
+  ],
+  "target": true
+ },
+ "media_player.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.unjoin": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.volume_down": {
+  "fields": [],
+  "target": true
+ },
+ "media_player.volume_mute": {
+  "fields": [
+   "is_volume_muted"
+  ],
+  "target": true
+ },
+ "media_player.volume_set": {
+  "fields": [
+   "volume_level"
+  ],
+  "target": true
+ },
+ "media_player.volume_up": {
+  "fields": [],
+  "target": true
+ },
+ "notify.notify": {
+  "fields": [
+   "data",
+   "message",
+   "target",
+   "title"
+  ],
+  "target": false
+ },
+ "notify.persistent_notification": {
+  "fields": [
+   "data",
+   "message",
+   "title"
+  ],
+  "target": false
+ },
+ "notify.send_message": {
+  "fields": [
+   "message",
+   "title"
+  ],
+  "target": true
+ },
+ "number.set_value": {
+  "fields": [
+   "value"
+  ],
+  "target": true
+ },
+ "persistent_notification.create": {
+  "fields": [
+   "message",
+   "notification_id",
+   "title"
+  ],
+  "target": false
+ },
+ "persistent_notification.dismiss": {
+  "fields": [
+   "notification_id"
+  ],
+  "target": false
+ },
+ "persistent_notification.dismiss_all": {
+  "fields": [],
+  "target": false
+ },
+ "person.reload": {
+  "fields": [],
+  "target": false
+ },
+ "recorder.disable": {
+  "fields": [],
+  "target": false
+ },
+ "recorder.enable": {
+  "fields": [],
+  "target": false
+ },
+ "recorder.get_statistics": {
+  "fields": [
+   "end_time",
+   "period",
+   "start_time",
+   "statistic_ids",
+   "types",
+   "units"
+  ],
+  "target": false
+ },
+ "recorder.purge": {
+  "fields": [
+   "apply_filter",
+   "keep_days",
+   "repack"
+  ],
+  "target": false
+ },
+ "recorder.purge_entities": {
+  "fields": [
+   "domains",
+   "entity_globs",
+   "entity_id",
+   "keep_days"
+  ],
+  "target": false
+ },
+ "remote.delete_command": {
+  "fields": [
+   "command",
+   "device"
+  ],
+  "target": true
+ },
+ "remote.learn_command": {
+  "fields": [
+   "alternative",
+   "command",
+   "command_type",
+   "device",
+   "timeout"
+  ],
+  "target": true
+ },
+ "remote.send_command": {
+  "fields": [
+   "command",
+   "delay_secs",
+   "device",
+   "hold_secs",
+   "num_repeats"
+  ],
+  "target": true
+ },
+ "remote.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "remote.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "remote.turn_on": {
+  "fields": [
+   "activity"
+  ],
+  "target": true
+ },
+ "scene.apply": {
+  "fields": [
+   "entities",
+   "transition"
+  ],
+  "target": false
+ },
+ "scene.create": {
+  "fields": [
+   "entities",
+   "scene_id",
+   "snapshot_entities"
+  ],
+  "target": false
+ },
+ "scene.delete": {
+  "fields": [],
+  "target": true
+ },
+ "scene.reload": {
+  "fields": [],
+  "target": false
+ },
+ "scene.turn_on": {
+  "fields": [
+   "transition"
+  ],
+  "target": true
+ },
+ "schedule.get_schedule": {
+  "fields": [],
+  "target": true
+ },
+ "schedule.reload": {
+  "fields": [],
+  "target": false
+ },
+ "script.<name>": {
+  "fields": [],
+  "target": false
+ },
+ "script.reload": {
+  "fields": [],
+  "target": false
+ },
+ "script.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "script.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "script.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "select.select_first": {
+  "fields": [],
+  "target": true
+ },
+ "select.select_last": {
+  "fields": [],
+  "target": true
+ },
+ "select.select_next": {
+  "fields": [
+   "cycle"
+  ],
+  "target": true
+ },
+ "select.select_option": {
+  "fields": [
+   "option"
+  ],
+  "target": true
+ },
+ "select.select_previous": {
+  "fields": [
+   "cycle"
+  ],
+  "target": true
+ },
+ "shopping_list.add_item": {
+  "fields": [
+   "name"
+  ],
+  "target": false
+ },
+ "shopping_list.clear_completed_items": {
+  "fields": [],
+  "target": false
+ },
+ "shopping_list.complete_all": {
+  "fields": [],
+  "target": false
+ },
+ "shopping_list.complete_item": {
+  "fields": [
+   "name"
+  ],
+  "target": false
+ },
+ "shopping_list.incomplete_all": {
+  "fields": [],
+  "target": false
+ },
+ "shopping_list.incomplete_item": {
+  "fields": [
+   "name"
+  ],
+  "target": false
+ },
+ "shopping_list.remove_item": {
+  "fields": [
+   "name"
+  ],
+  "target": false
+ },
+ "shopping_list.sort": {
+  "fields": [
+   "reverse"
+  ],
+  "target": false
+ },
+ "siren.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "siren.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "siren.turn_on": {
+  "fields": [
+   "duration",
+   "tone",
+   "volume_level"
+  ],
+  "target": true
+ },
+ "switch.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "switch.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "switch.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "system_log.clear": {
+  "fields": [],
+  "target": false
+ },
+ "system_log.write": {
+  "fields": [
+   "level",
+   "logger",
+   "message"
+  ],
+  "target": false
+ },
+ "template.reload": {
+  "fields": [],
+  "target": false
+ },
+ "text.set_value": {
+  "fields": [
+   "value"
+  ],
+  "target": true
+ },
+ "time.set_value": {
+  "fields": [
+   "time"
+  ],
+  "target": true
+ },
+ "timer.cancel": {
+  "fields": [],
+  "target": true
+ },
+ "timer.change": {
+  "fields": [
+   "duration"
+  ],
+  "target": true
+ },
+ "timer.finish": {
+  "fields": [],
+  "target": true
+ },
+ "timer.pause": {
+  "fields": [],
+  "target": true
+ },
+ "timer.reload": {
+  "fields": [],
+  "target": false
+ },
+ "timer.start": {
+  "fields": [
+   "duration"
+  ],
+  "target": true
+ },
+ "todo.add_item": {
+  "fields": [
+   "description",
+   "due_date",
+   "due_datetime",
+   "item"
+  ],
+  "target": true
+ },
+ "todo.get_items": {
+  "fields": [
+   "status"
+  ],
+  "target": true
+ },
+ "todo.remove_completed_items": {
+  "fields": [],
+  "target": true
+ },
+ "todo.remove_item": {
+  "fields": [
+   "item"
+  ],
+  "target": true
+ },
+ "todo.update_item": {
+  "fields": [
+   "description",
+   "due_date",
+   "due_datetime",
+   "item",
+   "rename",
+   "status"
+  ],
+  "target": true
+ },
+ "tts.clear_cache": {
+  "fields": [],
+  "target": false
+ },
+ "tts.cloud_say": {
+  "fields": [
+   "cache",
+   "entity_id",
+   "language",
+   "message",
+   "options"
+  ],
+  "target": false
+ },
+ "tts.demo_say": {
+  "fields": [
+   "cache",
+   "entity_id",
+   "language",
+   "message",
+   "options"
+  ],
+  "target": false
+ },
+ "tts.speak": {
+  "fields": [
+   "cache",
+   "language",
+   "media_player_entity_id",
+   "message",
+   "options"
+  ],
+  "target": true
+ },
+ "update.clear_skipped": {
+  "fields": [],
+  "target": true
+ },
+ "update.install": {
+  "fields": [
+   "backup",
+   "version"
+  ],
+  "target": true
+ },
+ "update.skip": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.clean_area": {
+  "fields": [
+   "cleaning_area_id"
+  ],
+  "target": true
+ },
+ "vacuum.clean_spot": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.locate": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.pause": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.return_to_base": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.send_command": {
+  "fields": [
+   "command",
+   "params"
+  ],
+  "target": true
+ },
+ "vacuum.set_fan_speed": {
+  "fields": [
+   "fan_speed"
+  ],
+  "target": true
+ },
+ "vacuum.start": {
+  "fields": [],
+  "target": true
+ },
+ "vacuum.stop": {
+  "fields": [],
+  "target": true
+ },
+ "valve.close_valve": {
+  "fields": [],
+  "target": true
+ },
+ "valve.open_valve": {
+  "fields": [],
+  "target": true
+ },
+ "valve.set_valve_position": {
+  "fields": [
+   "position"
+  ],
+  "target": true
+ },
+ "valve.stop_valve": {
+  "fields": [],
+  "target": true
+ },
+ "valve.toggle": {
+  "fields": [],
+  "target": true
+ },
+ "water_heater.set_away_mode": {
+  "fields": [
+   "away_mode"
+  ],
+  "target": true
+ },
+ "water_heater.set_operation_mode": {
+  "fields": [
+   "operation_mode"
+  ],
+  "target": true
+ },
+ "water_heater.set_temperature": {
+  "fields": [
+   "operation_mode",
+   "temperature"
+  ],
+  "target": true
+ },
+ "water_heater.turn_off": {
+  "fields": [],
+  "target": true
+ },
+ "water_heater.turn_on": {
+  "fields": [],
+  "target": true
+ },
+ "weather.get_forecasts": {
+  "fields": [
+   "type"
+  ],
+  "target": true
+ },
+ "zone.reload": {
+  "fields": [],
+  "target": false
+ }
+}

@@ -174,7 +174,7 @@ func (r *DeniedError) Hint() string {
 	var failClosed *Denial
 	for i, d := range r.Denied {
 		switch {
-		case d.Rule == policy.RuleDefaultDeny || d.Rule == RuleTemplateNeedsAllow:
+		case d.Rule == policy.RuleDefaultDeny || d.Rule == RuleTemplateNeedsAllow || d.Rule == RuleOpaqueServiceNeedsAllow:
 			// Nothing allows it: under default: deny, or system:template
 			// while the profile denies a read (D-143).
 			defaults = append(defaults, d)

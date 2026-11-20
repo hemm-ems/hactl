@@ -524,7 +524,7 @@ func (s *Session) decide(c reqmap.Check) policy.Verdict {
 	if s.fetcher != nil {
 		live = s.fetcher.Live()
 	}
-	return s.pol.Decide(c.Resource, c.Verb, live)
+	return OpaqueService(s.pol, c.Resource, c.Verb, s.pol.Decide(c.Resource, c.Verb, live))
 }
 
 // RuleUnreadViewDelete refuses deleting a dashboard view the profile may not
