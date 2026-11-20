@@ -37,7 +37,7 @@ func candidateCheckStrings(cs []reqmap.Check) []string {
 
 // TestCandidateChecksAreTheServiceCallsItWouldMake — each action is checked
 // as the svc call it makes (the service and its target), a mention as read
-// (D-133).
+// (D-133), the state a trigger compares as its state read (D-202).
 func TestCandidateChecksAreTheServiceCallsItWouldMake(t *testing.T) {
 	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
 		{EntityID: "light.hall", Platform: "demo"}, {EntityID: "lock.front", Platform: "demo"}, {EntityID: "binary_sensor.door", Platform: "demo"},
@@ -59,7 +59,7 @@ actions:
 	if len(denials) != 0 {
 		t.Fatalf("denials = %+v", denials)
 	}
-	want := []string{"control entity:light.hall", "control entity:lock.front", "control service:light.turn_on", "control service:lock.unlock", "read entity:binary_sensor.door"}
+	want := []string{"control entity:light.hall", "control entity:lock.front", "control service:light.turn_on", "control service:lock.unlock", "read entity:binary_sensor.door", "read entity:binary_sensor.door/state"}
 	if got := candidateCheckStrings(checks); !slices.Equal(got, want) {
 		t.Errorf("checks = %q, want %q", got, want)
 	}
@@ -200,8 +200,9 @@ func TestCandidateChecksExpandBlueprints(t *testing.T) {
 	}
 }
 
-// TestCandidateChecksAskSystemTemplateForUnsafeTemplates — D-188, D-190: a
-// template construct that can read state needs `read system:template`, which
+// TestCandidateChecksAskSystemTemplateForUnsafeTemplates — D-188, D-190, as
+// refined by D-198: a template construct whose read hactl cannot name needs
+// `read system:template`, which
 // only an allow by that exact name grants while the profile denies anything;
 // the refusal names the construct and where it is. A template of safe
 // constructs only needs nothing more.
@@ -209,7 +210,7 @@ func TestCandidateChecksAskSystemTemplateForUnsafeTemplates(t *testing.T) {
 	f := func() *fakeFetcher {
 		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.hall"}}
 	}
-	cand := []byte("sensor:\n  - unique_id: pg_x\n    state: \"{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}\"\n")
+	cand := []byte("sensor:\n  - unique_id: pg_x\n    state: \"{{ state_attr(now() | string, 'friendly_name') }}\"\n")
 	s, _ := newSession(t, candidatePolicy, f())
 	_, denials := s.CandidateChecks(context.Background(), "template", cand)
 	if len(denials) != 1 || denials[0].Resource != "system:template" || denials[0].Verb != "read" ||
@@ -232,5 +233,100 @@ func TestCandidateChecksAskSystemTemplateForUnsafeTemplates(t *testing.T) {
 	checks, denials = s.CandidateChecks(context.Background(), "template", []byte("sensor:\n  - unique_id: pg_y\n    state: \"{{ now().hour + 1 }}\"\n"))
 	if len(denials) != 0 || slices.Contains(candidateCheckStrings(checks), "read system:template") {
 		t.Errorf("a safe template: checks %q, denials %+v", candidateCheckStrings(checks), denials)
+	}
+}
+
+// TestCandidateChecksDecideTemplateReads — D-198, D-202: what a template
+// reads and what a condition or trigger compares is decided as a read, by
+// the profile's read rules; a denied one refuses naming the template or the
+// condition and where it is; an allowed one is a check, no system:template.
+func TestCandidateChecksDecideTemplateReads(t *testing.T) {
+	f := func() *fakeFetcher {
+		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.hall", "lock.front", "sun.sun"}}
+	}
+	run := func(cand string) ([]string, []enforce.Denial) {
+		t.Helper()
+		s, _ := newSession(t, candidatePolicy, f())
+		checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand))
+		return candidateCheckStrings(checks), denials
+	}
+	checks, denials := run(`
+id: pg_ok
+triggers: [{trigger: state, entity_id: sun.sun}]
+conditions: "{{ is_state('sun.sun', 'below_horizon') }}"
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {brightness: "{{ 255 if now().hour < 20 else 80 }}"}
+`)
+	if len(denials) != 0 || !slices.Contains(checks, "read entity:sun.sun/state") || slices.Contains(checks, "read system:template") {
+		t.Errorf("an allowed read: checks %q, denials %+v", checks, denials)
+	}
+	_, denials = run(`
+id: pg_tpl
+triggers: [{trigger: time, at: "07:00"}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {brightness: "{{ 255 if is_state('lock.front', 'locked') else 0 }}"}
+`)
+	if len(denials) != 1 || denials[0].Resource != "entity:lock.front/state" || denials[0].Verb != "read" ||
+		!strings.Contains(denials[0].Rule, "the template at /actions/0/data/brightness uses is_state") {
+		t.Errorf("a denied template read: denials %+v", denials)
+	}
+	_, denials = run(`
+id: pg_cmp
+triggers: [{trigger: time, at: "07:00"}]
+conditions:
+  - condition: state
+    entity_id: lock.front
+    attribute: code_format
+    state: number
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+`)
+	if !slices.ContainsFunc(denials, func(d enforce.Denial) bool {
+		return d.Resource == "entity:lock.front/attr/code_format" && strings.Contains(d.Rule, "the state condition at /conditions/0 compares it")
+	}) {
+		t.Errorf("a denied compare: denials %+v", denials)
+	}
+	_, denials = run(`
+id: pg_trig
+triggers: [{trigger: state, entity_id: lock.front}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {flash: "{{ trigger.to_state.attributes.friendly_name }}"}
+`)
+	if !slices.ContainsFunc(denials, func(d enforce.Denial) bool {
+		return d.Resource == "entity:lock.front/attr/friendly_name" && strings.Contains(d.Rule, "trigger.to_state")
+	}) {
+		t.Errorf("trigger.to_state of a denied entity (D-201): denials %+v", denials)
+	}
+
+	// A whole-entity read of a partly denied entity is refused; the state
+	// alone is not (D-198: Whole).
+	partly := strings.Replace(candidatePolicy, `      "entity:lock.*": [read, write]`,
+		`      "entity:lock.*": [read, write]
+      "entity:light.hall/attr/friendly_name": [read]`, 1)
+	runPartly := func(tpl string) []enforce.Denial {
+		t.Helper()
+		s, _ := newSession(t, partly, f())
+		_, d := s.CandidateChecks(context.Background(), "automation", []byte(`
+id: pg_whole
+triggers: [{trigger: time, at: "07:00"}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {flash: "`+tpl+`"}
+`))
+		return d
+	}
+	if d := runPartly("{{ states.light.hall }}"); len(d) != 1 || d[0].Resource != "entity:light.hall" || !d[0].Partial {
+		t.Errorf("a whole read of a partly denied entity: denials %+v, want one partial refusal of entity:light.hall", d)
+	}
+	if d := runPartly("{{ states('light.hall') }}"); len(d) != 0 {
+		t.Errorf("the state of a partly denied entity: denials %+v, want none", d)
 	}
 }

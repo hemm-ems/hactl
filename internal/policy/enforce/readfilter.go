@@ -170,8 +170,9 @@ func (s *Session) checkRead(req reqmap.Request, res reqmap.Result) error {
 		switch {
 		case !v.Allowed:
 			ref.Denied = append(ref.Denied, denial(c, v))
-		case res.Whole && v.Partial:
-			// One opaque body cannot be masked: a denied part refuses it.
+		case (res.Whole || c.Whole) && v.Partial:
+			// One opaque body — or a state object a template reads whole
+			// (D-198) — cannot be masked: a denied part refuses it.
 			d := denial(c, v)
 			if len(v.PartialDenies) > 0 {
 				d.Rule, d.Line = v.PartialDenies[0].Rule, v.PartialDenies[0].Line

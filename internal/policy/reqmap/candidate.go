@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 // What a written automation, script or template would do (W-1, E-3; D-56 as
@@ -47,9 +49,15 @@ type CandidateUse struct {
 	// Undecidable is what the candidate does that cannot be read off it, as
 	// `fail-closed: …` rules with the path they were found at.
 	Undecidable []CandidateUndecidable
-	// Templates is every unsafe construct the candidate's templates use
-	// (D-188): each needs `read system:template`.
+	// Templates is every unknowable construct the candidate's templates use
+	// (D-188, D-198): each needs `read system:template`.
 	Templates []TemplateUnsafe
+	// TemplateReads is what its templates read where hactl can name it
+	// (D-198, D-201), each with the template's path.
+	TemplateReads []TemplateRead
+	// Compared is what its state, numeric_state, zone and device conditions
+	// and triggers compare (D-202).
+	Compared []TemplateRead
 }
 
 // CandidateUndecidable is one part of a candidate whose effect hactl cannot
@@ -85,16 +93,18 @@ func isTemplate(s string) bool { return strings.Contains(s, "{{") || strings.Con
 // reg makes a device action undecidable, never unchecked; a nil live finds no
 // mention, which the caller must refuse rather than pass.
 func CandidateUses(candidate any, live *LiveStates, reg *Registries) CandidateUse {
-	w := &candWalker{live: live, reg: reg, read: map[string]bool{}, sw: map[string]bool{}, env: newTplEnv(candidate)}
-	if live != nil {
-		w.li = newLiveIndex(live.EntityIDs)
-	}
+	w := &candWalker{live: live, reg: reg, read: map[string]bool{}, sw: map[string]bool{}, env: newTplEnv(candidate, live, reg)}
+	w.li = w.env.li
 	w.walk(candidate, "")
 	w.templates(candidate, "")
+	w.reserved(candidate, "")
+	w.comparedReads(candidate, "")
 	var u CandidateUse
 	u.Actions = w.actions
 	u.Undecidable = w.undecidable
 	u.Templates = w.unsafe
+	u.TemplateReads = w.tplReads
+	u.Compared = w.compared
 	for id := range w.sw {
 		u.Switch = append(u.Switch, id)
 	}
@@ -117,11 +127,14 @@ type candWalker struct {
 	read, sw    map[string]bool
 	env         *tplEnv
 	unsafe      []TemplateUnsafe
+	tplReads    []TemplateRead
+	compared    []TemplateRead
 }
 
 // templates analyses every template in v, at any depth, keys included
-// (D-188): one that does not parse refuses the candidate; each unsafe
-// construct is recorded with its path.
+// (D-188, D-198): one that does not parse refuses the candidate, and so does
+// one that rebinds a runtime name (D-204); each unknowable construct and
+// each read is recorded with its path.
 func (w *candWalker) templates(v any, path string) {
 	one := func(s, at string) {
 		if !isTemplate(s) {
@@ -132,8 +145,15 @@ func (w *candWalker) templates(v any, path string) {
 			w.fail(at, RuleTemplateUnparsable)
 			return
 		}
-		for _, c := range w.env.unsafeIn(tpl) {
+		if rebindsReserved(tpl) {
+			w.fail(at, RuleReservedRebind)
+		}
+		a := w.env.analyse(tpl)
+		for _, c := range a.out {
 			w.unsafe = append(w.unsafe, TemplateUnsafe{Path: pathOrRoot(at), Construct: c})
+		}
+		for _, r := range a.reads {
+			w.tplReads = append(w.tplReads, TemplateRead{Path: pathOrRoot(at), Construct: r.construct, Check: r.check})
 		}
 	}
 	switch t := v.(type) {
@@ -199,16 +219,110 @@ func (w *candWalker) mention(s string) {
 	}
 }
 
-func (w *candWalker) byUUID(s string) string {
-	if w.reg == nil || s == "" {
-		return ""
-	}
-	for _, e := range w.reg.Entities {
-		if e.ID != "" && strings.EqualFold(e.ID, s) {
-			return e.EntityID
+func (w *candWalker) byUUID(s string) string { return entityByUUID(w.reg, s) }
+
+// rebindsReserved reports whether a template assigns a runtime name — a
+// set, for or with target, or a name of a tag hactl does not parse (D-204).
+func rebindsReserved(t *jinjaTemplate) bool {
+	for n := range t.assigned {
+		if tplReserved[n] {
+			return true
 		}
 	}
-	return ""
+	for _, tag := range t.tags {
+		for _, n := range tag.names {
+			if tplReserved[n] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reserved refuses every variable definition of a runtime name, at any
+// depth: a `variables:`, `trigger_variables:` or `fields:` key, a
+// `response_variable:` (D-204).
+func (w *candWalker) reserved(v any, path string) {
+	switch t := v.(type) {
+	case map[string]any:
+		for _, k := range sortedMapKeys(t) {
+			at := path + "/" + k
+			switch k {
+			case "variables", "trigger_variables", "fields":
+				if m, ok := t[k].(map[string]any); ok {
+					for _, name := range sortedMapKeys(m) {
+						if tplReserved[name] {
+							w.fail(at+"/"+name, RuleReservedRebind)
+						}
+					}
+				}
+			case "response_variable":
+				if s, ok := t[k].(string); ok && tplReserved[strings.TrimSpace(s)] {
+					w.fail(at, RuleReservedRebind)
+				}
+			}
+			w.reserved(t[k], at)
+		}
+	case []any:
+		for i, e := range t {
+			w.reserved(e, fmt.Sprintf("%s/%d", path, i))
+		}
+	}
+}
+
+// comparedReads records what a template-free condition or trigger compares
+// (D-202), at any depth: a state or numeric_state one reads the attribute
+// it names (`attribute:`), else the state, of each entity; a zone one reads
+// its entities and its zone whole (their location attributes); a device one
+// with an entity reads its state.
+func (w *candWalker) comparedReads(v any, path string) {
+	switch t := v.(type) {
+	case map[string]any:
+		kind, role := "", ""
+		if c, ok := t["condition"].(string); ok {
+			kind, role = c, "condition"
+		} else if k := triggerKind(t); k != "" {
+			kind, role = k, "trigger"
+		}
+		add := func(ids []string, sub string, whole bool) {
+			for _, id := range ids {
+				c, err := check(policy.Read, policy.KindEntity, id, sub)
+				if err != nil {
+					if c, err = check(policy.Read, policy.KindEntity, id, "attr"); err != nil {
+						continue
+					}
+					whole = true
+				}
+				c.Whole = whole
+				w.compared = append(w.compared, TemplateRead{Path: pathOrRoot(path), Construct: kind + " " + role, Check: c})
+			}
+		}
+		switch kind {
+		case "state", "numeric_state":
+			ids, _ := configEntityIDs(t["entity_id"], w.reg)
+			if attr, ok := t["attribute"].(string); ok && attr != "" {
+				add(ids, "attr/"+attr, false)
+			} else {
+				add(ids, "state", false)
+			}
+		case "zone":
+			ids, _ := configEntityIDs(t["entity_id"], w.reg)
+			zones, _ := configEntityIDs(t["zone"], w.reg)
+			add(append(ids, zones...), "", true)
+		case "device":
+			if raw, ok := t["entity_id"]; ok {
+				ids, _ := configEntityIDs(raw, w.reg)
+				add(ids, "state", false)
+			}
+		}
+		for _, k := range sortedMapKeys(t) {
+			w.comparedReads(t[k], path+"/"+k)
+		}
+	case []any:
+		for i, e := range t {
+			w.comparedReads(e, fmt.Sprintf("%s/%d", path, i))
+		}
+	}
 }
 
 // action handles a mapping with `action:` (or legacy `service:`). It reports

@@ -58,6 +58,7 @@ internal/livefire/integrity.go:parseCensusRows = proven: TestCensusRefusesAnEmpt
 internal/policy/reqmap/restmap.go:jsonObject = proven: TestServiceCallMapping
 internal/policy/reqmap/companionmap.go:yamlMapping = proven: TestClassifyWriteRequests
 internal/policy/reqmap/companionmap.go:mapRefReplace = proven: TestClassifyWriteRequests
+internal/policy/reqmap/tplreads.go:mapTemplateEval = proven: TestTemplateEvalChecks
 internal/policy/reqmap/dashboard.go:decodeObject = proven: TestDiffDashboard
 internal/policy/reqmap/refowner.go:parseRoot = proven: TestRefChangeOwnersFailsWhenItCannotPlace
 

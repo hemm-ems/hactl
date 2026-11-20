@@ -248,18 +248,20 @@ actions:
 	}
 }
 
-// TestCandidateUsesRecordsUnsafeTemplates — D-188 (B5, B6): every template
-// construct that can read state is recorded with its path, variables
-// assigned from one included; a template that does not parse refuses.
+// TestCandidateUsesRecordsUnsafeTemplates — D-188 (B5, B6) as refined by
+// D-198: every template construct that reads what hactl cannot name is
+// recorded with its path, variables assigned from one included; one whose
+// reads it names is recorded as those reads; a template that does not parse
+// refuses.
 func TestCandidateUsesRecordsUnsafeTemplates(t *testing.T) {
 	u := reqmap.CandidateUses(candidateDoc(t, `
 sensor:
   - name: a
     unique_id: a
-    state: "{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}"
+    state: "{{ state_attr(now() | string, 'friendly_name') }}"
   - name: b
     unique_id: b
-    state: "{{ states.input_boolean | selectattr('object_id', 'search', 'secr') | map(attribute='name') | join(',') }}"
+    state: "{{ device_attr('dev1', 'name') }}"
   - name: c
     unique_id: c
     state: "{{ now().hour }}"
@@ -271,7 +273,7 @@ sensor:
 	for _, x := range u.Templates {
 		got = append(got, x.Construct+"@"+x.Path)
 	}
-	want := []string{"state_attr@/sensor/0/state", "states@/sensor/1/state"}
+	want := []string{"state_attr with a computed entity id@/sensor/0/state", "device_attr@/sensor/1/state"}
 	if !slices.Equal(got, want) {
 		t.Errorf("unsafe = %q, want %q", got, want)
 	}
@@ -285,7 +287,7 @@ triggers:
     event_type: pg_fire
 actions:
   - variables:
-      s: "{{ state_attr('input_boolean.' ~ 'secret', 'friendly_name') }}"
+      s: "{{ state_attr(now() | string, 'friendly_name') }}"
   - action: logbook.log
     data:
       name: x
@@ -295,9 +297,31 @@ actions:
 	for _, x := range u.Templates {
 		got = append(got, x.Construct+"@"+x.Path)
 	}
-	want = []string{"state_attr@/actions/0/variables/s", "variable s (from state_attr)@/actions/1/data/message"}
+	want = []string{"state_attr with a computed entity id@/actions/0/variables/s", "variable s (from state_attr with a computed entity id)@/actions/1/data/message"}
 	if !slices.Equal(got, want) {
 		t.Errorf("unsafe = %q, want %q", got, want)
+	}
+
+	// The templates hunt 2 refused as unsafe now read what they name.
+	u = reqmap.CandidateUses(candidateDoc(t, `
+sensor:
+  - name: a
+    unique_id: a
+    state: "{{ state_attr('input_boolean.' ~ 'guard', 'friendly_name') }}"
+  - name: b
+    unique_id: b
+    state: "{{ states.input_boolean | selectattr('object_id', 'search', 'secr') | map(attribute='name') | join(',') }}"
+`), candLive, candReg)
+	if len(u.Templates) != 0 {
+		t.Errorf("unsafe %+v, want none", u.Templates)
+	}
+	got = got[:0]
+	for _, r := range u.TemplateReads {
+		got = append(got, r.Check.String()+"@"+r.Path)
+	}
+	want = []string{"read entity:input_boolean.guard/attr/friendly_name@/sensor/0/state", "read entity:input_boolean.guard@/sensor/1/state"}
+	if !slices.Equal(got, want) {
+		t.Errorf("reads = %q, want %q", got, want)
 	}
 }
 

@@ -10,24 +10,28 @@ import (
 	"strings"
 )
 
-// What a template in a candidate reads (D-188, decided by Jan 2026-11-20).
+// What a template in a candidate reads (D-188 as refined by D-198, decided by
+// Jan 2026-11-20).
 //
 // A template made only of safe constructs — literals, operators, its own and
-// the automation's variables, `this`, `trigger` (unless a trigger hands it
-// other entities' states), the time functions and the pure math, string and
-// list filters and tests of tplnames.go — reads nothing Home Assistant holds.
-// Any other construct (states, state_attr, is_state, expand, area_entities,
-// …, an unknown name, filter, test or tag) can read any state, so it needs
-// `read system:template`, which only an allow by that exact name grants while
-// the profile denies anything (enforce.TemplateRead). A variable assigned
-// from an unsafe template is unsafe wherever it is used.
+// the automation's variables, `this`, the time functions and the pure math,
+// string and list filters and tests of tplnames.go — reads nothing Home
+// Assistant holds. A construct that reads state is checked as the reads it
+// makes where hactl can name them (tplreads.go): `states('sun.sun')` needs
+// `read entity:sun.sun/state`. One whose reach hactl cannot name — a
+// computed entity id, a lookup, an unknown name, filter, test or tag — is
+// unknowable: it needs `read system:template`, which only an allow by that
+// exact name grants while the profile denies anything (enforce.TemplateRead).
+// A variable assigned from an unknowable template is unknowable wherever it
+// is used; one assigned from a template whose reads hactl names is checked
+// where it is defined.
 //
 // A template whose value hactl can compute from constants alone (a literal, a
 // concatenation, a foldable variable) is checked as the value it renders to:
 // `{{ 'input_boolean.' ~ 'guard' }}` in a service's data names
 // input_boolean.guard exactly as the literal does (D-189).
 
-// TemplateUnsafe is one unsafe construct a candidate's template uses.
+// TemplateUnsafe is one unknowable construct a candidate's template uses.
 type TemplateUnsafe struct {
 	Path, Construct string
 }
@@ -38,10 +42,18 @@ type tplEnv struct {
 	// fields, response_variable) and the runtime names (this, context,
 	// repeat, wait, trigger).
 	vars map[string]*tplVar
+	// live, li and reg are what the reads are resolved against: the live
+	// entity set and the registries (nil when not read).
+	live *LiveStates
+	li   *liveIndex
+	reg  *Registries
+	// trig is what `trigger` hands the templates (D-201).
+	trig trigFacts
 }
 
 type tplVar struct {
-	// unsafe names the construct the variable's value uses, "" when safe.
+	// unsafe names the unknowable construct the variable's value uses, ""
+	// when there is none.
 	unsafe string
 	// value is the folded value, valid when folded.
 	value  any
@@ -53,21 +65,21 @@ type tplVar struct {
 // (`this` is the entity itself; `repeat`, `wait`, `context` carry the run).
 var tplRuntime = []string{"this", "context", "repeat", "wait"}
 
-// stateEventTypes are the events whose data carries another entity's state
-// or a logbook message: an event trigger on one hands `trigger.event` that.
-var stateEventTypes = map[string]bool{
-	"state_changed": true, "state_reported": true, "logbook_entry": true, "*": true,
-}
-
 // newTplEnv builds the environment of a candidate: every variable it
-// defines, analysed to a fixpoint, and `trigger` — unsafe when a trigger
-// hands it states the candidate does not name.
-func newTplEnv(doc any) *tplEnv {
-	env := &tplEnv{vars: map[string]*tplVar{}}
+// defines, analysed to a fixpoint, the runtime names, and what `trigger`
+// hands over (D-201, D-203). A definition of a runtime name is not one: the
+// candidate is refused for it (D-204), and the analysis keeps the runtime
+// meaning.
+func newTplEnv(doc any, live *LiveStates, reg *Registries) *tplEnv {
+	env := &tplEnv{vars: map[string]*tplVar{}, live: live, reg: reg}
+	if live != nil {
+		env.li = newLiveIndex(live.EntityIDs)
+	}
 	for _, n := range tplRuntime {
 		env.vars[n] = &tplVar{}
 	}
-	env.vars["trigger"] = &tplVar{unsafe: triggerUnsafe(doc)}
+	env.vars["trigger"] = &tplVar{}
+	env.trig = triggerFacts(doc, reg)
 	defs := map[string][]any{}
 	collectVarDefs(doc, defs, env)
 	// Fixpoint: a variable is unsafe if any definition is; folded when every
@@ -131,65 +143,24 @@ func collectVarDef(k string, val any, defs map[string][]any, env *tplEnv) {
 	case "variables", "trigger_variables":
 		if m, ok := val.(map[string]any); ok {
 			for _, name := range slices.Sorted(maps.Keys(m)) {
-				defs[name] = append(defs[name], m[name])
+				if !tplReserved[name] {
+					defs[name] = append(defs[name], m[name])
+				}
 			}
 		}
 	case "response_variable":
-		if s, ok := val.(string); ok && !isTemplate(s) {
+		if s, ok := val.(string); ok && !isTemplate(s) && !tplReserved[s] {
 			env.vars[s] = &tplVar{}
 		}
 	case "fields":
 		if m, ok := val.(map[string]any); ok {
 			for name := range m {
-				if _, defined := env.vars[name]; !defined {
+				if _, defined := env.vars[name]; !defined && !tplReserved[name] {
 					env.vars[name] = &tplVar{}
 				}
 			}
 		}
 	}
-}
-
-// triggerUnsafe names why `trigger` is unsafe: an event trigger on an event
-// that carries other entities' states (or on a templated event type), or a
-// geo_location trigger (its source's entities). "" when safe: every other
-// trigger hands `trigger` the entity it names, which needs read already.
-func triggerUnsafe(doc any) string {
-	reason := ""
-	// The least reason by text: one candidate always names the same one.
-	note := func(r string) {
-		if reason == "" || r < reason {
-			reason = r
-		}
-	}
-	var walk func(v any)
-	walk = func(v any) {
-		switch t := v.(type) {
-		case map[string]any:
-			kind, _ := t["trigger"].(string)
-			if kind == "" {
-				kind, _ = t["platform"].(string)
-			}
-			switch kind {
-			case "event":
-				for _, et := range anyStrings(t["event_type"]) {
-					if isTemplate(et) || stateEventTypes[strings.ToLower(strings.TrimSpace(et))] {
-						note("trigger (an event trigger on " + et + ")")
-					}
-				}
-			case "geo_location":
-				note("trigger (a geo_location trigger)")
-			}
-			for _, k := range slices.Sorted(maps.Keys(t)) {
-				walk(t[k])
-			}
-		case []any:
-			for _, e := range t {
-				walk(e)
-			}
-		}
-	}
-	walk(doc)
-	return reason
 }
 
 func anyStrings(v any) []string {
@@ -260,10 +231,14 @@ func (env *tplEnv) analyseValue(v any) (unsafe string, folded any, ok bool) {
 	return "", v, true
 }
 
-// unsafeIn lists every unsafe construct a parsed template uses, in order,
-// each once.
-func (env *tplEnv) unsafeIn(t *jinjaTemplate) []string {
-	a := &tplAnalysis{env: env, bound: t.bound, seen: map[string]bool{}}
+// unsafeIn lists every unknowable construct a parsed template uses, in
+// order, each once.
+func (env *tplEnv) unsafeIn(t *jinjaTemplate) []string { return env.analyse(t).out }
+
+// analyse reads a parsed template: its unknowable constructs and the reads
+// hactl can name.
+func (env *tplEnv) analyse(t *jinjaTemplate) *tplAnalysis {
+	a := &tplAnalysis{env: env, bound: t.bound, seen: map[string]bool{}, seenRead: map[string]int{}}
 	for _, p := range t.parts {
 		if p.expr != nil {
 			a.node(p.expr)
@@ -283,14 +258,17 @@ func (env *tplEnv) unsafeIn(t *jinjaTemplate) []string {
 			a.filter(f)
 		}
 	}
-	return a.out
+	return a
 }
 
 type tplAnalysis struct {
 	env   *tplEnv
 	bound map[string]bool
-	out   []string
-	seen  map[string]bool
+	// out are the unknowable constructs; reads what the rest reads.
+	out      []string
+	seen     map[string]bool
+	reads    []tplRead
+	seenRead map[string]int
 }
 
 func (a *tplAnalysis) add(c string) {
@@ -316,21 +294,19 @@ func (a *tplAnalysis) node(n jNode) {
 	case jDict:
 		a.nodes(t.keys)
 		a.nodes(t.vals)
-	case jGetattr:
-		a.node(t.obj)
-	case jGetitem:
-		a.node(t.obj)
-		a.node(t.idx)
+	case jGetattr, jGetitem, jCall:
+		a.chain(n)
 	case jSlice:
 		a.node(t.a)
 		a.node(t.b)
 		a.node(t.c)
-	case jCall:
-		a.node(t.fn)
-		a.nodes(t.args.all())
 	case jFilter:
 		a.filter(t)
 	case jTest:
+		if unsafeTemplateTests[t.name] {
+			a.reading(t.name, append([]jNode{t.arg}, t.args.pos...), t.args, "test "+t.name)
+			return
+		}
 		a.node(t.arg)
 		a.nodes(t.args.all())
 		if !safeTemplateTests[t.name] {
@@ -350,14 +326,22 @@ func (a *tplAnalysis) node(n jNode) {
 	}
 }
 
-// name classifies a bare name: a name an unsafe global holds is unsafe even
-// where the template assigns it (a `set` in a branch not taken leaves Jinja
-// resolving the global); a bound name or a safe variable is safe; a safe
-// global is safe; anything else is unsafe.
+// name classifies a bare name: `states` used whole reads every live entity,
+// `trigger` and `wait` what the triggers hand over; a reading global used
+// other than by a call, or rebound by the template or a variable, is
+// unknowable (a `set` in a branch not taken leaves Jinja resolving the
+// global); a bound name or a safe variable is safe; a safe global is safe;
+// anything else is unknowable.
 func (a *tplAnalysis) name(n string) {
 	switch {
-	case unsafeTemplateGlobals[n]:
+	case n == "states" && a.global(n):
+		a.wholeDomain("states", "")
+	case (n == "trigger" || n == "wait") && a.runtime(n):
+		a.triggerChain(nil, n)
+	case unsafeTemplateGlobals[n] && a.global(n):
 		a.add(n)
+	case unsafeTemplateGlobals[n]:
+		a.add(n + " (rebound)")
 	case a.bound[n]:
 	case a.env.vars[n] != nil:
 		if u := a.env.vars[n].unsafe; u != "" {
@@ -381,35 +365,46 @@ var nameArgFilters = map[string]struct {
 }
 
 func (a *tplAnalysis) filter(f jFilter) {
-	a.node(f.arg)
-	a.nodes(f.args.all())
+	if unsafeTemplateFilters[f.name] {
+		a.reading(f.name, append([]jNode{f.arg}, f.args.pos...), f.args, "filter "+f.name)
+		return
+	}
+	walk := func() {
+		a.node(f.arg)
+		a.nodes(f.args.all())
+	}
 	if !safeTemplateFilters[f.name] {
+		walk()
 		a.add("filter " + f.name)
 		return
 	}
 	spec, ok := nameArgFilters[f.name]
-	if !ok {
+	switch {
+	case !ok, f.name == "map" && len(f.args.pos) == 0, // map(attribute=…)
+		len(f.args.pos) <= spec.pos && len(f.args.dyn) == 0: // selectattr('a'): truthiness, no test
+		walk()
 		return
-	}
-	if f.name == "map" && len(f.args.pos) == 0 {
-		return // map(attribute=…)
-	}
-	if len(f.args.dyn) > 0 {
+	case len(f.args.dyn) > 0:
+		walk()
 		a.add("filter " + f.name + " with computed arguments")
 		return
-	}
-	if len(f.args.pos) <= spec.pos {
-		return // selectattr('a'): truthiness, no test
 	}
 	c, isConst := f.args.pos[spec.pos].(jConst)
 	s, isStr := c.v.(string)
 	switch {
 	case !isConst || !isStr:
+		walk()
 		a.add("filter " + f.name + " with a computed name")
+	case spec.isFilter && unsafeTemplateFilters[s], !spec.isFilter && unsafeTemplateTests[s]:
+		a.nameArgReads(f, s, spec.isFilter, spec.pos)
 	case spec.isFilter && !safeTemplateFilters[s]:
+		walk()
 		a.add("filter " + s + " (through " + f.name + ")")
 	case !spec.isFilter && !safeTemplateTests[s]:
+		walk()
 		a.add("test " + s + " (through " + f.name + ")")
+	default:
+		walk()
 	}
 }
 

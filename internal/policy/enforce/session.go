@@ -455,6 +455,11 @@ func needsOf(row string, req reqmap.Request) needs {
 		// reaches — a script's config id (D-84), a helper's, a template
 		// entity's (D-107).
 		return needs{live: true, reach: true, registries: true}
+	case "rest POST /api/template":
+		// What a template reads is resolved against the live states (a
+		// domain's entities, a group's members) and the registries (an
+		// area's entities), D-198.
+		return needs{live: true, registries: true}
 	case "ws config/label_registry/delete", "ws config/area_registry/delete", "ws config/floor_registry/delete":
 		return needs{registries: true}
 	case "rest DELETE /api/config/config_entries/entry/{entry_id}":

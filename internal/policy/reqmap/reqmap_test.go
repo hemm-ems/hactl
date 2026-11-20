@@ -588,7 +588,8 @@ var readVectors = []vector{
 	{name: "logbook of every entity", req: rest("GET", "/api/logbook/2026-11-01", ""), disp: reqmap.Read, row: "rest GET /api/logbook/{start}", filter: reqmap.FilterLogbook},
 	{name: "error log", req: rest("GET", "/api/error_log", ""), disp: reqmap.Read, row: "rest GET /api/error_log", checks: []string{"read system:logs"}},
 	{name: "services", req: rest("GET", "/api/services", ""), disp: reqmap.Read, row: "rest GET /api/services", filter: reqmap.FilterServices},
-	{name: "tpl eval is a POST that reads (E-6)", req: rest("POST", "/api/template", `{"template":"{{ 1 }}"}`), disp: reqmap.Read, row: "rest POST /api/template", checks: []string{"read system:template"}},
+	{name: "tpl eval is a POST that reads (E-6); a template that reads no state needs nothing (D-198)", req: rest("POST", "/api/template", `{"template":"{{ 1 }}"}`), disp: reqmap.Read, row: "rest POST /api/template"},
+	{name: "tpl eval of what hactl cannot name reads system:template (D-198)", req: rest("POST", "/api/template", `{"template":"{{ device_attr('d', 'name') }}"}`), disp: reqmap.Read, row: "rest POST /api/template", checks: []string{"read system:template"}},
 	{name: "core config", req: rest("GET", "/api/config", ""), disp: reqmap.Read, row: "rest GET /api/config", filter: reqmap.FilterCoreConfig},
 	{name: "API probe", req: rest("GET", "/api/", ""), disp: reqmap.Exempt, row: "rest GET /api/"},
 

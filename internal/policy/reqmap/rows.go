@@ -131,7 +131,7 @@ var (
 		restRow("GET", "/api/logbook/{start}", Read, readLogbook),
 		restRow("GET", "/api/error_log", Read, readSystem("logs")),
 		restRow("GET", "/api/services", Read, filtered(FilterServices)),
-		restRow("POST", "/api/template", Read, readSystem("template")),
+		restRow("POST", "/api/template", Read, mapTemplateEval),
 		restRow("GET", "/api/config", Read, filtered(FilterCoreConfig)),
 		exempt(restRow("GET", "/api/", Exempt, nil), "the API liveness probe answers \"API running\" and nothing about any Home Assistant resource"),
 	}

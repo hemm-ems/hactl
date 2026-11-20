@@ -1202,14 +1202,14 @@
   },
   {
    "id": "template-denied",
-   "why": "tpl eval needs an allow of system:template by its exact name while the profile denies anything (D-143, D-190)",
+   "why": "tpl eval of what hactl cannot name (D-198) needs an allow of system:template by its exact name while the profile denies anything (D-143, D-190)",
    "row": "rest POST /api/template",
    "policy": "reader",
    "request": {
     "transport": "rest",
     "method": "POST",
     "path": "/api/template",
-    "body": "{\"template\":\"{{ 1 }}\"}"
+    "body": "{\"template\":\"{{ device_attr('x', 'name') }}\"}"
    },
    "expect": {
     "refused": "system:template needs an allow by its exact name"
@@ -1224,7 +1224,7 @@
     "transport": "rest",
     "method": "POST",
     "path": "/api/template",
-    "body": "{\"template\":\"{{ 1 }}\"}"
+    "body": "{\"template\":\"{{ device_attr('x', 'name') }}\"}"
    },
    "answer": "1",
    "expect": {
@@ -1242,7 +1242,7 @@
     "transport": "rest",
     "method": "POST",
     "path": "/api/template",
-    "body": "{\"template\":\"{{ 1 }}\"}"
+    "body": "{\"template\":\"{{ device_attr('x', 'name') }}\"}"
    },
    "expect": {
     "refused": "system:template needs an allow by its exact name"
@@ -1257,10 +1257,76 @@
     "transport": "rest",
     "method": "POST",
     "path": "/api/template",
-    "body": "{\"template\":\"{{ 1 }}\"}"
+    "body": "{\"template\":\"{{ device_attr('x', 'name') }}\"}"
    },
    "expect": {
     "refused": "system:template needs an allow by its exact name"
+   }
+  },
+  {
+   "id": "template-reads-nothing",
+   "why": "a template that reads no state needs nothing, also under a profile that denies reads (D-198)",
+   "row": "rest POST /api/template",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ now().hour }}\"}"
+   },
+   "answer": "7",
+   "expect": {
+    "answer": "7",
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "template-reads-allowed",
+   "why": "a template is checked as the reads it names: an allowed state passes without system:template (D-198)",
+   "row": "rest POST /api/template",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ is_state('sun.sun', 'below_horizon') }}\"}"
+   },
+   "answer": "True",
+   "expect": {
+    "answer": "True",
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "template-reads-denied",
+   "why": "… and a denied one is refused, naming the rule (D-198)",
+   "row": "rest POST /api/template",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ states('lock.front_door') }}\"}"
+   },
+   "expect": {
+    "refused": "entity:lock.*"
+   }
+  },
+  {
+   "id": "template-reads-partial-whole",
+   "why": "a whole state object is refused when a part of it is denied (D-198, Whole)",
+   "row": "rest POST /api/template",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "POST",
+    "path": "/api/template",
+    "body": "{\"template\":\"{{ states.sensor.temp.attributes }}\"}"
+   },
+   "expect": {
+    "refused": "entity:sensor.temp"
    }
   },
   {

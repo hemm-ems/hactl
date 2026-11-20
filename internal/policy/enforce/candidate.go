@@ -24,11 +24,15 @@ const RuleLiveUnread = "fail-closed: live entities unread"
 //   - every other live entity the candidate mentions needs read;
 //   - what cannot be read off the candidate (a templated service name or
 //     target, a device action's entity that does not resolve) refuses it;
-//   - a template construct that can read state (a state function, an unsafe
-//     filter or test, a variable assigned from one, D-188) needs `read
-//     system:template` (D-190); a template that does not parse refuses it;
-//     a data field naming entities that holds a template hactl cannot fold
-//     refuses it (D-189);
+//   - what a template reads is checked as reads where hactl can name them
+//     (D-198, D-201): `states('x')` needs `read entity:x/state`, a state
+//     object read whole is refused by a deny on any part of the entity; a
+//     construct whose reach hactl cannot name (D-188) needs `read
+//     system:template` (D-190); a template that does not parse, or that
+//     rebinds a runtime name (D-204), refuses it; a data field naming
+//     entities that holds a template hactl cannot fold refuses it (D-189);
+//   - what a state, numeric_state, zone or device condition or trigger
+//     compares needs read (D-202);
 //   - a `use_blueprint` is checked as what it expands to: the blueprint of
 //     domain (automation, script, template) read through the fetcher, its
 //     `!input`s substituted (D-185); one that cannot be expanded refuses it.
@@ -86,8 +90,25 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 			checks = append(checks, c)
 		}
 	}
-	// A template construct that can read state needs `read system:template`
-	// (D-188, D-190): decided here, so the refusal names the construct.
+	// What templates read and conditions compare is decided here, so the
+	// refusal names the construct: a whole read is refused by a deny on any
+	// part (D-198).
+	for _, r := range use.TemplateReads {
+		if d := s.candidateRead(r.Check, " — the template at "+r.Path+" uses "+r.Construct); d != nil {
+			denials = append(denials, *d)
+		} else {
+			checks = append(checks, r.Check)
+		}
+	}
+	for _, r := range use.Compared {
+		if d := s.candidateRead(r.Check, " — the "+r.Construct+" at "+r.Path+" compares it"); d != nil {
+			denials = append(denials, *d)
+		} else {
+			checks = append(checks, r.Check)
+		}
+	}
+	// A construct whose reach hactl cannot name needs `read system:template`
+	// (D-188, D-190).
 	if len(use.Templates) > 0 {
 		tpl := reqmap.Check{Verb: policy.Read, Resource: policy.Resource{Kind: policy.KindSystem, ID: "template"}}
 		if v := s.decideRead(tpl); v.Allowed {
@@ -103,6 +124,27 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 		denials = append(denials, Denial{Resource: "candidate " + u.Path, Verb: policy.Control.String(), Rule: u.Rule})
 	}
 	return dedupeChecks(checks), denials
+}
+
+// candidateRead decides one read a candidate makes: nil when allowed, else
+// the denial, its rule followed by why.
+func (s *Session) candidateRead(c reqmap.Check, why string) *Denial {
+	v := s.decideRead(c)
+	switch {
+	case !v.Allowed:
+		d := denial(c, v)
+		d.Rule += why
+		return &d
+	case c.Whole && v.Partial:
+		d := denial(c, v)
+		if len(v.PartialDenies) > 0 {
+			d.Rule, d.Line = v.PartialDenies[0].Rule, v.PartialDenies[0].Line
+		}
+		d.Rule += why
+		d.Partial = true
+		return &d
+	}
+	return nil
 }
 
 // blueprintReader reads a blueprint file through the fetcher, as the
@@ -125,16 +167,18 @@ func entityCheck(v policy.Verb, id string) (reqmap.Check, bool) {
 	return reqmap.Check{Verb: v, Resource: r}, true
 }
 
-// dedupeChecks keeps the first of each identical check, in order.
+// dedupeChecks keeps the first of each identical check, in order; a whole
+// read of a duplicate makes the kept one whole (D-198).
 func dedupeChecks(in []reqmap.Check) []reqmap.Check {
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	out := in[:0]
 	for _, c := range in {
 		k := c.String()
-		if seen[k] {
+		if i, ok := seen[k]; ok {
+			out[i].Whole = out[i].Whole || c.Whole
 			continue
 		}
-		seen[k] = true
+		seen[k] = len(out)
 		out = append(out, c)
 	}
 	return out
