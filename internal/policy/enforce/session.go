@@ -83,7 +83,7 @@ type Session struct {
 
 	// targeted is whether anything targets a container, asked once per
 	// invocation (D-186); guarded by mu.
-	targeted map[string]bool
+	targeted map[string]targeting
 }
 
 // New starts a session. It refuses a policy that puts no profile in effect:

@@ -397,7 +397,7 @@ func policyConfigGrep(comp func(ctx context.Context) (*companion.Client, error))
 		// were returned, so as targeting.
 		out := enforce.ConfigGrepResult{Truncated: r.Truncated || len(r.Skipped) > 0}
 		for _, h := range r.Hits {
-			out.Hits = append(out.Hits, enforce.ConfigGrepHit{Location: h.Location, Key: h.Key, MatchedValue: h.MatchedValue})
+			out.Hits = append(out.Hits, enforce.ConfigGrepHit{Location: h.Location, Key: h.Key, MatchedValue: h.MatchedValue, Path: h.Path})
 		}
 		return out, nil
 	}

@@ -296,3 +296,145 @@ func TestRequestLayerChecksARelabel(t *testing.T) {
 		t.Errorf("deleting the kitchen: denied %+v, want only the fallen-back entity", ref.Denied)
 	}
 }
+
+// affectFetcher is a targetFetcher that also reads stored configs, config
+// files and the service list (D-212).
+type affectFetcher struct {
+	*targetFetcher
+	configs  map[string]string
+	files    map[string]string
+	services map[string]map[string]bool
+}
+
+func (f affectFetcher) StoredConfig(_ context.Context, kind, id string) ([]byte, error) {
+	f.asks = append(f.asks, "stored "+kind+":"+id)
+	c, ok := f.configs[kind+":"+id]
+	if !ok {
+		return nil, errors.New("404 not found")
+	}
+	return []byte(c), nil
+}
+
+func (f affectFetcher) ConfigFile(_ context.Context, location string) ([]byte, error) {
+	c, ok := f.files[location]
+	if !ok {
+		return nil, errors.New("404 not found")
+	}
+	return []byte(c), nil
+}
+
+func (f affectFetcher) Services(context.Context) (map[string]map[string]bool, error) {
+	return f.services, nil
+}
+
+// TestRegistryReachNeedsAnAffectingAction (D-212): a registry edit that puts
+// an entity under a container something targets needs control on it only if
+// one of the targeting actions can affect the entity's domain — a lock under
+// a label only homeassistant.turn_off targets is fine, under an area a
+// lock.lock targets is not — and the check names the targeter.
+func TestRegistryReachNeedsAnAffectingAction(t *testing.T) {
+	const pol = `version: 1
+active: house
+profiles:
+  house:
+    deny:
+      "entity:lock.front_door": [control]
+`
+	auto := func(id, actions string) string {
+		return "id: " + id + "\ntriggers:\n  - trigger: time\n    at: '23:00'\nactions:\n" + actions
+	}
+	newF := func(withServices bool) affectFetcher {
+		tf := &targetFetcher{
+			fakeFetcher: fakeFetcher{
+				reg: &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+					{EntityID: "lock.front_door"}, {EntityID: "light.hall"},
+					{EntityID: "script.hall_lock", UniqueID: "hall_lock"},
+				}}, complete: true,
+				live: []string{"lock.front_door", "light.hall", "automation.downstairs_off", "automation.hallway_area_lock",
+					"automation.lights_only", "automation.porch_watch", "automation.tpl", "automation.zw", "automation.gone", "script.hall_lock"},
+				autoIDs: map[string]string{"automation.downstairs_off": "downstairs_off", "automation.hallway_area_lock": "hallway_area_lock",
+					"automation.lights_only": "lights_only", "automation.porch_watch": "porch_watch", "automation.tpl": "tpl", "automation.zw": "zw"},
+			},
+			related: map[string]map[string][]string{
+				"label:downstairs":  {"automation": {"automation.downstairs_off"}},
+				"area:hallway":      {"automation": {"automation.hallway_area_lock"}},
+				"label:lightsonly":  {"automation": {"automation.lights_only"}},
+				"entity:lock.porch": {"automation": {"automation.porch_watch"}},
+				"label:tpl":         {"automation": {"automation.tpl"}},
+				"label:zw":          {"automation": {"automation.zw"}},
+				"label:missing":     {"automation": {"automation.gone"}},
+				"label:scripted":    {"script": {"script.hall_lock"}},
+			},
+			grep: map[string]enforce.ConfigGrepResult{
+				"grepped": {Hits: []enforce.ConfigGrepHit{{Location: "automations.yaml", Path: "[0].actions[0].target.label_id", Key: "label_id", MatchedValue: "grepped"}}},
+				"tplent":  {Hits: []enforce.ConfigGrepHit{{Location: "templates.yaml", Path: "[0].sensor[0].state", Key: "state", MatchedValue: "{{ label_entities('tplent') | count }}"}}},
+			},
+		}
+		f := affectFetcher{targetFetcher: tf, configs: map[string]string{
+			"automation:downstairs_off":    auto("downstairs_off", "  - action: homeassistant.turn_off\n    target: {label_id: downstairs}\n"),
+			"automation:hallway_area_lock": auto("hallway_area_lock", "  - action: lock.lock\n    target: {area_id: [kitchen, hallway]}\n"),
+			"automation:lights_only":       auto("lights_only", "  - action: light.turn_on\n    target: {label_id: lightsonly}\n  - action: notify.notify\n    data: {message: lightsonly}\n"),
+			"automation:porch_watch": "id: porch_watch\ntriggers:\n  - trigger: state\n    entity_id: lock.porch\nconditions:\n  - condition: state\n    entity_id: lock.porch\n    state: locked\n" +
+				"actions:\n  - action: light.turn_on\n    target: {entity_id: light.hall}\n",
+			"automation:tpl":       auto("tpl", "  - action: light.turn_on\n    target:\n      label_id: \"{{ 'tpl' }}\"\n"),
+			"automation:zw":        auto("zw", "  - action: zwave_js.set_value\n    target: {label_id: zw}\n"),
+			"automation:grep_auto": auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"),
+			"script:hall_lock":     "sequence:\n  - action: lock.lock\n    data: {label_id: scripted}\n",
+		}, files: map[string]string{
+			"automations.yaml": "- " + strings.ReplaceAll(auto("grep_auto", "  - action: homeassistant.turn_off\n    target: {label_id: grepped}\n"), "\n", "\n  "),
+			"templates.yaml":   "- sensor:\n  - name: n\n    unique_id: n\n    state: \"{{ label_entities('tplent') | count }}\"\n",
+		}}
+		if withServices {
+			f.services = map[string]map[string]bool{
+				"homeassistant": {"turn_on": true, "turn_off": true, "toggle": true},
+				"light":         {"turn_on": true, "turn_off": true, "toggle": true},
+				"lock":          {"lock": true, "unlock": true},
+			}
+		}
+		return f
+	}
+	const lock = "control entity:lock.front_door"
+	for _, c := range []struct {
+		name     string
+		change   enforce.RegistryChange
+		services bool
+		want     string // "" = no check; else the Via
+	}{
+		{"homeassistant.turn_off on the label cannot switch a lock", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("downstairs")}, true, ""},
+		{"without a service list it can (a superset)", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("downstairs")}, false, "because automation.downstairs_off targets label:downstairs"},
+		{"lock.lock on the area, in a list", enforce.RegistryChange{EntityID: "lock.front_door", AreaSet: true, AreaID: "hallway"}, true, "because automation.hallway_area_lock targets area:hallway"},
+		{"light.turn_on and notify data never switch a lock", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("lightsonly")}, true, ""},
+		{"a mention in a trigger or condition only", enforce.RegistryChange{EntityID: "lock.front_door", NewEntityID: "lock.porch"}, true, ""},
+		{"a template naming the container", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("tpl")}, true, "because automation.tpl targets label:tpl"},
+		{"a service of a domain with no live entity", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("zw")}, true, "because automation.zw targets label:zw"},
+		{"a config hactl cannot read", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("missing")}, true, "because automation.gone targets label:missing"},
+		{"a script naming the label in its data", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("scripted")}, true, "because script.hall_lock targets label:scripted"},
+		{"a grep hit placed in an automation is read as it", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("grepped")}, true, ""},
+		{"a grep hit in a template entity counts", enforce.RegistryChange{EntityID: "lock.front_door", Labels: labels("tplent")}, true, "-"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newF(c.services)
+			s, _ := newSession(t, pol, f)
+			checks, denials := s.RegistryReachChecks(context.Background(), c.change)
+			if len(denials) != 0 {
+				t.Fatalf("denials %+v", denials)
+			}
+			switch {
+			case c.want == "" && len(checks) != 0:
+				t.Errorf("checks %q, want none (asked %q)", relabelStrings(checks), f.asks)
+			case c.want != "" && (len(checks) != 1 || checks[0].String() != lock):
+				t.Errorf("checks %q, want %s (asked %q)", relabelStrings(checks), lock, f.asks)
+			case c.want != "" && c.want != "-" && checks[0].Via != c.want:
+				t.Errorf("via %q, want %q", checks[0].Via, c.want)
+			}
+		})
+	}
+
+	// The refusal names the targeter after its rule.
+	s, _ := newSession(t, pol, newF(true))
+	err := s.Check(context.Background(), reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/update",
+		Params: map[string]any{"entity_id": "lock.front_door", "area_id": "hallway"}})
+	if !strings.Contains(refusalText(err), `control entity:lock.front_door — deny "entity:lock.front_door" [control] (line 6) (because automation.hallway_area_lock targets area:hallway)`) {
+		t.Errorf("refusal: %v\n%s", err, refusalText(err))
+	}
+}

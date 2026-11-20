@@ -28,6 +28,9 @@ type ConfigGrepHit struct {
 	Key string
 	// MatchedValue is the whole string that matched.
 	MatchedValue string
+	// Path is the hit's path in the file, in ref scan form — where it is
+	// placed in an automation or a script (D-212); "" = unknown.
+	Path string
 }
 
 // ConfigGrepResult is a config-file search's answer. Truncated: more hits
@@ -116,10 +119,11 @@ func (s *Session) RegistryReachChecks(ctx context.Context, ch RegistryChange) ([
 	var checks []reqmap.Check
 	var denials []Denial
 	for _, e := range sortedKeysOf(gained) {
-		targeted := false
+		targeted, via := false, ""
+		domain, _, _ := strings.Cut(e, ".")
 		for _, c := range gained[e] {
-			if s.containerTargeted(ctx, c) {
-				targeted = true
+			if t := s.containerTargeted(ctx, c, domain); t.targeted {
+				targeted, via = true, t.via(c)
 				break
 			}
 		}
@@ -127,6 +131,7 @@ func (s *Session) RegistryReachChecks(ctx context.Context, ch RegistryChange) ([
 			continue
 		}
 		if c, ok := entityCheck(policy.Control, e); ok {
+			c.Via = via
 			checks = append(checks, c)
 		} else {
 			denials = append(denials, Denial{Resource: "entity:" + e, Verb: policy.Control.String(), Rule: "fail-closed: unmappable resource entity:" + e})
@@ -308,46 +313,24 @@ func (idx regIndex) containersOf(e reqmap.RegistryEntity, d reqmap.RegistryDevic
 	return out
 }
 
-// containerTargeted asks, once per invocation, whether anything targets c.
-func (s *Session) containerTargeted(ctx context.Context, c container) bool {
+// containerTargeted asks, once per invocation and domain, whether anything
+// that targets c can switch an entity of domain (D-212).
+func (s *Session) containerTargeted(ctx context.Context, c container, domain string) targeting {
+	key := c.String() + "|" + domain
 	s.mu.Lock()
 	if s.targeted == nil {
-		s.targeted = map[string]bool{}
+		s.targeted = map[string]targeting{}
 	}
-	t, have := s.targeted[c.String()]
+	t, have := s.targeted[key]
 	s.mu.Unlock()
 	if have {
 		return t
 	}
-	t = s.askTargeted(ctx, c)
+	t = s.askTargeted(ctx, c, domain)
 	s.mu.Lock()
-	s.targeted[c.String()] = t
+	s.targeted[key] = t
 	s.mu.Unlock()
 	return t
-}
-
-func (s *Session) askTargeted(ctx context.Context, c container) bool {
-	tf, ok := s.fetcher.(TargetFetcher)
-	if !ok || s.fetcher == nil {
-		return true // cannot ask: counts as targeting
-	}
-	rel, err := tf.Related(own(ctx), c.kind, c.id)
-	if err != nil || len(rel["automation"])+len(rel["script"]) > 0 {
-		return true
-	}
-	res, err := tf.ConfigGrep(own(ctx), c.id)
-	switch {
-	case errors.Is(err, ErrNoCompanion):
-		return false
-	case err != nil:
-		return true
-	}
-	for _, h := range res.Hits {
-		if targetKeys[h.Key] || strings.Contains(h.MatchedValue, "{{") || strings.Contains(h.MatchedValue, "{%") {
-			return true
-		}
-	}
-	return res.Truncated
 }
 
 // registryChangeOf reads a registry update message as a RegistryChange; ok
