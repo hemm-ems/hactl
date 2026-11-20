@@ -769,6 +769,11 @@ var passThroughFilters = names("list", "unique", "sort", "reverse", "first", "la
 // `states.<domain>` and `states`, lists, `+`, conditionals and the filters
 // that pass ids through. ok is false when hactl cannot name them.
 func (a *tplAnalysis) ids(n jNode) ([]string, bool) {
+	if name, ok := n.(jName); ok {
+		if vals, folded := a.loopVals[name.name]; folded {
+			return vals, true // a for variable over a literal list (D-210)
+		}
+	}
 	if v, ok := a.env.foldExpr(n); ok {
 		return idsOf(v)
 	}

@@ -490,3 +490,50 @@ sensor:
 		}
 	}
 }
+
+// TestTemplateReadsFoldLiteralForLoops (D-210): a for variable over a list
+// that folds names each of its values, so `states(e)` in the loop reads what
+// the list names; a loop over something computed, a variable another target
+// rebinds, and a tuple target stay unknowable.
+func TestTemplateReadsFoldLiteralForLoops(t *testing.T) {
+	live, reg := tplTestFacts()
+	env := newTplEnv(map[string]any{"variables": map[string]any{"my_locks": []any{"lock.front"}}}, live, reg)
+	const (
+		sunState  = "read entity:sun.sun/state"
+		lockState = "read entity:lock.front/state"
+		lockAttr  = "read entity:lock.front/attr/battery"
+		computed  = "states with a computed entity id"
+	)
+	cases := []struct {
+		tpl     string
+		reads   []string
+		unknown []string
+	}{
+		{"{% for e in ['lock.front', 'sun.sun'] %}{{ states(e) }}{% endfor %}", []string{lockState, sunState}, nil},
+		{"{% for e in ['LOCK.Front'] %}{{ state_attr(e, 'battery') }}{% endfor %}", []string{lockAttr}, nil},
+		{"{% for e in ['light.a', 'light.b'] %}{% if is_state(e, 'on') %}on{% endif %}{% endfor %}",
+			[]string{"read entity:light.a/state", "read entity:light.b/state"}, nil},
+		{"{% for e in ['lock.front'] + ['sun.sun'] %}{{ states(e) }}{% endfor %}", []string{lockState, sunState}, nil},
+		{"{% for e in my_locks %}{{ states(e) }}{% endfor %}", []string{lockState}, nil},
+		{"{% for e in [] %}{{ states(e) }}{% endfor %}", nil, nil},
+		// not folded
+		{"{% for e in xs %}{{ states(e) }}{% endfor %}", nil, []string{"states with a computed entity id", "name xs"}},
+		{"{% for e in ['lock.front'] %}{% endfor %}{% set e = x %}{{ states(e) }}", nil, []string{computed, "name x"}},
+		{"{% for k, v in [['lock.front', 1]] %}{{ states(k) }}{% endfor %}", nil, []string{computed}},
+		{"{% for e in ['lock.front', 1] %}{{ states(e) }}{% endfor %}", nil, []string{computed}},
+	}
+	for _, c := range cases {
+		tpl, err := parseJinja(c.tpl)
+		if err != nil {
+			t.Errorf("%s: %v", c.tpl, err)
+			continue
+		}
+		a := env.analyse(tpl)
+		if got := readsOf(a.reads); fmt.Sprint(got) != fmt.Sprint(c.reads) && (len(got) != 0 || len(c.reads) != 0) {
+			t.Errorf("%s:\n  reads %q\n  want  %q", c.tpl, got, c.reads)
+		}
+		if fmt.Sprint(a.out) != fmt.Sprint(c.unknown) && (len(a.out) != 0 || len(c.unknown) != 0) {
+			t.Errorf("%s: unknowable %q, want %q", c.tpl, a.out, c.unknown)
+		}
+	}
+}

@@ -235,10 +235,46 @@ func (env *tplEnv) analyseValue(v any) (unsafe string, folded any, ok bool) {
 // order, each once.
 func (env *tplEnv) unsafeIn(t *jinjaTemplate) []string { return env.analyse(t).out }
 
+// loopValues are the for variables that fold (D-210): the target is a single
+// name no other target assigns, and the iterable folds to a list of strings
+// — `{% for e in ['lock.front', 'lock.back'] %}` — each mapped to its
+// values, lowercased like any entity id.
+func loopValues(env *tplEnv, t *jinjaTemplate) map[string][]string {
+	var out map[string][]string
+	for _, l := range t.loops {
+		if t.binds[l.name] != 1 || l.name == "loop" {
+			continue
+		}
+		v, ok := env.foldExpr(l.iter)
+		list, isList := v.([]any)
+		if !ok || !isList {
+			continue
+		}
+		vals := make([]string, 0, len(list))
+		for _, e := range list {
+			s, isStr := e.(string)
+			if !isStr {
+				vals = nil
+				break
+			}
+			vals = append(vals, strings.ToLower(s))
+		}
+		if vals == nil && len(list) > 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string][]string{}
+		}
+		out[l.name] = vals
+	}
+	return out
+}
+
 // analyse reads a parsed template: its unknowable constructs and the reads
 // hactl can name.
 func (env *tplEnv) analyse(t *jinjaTemplate) *tplAnalysis {
 	a := &tplAnalysis{env: env, bound: t.bound, seen: map[string]bool{}, seenRead: map[string]int{}}
+	a.loopVals = loopValues(env, t)
 	for _, p := range t.parts {
 		if p.expr != nil {
 			a.node(p.expr)
@@ -264,6 +300,9 @@ func (env *tplEnv) analyse(t *jinjaTemplate) *tplAnalysis {
 type tplAnalysis struct {
 	env   *tplEnv
 	bound map[string]bool
+	// loopVals are the for variables over a literal list and their values
+	// (D-210).
+	loopVals map[string][]string
 	// out are the unknowable constructs; reads what the rest reads.
 	out      []string
 	seen     map[string]bool

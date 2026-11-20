@@ -28,6 +28,17 @@ type jinjaTemplate struct {
 	// assigned is every name a set, for or with target assigns or assigns an
 	// attribute of (`ns` of `ns.a`) — the rebinds D-204 refuses.
 	assigned map[string]bool
+	// binds counts the targets that assign each name (D-210).
+	binds map[string]int
+	// loops are the for statements whose target is a single name, with the
+	// expression they iterate (D-210).
+	loops []jLoop
+}
+
+// jLoop is `{% for <name> in <iter> %}`.
+type jLoop struct {
+	name string
+	iter jNode
 }
 
 // jinjaPart is literal text (expr nil) or one `{{ expr }}`.
@@ -374,7 +385,7 @@ func decodePyEscapes(body string) (string, error) {
 
 // parseJinja parses a whole template source.
 func parseJinja(src string) (*jinjaTemplate, error) {
-	t := &jinjaTemplate{bound: map[string]bool{}, assigned: map[string]bool{}}
+	t := &jinjaTemplate{bound: map[string]bool{}, assigned: map[string]bool{}, binds: map[string]int{}}
 	var stack []string // open block tags
 	i := 0
 	for i < len(src) {
@@ -621,6 +632,9 @@ func stmtFor(st *jStmt) error {
 	if err := st.expr(false); err != nil {
 		return err
 	}
+	if name, ok := target.(jName); ok {
+		st.t.loops = append(st.t.loops, jLoop{name: name.name, iter: st.tag.exprs[len(st.tag.exprs)-1]})
+	}
 	if st.p.skipName("if") {
 		if err := st.expr(true); err != nil {
 			return err
@@ -675,6 +689,7 @@ func (t *jinjaTemplate) bindTarget(n jNode) {
 	case jName:
 		t.bound[v.name] = true
 		t.assigned[v.name] = true
+		t.binds[v.name]++
 	case jGetattr:
 		if base, ok := v.obj.(jName); ok {
 			t.assigned[base.name] = true
