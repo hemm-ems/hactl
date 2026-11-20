@@ -303,3 +303,36 @@ func TestUnmetWhereNamesTheFirstFailingKey(t *testing.T) {
 		}
 	}
 }
+
+// TestLintTemplateReadsDenied — D-206: an allow of system:template in a
+// profile that denies reading anything is named; the agent starter's shape
+// (default: deny, "*": [read], system:template) is not.
+func TestLintTemplateReadsDenied(t *testing.T) {
+	const msg = "this allow lets a template read every state, also what this profile denies reading — allow system:template only where every read is allowed"
+	cases := []struct {
+		name, body string
+		want       []Finding
+	}{
+		{"a deny of read", "version: 1\nactive: p\nprofiles:\n  p:\n    deny:\n      \"entity:lock.*\": [read]\n    allow:\n      \"system:template\": [read]\n",
+			[]Finding{{CodeTemplateReadsDenied, "p", `allow "system:template" [read]`, 8, msg}}},
+		{"default: deny without a read of everything", profileHead + "    allow:\n      \"entity:light.*\": [read]\n      \"system:template\": [read]\n",
+			[]Finding{{CodeTemplateReadsDenied, "p", `allow "system:template" [read]`, 8, msg}}},
+		{"a read of every entity is no read of everything", profileHead + "    allow:\n      \"entity:*\": [read]\n      \"system:template\": [read]\n",
+			[]Finding{{CodeTemplateReadsDenied, "p", `allow "system:template" [read]`, 8, msg}}},
+		{"the agent starter", profileHead + "    allow:\n      \"*\": [read]\n      \"system:template\": [read]\n", nil},
+		{"a deny of control only", "version: 1\nactive: p\nprofiles:\n  p:\n    deny:\n      \"entity:lock.*\": [control]\n    allow:\n      \"system:template\": [read]\n", nil},
+		{"no system:template allow", "version: 1\nactive: p\nprofiles:\n  p:\n    deny:\n      \"entity:lock.*\": [read]\n", nil},
+		{"a wildcard is not the exact allow", "version: 1\nactive: p\nprofiles:\n  p:\n    deny:\n      \"entity:lock.*\": [read]\n    allow:\n      \"system:*\": [read]\n", nil},
+	}
+	for _, c := range cases {
+		got := templateReadsDenied(mustLoad(t, c.body))
+		if !reflect.DeepEqual(got, c.want) && (len(got) != 0 || len(c.want) != 0) {
+			t.Errorf("%s: findings %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	// Lint reports it, also with no inventory.
+	rep := Lint(mustLoad(t, cases[0].body), nil)
+	if !slices.ContainsFunc(rep.Findings, func(f Finding) bool { return f.Code == CodeTemplateReadsDenied }) {
+		t.Errorf("Lint findings %+v, want %s", rep.Findings, CodeTemplateReadsDenied)
+	}
+}

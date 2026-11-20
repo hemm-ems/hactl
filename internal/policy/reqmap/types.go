@@ -98,6 +98,10 @@ type Check struct {
 	// address can only refuse it — the profile default and the allows do not
 	// decide it. It renders like any check.
 	DenyOnly bool
+	// Whole marks a read of everything Resource holds as one value — the
+	// state object a template reads (D-198): a deny on any part of it refuses
+	// the read, which is never masked. It renders like any check.
+	Whole bool
 }
 
 // Target renders the checked resource: the address, or `<kind>:*[/<sub>]` for
@@ -326,10 +330,14 @@ type checkSet struct {
 func newCheckSet() *checkSet { return &checkSet{m: map[string]Check{}} }
 
 // add keeps one check per (verb, target); of a deny-only and a full check of
-// the same pair, the full check — the stricter one — stays.
+// the same pair, the full check — the stricter one — stays, and so does a
+// whole read over a part (D-198).
 func (s *checkSet) add(c Check) {
-	if have, ok := s.m[c.String()]; ok && !have.DenyOnly && c.DenyOnly {
-		return
+	if have, ok := s.m[c.String()]; ok {
+		if !have.DenyOnly && c.DenyOnly {
+			return
+		}
+		c.Whole = c.Whole || have.Whole
 	}
 	s.m[c.String()] = c
 }

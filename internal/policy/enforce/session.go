@@ -444,17 +444,24 @@ func needsOf(row string, req reqmap.Request) needs {
 	case "rest POST /api/services/{domain}/{service}":
 		// A call with no data names no target and no entity: its service
 		// check alone, nothing to ask (D-73).
-		// A mapped service reaches what its call does not name (a reload's
-		// scenes, set_location's home zone, D-191, D-193): the live set even
-		// then.
+		// A mapped service reaches what its call does not name (the home
+		// zone set_location writes, D-191; the entities a config entry
+		// reload resets, D-200): the live set even then.
 		var data map[string]any
 		if json.Unmarshal(req.Body, &data) == nil && len(data) == 0 && !mappedServicePath(req.Path) {
 			return needs{}
 		}
 		// The registries name the typed address of every entity the call
 		// reaches — a script's config id (D-84), a helper's, a template
-		// entity's (D-107).
-		return needs{live: true, reach: true, registries: true}
+		// entity's (D-107). A config entry reload names the entities it
+		// resets from them: only a complete read (D-200).
+		return needs{live: true, reach: true, registries: true,
+			cascade: strings.EqualFold(req.Path, "/api/services/homeassistant/reload_config_entry")}
+	case "rest POST /api/template":
+		// What a template reads is resolved against the live states (a
+		// domain's entities, a group's members) and the registries (an
+		// area's entities), D-198.
+		return needs{live: true, registries: true}
 	case "ws config/label_registry/delete", "ws config/area_registry/delete", "ws config/floor_registry/delete":
 		return needs{registries: true}
 	case "rest DELETE /api/config/config_entries/entry/{entry_id}":

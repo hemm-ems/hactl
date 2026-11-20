@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // A Jinja reader for the templates a candidate carries (D-188): enough of
@@ -23,6 +25,9 @@ type jinjaTemplate struct {
 	// bound is every name the template itself assigns: set, for and with
 	// targets, and `loop` inside a for.
 	bound map[string]bool
+	// assigned is every name a set, for or with target assigns or assigns an
+	// attribute of (`ns` of `ns.a`) — the rebinds D-204 refuses.
+	assigned map[string]bool
 }
 
 // jinjaPart is literal text (expr nil) or one `{{ expr }}`.
@@ -38,6 +43,9 @@ type jinjaTag struct {
 	// filters are the filter names a `{% filter %}` block or a filtered
 	// block `set` applies.
 	filters []jFilter
+	// names are the name tokens of a tag hactl does not parse (macro, call,
+	// import, …): the names it may bind (D-204).
+	names []string
 }
 
 type jNode any
@@ -235,42 +243,138 @@ func lexNumber(src string, i int) (int, string) {
 	return j, kind
 }
 
+// lexString reads the string literal at src[i] as jinja2's lexer does
+// (D-205): the token is a quote, then any run of characters in which a
+// backslash always takes the next character with it, then the same quote;
+// its value is the body with `\r\n` and `\r` made `\n`, then
+// `.encode("ascii", "backslashreplace").decode("unicode-escape")` — Python's
+// escapes, decoded. A literal hactl cannot decode exactly as Python would is
+// unparsable: fail closed.
 func lexString(src string, i int) (string, int, error) {
 	q := src[i]
-	var b strings.Builder
 	j := i + 1
 	for j < len(src) {
-		c := src[j]
-		switch {
-		case c == '\\' && j+1 < len(src):
-			n := src[j+1]
-			switch n {
-			case 'n':
-				b.WriteByte('\n')
-			case 't':
-				b.WriteByte('\t')
-			case 'r':
-				b.WriteByte('\r')
-			case '\\', '\'', '"':
-				b.WriteByte(n)
-			default:
-				b.WriteByte('\\')
-				b.WriteByte(n)
+		switch src[j] {
+		case '\\':
+			if j+1 >= len(src) {
+				return "", 0, jinjaErr("unterminated string")
 			}
 			j += 2
 			continue
-		case c == q:
-			return b.String(), j + 1, nil
+		case q:
+			s, err := decodePyEscapes(src[i+1 : j])
+			if err != nil {
+				return "", 0, err
+			}
+			return s, j + 1, nil
 		}
-		b.WriteByte(c)
 		j++
 	}
 	return "", 0, jinjaErr("unterminated string")
 }
 
+// DecodeJinjaString is what jinja2 makes of the whole string literal lit
+// (quotes included): lexString, exposed so TestOracleJinjaStringEscapes can
+// hold the decoding to Home Assistant's. An error is a literal hactl refuses.
+func DecodeJinjaString(lit string) (string, error) {
+	v, end, err := lexString(lit, 0)
+	if err != nil {
+		return "", err
+	}
+	if end != len(lit) {
+		return "", jinjaErr("more than one string literal")
+	}
+	return v, nil
+}
+
+// decodePyEscapes is Python's unicode-escape decoding of a jinja2 string
+// body, after jinja2's newline normalisation. Python keeps an unknown escape
+// (`\q`) as written; a truncated `\x`, `\u` or `\U` and a code point past
+// U+10FFFF are errors there and here. Refused rather than guessed: a
+// surrogate (Python keeps a lone one, a Go string cannot), `\N{…}` (it
+// needs Python's Unicode name table) and a backslash before a non-ASCII
+// character (it decodes through backslashreplace's own escape).
+func decodePyEscapes(body string) (string, error) {
+	if !utf8.ValidString(body) {
+		return "", jinjaErr("string literal is not UTF-8")
+	}
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
+	var b strings.Builder
+	hexRune := func(digits string, n int) (rune, error) {
+		if len(digits) < n {
+			return 0, jinjaErr("truncated escape in a string literal")
+		}
+		v, err := strconv.ParseUint(digits[:n], 16, 32)
+		if err != nil {
+			return 0, jinjaErr("truncated escape in a string literal")
+		}
+		if v > unicode.MaxRune || (v >= 0xD800 && v <= 0xDFFF) {
+			return 0, jinjaErr("escape names no Unicode character")
+		}
+		return rune(v), nil
+	}
+	for k := 0; k < len(body); {
+		c := body[k]
+		if c != '\\' {
+			b.WriteByte(c)
+			k++
+			continue
+		}
+		if k+1 >= len(body) {
+			return "", jinjaErr("backslash at the end of a string literal")
+		}
+		n := body[k+1]
+		k += 2
+		switch n {
+		case '\n':
+			// a line continuation: dropped
+		case '\\', '\'', '"':
+			b.WriteByte(n)
+		case 'a':
+			b.WriteByte(0x07)
+		case 'b':
+			b.WriteByte(0x08)
+		case 'f':
+			b.WriteByte(0x0c)
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'v':
+			b.WriteByte(0x0b)
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			v := rune(n - '0')
+			for d := 0; d < 2 && k < len(body) && body[k] >= '0' && body[k] <= '7'; d++ {
+				v = v*8 + rune(body[k]-'0')
+				k++
+			}
+			b.WriteRune(v)
+		case 'x', 'u', 'U':
+			width := map[byte]int{'x': 2, 'u': 4, 'U': 8}[n]
+			r, err := hexRune(body[k:], width)
+			if err != nil {
+				return "", err
+			}
+			b.WriteRune(r)
+			k += width
+		case 'N':
+			return "", jinjaErr("\\N{…} escapes are not read")
+		default:
+			if n >= utf8.RuneSelf {
+				return "", jinjaErr("backslash before a non-ASCII character in a string literal")
+			}
+			b.WriteByte('\\')
+			b.WriteByte(n)
+		}
+	}
+	return b.String(), nil
+}
+
 // parseJinja parses a whole template source.
 func parseJinja(src string) (*jinjaTemplate, error) {
-	t := &jinjaTemplate{bound: map[string]bool{}}
+	t := &jinjaTemplate{bound: map[string]bool{}, assigned: map[string]bool{}}
 	var stack []string // open block tags
 	i := 0
 	for i < len(src) {
@@ -441,6 +545,11 @@ func (t *jinjaTemplate) statement(toks []jTok, stack *[]string) error {
 		// macro, call, import, from, include, extends, block, autoescape,
 		// trans, …: a tag whose reads hactl does not follow. Recorded, and
 		// classified unsafe by the analysis; its body is not parsed further.
+		for _, tok := range toks[1:] {
+			if tok.kind == "name" {
+				st.tag.names = append(st.tag.names, tok.val)
+			}
+		}
 		t.tags = append(t.tags, st.tag)
 		return nil
 	}
@@ -565,6 +674,11 @@ func (t *jinjaTemplate) bindTarget(n jNode) {
 	switch v := n.(type) {
 	case jName:
 		t.bound[v.name] = true
+		t.assigned[v.name] = true
+	case jGetattr:
+		if base, ok := v.obj.(jName); ok {
+			t.assigned[base.name] = true
+		}
 	case jList:
 		for _, e := range v.items {
 			t.bindTarget(e)

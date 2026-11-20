@@ -2992,7 +2992,7 @@
   },
   {
    "id": "rest-read-posttemplate",
-   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
+   "why": "a read (W-2): what it names itself is checked before it is sent — a template reads what it names (D-198)",
    "request": {
     "transport": "rest",
     "method": "POST",
@@ -3007,7 +3007,7 @@
     "checks": [
      {
       "verb": "read",
-      "resource": "system:template"
+      "resource": "entity:lock.front_door/state"
      }
     ]
    },

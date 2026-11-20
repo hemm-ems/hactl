@@ -49,6 +49,10 @@ const (
 	// beside `deny "entity:*/registry/entity_id": [write]`, which holds delete
 	// on every entity because deleting the entity deletes the field.
 	CodeBlockedByPart = "blocked-by-part"
+	// CodeTemplateReadsDenied: an allow of `system:template` with read in a
+	// profile that denies reading anything (D-206). A template hactl cannot
+	// name the reads of then reads every state, also the denied ones.
+	CodeTemplateReadsDenied = "template-reads-denied"
 )
 
 // Finding is one lint result.
@@ -225,6 +229,7 @@ func Lint(p *Policy, inv Inventory) LintReport {
 	}
 	rep.Findings = append(rep.Findings, l.findings...)
 	rep.Findings = append(rep.Findings, verbNotApplicable(p)...)
+	rep.Findings = append(rep.Findings, templateReadsDenied(p)...)
 	sortFindings(rep.Findings)
 	rep.Unchecked = append(rep.Unchecked, l.sortedUnchecked()...)
 	return rep
@@ -366,6 +371,36 @@ func (l *linter) profile(pr *profile) {
 	l.findings = append(l.findings, blockedByPart(pr)...)
 	l.selfGrant(pr)
 	l.halfProtected(pr)
+}
+
+// templateReadsDenied reports each allow whose pattern is exactly
+// `system:template` and lists read, in a profile that denies reading
+// anything: a deny rule listing read, or `default: deny` without an allow of
+// read on `*` with no where (D-206). Needs no instance.
+func templateReadsDenied(p *Policy) []Finding {
+	var out []Finding
+	for _, pr := range p.profiles {
+		denies := false
+		allowsAll := false
+		for _, r := range pr.rules {
+			if !slices.Contains(r.Verbs, Read) {
+				continue
+			}
+			denies = denies || r.Effect == Deny
+			allowsAll = allowsAll || (r.Effect == Allow && r.Pattern == "*" && r.Where == nil)
+		}
+		if !denies && (pr.deflt != Deny || allowsAll) {
+			continue
+		}
+		for _, r := range pr.rules {
+			if r.Effect == Allow && r.Pattern == "system:template" && slices.Contains(r.Verbs, Read) {
+				out = append(out, Finding{Code: CodeTemplateReadsDenied, Profile: pr.name, Rule: r.Text(), Line: r.Line,
+					Message: "this allow lets a template read every state, also what this profile denies reading — " +
+						"allow system:template only where every read is allowed"})
+			}
+		}
+	}
+	return out
 }
 
 // createOnly reports whether r's only verb is create (D-171).

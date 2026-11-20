@@ -219,8 +219,9 @@ profiles:
 }
 
 // TestPolicyReadsTplEvalNeedsSystemTemplate — D-143: under a profile that
-// denies some read, `tpl eval` is refused without an allow of
-// system:template [read], and runs with it.
+// denies some read, `tpl eval` of a template with a computed entity id is
+// refused without an allow of system:template [read], and runs with it; one
+// naming the denied entity is refused on that read (D-198).
 func TestPolicyReadsTplEvalNeedsSystemTemplate(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	rig := buildPGRig(t, inst)
@@ -231,10 +232,15 @@ profiles:
     deny:
       "entity:%s": [read]
 `, pgProfile, pgProfile, rig.Lights[0])
-	tpl := "{{ states('" + rig.Lights[0] + "') }}"
+	tpl := "{{ states(now().year > 2000 and '" + rig.Lights[0] + "' or 'x') }}"
 	refused, _, err := pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), base), "tpl", "eval", tpl)
 	if pgExitCode(err) != 1 || !strings.Contains(refused, "  denied: read system:template — ") {
 		t.Fatalf("tpl eval under a read deny: %v, want refused on read system:template:\n%s", err, refused)
+	}
+	named := "{{ states('" + rig.Lights[0] + "') }}"
+	refused, _, err = pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), base), "tpl", "eval", named)
+	if pgExitCode(err) != 1 || !strings.Contains(refused, "  denied: read entity:"+rig.Lights[0]+"/state — ") {
+		t.Fatalf("tpl eval of the denied state: %v, want refused on its read:\n%s", err, refused)
 	}
 	allowed := base + "    allow:\n      \"system:template\": [read]\n"
 	out, _, err := pgReads(t, pgInstanceDir(t, inst.URL(), inst.Token(), allowed), "tpl", "eval", tpl)
