@@ -248,7 +248,9 @@ profiles:
 
 // TestPolicyReadsNoPolicyIsByteIdentical — D-58 for reads: with no policy
 // file, with the implicit allow-all, and under a profile that denies no read,
-// every read prints the same bytes, and no trailer.
+// every read prints the same bytes, and no trailer. The profile denies a
+// control, so under D-190 it allows system:template by its exact name for
+// `tpl eval` to run at all.
 func TestPolicyReadsNoPolicyIsByteIdentical(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	rig := buildPGRig(t, inst)
@@ -256,7 +258,7 @@ func TestPolicyReadsNoPolicyIsByteIdentical(t *testing.T) {
 		"no file":            pgInstanceDir(t, inst.URL(), inst.Token(), ""),
 		"implicit allow-all": pgInstanceDir(t, inst.URL(), inst.Token(), "version: 1\nprofiles:\n  other:\n    default: deny\n"),
 		"no read denied": pgInstanceDir(t, inst.URL(), inst.Token(), fmt.Sprintf(
-			"version: 1\nactive: %s\nprofiles:\n  %s:\n    deny:\n      \"entity:lock.*\": [control]\n", pgProfile, pgProfile)),
+			"version: 1\nactive: %s\nprofiles:\n  %s:\n    deny:\n      \"entity:lock.*\": [control]\n    allow:\n      \"system:template\": [read]\n", pgProfile, pgProfile)),
 	}
 	for _, args := range [][]string{
 		{"ent", "show", rig.Lights[0], "--json"},

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -29,10 +30,11 @@ var (
 	deniedListJSON = json.RawMessage(`["` + Denied + `"]`)
 )
 
-// RuleTemplateNeedsAllow decides `read system:template` when the profile
-// denies some read and only its default allows it (D-143, M-3): a template can
-// read any state, so it needs an allow of its own.
-const RuleTemplateNeedsAllow = "system:template needs an explicit allow while the profile denies a read"
+// RuleTemplateNeedsAllow decides `read system:template` while the profile
+// denies anything and no allow names system:template exactly (D-143 as
+// tightened by D-190): a template can read any state, so it needs an allow of
+// its own — a wildcard (`"*": [read]`) or the default never grants it.
+const RuleTemplateNeedsAllow = "system:template needs an allow by its exact name while the profile denies anything"
 
 // ConfigFileFetcher is a Fetcher that can also read a config file's raw
 // content (through the companion). The read filter asks it which typed owner
@@ -131,33 +133,30 @@ func (s *Session) decideRead(c reqmap.Check) policy.Verdict {
 	return TemplateRead(s.pol, c.Resource, v)
 }
 
-// TemplateRead applies D-143 to a read verdict: `read system:template` — what
-// `tpl eval` reads — needs an explicit allow while the profile denies some
-// read, because a template can read any state (M-3); the profile default
-// alone does not grant it then. Every other verdict is returned as it is.
-// `policy check` and the request layer answer it alike.
+// TemplateRead applies D-190 to a read verdict: `read system:template` —
+// what `tpl eval` reads, and what a written template does when it uses a
+// construct that can read state (D-188) — is allowed, while the profile
+// denies anything (a deny rule, or `default: deny`), only by an allow whose
+// pattern is exactly `system:template` and lists read (a narrowed one only
+// when it is the rule that decided), never by a wildcard or the default
+// alone, as for an opaque service (D-184). A denial stays a denial; every
+// other verdict is returned as it is. `policy check` and the request layer
+// answer it alike.
 func TemplateRead(pol *policy.Policy, r policy.Resource, v policy.Verdict) policy.Verdict {
-	if r.Kind != policy.KindSystem || r.ID != "template" || r.Sub != "" || !DeniesAnyRead(pol) {
+	if !v.Allowed || r.Kind != policy.KindSystem || r.ID != "template" || r.Sub != "" || !DeniesAnything(pol) {
 		return v
 	}
-	if v.Allowed && v.Rule == policy.RuleDefaultAllow {
-		v.Allowed, v.Rule, v.Line = false, RuleTemplateNeedsAllow, 0
-	}
-	return v
-}
-
-// DeniesAnyRead reports whether the profile in effect denies some read: a deny
-// for read anywhere, or a kind its allows and default leave unreadable.
-func DeniesAnyRead(pol *policy.Policy) bool {
-	if pol == nil || !pol.InEffect() {
-		return false
-	}
-	for _, k := range policy.Kinds() {
-		if v := pol.DecideKindWide(k, "", policy.Read); !v.Allowed || v.Partial {
-			return true
+	exact := string(policy.KindSystem) + ":template"
+	for _, rule := range pol.Rules() {
+		if rule.Effect != policy.Allow || rule.Pattern != exact || !slices.Contains(rule.Verbs, policy.Read) {
+			continue
+		}
+		if rule.Where == nil || rule.Text() == v.Rule {
+			return v
 		}
 	}
-	return false
+	v.Allowed, v.Rule, v.Line, v.Partial = false, RuleTemplateNeedsAllow, 0, false
+	return v
 }
 
 // checkRead decides what a read names itself, before it is sent (D-138).

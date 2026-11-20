@@ -481,9 +481,9 @@ rest GET /api/error_log = proven: TestEveryReadRowIsEnforced
 # without one is dropped.
 rest GET /api/services = proven: TestEveryReadRowIsEnforced
 
-# map: read system:template (D-143), refused when denied. A POST that is a
-# read: Jinja reads any state, so while the profile denies some read it needs
-# an explicit allow — the profile default does not grant it.
+# map: read system:template (D-143, D-190), refused when denied. A POST that
+# is a read: Jinja reads any state, so while the profile denies anything it
+# needs an allow by its exact name — a wildcard or the default never grants it.
 rest POST /api/template = proven: TestEveryReadRowIsEnforced
 
 # map: read, the home's location (latitude, longitude, elevation, radius)
