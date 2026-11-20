@@ -850,4 +850,3 @@ func anyRefMatches(refs []Ref, values []string) bool {
 	}
 	return false
 }
-

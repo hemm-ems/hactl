@@ -356,7 +356,9 @@ func TestE2EPolicyAcceptance20261120TraceValues(t *testing.T) {
 	if c != 0 || !strings.Contains(o, "52.37") {
 		t.Fatalf("hactl %v under P_open: exit %d, want the trace with 52.37 (the fixture shows nothing otherwise)\n%s\n%s", full, c, o, e)
 	}
-	denied := func(s string) bool { return strings.Contains(s, "<denied>") || strings.Contains(s, `\u003cdenied\u003e`) }
+	denied := func(s string) bool {
+		return strings.Contains(s, "<denied>") || strings.Contains(s, `\u003cdenied\u003e`)
+	}
 	for name, dir := range map[string]string{"P_house": house, "P_lights": lights} {
 		for _, args := range [][]string{full, {"trace", "show", "pg_acc_hallway_motion", "--json"}, {"trace", "show", "pg_acc_hallway_motion"}} {
 			ho, he, hc := runPolicyE2E(t, dir, nil, args...)
