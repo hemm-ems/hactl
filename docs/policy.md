@@ -354,7 +354,10 @@ reports:
   and draws no finding;
 - `self-grant`: a `where:` allow the agent could satisfy itself;
 - `half-protected`: a deny on an automation's config without its entity, or
-  the other way round.
+  the other way round;
+- `template-reads-denied`: an allow of `system:template` in a profile that
+  denies reading anything — a template it lets through can read every state,
+  also what the profile denies.
 
 Lint checks ids against your instance: entities, devices, areas, floors,
 labels, automations, scripts, dashboards, services, helpers (YAML and the ones
@@ -429,13 +432,15 @@ A few things worth knowing:
   `recorder.get_statistics` needs `read` on each entity's statistics. The
   `shopping_list` services change the shopping list's own entity.
   `homeassistant.set_location` moves `zone.home`, so it needs `control` on
-  `zone.home`.
+  `zone.home`. `homeassistant.reload_config_entry` sets up an integration
+  again, and its entities come back the way the integration starts them — a
+  demo light you turned off is on again — so it needs `control` on every
+  entity of that config entry (and of every entry its target belongs to).
 - **Removing counts as deleting.** `scene.delete` and `group.remove` need
-  `delete` on the scene or group. Reloading scenes (`scene.reload`,
-  `homeassistant.reload_all`) removes every scene made at run time, and
-  restarting or stopping Home Assistant every runtime scene and group; hactl
-  cannot tell those from the others, so these need `delete` on every scene
-  (and, for a restart, every group).
+  `delete` on the scene or group. Reloading scenes or restarting Home
+  Assistant is not checked as deleting, although it drops every scene and
+  group made at run time (`scene.create`, `group.set`): it needs only its
+  service.
 - **Some services act on things no field of the call names** — Assist's
   `conversation.process` does what a sentence means; `shell_command.*`,
   `python_script.*`, `rest_command.*` and `pyscript.*` do whatever they were
@@ -451,12 +456,22 @@ A few things worth knowing:
   would switch, exactly as `svc call` would, and `read` on every other entity
   it mentions. hactl reads every template in it: one it can compute
   (`{{ 'input_boolean.' ~ 'guard' }}`) is checked as what it renders to; one
-  it cannot compute where an action names entities is refused; and one that
-  can read state — `states`, `state_attr`, `is_state`, `expand`, an area or
-  label function, a macro, a name hactl does not know, or a variable set from
-  any of them — needs `"system:template": [read]` by that exact name. Time,
-  math, text and list functions need nothing. A template hactl cannot parse
-  is refused. One built from a blueprint (`use_blueprint`) is checked as the
+  it cannot compute where an action names entities is refused; and what a
+  template reads counts as reading it: `{{ states('sun.sun') }}` and
+  `is_state('sun.sun', 'below_horizon')` need `read` on `sun.sun`'s state,
+  `state_attr('person.me', 'latitude')` on that attribute,
+  `states.light | selectattr('state', 'eq', 'on')` on every light, and
+  `expand('group.x')` and the area, floor, label and device functions on
+  everything they lead to. `trigger.to_state` needs the same read on the
+  entities that trigger it, and a `state` or `numeric_state` trigger or
+  condition on an `attribute:` needs `read` on that attribute (on the state
+  without one). Where hactl cannot tell what a template reads — an id it
+  computes from a state, `closest`, a name lookup such as `area_name`, a
+  macro, a name hactl does not know, or a variable set from any of them — it
+  needs `"system:template": [read]` by that exact name. Time, math, text and
+  list functions need nothing. A template hactl cannot parse is refused, and
+  so is one that reuses Home Assistant's own names `trigger`, `this`, `wait`,
+  `repeat` or `context` for a variable of its own. One built from a blueprint (`use_blueprint`) is checked as the
   blueprint expands with your inputs and the blueprint's defaults: hactl reads
   the blueprint through the companion, and refuses the write if it cannot read
   or expand it. A later change to the blueprint file itself is not checked.
@@ -523,8 +538,9 @@ A few things worth knowing:
   `create` blocks creating areas at all. The refusal names `area:*`.
 - **Some side effects are not checked**, because they happen inside Home
   Assistant after an allowed write and hactl cannot list them in advance:
-  the companion reloads what it wrote, and running a script lets that script
-  do whatever it does. A label, area or floor that changes outside hactl, a
+  the companion reloads what it wrote, running a script lets that script
+  do whatever it does, and reloading scenes or restarting Home Assistant
+  drops the scenes and groups made at run time. A label, area or floor that changes outside hactl, a
   group helper whose members change through its options, a template helper
   made in the UI, and (without a companion) a YAML template entity are not
   searched for what they target.
@@ -561,11 +577,16 @@ stderr. A few things worth knowing:
   logbook row needs `read` on its entity. `log show` of an id from an
   earlier `log` needs `read` on `system:logs` too. Raw file contents
   (`config file`) are checked as the file, not redacted.
-- **`tpl eval` needs `system:template`.** A template can read any state, so
-  while your profile denies anything, `tpl eval` needs
+- **`tpl eval` is checked as what the template reads**, as a written
+  template is: `{{ now().hour }}` needs nothing, `{{ states('sun.sun') }}`
+  needs `read` on `sun.sun`'s state, and a template that uses an entity as a
+  whole (`{{ states.light.hall }}`, `expand(…)`) is refused when any part of
+  that entity is denied. A template whose reads hactl cannot tell needs
   `"system:template": [read]` allowed by that exact name — `"*": [read]`,
   `"system:*": [read]` and the default do not grant it. `policy check read
-  system:template` answers the same.
+  system:template` answers that last question. Such an allow lets templates
+  read every state, also what the profile denies, so `policy lint` reports it
+  (`template-reads-denied`) in a profile that denies reading anything.
 - **Traces and the logbook are masked too.** In `trace show` (also `--full`
   and `--json`) every state of an entity you may not read, and every
   `entity_id` naming one, reads `<denied>`; in `changes`, the entity that
