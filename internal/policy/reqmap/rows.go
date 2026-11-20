@@ -125,6 +125,8 @@ var (
 		exempt(restRow("GET", "/api/config/config_entries/flow_handlers", Exempt, nil), "an auxiliary read: the integration catalog — the domains offering a config flow, nothing about an entity, device or config"),
 		restRow("GET", "/api/config/config_entries/entry", Read, filtered(FilterConfigEntries)),
 		restRow("GET", "/api/diagnostics/config_entry/{entry_id}", Read, readDiagnostics),
+		restRow("GET", "/api/config/script/config/{key}", Read, readPathID(policy.KindScript, "key", "config")),
+		restRow("GET", "/api/config/automation/config/{automation_id}", Read, readPathID(policy.KindAutomation, "automation_id", "config")),
 		restRow("GET", "/api/states", Read, filtered(FilterStates)),
 		restRow("GET", "/api/states/{entity_id}", Read, readEntityState),
 		restRow("GET", "/api/history/period/{start}", Read, readHistory),

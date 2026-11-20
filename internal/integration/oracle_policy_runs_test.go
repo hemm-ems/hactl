@@ -76,7 +76,7 @@ func runOracleStays(t *testing.T, inst *hatest.Instance, entityID, want, why str
 
 func runOracleReset(t *testing.T, inst *hatest.Instance) {
 	t.Helper()
-	for _, b := range []string{"outer_ran", "inner_ran", "inner2_ran", "auto_ran", "gate"} {
+	for _, b := range []string{"outer_ran", "inner_ran", "inner2_ran", "auto_ran", "gate", "night_ran"} {
 		pgCallService(t, inst, "input_boolean", "turn_off", map[string]any{"entity_id": "input_boolean.pg_run_" + b})
 		runOracleWait(t, inst, "input_boolean.pg_run_"+b, "off", "reset")
 	}
@@ -245,4 +245,41 @@ func TestOracleHomeassistantGroupAndAll(t *testing.T) {
 	}
 	runOracleStays(t, inst, "light.kitchen_lights", "on", "homeassistant.turn_off all is refused, the light stays on")
 	runOracleStays(t, inst, "lock.kitchen_door", "unlocked", "homeassistant.turn_off all leaves a lock")
+}
+
+// TestOracleConfigAPIStoredConfig (D-207's fallback): what Home Assistant's
+// config API answers for a stored config, without a companion. A script of
+// scripts.yaml answers its bare body (not keyed by the script, as the
+// companion keys it), an automation of automations.yaml its body with its id;
+// a script and an automation a package defines — both loaded and running —
+// answer 404: the API serves only those two files.
+func TestOracleConfigAPIStoredConfig(t *testing.T) {
+	inst := getPolicyRunHA(t)
+	get := func(path string) (int, map[string]any) {
+		t.Helper()
+		code, body := pgHTTP(t, inst, http.MethodGet, path, nil)
+		var doc map[string]any
+		if err := json.Unmarshal(body, &doc); err != nil {
+			t.Fatalf("%s: %d %s: %v", path, code, body, err)
+		}
+		return code, doc
+	}
+	code, doc := get("/api/config/script/config/pg_run_goodnight")
+	if _, keyed := doc["pg_run_goodnight"]; code != http.StatusOK || keyed || doc["alias"] != "PG Run Goodnight" || doc["sequence"] == nil {
+		t.Errorf("a script of scripts.yaml: %d %v, want 200 with the bare body", code, doc)
+	}
+	code, doc = get("/api/config/automation/config/pg_run_night_lockup")
+	if code != http.StatusOK || doc["id"] != "pg_run_night_lockup" || doc["actions"] == nil {
+		t.Errorf("an automation of automations.yaml: %d %v, want 200 with its body and id", code, doc)
+	}
+	for _, path := range []string{"/api/config/script/config/pg_run_pkg_script", "/api/config/automation/config/pg_run_pkg_auto"} {
+		if code, doc := get(path); code != http.StatusNotFound {
+			t.Errorf("%s (a package's): %d %v, want 404", path, code, doc)
+		}
+	}
+	for id, want := range map[string]string{"script.pg_run_pkg_script": "off", "automation.pg_run_pkg_auto": "on"} {
+		if got := pgStateOf(t, inst, id).State; got != want {
+			t.Errorf("%s is %q, want %q — the package is not loaded, and its 404 proves nothing", id, got, want)
+		}
+	}
 }

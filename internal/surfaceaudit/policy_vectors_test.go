@@ -107,7 +107,6 @@ var deadRoutes = []string{
 	"companion GET /v1/config/automations",
 	"companion PUT /v1/config/helper",
 	"companion POST /v1/ha/reload/{domain}",
-	"rest GET /api/config/automation/config/{automation_id}",
 	"rest GET /api/events",
 }
 

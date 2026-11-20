@@ -2137,6 +2137,57 @@
    }
   },
   {
+   "id": "rest-script-config",
+   "why": "a denied script's config is refused on Home Assistant's config API too (D-207's no-companion read)",
+   "row": "rest GET /api/config/script/config/{key}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/script/config/wipe"
+   },
+   "expect": {
+    "refused": "deny \"script:wipe\" [read]"
+   }
+  },
+  {
+   "id": "rest-automation-config",
+   "why": "a denied automation's config is refused on Home Assistant's config API too",
+   "row": "rest GET /api/config/automation/config/{automation_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/automation/config/prod_heating"
+   },
+   "expect": {
+    "refused": "deny \"automation:prod_*\" [read]"
+   }
+  },
+  {
+   "id": "rest-automation-config-allowed",
+   "why": "a readable automation's config passes as it is",
+   "row": "rest GET /api/config/automation/config/{automation_id}",
+   "policy": "reader",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/automation/config/morning_light"
+   },
+   "answer": {
+    "id": "morning_light",
+    "alias": "x"
+   },
+   "expect": {
+    "answer": {
+     "id": "morning_light",
+     "alias": "x"
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
    "id": "helpers",
    "why": "rows by helper:<domain>/<id>",
    "row": "companion GET /v1/config/helpers",

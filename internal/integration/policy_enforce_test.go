@@ -442,20 +442,18 @@ profiles:
 		})
 	}
 
-	// An allowed start is checked by what its stored config does (D-207),
-	// which this tier cannot read — no companion — so it is refused,
-	// naming the run; under `indirect: unchecked` it runs. The companion
-	// tier runs an allowed script under a deny
-	// (TestE2EPolicyAcceptance20261120Runs).
+	// An allowed start is checked by what its stored config does (D-207):
+	// without a companion, read from Home Assistant's config API, which
+	// serves scripts.yaml — so it runs, and so it does under `indirect:
+	// unchecked`, which reads nothing. TestPolicyEnforceRunsWithoutCompanion
+	// holds the refusals; the companion tier runs an allowed script under a
+	// deny (TestE2EPolicyAcceptance20261120Runs).
 	beforeAllowed := lastTriggered(allowedEntity)
-	out, err := runHactlDirErr(t, runDir, "script", "run", "pg_policy_allowed")
-	if pgExitCode(err) != 1 || !strings.Contains(out, "fail-closed: stored config unreadable (run of script.pg_policy_allowed: ") {
-		t.Errorf("allowed script run without a companion: exit %d, want refused as unreadable, naming the run\n%s", pgExitCode(err), out)
-	}
+	assertPolicyAllowedPreview(t, runDir, "script", "run", "pg_policy_allowed")
 	uncheckedDir := pgInstanceDir(t, inst.URL(), inst.Token(),
 		strings.Replace(runPolicy, "    deny:\n", "    indirect: unchecked\n    deny:\n", 1))
 	assertPolicyAllowedPreview(t, uncheckedDir, "script", "run", "pg_policy_allowed")
-	if out, err := runHactlDirErr(t, uncheckedDir, "script", "run", "pg_policy_allowed", "--confirm"); err != nil {
+	if out, err := runHactlDirErr(t, runDir, "script", "run", "pg_policy_allowed", "--confirm"); err != nil {
 		t.Fatalf("allowed script run --confirm refused: %v\n%s", err, out)
 	}
 	deadline := time.Now().Add(5 * time.Second)

@@ -8,6 +8,11 @@
 # The group mixes a light and a lock: what a group forwards is filtered the
 # same way. The scripts and the automation are the run oracles: each step turns
 # an input_boolean on, so a step that ran leaves its mark.
+#
+# Where a config lives decides who can read it (D-207's fallback): scripts.yaml
+# and automations.yaml are the files Home Assistant's config API
+# (/api/config/{script,automation}/config/<id>) serves; the package's script
+# and automation are YAML Home Assistant runs but that API does not serve.
 
 homeassistant:
   name: Policy Run
@@ -18,6 +23,7 @@ homeassistant:
   time_zone: UTC
   country: DE
   currency: EUR
+  packages: !include_dir_named packages
 
 default_config:
 
@@ -49,20 +55,10 @@ input_boolean:
   pg_run_gate:
     name: PG Run Gate
     initial: false
+  pg_run_night_ran:
+    name: PG Run Night Ran
+    initial: false
 
 script: !include scripts.yaml
 
-automation:
-  - id: pg_run_gated
-    alias: PG Run Gated
-    triggers:
-      - trigger: event
-        event_type: pg_run_never_fired
-    conditions:
-      - condition: state
-        entity_id: input_boolean.pg_run_gate
-        state: "on"
-    actions:
-      - action: input_boolean.turn_on
-        target:
-          entity_id: input_boolean.pg_run_auto_ran
+automation: !include automations.yaml

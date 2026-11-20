@@ -582,6 +582,8 @@ var readVectors = []vector{
 	{name: "flow handlers", req: rest("GET", "/api/config/config_entries/flow_handlers", ""), disp: reqmap.Exempt, row: "rest GET /api/config/config_entries/flow_handlers"},
 	{name: "config entries", req: rest("GET", "/api/config/config_entries/entry", ""), disp: reqmap.Read, row: "rest GET /api/config/config_entries/entry", filter: reqmap.FilterConfigEntries},
 	{name: "diagnostics", req: rest("GET", "/api/diagnostics/config_entry/E1", ""), disp: reqmap.Read, row: "rest GET /api/diagnostics/config_entry/{entry_id}", checks: []string{"read config_entry:E1"}},
+	{name: "script config api", req: rest("GET", "/api/config/script/config/goodnight", ""), disp: reqmap.Read, row: "rest GET /api/config/script/config/{key}", checks: []string{"read script:goodnight/config"}},
+	{name: "automation config api", req: rest("GET", "/api/config/automation/config/night_lockup", ""), disp: reqmap.Read, row: "rest GET /api/config/automation/config/{automation_id}", checks: []string{"read automation:night_lockup/config"}},
 	{name: "states", req: rest("GET", "/api/states", ""), disp: reqmap.Read, row: "rest GET /api/states", filter: reqmap.FilterStates},
 	{name: "one state", req: rest("GET", "/api/states/light.kitchen", ""), disp: reqmap.Read, row: "rest GET /api/states/{entity_id}", checks: []string{"read entity:light.kitchen"}, filter: reqmap.FilterState},
 	{name: "history", req: rest("GET", "/api/history/period/2026-11-01T00%3A00%3A00Z?filter_entity_id=sensor.a&end_time=x", ""), disp: reqmap.Read, row: "rest GET /api/history/period/{start}", checks: []string{"read entity:sensor.a/history"}, filter: reqmap.FilterHistory},

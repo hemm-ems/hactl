@@ -70,6 +70,20 @@ func (c *Client) GetConfig(ctx context.Context) ([]byte, error) {
 	return c.doGet(ctx, "/api/config")
 }
 
+// GetScriptConfig calls GET /api/config/script/config/<key>: the stored
+// config of a script of scripts.yaml, its bare body (not keyed by the script).
+// A script defined anywhere else answers 404.
+func (c *Client) GetScriptConfig(ctx context.Context, key string) ([]byte, error) {
+	return c.doGet(ctx, "/api/config/script/config/"+url.PathEscape(key))
+}
+
+// GetAutomationConfig calls GET /api/config/automation/config/<config id>:
+// the stored config of an automation of automations.yaml. An automation
+// defined anywhere else answers 404.
+func (c *Client) GetAutomationConfig(ctx context.Context, id string) ([]byte, error) {
+	return c.doGet(ctx, "/api/config/automation/config/"+url.PathEscape(id))
+}
+
 // GetStates calls GET /api/states and returns the raw JSON body.
 func (c *Client) GetStates(ctx context.Context) ([]byte, error) {
 	return c.doGet(ctx, "/api/states")

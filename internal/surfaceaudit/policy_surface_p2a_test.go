@@ -628,13 +628,13 @@ func inPolicyGrammar(k string) bool {
 // TestDeadClientMethodsAreDeleted — D-81: the eleven client methods with no
 // product caller are deleted, and companion.Endpoints loses their entries.
 // ListTemplates came back with a product caller, `policy lint`'s template
-// enumeration (D-116).
+// enumeration (D-116), GetAutomationConfig with D-207's no-companion read.
 func TestDeadClientMethodsAreDeleted(t *testing.T) {
 	for _, tc := range []struct {
 		typ     reflect.Type
 		methods []string
 	}{
-		{reflect.TypeFor[*haapi.Client](), []string{"GetAutomationConfig", "GetEvents", "StartConfigFlow", "ServiceExists"}},
+		{reflect.TypeFor[*haapi.Client](), []string{"GetEvents", "StartConfigFlow", "ServiceExists"}},
 		{reflect.TypeFor[*companion.Client](), []string{"WriteConfigFile", "WriteTemplate",
 			"ListScriptDefs", "ListAutomationDefs", "UpdateHelper", "ReloadDomain"}},
 	} {

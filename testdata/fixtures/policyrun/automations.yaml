@@ -1,0 +1,22 @@
+- id: pg_run_gated
+  alias: PG Run Gated
+  triggers:
+    - trigger: event
+      event_type: pg_run_never_fired
+  conditions:
+    - condition: state
+      entity_id: input_boolean.pg_run_gate
+      state: "on"
+  actions:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.pg_run_auto_ran
+- id: pg_run_night_lockup
+  alias: PG Run Night Lockup
+  triggers:
+    - trigger: event
+      event_type: pg_run_never_fired
+  actions:
+    - action: lock.lock
+      target:
+        entity_id: lock.front_door

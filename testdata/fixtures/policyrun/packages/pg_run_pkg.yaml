@@ -1,0 +1,18 @@
+# A package: Home Assistant runs these, its config API does not serve them.
+script:
+  pg_run_pkg_script:
+    alias: PG Run Pkg Script
+    sequence:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pg_run_inner_ran
+automation:
+  - id: pg_run_pkg_auto
+    alias: PG Run Pkg Auto
+    triggers:
+      - trigger: event
+        event_type: pg_run_never_fired
+    actions:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pg_run_auto_ran

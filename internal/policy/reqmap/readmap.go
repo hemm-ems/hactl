@@ -262,6 +262,15 @@ func readLogbook(c *call) (mapping, error) {
 	return mapping{checks: cs, filter: ReadFilter{Kind: FilterLogbook}}, err
 }
 
+// readPathID reads <kind>:<{key}>[/<sub>] whole — the stored-config reads of
+// Home Assistant's config API (D-207's no-companion read).
+func readPathID(kind policy.Kind, key, sub string) mapper {
+	return func(c *call) (mapping, error) {
+		ch, err := check(policy.Read, kind, c.vars[key], sub)
+		return mapping{checks: []Check{ch}}, err
+	}
+}
+
 // readQueryID reads <kind>:<?key>[/<sub>] whole.
 func readQueryID(kind policy.Kind, key, sub string) mapper {
 	return func(c *call) (mapping, error) {

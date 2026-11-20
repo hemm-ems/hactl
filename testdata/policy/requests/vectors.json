@@ -3075,17 +3075,42 @@
    "facts_ref": "house"
   },
   {
-   "id": "rest-dead-get-automation-config",
-   "why": "D-81: GetAutomationConfig is deleted; an unmapped GET — refused like a write from W-2 on (D-145)",
+   "id": "rest-read-config-automation",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
    "request": {
     "transport": "rest",
     "method": "GET",
     "path": "/api/config/automation/config/prod_heating"
    },
    "expect": {
-    "disposition": "unmapped",
-    "row": "",
-    "refused": true
+    "disposition": "read",
+    "row": "rest GET /api/config/automation/config/{automation_id}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "automation:prod_heating/config"
+     }
+    ]
+   },
+   "facts_ref": "house"
+  },
+  {
+   "id": "rest-read-config-script",
+   "why": "a read (W-2): what it names itself is checked before it is sent, its answer filtered before any command decodes it",
+   "request": {
+    "transport": "rest",
+    "method": "GET",
+    "path": "/api/config/script/config/morning"
+   },
+   "expect": {
+    "disposition": "read",
+    "row": "rest GET /api/config/script/config/{key}",
+    "checks": [
+     {
+      "verb": "read",
+      "resource": "script:morning/config"
+     }
+    ]
    },
    "facts_ref": "house"
   },

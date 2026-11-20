@@ -643,6 +643,14 @@ companion GET /v1/config/script = proven: TestEveryReadRowIsEnforced
 # verification the DELETE row depends on: a refused read verifies nothing.
 companion GET /v1/config/automation = proven: TestEveryReadRowIsEnforced
 
+# map: read script:{key}/config, refused when denied. D-207's stored-config
+# read without a companion; serves scripts.yaml only.
+rest GET /api/config/script/config/{key} = proven: TestEveryReadRowIsEnforced
+
+# map: read automation:{automation_id}/config, refused when denied. D-207's
+# stored-config read without a companion; serves automations.yaml only.
+rest GET /api/config/automation/config/{automation_id} = proven: TestEveryReadRowIsEnforced
+
 # map: read, each row by helper:{domain}/{id}.
 companion GET /v1/config/helpers = proven: TestEveryReadRowIsEnforced
 

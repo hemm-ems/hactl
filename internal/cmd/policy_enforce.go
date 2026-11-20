@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/hemm-ems/hactl/internal/companion"
 	"github.com/hemm-ems/hactl/internal/config"
+	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/manual"
 	"github.com/hemm-ems/hactl/internal/policy"
 	"github.com/hemm-ems/hactl/internal/policy/enforce"
@@ -195,7 +197,12 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	comp := policyCompanion()
 	fetcher.SetConfigFileReader(policyConfigFileReader(comp))
 	fetcher.SetConfigGrep(policyConfigGrep(comp))
-	fetcher.SetStoredConfigReader(policyStoredConfig(comp))
+	fetcher.SetStoredConfigReader(policyStoredConfig(comp, func() *haapi.Client {
+		if url == "" {
+			return nil
+		}
+		return haapi.New(url, token)
+	}))
 	sess, err := enforce.New(enforce.Options{
 		Policy:      pol,
 		InstanceDir: dir,
@@ -407,32 +414,70 @@ func policyConfigGrep(comp func(ctx context.Context) (*companion.Client, error))
 	}
 }
 
-// policyStoredConfig reads a script's or automation's stored config through
-// the companion, as `script cat` and `auto cat` read it, for what a run does
-// (D-207), as the session's own read. Any failure — no companion included —
-// is an error: the run is then refused (fail-closed).
-func policyStoredConfig(comp func(ctx context.Context) (*companion.Client, error)) func(ctx context.Context, kind, id string) ([]byte, error) {
+// policyStoredConfig reads a script's or automation's stored config for what a
+// run does (D-207), as the session's own read: through the companion, as
+// `script cat` and `auto cat` read it; when the companion cannot be connected
+// (none installed, a protocol mismatch, unreachable), from Home Assistant's
+// config API, which serves only scripts.yaml and automations.yaml. Any other
+// failure is an error, and the run is then refused (fail-closed) — an error of
+// a connected companion is not retried on the config API.
+func policyStoredConfig(comp func(ctx context.Context) (*companion.Client, error), ha func() *haapi.Client) func(ctx context.Context, kind, id string) ([]byte, error) {
 	return func(ctx context.Context, kind, id string) ([]byte, error) {
+		if kind != "script" && kind != "automation" {
+			return nil, fmt.Errorf("no stored config of kind %q", kind)
+		}
 		cc, err := comp(ctx)
 		if err != nil {
-			return nil, err
+			return storedConfigFromHA(ctx, ha, kind, id, err)
 		}
-		switch kind {
-		case "script":
-			r, err := cc.GetScriptDef(reqgate.Own(ctx), id)
-			if err != nil {
-				return nil, err
+		if kind == "script" {
+			def, defErr := cc.GetScriptDef(reqgate.Own(ctx), id)
+			if defErr != nil {
+				return nil, defErr
 			}
-			return []byte(r.Content), nil
-		case "automation":
-			r, err := cc.GetAutomationDef(reqgate.Own(ctx), id)
-			if err != nil {
-				return nil, err
-			}
-			return []byte(r.Content), nil
+			return []byte(def.Content), nil
 		}
-		return nil, fmt.Errorf("no stored config of kind %q", kind)
+		def, defErr := cc.GetAutomationDef(reqgate.Own(ctx), id)
+		if defErr != nil {
+			return nil, defErr
+		}
+		return []byte(def.Content), nil
 	}
+}
+
+// storedConfigFromHA is D-207's read without a companion: Home Assistant's
+// config API. A script's body comes bare there (observed on HA 2026.11,
+// TestOracleConfigAPIStoredConfig), so it is keyed by the script as the
+// companion keys it. A 404 is a config defined outside scripts.yaml and
+// automations.yaml — a package, another include — which only the companion
+// can read.
+func storedConfigFromHA(ctx context.Context, ha func() *haapi.Client, kind, id string, compErr error) ([]byte, error) {
+	client := ha()
+	if client == nil {
+		return nil, fmt.Errorf("no companion, and no Home Assistant connection to read the config from: %w", compErr)
+	}
+	var body []byte
+	var err error
+	if kind == "script" {
+		body, err = client.GetScriptConfig(reqgate.Own(ctx), id)
+	} else {
+		body, err = client.GetAutomationConfig(reqgate.Own(ctx), id)
+	}
+	if err != nil {
+		var se *haapi.HTTPStatusError
+		if errors.As(err, &se) && se.Status == http.StatusNotFound {
+			file := kind + "s.yaml"
+			return nil, fmt.Errorf("%s %s is not readable without the companion: Home Assistant's config API serves only %s, and it is defined elsewhere (a package, another include)", kind, id, file)
+		}
+		return nil, fmt.Errorf("reading %s %s from Home Assistant's config API (no companion): %w", kind, id, err)
+	}
+	if kind == "automation" {
+		return body, nil
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("%s %s: Home Assistant's config API answered no JSON", kind, id)
+	}
+	return json.Marshal(map[string]json.RawMessage{id: body})
 }
 
 // policyConfigFileReader reads a config file's raw content through the
