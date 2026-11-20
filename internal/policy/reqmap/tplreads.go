@@ -411,7 +411,7 @@ func (a *tplAnalysis) statesChain(steps []jStep) {
 		}
 	}
 	if strings.Contains(key, ".") {
-		a.stateObject("states['"+key+"']", strings.ToLower(key), steps[1:])
+		a.stateObject("states['"+strings.ReplaceAll(key, "'", `\'`)+"']", strings.ToLower(key), steps[1:])
 		return
 	}
 	construct := "states." + key

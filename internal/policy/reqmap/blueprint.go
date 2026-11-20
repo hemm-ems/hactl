@@ -144,7 +144,7 @@ func (e *bpExpander) expand(cfg map[string]any, ub any) (map[string]any, error) 
 		return nil, fmt.Errorf("%s: %w", loc, err)
 	}
 	out, _ := processed.(map[string]any)
-	combined := make(map[string]any, len(out)+len(cfg))
+	combined := make(map[string]any)
 	maps.Copy(combined, out)
 	maps.Copy(combined, cfg)
 	delete(combined, "use_blueprint")
