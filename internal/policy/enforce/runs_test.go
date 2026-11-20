@@ -15,6 +15,7 @@ import (
 // keyed `<kind>:<id>`.
 type storedFetcher struct {
 	*fakeFetcher
+
 	configs map[string]string
 }
 
@@ -36,7 +37,7 @@ profiles:
 `
 
 func runsFetcher() storedFetcher {
-	ents := []reqmap.RegistryEntity{}
+	ents := make([]reqmap.RegistryEntity, 0, 6)
 	for _, uid := range []string{"goodnight", "inner", "allowed", "loop_a", "loop_b"} {
 		ents = append(ents, reqmap.RegistryEntity{EntityID: "script." + uid, UniqueID: uid})
 	}
@@ -52,7 +53,8 @@ func runsFetcher() storedFetcher {
 		f.reach[`{"entity_id":["`+id+`"]}`] = []string{id}
 	}
 	return storedFetcher{f, map[string]string{
-		"script:goodnight": "alias: Goodnight\nsequence:\n  - action: light.turn_off\n    target: {entity_id: light.hall}\n  - action: lock.lock\n    target: {entity_id: lock.front_door}\n",
+		// keyed by the script, as the companion returns it
+		"script:goodnight": "goodnight:\n  alias: Goodnight\n  sequence:\n    - action: light.turn_off\n      target: {entity_id: light.hall}\n    - action: lock.lock\n      target: {entity_id: lock.front_door}\n",
 		"script:allowed":   "sequence:\n  - action: light.turn_off\n    target: {entity_id: light.hall}\n",
 		"script:inner":     "sequence:\n  - action: lock.lock\n    target: {entity_id: lock.front_door}\n",
 		"automation:night_lockup": "id: night_lockup\ntriggers:\n  - trigger: time\n    at: '23:00'\nconditions:\n  - condition: state\n    entity_id: light.hall\n    state: 'off'\n" +
@@ -97,8 +99,8 @@ func TestRunChecksExpandStoredConfig(t *testing.T) {
 		{"script", "toggle", `{"entity_id":"script.goodnight"}`},
 		{"homeassistant", "turn_on", `{"entity_id":"script.goodnight"}`},
 	} {
-		if err := runCall(t, runsPolicy, runsFetcher(), c.domain, c.service, c.data); !deniedWith(err, lock, "run of script.goodnight: action at /sequence/1") {
-			t.Errorf("%s.%s: %v, want the lock refused", c.domain, c.service, err)
+		if cerr := runCall(t, runsPolicy, runsFetcher(), c.domain, c.service, c.data); !deniedWith(cerr, lock, "run of script.goodnight: action at /sequence/1") {
+			t.Errorf("%s.%s: %v, want the lock refused", c.domain, c.service, cerr)
 		}
 	}
 	err = runCall(t, runsPolicy, runsFetcher(), "automation", "trigger", `{"entity_id":"automation.night_lockup"}`)

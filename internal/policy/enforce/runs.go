@@ -99,5 +99,13 @@ func (s *Session) storedConfig(ctx context.Context, r reqmap.Run) (any, error) {
 	if err := yaml.Unmarshal(body, &doc); err != nil || doc == nil {
 		return nil, fmt.Errorf("%s %s: the stored config does not parse", r.Kind, r.ID)
 	}
+	// A script's stored config comes keyed by the script, as `script cat`
+	// prints it ({key: {sequence: …}}, observed on the companion tier): what
+	// runs is the body under the key.
+	if m, ok := doc.(map[string]any); ok && r.Kind == "script" && len(m) == 1 {
+		if inner, ok := m[r.ID].(map[string]any); ok {
+			return inner, nil
+		}
+	}
 	return doc, nil
 }

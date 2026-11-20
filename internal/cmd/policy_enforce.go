@@ -394,8 +394,12 @@ func policyConfigGrep(comp func(ctx context.Context) (*companion.Client, error))
 			return enforce.ConfigGrepResult{}, err
 		}
 		// A file the walk skipped may name the id: counted as more hits than
-		// were returned, so as targeting.
-		out := enforce.ConfigGrepResult{Truncated: r.Truncated || len(r.Skipped) > 0}
+		// were returned, so as targeting. A missing one is not (D-212): Home
+		// Assistant reads it as empty, so it names nothing — stock
+		// configurations carry such an include (`themes:`), and counting it
+		// made every registry edit a reach (D-31's rule, as `grep` and `ref`
+		// apply it).
+		out := enforce.ConfigGrepResult{Truncated: r.Truncated || len(unreadConfigFiles(r.Skipped)) > 0}
 		for _, h := range r.Hits {
 			out.Hits = append(out.Hits, enforce.ConfigGrepHit{Location: h.Location, Key: h.Key, MatchedValue: h.MatchedValue, Path: h.Path})
 		}
