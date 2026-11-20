@@ -99,6 +99,11 @@ func newBulkRig(t *testing.T, ws map[string]any, files map[string]string, dryCha
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"target": req.URL.Query().Get("target"), "hits": []any{}})
 		},
+		// The relabel check's config search (D-186): nothing names the new id.
+		"/v1/ref/grep": func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"term": req.URL.Query().Get("term"), "hits": []any{}, "total": 0, "truncated": false, "sources": []any{}})
+		},
 	}
 	r.ts = startCmdServer(t, ws, handlers)
 	pointAtCompanion(t, r.ts)
@@ -131,6 +136,11 @@ func refWS() map[string]any {
 			map[string]any{"entity_id": "sensor.old", "unique_id": "u-old", "platform": "template"},
 		},
 		"config/entity_registry/update": map[string]any{"entity_entry": map[string]any{"entity_id": "sensor.new"}},
+		// The registries a rename's reach is worked out from, and nothing
+		// targeting sensor.new (D-186).
+		"config/device_registry/list": []any{},
+		"config/area_registry/list":   []any{},
+		"search/related":              map[string]any{},
 	}
 }
 

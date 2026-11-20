@@ -801,6 +801,30 @@ func (ws *WSClient) ExtractFromTarget(ctx context.Context, target map[string]any
 	return *answer.ReferencedEntities, nil
 }
 
+// SearchRelated asks Home Assistant what is related to one item — a label,
+// an area, a floor, an entity — the search the UI's "Related" panel runs. The
+// answer maps an item type (automation, script, entity, device, …) to ids.
+// The policy check asks it which automations and scripts target a container
+// an entity is about to join (D-186); it changes nothing.
+// WS command: search/related
+func (ws *WSClient) SearchRelated(ctx context.Context, itemType, itemID string) (map[string][]string, error) {
+	result, err := ws.sendCommand(ctx, "search/related", map[string]any{
+		"item_type": itemType,
+		"item_id":   itemID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var answer map[string][]string
+	if err := json.Unmarshal(result, &answer); err != nil {
+		return nil, fmt.Errorf("parsing search/related answer: %w", err)
+	}
+	if answer == nil {
+		return nil, errors.New("search/related answered without a mapping")
+	}
+	return answer, nil
+}
+
 // DeviceConfigEntries maps each device id to the config entries its registry
 // row names, from config/device_registry/list. complete is false when any row
 // carries no `config_entries` key at all: then the answer cannot say which

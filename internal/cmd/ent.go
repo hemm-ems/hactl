@@ -1537,7 +1537,8 @@ func runEntRename(ctx context.Context, w io.Writer, oldID, newID string) error {
 	if policySession != nil {
 		plan := newWritePlan("rename entity").
 			add(policy.Edit, policy.KindEntity, oldID, "registry/entity_id").
-			add(policy.Create, policy.KindEntity, newID, "")
+			add(policy.Create, policy.KindEntity, newID, "").
+			addRegistryReach(ctx, enforce.RegistryChange{EntityID: oldID, NewEntityID: newID})
 		if checked, err = addRenameReferences(ctx, plan, src, oldID, newID); err != nil {
 			return err
 		}
@@ -1691,7 +1692,8 @@ func runEntSetLabel(ctx context.Context, w io.Writer, entityID string, labels []
 	// The plan (H-29), at the finest address the write has: the entity's
 	// labels field — never the entity as a whole, and never label:<id>
 	// (assigning a label does not edit it). --remove writes the same field.
-	plan := newWritePlan("set entity labels").add(policy.Edit, policy.KindEntity, entityID, "registry/labels")
+	plan := newWritePlan("set entity labels").add(policy.Edit, policy.KindEntity, entityID, "registry/labels").
+		addRegistryReach(ctx, enforce.RegistryChange{EntityID: entityID, Labels: &final})
 	note, err := checkWritePlan(w, !flagEntConfirm, plan)
 	if err != nil {
 		return err
@@ -1788,7 +1790,8 @@ func runEntSetArea(ctx context.Context, w io.Writer, entityID, area string) erro
 	if flagEntAreaClear {
 		action = "clear entity area"
 	}
-	note, err := checkWritePlan(w, !flagEntConfirm, newWritePlan(action).add(policy.Edit, policy.KindEntity, entityID, "registry/area_id"))
+	note, err := checkWritePlan(w, !flagEntConfirm, newWritePlan(action).add(policy.Edit, policy.KindEntity, entityID, "registry/area_id").
+		addRegistryReach(ctx, enforce.RegistryChange{EntityID: entityID, AreaSet: true, AreaID: areaEntry.AreaID}))
 	if err != nil {
 		return err
 	}

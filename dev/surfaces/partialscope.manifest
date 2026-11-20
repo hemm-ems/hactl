@@ -33,3 +33,4 @@ internal/cmd/ref.go:refReplaceRun = proven: TestRefReplaceRefusesWhenTheCompanio
 internal/cmd/ent.go:countRenameReferences = proven: TestEntRenameRefusesWhenTheConfigHalfSkippedAFile
 internal/cmd/ent.go:runEntRename = proven: TestEntRenameRefusesWhenTheConfigHalfSkippedAFile
 internal/cmd/ent.go:addRenameReferences = exempt: builds the policy plan of what the rename will write; the same sources' partial scope was already stated or refused by countRenameReferences before it runs, and an unread file or dashboard is never written, so leaving it out of the plan checks nothing less
+internal/cmd/policy_enforce.go:policyConfigGrep = exempt: the relabel check's search of the config files (D-186); a skipped file or a capped answer is reported as truncated, which counts as targeting, so a partial answer refuses rather than passes

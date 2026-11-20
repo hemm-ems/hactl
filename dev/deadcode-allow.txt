@@ -40,3 +40,6 @@ internal/cache/store.go Store.TrimLogs           # orphan: no caller in the bina
 internal/manual/state.go HowToPending             # orphan: a read-only "is this family's how-to still undelivered" predicate with no caller in the binary; nothing branches on it, so the manual is delivered without ever asking
 internal/analyze/logdedup.go FilterByLevel       # orphan: `log --level` filters before dedup, not through this
 internal/cmd/root.go statsWriter.Write           # orphan: statsWriter is never installed as the output writer
+internal/policy/reqmap/servicefields.go ServiceClassOf      # harness: TestServiceSurfaceIsClosed classifies every inventoried service with it; the binary classifies through ServiceFieldChecks and OpaqueService
+internal/policy/reqmap/servicefields.go ServiceInventoryKey # harness: the service inventory's and manifest's key, used by TestServiceSurfaceIsClosed and the live inventory checks
+internal/policy/reqmap/servicefields.go ServiceTable        # harness: the classified services the service manifest must hold even when no test instance exposes them

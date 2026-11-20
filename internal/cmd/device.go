@@ -16,6 +16,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
 )
 
 var (
@@ -154,7 +155,8 @@ func runDeviceSetArea(ctx context.Context, w io.Writer, deviceRef, area string) 
 	if flagDeviceAreaClear {
 		action = "clear device area"
 	}
-	note, err := checkWritePlan(w, !flagDeviceConfirm, newWritePlan(action).add(policy.Edit, policy.KindDevice, device.ID, "registry/area_id"))
+	note, err := checkWritePlan(w, !flagDeviceConfirm, newWritePlan(action).add(policy.Edit, policy.KindDevice, device.ID, "registry/area_id").
+		addRegistryReach(ctx, enforce.RegistryChange{DeviceID: device.ID, AreaSet: true, AreaID: areaEntry.AreaID}))
 	if err != nil {
 		return err
 	}
@@ -271,7 +273,8 @@ func runDeviceSetLabel(ctx context.Context, w io.Writer, deviceRef string, label
 	final, removed := applyLabelDelta(device.Labels, toAdd, toRemove)
 
 	// The plan (H-29): the device's labels field (--remove writes it too).
-	plan := newWritePlan("set device labels").add(policy.Edit, policy.KindDevice, device.ID, "registry/labels")
+	plan := newWritePlan("set device labels").add(policy.Edit, policy.KindDevice, device.ID, "registry/labels").
+		addRegistryReach(ctx, enforce.RegistryChange{DeviceID: device.ID, Labels: &final})
 	note, err := checkWritePlan(w, !flagDeviceConfirm, plan)
 	if err != nil {
 		return err

@@ -562,6 +562,9 @@ func policyCheckVerdict(pol *policy.Policy, res policy.Resource, v policy.Verb, 
 		// denied (D-143): check answers what the request layer enforces.
 		verdict = enforce.TemplateRead(pol, res, verdict)
 	}
+	// An opaque service needs an allow by its exact name while the profile
+	// denies anything (D-184): check answers what the request layer enforces.
+	verdict = enforce.OpaqueService(pol, res, v, verdict)
 
 	// A typed address a service call reaches is checked for its denies only
 	// (D-107): a denial by the profile default alone is never enforced there.

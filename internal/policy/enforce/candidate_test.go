@@ -47,7 +47,7 @@ func TestCandidateChecksAreTheServiceCallsItWouldMake(t *testing.T) {
 		`{"entity_id":["light.hall"]}`: {"light.hall"},
 	}}
 	s, _ := newSession(t, candidatePolicy, f)
-	checks, denials := s.CandidateChecks(context.Background(), []byte(`
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(`
 id: pg_a
 triggers: [{trigger: state, entity_id: binary_sensor.door}]
 actions:
@@ -69,12 +69,12 @@ actions:
 // parse, or whose live set cannot be read, is refused: never "nothing found".
 func TestCandidateChecksRefusesAnUnreadableCandidate(t *testing.T) {
 	s, _ := newSession(t, candidatePolicy, &fakeFetcher{live: []string{"light.hall"}})
-	_, denials := s.CandidateChecks(context.Background(), []byte("actions: [\n"))
+	_, denials := s.CandidateChecks(context.Background(), "automation", []byte("actions: [\n"))
 	if len(denials) != 1 || denials[0].Rule != reqmap.RuleCandidateUnreadable {
 		t.Errorf("unparsable candidate: denials = %+v, want %s", denials, reqmap.RuleCandidateUnreadable)
 	}
 	s2, _ := newSession(t, candidatePolicy, &fakeFetcher{liveErr: errors.New("down")})
-	_, denials = s2.CandidateChecks(context.Background(), []byte("actions: []\n"))
+	_, denials = s2.CandidateChecks(context.Background(), "automation", []byte("actions: []\n"))
 	if len(denials) != 1 || denials[0].Rule != enforce.RuleLiveUnread {
 		t.Errorf("live set unread: denials = %+v, want %s", denials, enforce.RuleLiveUnread)
 	}
@@ -85,7 +85,7 @@ func TestCandidateChecksOffUnderIndirectUnchecked(t *testing.T) {
 	body := strings.Replace(candidatePolicy, "    default: deny\n", "    default: deny\n    indirect: unchecked\n", 1)
 	f := &fakeFetcher{live: []string{"lock.front"}}
 	s, _ := newSession(t, body, f)
-	checks, denials := s.CandidateChecks(context.Background(), []byte("actions: [{action: lock.unlock, target: {entity_id: lock.front}}]\n"))
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte("actions: [{action: lock.unlock, target: {entity_id: lock.front}}]\n"))
 	if len(checks) != 0 || len(denials) != 0 || len(f.asked) != 0 {
 		t.Errorf("indirect: unchecked still checked: %v %v, asked %q", checks, denials, f.asked)
 	}
@@ -131,5 +131,71 @@ func TestRequestLayerChecksTheCandidateOnItsOwn(t *testing.T) {
 		if !errors.As(err, &ref) || !strings.Contains(err.Error()+fmt.Sprint(ref.Denied), reqmap.RuleActionTargetTemplate) {
 			t.Errorf("%s with a templated target: Check = %v, want %s", method, err, reqmap.RuleActionTargetTemplate)
 		}
+	}
+}
+
+// lockBlueprint is an automation blueprint whose action target is an input.
+const lockBlueprint = `blueprint:
+  name: Unlock
+  domain: automation
+  input:
+    door:
+      name: Door
+      default: {entity_id: light.hall}
+actions:
+  - action: lock.unlock
+    target: !input door
+`
+
+// TestCandidateChecksExpandBlueprints — D-185 (F4): a use_blueprint
+// candidate is checked as what the blueprint expands to, at the command plan
+// and at the request layer alike; a blueprint the session cannot read refuses
+// the write, never passes it.
+func TestCandidateChecksExpandBlueprints(t *testing.T) {
+	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+		{EntityID: "light.hall", Platform: "demo"}, {EntityID: "lock.front", Platform: "demo"},
+	}}
+	newF := func() *fileFetcher {
+		return &fileFetcher{
+			fakeFetcher: fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front"}, reach: map[string][]string{
+				`{"entity_id":["lock.front"]}`: {"lock.front"},
+				`{"entity_id":["light.hall"]}`: {"light.hall"},
+			}},
+			files: map[string]string{"blueprints/automation/pg/unlock.yaml": lockBlueprint},
+		}
+	}
+	cand := "id: pg_bp\nuse_blueprint:\n  path: pg/unlock.yaml\n  input:\n    door: {entity_id: lock.front}\n"
+	// The lock is readable, its service allowed: only switching it is denied —
+	// the F4 shape, where the input alone (a mention) passes as a read.
+	pol := strings.Replace(candidatePolicy, `"entity:lock.*": [read, write]`, `"entity:lock.*": [write]`, 1)
+	pol = strings.Replace(pol, `"service:light.*": [control]`, `"service:light.*": [control]
+      "service:lock.*": [control]`, 1)
+
+	f := newF()
+	s, _ := newSession(t, pol, f)
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand))
+	if len(denials) != 0 {
+		t.Fatalf("denials = %+v", denials)
+	}
+	if got := candidateCheckStrings(checks); !slices.Contains(got, "control entity:lock.front") || !slices.Contains(got, "control service:lock.unlock") {
+		t.Errorf("checks = %q, want control on lock.front and lock.unlock (the blueprint's action on the given input)", got)
+	}
+	if !slices.Equal(f.read, []string{"blueprints/automation/pg/unlock.yaml"}) {
+		t.Errorf("read %q, want the blueprint from the automation folder", f.read)
+	}
+
+	// The request layer: the same write is refused naming the lock.
+	s, _ = newSession(t, pol, newF())
+	err := s.Check(context.Background(), reqmap.Request{Transport: reqmap.Companion, Method: "POST", Path: "/v1/config/automation", Body: []byte(cand)})
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool { return d.Resource == "entity:lock.front" }) {
+		t.Errorf("request layer: Check = %v, want a refusal naming entity:lock.front", err)
+	}
+
+	// No config-file reader: refused fail-closed.
+	s, _ = newSession(t, pol, &fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front"}})
+	_, denials = s.CandidateChecks(context.Background(), "automation", []byte(cand))
+	if len(denials) != 1 || !strings.HasPrefix(denials[0].Rule, reqmap.RuleBlueprintUnexpandable) {
+		t.Errorf("no reader: denials = %+v, want %s", denials, reqmap.RuleBlueprintUnexpandable)
 	}
 }

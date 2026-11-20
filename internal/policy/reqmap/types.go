@@ -359,14 +359,15 @@ func MergeChecks(base, more []Check) []Check {
 }
 
 // CandidateRows are the rows whose body is a candidate an automation, a
-// script or a template entity is written from (W-1): the request layer adds
-// what the candidate would do to their checks.
-var CandidateRows = map[string]bool{
-	"companion POST /v1/config/automation": true,
-	"companion PUT /v1/config/automation":  true,
-	"companion POST /v1/config/script":     true,
-	"companion PUT /v1/config/script":      true,
-	"companion POST /v1/config/template":   true,
+// script or a template entity is written from (W-1), each with the domain it
+// writes — the blueprint folder a `use_blueprint` in it is read from (D-185):
+// the request layer adds what the candidate would do to their checks.
+var CandidateRows = map[string]string{
+	"companion POST /v1/config/automation": "automation",
+	"companion PUT /v1/config/automation":  "automation",
+	"companion POST /v1/config/script":     "script",
+	"companion PUT /v1/config/script":      "script",
+	"companion POST /v1/config/template":   "template",
 }
 
 func sortChecks(cs []Check) {

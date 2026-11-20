@@ -135,11 +135,11 @@ var serviceVectors = []vector{
 		checks: []string{"control entity:light.hall", "control service:light.turn_off"},
 	},
 	{
-		name:  "a comma-separated list of entities in the data names each of them (D-73)",
+		name:  "a comma-separated list of entities in the data names each of them (D-73); scene_id is the scene it writes (D-184)",
 		req:   rest("POST", "/api/services/scene/create", `{"scene_id":"s","snapshot_entities":"light.kitchen, lock.front_door"}`),
 		facts: &reqmap.Facts{Live: liveStates, Registries: &reqmap.Registries{}},
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control entity:light.kitchen", "control entity:lock.front_door", "control service:scene.create"},
+		checks: []string{"control entity:light.kitchen", "control entity:lock.front_door", "control entity:scene.s", "control service:scene.create"},
 	},
 	{
 		name: "entity_id: all on a homeassistant service is every live entity, even with a live homeassistant.* entity (R-1)",

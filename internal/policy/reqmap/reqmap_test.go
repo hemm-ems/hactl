@@ -553,6 +553,7 @@ func TestClassifyWriteRequests(t *testing.T) {
 var readVectors = []vector{
 	{name: "ws auth is exempt", req: ws("auth", map[string]any{"access_token": "x"}), disp: reqmap.Exempt, row: "ws auth"},
 	{name: "the reach question is exempt", req: ws("extract_from_target", map[string]any{"target": map[string]any{"area_id": []any{"office"}}, "expand_group": true}), disp: reqmap.Exempt, row: "ws extract_from_target"},
+	{name: "the relabel target question is exempt (D-186)", req: ws("search/related", map[string]any{"item_type": "label", "item_id": "cosy"}), disp: reqmap.Exempt, row: "ws search/related"},
 	{name: "supervisor add-on list", req: ws("supervisor/api", map[string]any{"endpoint": "/addons", "method": "get"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons"},
 	{name: "supervisor add-on info", req: ws("supervisor/api", map[string]any{"endpoint": "/addons/abc_hactl/info", "method": "get"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons/{slug}/info"},
 	{name: "supervisor method defaults to get", req: ws("supervisor/api", map[string]any{"endpoint": "/addons"}), disp: reqmap.Exempt, row: "ws supervisor/api GET /addons"},
@@ -671,7 +672,7 @@ func TestRowDispositionsAreWhatTheRowSays(t *testing.T) {
 func TestUnmappedRequests(t *testing.T) {
 	for _, v := range []vector{
 		{name: "an unknown websocket type", req: ws("config/entity_registry/frobnicate", nil), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request ws config/entity_registry/frobnicate"},
-		{name: "a websocket read nobody mapped is still refused", req: ws("search/related", nil), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request ws search/related"},
+		{name: "a websocket read nobody mapped is still refused", req: ws("assist_pipeline/pipeline/list", nil), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request ws assist_pipeline/pipeline/list"},
 		{name: "a supervisor pair nobody mapped", req: ws("supervisor/api", map[string]any{"endpoint": "/addons/x/restart", "method": "post"}), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request ws supervisor/api POST /addons/x/restart"},
 		{name: "a supervisor GET nobody mapped is a websocket message, so refused", req: ws("supervisor/api", map[string]any{"endpoint": "/host/info", "method": "get"}), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request"},
 		{name: "a REST POST nobody mapped", req: rest("POST", "/api/events/my_event", "{}"), disp: reqmap.Unmapped, refused: "fail-closed: unmapped request rest POST /api/events/my_event"},

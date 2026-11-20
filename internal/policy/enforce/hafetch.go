@@ -38,6 +38,9 @@ type HAFetcher struct {
 	// configFile reads a config file's raw content through the companion,
 	// for the read filter's typed owners (D-142); nil = it cannot.
 	configFile func(ctx context.Context, location string) ([]byte, error)
+	// configGrep finds a container id in the config files through the
+	// companion, for a relabel's targets (D-186); nil = it cannot.
+	configGrep func(ctx context.Context, id string) (ConfigGrepResult, error)
 }
 
 // NewHAFetcher answers from the instance at url with token. A non-nil cfgErr
@@ -49,6 +52,34 @@ func NewHAFetcher(ctx context.Context, url, token string, cfgErr error) *HAFetch
 	f := &HAFetcher{ctx: own(ctx), url: url, token: token, cfgErr: cfgErr}
 	f.live = &registryLive{fetch: f}
 	return f
+}
+
+// SetConfigGrep lets the fetcher search the config files (TargetFetcher).
+func (f *HAFetcher) SetConfigGrep(grep func(ctx context.Context, id string) (ConfigGrepResult, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configGrep = grep
+}
+
+// Related implements TargetFetcher: Home Assistant's search/related.
+func (f *HAFetcher) Related(ctx context.Context, itemType, itemID string) (map[string][]string, error) {
+	ctx = own(ctx)
+	ws, err := f.socket(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ws.SearchRelated(ctx, itemType, itemID)
+}
+
+// ConfigGrep implements TargetFetcher.
+func (f *HAFetcher) ConfigGrep(ctx context.Context, id string) (ConfigGrepResult, error) {
+	f.mu.Lock()
+	grep := f.configGrep
+	f.mu.Unlock()
+	if grep == nil {
+		return ConfigGrepResult{}, ErrNoCompanion
+	}
+	return grep(own(ctx), id)
 }
 
 // SetConfigFileReader lets the fetcher read config files (ConfigFileFetcher).

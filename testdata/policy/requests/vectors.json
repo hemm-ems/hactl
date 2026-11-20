@@ -313,6 +313,23 @@
    "facts_ref": "house"
   },
   {
+   "id": "ws-search-related",
+   "why": "the policy check's own oracle for a relabel (D-186), sent by haapi.WSClient.SearchRelated while a registry edit is checked: exempt, never gated by the edit it serves",
+   "request": {
+    "transport": "ws",
+    "message": {
+     "type": "search/related",
+     "item_type": "label",
+     "item_id": "cosy"
+    }
+   },
+   "expect": {
+    "disposition": "exempt",
+    "row": "ws search/related"
+   },
+   "facts_ref": "house"
+  },
+  {
    "id": "ws-supervisor-unknown-post",
    "why": "an endpoint no row names: unmapped, and every WS type is mutating",
    "request": {

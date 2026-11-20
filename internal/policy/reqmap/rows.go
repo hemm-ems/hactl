@@ -66,6 +66,7 @@ var (
 	wsRows = indexWS(
 		exempt(wsRow("auth", Exempt, nil), "the session handshake carries the token and no Home Assistant resource"),
 		exempt(wsRow("extract_from_target", Exempt, nil), "the policy check's own oracle for a service call's reach: it reads the target's references and changes nothing, and it must never be gated by the call it serves"),
+		exempt(wsRow("search/related", Exempt, nil), "the policy check's own oracle for a relabel: which automations and scripts target a container; it changes nothing and must never be gated by the edit it serves"),
 
 		// Minting a token is the owner's (`agent add`, D-160/D-164), which runs
 		// without a policy session; under one it is always refused (D-149).

@@ -173,6 +173,9 @@ func walkData(v any, visit func(string)) {
 //     at any depth, that names a live entity;
 //   - homeassistant.turn_on|turn_off|toggle: control service:<d>.<service>
 //     for every domain d in the reach;
+//   - a mapped service (D-184, servicefields.go): what its own fields address
+//     by another name — group.set's object_id, recorder.purge_entities'
+//     domains and globs, …;
 //   - every service that can start a script: control script:<id>/run for
 //     every script it starts — <x> itself for script.<x>, the entity
 //     registry unique_id of each script entity in the reach otherwise (the
@@ -194,7 +197,8 @@ func mapServiceCall(c *call) (mapping, error) {
 	cs := &cascade{out: []Check{svc}}
 	cs.out = append(cs.out, perScriptRun(domain, service)...)
 	sel := selectors(data)
-	if len(sel) == 0 && len(data) == 0 {
+	fields, mapped := lookupService(mappedServices, domain+"."+service)
+	if len(sel) == 0 && len(data) == 0 && !mapped {
 		// No selector and no entity in the data: the service check alone.
 		return mapping{checks: cs.out}, nil
 	}
@@ -213,6 +217,10 @@ func mapServiceCall(c *call) (mapping, error) {
 	reached := forwardedTo(append(slices.Clone(ids), named...), f.Live.Members)
 	for _, id := range reached {
 		cs.add(policy.Control, policy.KindEntity, id, "")
+	}
+	if mapped {
+		// Fields that address entities by another name (D-184).
+		fields(cs, data, live, f.Registries)
 	}
 	if domain == "homeassistant" && homeassistantFanOut[service] {
 		for _, d := range domainsOf(ids) {

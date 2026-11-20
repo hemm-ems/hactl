@@ -23,13 +23,16 @@ const RuleLiveUnread = "fail-closed: live entities unread"
 //   - each entity a device action names needs control;
 //   - every other live entity the candidate mentions needs read;
 //   - what cannot be read off the candidate (a templated service name or
-//     target, a device action's entity that does not resolve) refuses it.
+//     target, a device action's entity that does not resolve) refuses it;
+//   - a `use_blueprint` is checked as what it expands to: the blueprint of
+//     domain (automation, script, template) read through the fetcher, its
+//     `!input`s substituted (D-185); one that cannot be expanded refuses it.
 //
 // The command layer adds these to its plan and the request layer to the
 // companion write that carries the candidate, through this one function, so
 // both decide alike (R-12). With `indirect: unchecked` on the profile
 // (D-135) nothing is added.
-func (s *Session) CandidateChecks(ctx context.Context, candidate []byte) ([]reqmap.Check, []Denial) {
+func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate []byte) ([]reqmap.Check, []Denial) {
 	if !s.pol.IndirectChecked() {
 		return nil, nil
 	}
@@ -37,6 +40,8 @@ func (s *Session) CandidateChecks(ctx context.Context, candidate []byte) ([]reqm
 	if err := yaml.Unmarshal(candidate, &doc); err != nil {
 		return nil, []Denial{{Resource: "candidate", Verb: policy.Control.String(), Rule: reqmap.RuleCandidateUnreadable}}
 	}
+	// A blueprint's actions are in its file: check what it expands to (D-185).
+	doc, unexpanded := reqmap.ExpandBlueprints(doc, domain, s.blueprintReader(ctx))
 	s.gather(ctx, reqmap.Request{}, needs{live: true, registries: true})
 	s.mu.Lock()
 	var live *reqmap.LiveStates
@@ -76,10 +81,22 @@ func (s *Session) CandidateChecks(ctx context.Context, candidate []byte) ([]reqm
 			checks = append(checks, c)
 		}
 	}
-	for _, u := range use.Undecidable {
+	for _, u := range append(unexpanded, use.Undecidable...) {
 		denials = append(denials, Denial{Resource: "candidate " + u.Path, Verb: policy.Control.String(), Rule: u.Rule})
 	}
 	return dedupeChecks(checks), denials
+}
+
+// blueprintReader reads a blueprint file through the fetcher, as the
+// session's own read; nil when the fetcher cannot read config files.
+func (s *Session) blueprintReader(ctx context.Context) reqmap.BlueprintReader {
+	cf, ok := s.fetcher.(ConfigFileFetcher)
+	if !ok || s.fetcher == nil {
+		return nil
+	}
+	return func(location string) ([]byte, error) {
+		return cf.ConfigFile(own(ctx), location)
+	}
 }
 
 func entityCheck(v policy.Verb, id string) (reqmap.Check, bool) {
