@@ -85,7 +85,9 @@ var agentNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 const agentTokenLifespanDays = 3650
 
 // starterPolicy is agent add's read-only starter (D-150): one profile in
-// effect that allows reading everything and denies every write.
+// effect that allows reading everything and denies every write. Its
+// `system:template` allow is by exact name: a wildcard never grants a
+// template while the profile denies anything (D-190, D-197).
 const starterPolicy = `# Written by ` + "`hactl agent add`" + `: read-only until the owner activates
 # this agent's own policy with ` + "`hactl policy activate`" + `.
 version: 1
@@ -95,6 +97,7 @@ profiles:
     default: deny
     allow:
       "*": [read]
+      "system:template": [read]
 `
 
 // agentsRoot is ~/.hactl/agents, or root when given.
