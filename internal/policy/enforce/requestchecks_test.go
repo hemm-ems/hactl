@@ -2,6 +2,7 @@ package enforce_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -95,4 +96,54 @@ func TestRequestChecksRefusesWhatItCannotPlan(t *testing.T) {
 
 func withRecorder(r enforce.Recorder) func(*enforce.Options) {
 	return func(o *enforce.Options) { o.Recorder = r }
+}
+
+// TestRequestChecksReloadConfigEntryNeedsCompleteRegistries (D-200): a
+// config entry reload names the entities it resets from the registries —
+// only from a complete read; an incomplete one refuses.
+func TestRequestChecksReloadConfigEntryNeedsCompleteRegistries(t *testing.T) {
+	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+		{EntityID: "light.a", ConfigEntryID: "ce1"}, {EntityID: "light.b", ConfigEntryID: "ce2"},
+	}}
+	req := reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/services/homeassistant/reload_config_entry",
+		Body: []byte(`{"entry_id":"ce1"}`)}
+	s, _ := newSession(t, "version: 1\nactive: a\nprofiles:\n  a: {}\n", &fakeFetcher{reg: reg, complete: true, live: []string{"light.a", "light.b"}})
+	planned, denial := s.RequestChecks(context.Background(), req)
+	if want := []string{"control entity:light.a", "control service:homeassistant.reload_config_entry"}; denial != nil || !slices.Equal(checkStrings(planned), want) {
+		t.Errorf("complete registries: plan %q, denial %+v; want %q", checkStrings(planned), denial, want)
+	}
+	s, _ = newSession(t, "version: 1\nactive: a\nprofiles:\n  a: {}\n", &fakeFetcher{reg: reg, complete: false, live: []string{"light.a", "light.b"}})
+	planned, denial = s.RequestChecks(context.Background(), req)
+	if denial == nil || !strings.Contains(denial.Rule, "config entry reach unknown") {
+		t.Errorf("incomplete registries: plan %q, denial %+v; want refused, config entry reach unknown", checkStrings(planned), denial)
+	}
+}
+
+// TestTemplateEvalReadsTheLiveStates (D-198): `tpl eval` resolves what a
+// template reads against the live states — `states.light` reads each live
+// light, so a denied one refuses even where system:template is allowed.
+func TestTemplateEvalReadsTheLiveStates(t *testing.T) {
+	const pol = `version: 1
+active: a
+profiles:
+  a:
+    default: deny
+    allow:
+      "entity:*": [read]
+      "system:template": [read]
+    deny:
+      "entity:light.b": [read]
+`
+	s, _ := newSession(t, pol, &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.a", "light.b"}})
+	req := reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/template",
+		Body: []byte(`{"template":"{{ states.light | count }}"}`)}
+	err := s.Check(context.Background(), req)
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool { return d.Resource == "entity:light.b" }) {
+		t.Errorf("tpl eval over a denied live light: %v, want refused naming entity:light.b", err)
+	}
+	req.Body = []byte(`{"template":"{{ states('light.a') }}"}`)
+	if err := s.Check(context.Background(), req); err != nil {
+		t.Errorf("tpl eval of an allowed state: %v", err)
+	}
 }

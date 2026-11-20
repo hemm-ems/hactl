@@ -9,7 +9,8 @@ package integration
 //   - the template constructs hactl calls safe cannot read a state (D-188);
 //   - every template name hactl classifies exists in Home Assistant as that
 //     kind of name (D-188);
-//   - which reload removes which runtime-created entity (D-193);
+//   - which reload removes which runtime-created entity (D-193; since D-199
+//     a stated limit, not a check);
 //   - which entity homeassistant.set_location writes (D-191);
 //   - every service field that may name an entity is one hactl refuses a
 //     template it cannot fold in (D-189).
@@ -158,7 +159,9 @@ func oracleRuntimeEntities(t *testing.T, inst *hatest.Instance) {
 // group.set made and the scene scene.create made (D-193). scene.reload and
 // homeassistant.reload_all remove the scene; no reload removes the group
 // (observed on HA 2026.11.2: group.reload keeps it); the other domains'
-// reloads remove neither.
+// reloads remove neither. Since D-199 a reload needs no delete on what it
+// removes — the documented limit this oracle keeps true: each reload is
+// the service check alone.
 func TestOracleReloadsRemoveRuntimeEntities(t *testing.T) {
 	inst := getPolicyEnforceHA(t)
 	cases := []struct {
@@ -182,16 +185,16 @@ func TestOracleReloadsRemoveRuntimeEntities(t *testing.T) {
 		if g != c.group || sc != c.scene {
 			t.Errorf("%s: runtime group removed=%v (want %v), runtime scene removed=%v (want %v)", c.svc, g, c.group, sc, c.scene)
 		}
-		if reqmap.ReloadRemovesRuntime(d+"."+s) != (c.group || c.scene) {
-			t.Errorf("%s: hactl's reload table says removes=%v, Home Assistant removed group=%v scene=%v",
-				c.svc, reqmap.ReloadRemovesRuntime(d+"."+s), g, sc)
+		if got := reqmap.ServiceClassOf(c.svc); got != reqmap.ServiceTargetOnly {
+			t.Errorf("%s: hactl classes it %s; a reload is the service check alone (D-199)", c.svc, got)
 		}
 	}
 }
 
 // TestOracleRestartRemovesRuntimeEntities: a restart forgets what group.set
-// and scene.create made — nothing stores them. A dedicated instance, so the
-// restart disturbs no other test.
+// and scene.create made — nothing stores them: the limit D-199 states, a
+// restart needing no delete on them. A dedicated instance, so the restart
+// disturbs no other test.
 func TestOracleRestartRemovesRuntimeEntities(t *testing.T) {
 	inst := hatest.Start(t, hatest.WithFixture("policyenforce"))
 	oracleRuntimeEntities(t, inst)
@@ -212,12 +215,12 @@ func TestOracleRestartRemovesRuntimeEntities(t *testing.T) {
 	}
 	time.Sleep(3 * time.Second)
 	if oracleStatus(t, inst, "group.pg_oracle_rt") != http.StatusNotFound || oracleStatus(t, inst, "scene.pg_oracle_rt") != http.StatusNotFound {
-		t.Errorf("after homeassistant.restart the runtime group is %d and the runtime scene %d; hactl maps restart as removing both",
+		t.Errorf("after homeassistant.restart the runtime group is %d and the runtime scene %d; the manual states a restart removes both",
 			oracleStatus(t, inst, "group.pg_oracle_rt"), oracleStatus(t, inst, "scene.pg_oracle_rt"))
 	}
 	for _, svc := range []string{"homeassistant.restart", "homeassistant.stop"} {
-		if !reqmap.ReloadRemovesRuntime(svc) {
-			t.Errorf("hactl's reload table does not map %s as removing runtime entities", svc)
+		if got := reqmap.ServiceClassOf(svc); got != reqmap.ServiceTargetOnly {
+			t.Errorf("hactl classes %s %s; a restart is the service check alone (D-199)", svc, got)
 		}
 	}
 }

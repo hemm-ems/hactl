@@ -57,45 +57,12 @@ var mappedServices = map[string]fieldMapper{
 	"shopping_list.*":         platformEntities("shopping_list", "todo"),
 	// Removing what a call names needs delete as well (D-194).
 	"scene.delete": deletesTarget("scene"),
-	// What a reload or a restart removes (D-193).
-	"scene.reload":             dropsRuntime,
-	"homeassistant.reload_all": dropsRuntime,
-	"homeassistant.restart":    dropsRuntime,
-	"homeassistant.stop":       dropsRuntime,
-	// What a call writes that no field names (D-191).
-	"homeassistant.set_location":       writesFixed,
-	"homeassistant.reload_core_config": writesFixed,
-}
-
-// runtimeDropped is, per service, the domains whose runtime-created entities
-// — what group.set and scene.create make, which nothing stores — the call
-// removes (D-193). Observed by TestOracleReloadsRemoveRuntimeEntities and
-// TestOracleRestartRemovesRuntimeEntities on HA 2026.11.2: scene.reload and
-// homeassistant.reload_all remove the scenes, a restart the scenes and the
-// groups; group.reload and every other reload neither. homeassistant.stop is
-// not observed (it ends the rig's Home Assistant): it is mapped as the first
-// half of a restart, after which neither exists.
-var runtimeDropped = map[string][]string{
-	"scene.reload":             {"scene"},
-	"homeassistant.reload_all": {"scene"},
-	"homeassistant.restart":    {"group", "scene"},
-	"homeassistant.stop":       {"group", "scene"},
-}
-
-// ReloadRemovesRuntime reports whether a service removes runtime-created
-// entities (D-193).
-func ReloadRemovesRuntime(name string) bool { return len(runtimeDropped[name]) > 0 }
-
-// dropsRuntime: a reload or restart removes every runtime-created entity of
-// the domains it drops, so each live entity of those domains needs delete —
-// every one, a superset: which were created at runtime is not on the live
-// state, and one from configuration comes back as it was.
-func dropsRuntime(cs *cascade, _ map[string]any, live *liveIndex, _ *Registries) {
-	for _, d := range runtimeDropped[cs.service] {
-		for _, id := range live.byDomain[d] {
-			cs.add(policy.Delete, policy.KindEntity, id, "")
-		}
-	}
+	// A reload or a restart removes the runtime-created scenes and groups:
+	// not checked, a stated limit (D-199, refining D-193).
+	// What a call writes that no field names (D-191, D-200).
+	"homeassistant.reload_config_entry": reloadConfigEntry,
+	"homeassistant.set_location":        writesFixed,
+	"homeassistant.reload_core_config":  writesFixed,
 }
 
 // fixedEntities is, per service, the entities it writes although no field
@@ -112,6 +79,98 @@ var fixedEntities = map[string][]string{
 
 // FixedEntitiesOf is what a service writes that no field names (D-191).
 func FixedEntitiesOf(name string) []string { return fixedEntities[name] }
+
+// reloadConfigEntry: homeassistant.reload_config_entry re-creates every
+// entity of the config entries it reloads in its start-up state (D-200,
+// TestOracleReloadConfigEntryResetsItsEntities). Home Assistant's
+// async_extract_config_entry_ids reloads the entry `entry_id` names, the
+// entry of every entity the target reaches and the entries of every device
+// it references — named, or in a targeted area, floor or label. hactl counts
+// a superset: also the entries of each reached entity's device. Every
+// registry entity of those entries — its own `config_entry_id`, or its
+// device's `config_entries` — needs control. Without the registries the
+// reach is unknown: refused.
+func reloadConfigEntry(cs *cascade, data map[string]any, _ *liveIndex, reg *Registries) {
+	if reg == nil {
+		cs.err = refuse("config entry reach unknown", "the registries were not read in this invocation, so the entities %s reloads cannot be named", cs.service)
+		return
+	}
+	devices := map[string]RegistryDevice{}
+	for _, d := range reg.Devices {
+		devices[d.ID] = d
+	}
+	entries := map[string]bool{}
+	for _, id := range stringList(data["entry_id"]) {
+		entries[id] = true
+	}
+	addDevice := func(id string) {
+		for _, ce := range devices[id].ConfigEntries {
+			entries[ce] = true
+		}
+	}
+	reached := map[string]bool{}
+	for _, id := range cs.reached {
+		reached[id] = true
+	}
+	for _, e := range reg.Entities {
+		if reached[e.EntityID] {
+			if e.ConfigEntryID != "" {
+				entries[e.ConfigEntryID] = true
+			}
+			addDevice(e.DeviceID)
+		}
+	}
+	for _, id := range targetedDevices(selectors(data), reg) {
+		addDevice(id)
+	}
+	for _, e := range reg.Entities {
+		hit := e.ConfigEntryID != "" && entries[e.ConfigEntryID]
+		for _, ce := range devices[e.DeviceID].ConfigEntries {
+			hit = hit || entries[ce]
+		}
+		if hit {
+			cs.add(policy.Control, policy.KindEntity, e.EntityID, "")
+		}
+	}
+}
+
+// targetedDevices are the devices a target references: named by device_id,
+// in an area it names (by area_id, floor_id or an area's label), or carrying
+// a label it names.
+func targetedDevices(sel map[string][]any, reg *Registries) []string {
+	set := func(k string) map[string]bool {
+		out := map[string]bool{}
+		for _, v := range sel[k] {
+			if s, ok := v.(string); ok {
+				out[s] = true
+			}
+		}
+		return out
+	}
+	areaIDs, floors, labels := set("area_id"), set("floor_id"), set("label_id")
+	for _, a := range reg.Areas {
+		if floors[a.FloorID] && a.FloorID != "" {
+			areaIDs[a.ID] = true
+		}
+		for _, l := range a.Labels {
+			if labels[l] {
+				areaIDs[a.ID] = true
+			}
+		}
+	}
+	named := set("device_id")
+	var out []string
+	for _, d := range reg.Devices {
+		hit := named[d.ID] || (d.AreaID != "" && areaIDs[d.AreaID])
+		for _, l := range d.Labels {
+			hit = hit || labels[l]
+		}
+		if hit {
+			out = append(out, d.ID)
+		}
+	}
+	return out
+}
 
 func writesFixed(cs *cascade, _ map[string]any, _ *liveIndex, _ *Registries) {
 	for _, id := range fixedEntities[cs.service] {

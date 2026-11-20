@@ -22,6 +22,23 @@ func fieldFacts() *reqmap.Facts {
 	return &reqmap.Facts{Live: fieldLive, Registries: fieldRegistries}
 }
 
+// entryLive and entryRegistries: two config entries — ce-hue owns
+// light.kitchen directly and light.porch and sensor.hue_bridge through the
+// bridge device; ce-other owns lock.front_door.
+var entryLive = &reqmap.LiveStates{EntityIDs: []string{"light.kitchen", "light.porch", "sensor.hue_bridge", "lock.front_door"}}
+
+func entryFacts(reach ...string) *reqmap.Facts {
+	return &reqmap.Facts{Live: entryLive, Reach: &reqmap.Reach{EntityIDs: reach}, Registries: &reqmap.Registries{
+		Entities: []reqmap.RegistryEntity{
+			{EntityID: "light.kitchen", ConfigEntryID: "ce-hue"},
+			{EntityID: "light.porch", DeviceID: "bridge"},
+			{EntityID: "sensor.hue_bridge", DeviceID: "bridge", ConfigEntryID: "ce-hue"},
+			{EntityID: "lock.front_door", DeviceID: "lockdev", ConfigEntryID: "ce-other"},
+		},
+		Devices: []reqmap.RegistryDevice{{ID: "bridge", AreaID: "garden", ConfigEntries: []string{"ce-hue"}}, {ID: "lockdev", ConfigEntries: []string{"ce-other"}}},
+	}}
+}
+
 // serviceFieldVectors — D-184: fields that address an entity by another name
 // than its entity id (the policy hunt of 2026-11-19, F1 and F3).
 var serviceFieldVectors = []vector{
@@ -89,33 +106,65 @@ var serviceFieldVectors = []vector{
 		disp:  reqmap.Write, row: svcRow,
 		checks: []string{"control entity:scene.secure", "control service:scene.delete", "delete entity:scene.secure"},
 	},
+	// D-199 (refining D-193): a reload or a restart removes the runtime
+	// scenes and groups but needs no delete on them — the service check
+	// alone, a stated limit.
 	{
-		name:  "scene.reload removes every scene scene.create made: delete on every live scene (D-193)",
+		name:  "scene.reload: the service check alone (D-199)",
 		req:   rest("POST", "/api/services/scene/reload", `{}`),
 		facts: fieldFacts(),
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control service:scene.reload", "delete entity:scene.secure"},
+		checks: []string{"control service:scene.reload"},
 	},
 	{
-		name:  "homeassistant.restart removes every runtime scene and group (D-193)",
+		name:  "homeassistant.restart: the service check alone (D-199)",
 		req:   rest("POST", "/api/services/homeassistant/restart", `{}`),
 		facts: fieldFacts(),
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control service:homeassistant.restart", "delete entity:group.secure", "delete entity:scene.secure"},
+		checks: []string{"control service:homeassistant.restart"},
 	},
 	{
-		name:  "homeassistant.reload_all reloads scenes too: delete on every live scene (D-193)",
+		name:  "homeassistant.reload_all: the service check alone (D-199)",
 		req:   rest("POST", "/api/services/homeassistant/reload_all", `{}`),
 		facts: fieldFacts(),
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control service:homeassistant.reload_all", "delete entity:scene.secure"},
+		checks: []string{"control service:homeassistant.reload_all"},
 	},
 	{
-		name:  "homeassistant.stop is the first half of a restart (D-193)",
+		name:  "homeassistant.stop: the service check alone (D-199)",
 		req:   rest("POST", "/api/services/homeassistant/stop", `{}`),
 		facts: fieldFacts(),
 		disp:  reqmap.Write, row: svcRow,
-		checks: []string{"control service:homeassistant.stop", "delete entity:group.secure", "delete entity:scene.secure"},
+		checks: []string{"control service:homeassistant.stop"},
+	},
+	// D-200: reload_config_entry resets every entity of the entries it
+	// reloads.
+	{
+		name:  "reload_config_entry by entry_id: control on every entity of the entry, also through its devices (D-200)",
+		req:   rest("POST", "/api/services/homeassistant/reload_config_entry", `{"entry_id":"ce-hue"}`),
+		facts: entryFacts(),
+		disp:  reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.kitchen", "control entity:light.porch", "control entity:sensor.hue_bridge", "control service:homeassistant.reload_config_entry"},
+	},
+	{
+		name:  "reload_config_entry by an entity: every entity of its entry (D-200)",
+		req:   rest("POST", "/api/services/homeassistant/reload_config_entry", `{"entity_id":"light.kitchen"}`),
+		facts: entryFacts("light.kitchen"),
+		disp:  reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.kitchen", "control entity:light.porch", "control entity:sensor.hue_bridge", "control service:homeassistant.reload_config_entry"},
+	},
+	{
+		name:  "reload_config_entry by an area: every entity of the entries of its devices (D-200)",
+		req:   rest("POST", "/api/services/homeassistant/reload_config_entry", `{"area_id":"garden"}`),
+		facts: entryFacts(),
+		disp:  reqmap.Write, row: svcRow,
+		checks: []string{"control entity:light.kitchen", "control entity:light.porch", "control entity:sensor.hue_bridge", "control service:homeassistant.reload_config_entry"},
+	},
+	{
+		name:  "reload_config_entry without the registries is refused (D-200)",
+		req:   rest("POST", "/api/services/homeassistant/reload_config_entry", `{"entry_id":"ce-hue"}`),
+		facts: &reqmap.Facts{Live: entryLive},
+		disp:  reqmap.Unmappable, row: svcRow, refused: "fail-closed: config entry reach unknown",
 	},
 	{
 		name:  "group.reload keeps the groups group.set made: the service check alone (D-193)",

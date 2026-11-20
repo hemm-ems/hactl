@@ -547,7 +547,8 @@ func TestPolicyRehuntPurgeGlobNegation(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // 8. Reload services that drop entities a call never names: group.set and
-//    scene.create entities live only until the reload.
+//    scene.create entities live only until the reload. Since D-199 the
+//    reload needs no delete on them — a stated limit: the reload runs.
 // ---------------------------------------------------------------------------
 
 func TestPolicyRehuntReloadDrops(t *testing.T) {
@@ -565,7 +566,10 @@ func TestPolicyRehuntReloadDrops(t *testing.T) {
 		pc, oc, rep := rhBoth(t, dir, "svc", "call", c.svc)
 		time.Sleep(2 * time.Second)
 		a, _ := pgHTTP(t, inst, http.MethodGet, "/api/states/"+c.id, nil)
-		rhVerdict(t, fmt.Sprintf("%s with write-denied %s: GET state %d → %d", c.svc, c.id, b, a), b == 200 && a == 404, fmt.Sprintf("pc=%d oc=%d %s", pc, oc, rep))
+		if pc != 0 || oc != 0 {
+			t.Errorf("over-refusal: %s with write-denied %s refused; a reload needs no delete (D-199)\n      %s", c.svc, c.id, rep)
+		}
+		t.Logf("%s with write-denied %s: GET state %d → %d (the stated limit, D-199)", c.svc, c.id, b, a)
 	}
 	// homeassistant.set_location under default deny with the homeassistant services allowed
 	dir2 := pgInstanceDir(t, inst.URL(), inst.Token(), rhPolicy(`    default: deny
