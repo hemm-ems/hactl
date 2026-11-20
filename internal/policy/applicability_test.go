@@ -336,3 +336,49 @@ func TestLintTemplateReadsDenied(t *testing.T) {
 		t.Errorf("Lint findings %+v, want %s", rep.Findings, CodeTemplateReadsDenied)
 	}
 }
+
+// TestLintControlWithoutService — D-213: under default: deny, an allow of
+// control on a domain's entities with no allow of any service of that domain
+// is named, with the service pattern to add; a service allow that can match
+// one of the domain's services, a profile without default: deny, a
+// wildcard domain and a non-control allow draw none.
+func TestLintControlWithoutService(t *testing.T) {
+	msg := func(d string) string {
+		return "this allow lets the agent control " + d + " entities, but no allow grants a " + d +
+			" service, so every service call on them is refused — add \"service:" + d + ".*\": [control]"
+	}
+	cases := []struct {
+		name, body string
+		want       []Finding
+	}{
+		{"P_lights", profileHead + "    allow:\n      \"*\": [read]\n      \"entity:light.*\": [control]\n      \"entity:cover.*\": [control]\n      \"service:automation.reload\": [control]\n",
+			[]Finding{
+				{CodeControlWithoutService, "p", `allow "entity:light.*" [control]`, 8, msg("light")},
+				{CodeControlWithoutService, "p", `allow "entity:cover.*" [control]`, 9, msg("cover")},
+			}},
+		{"one entity", profileHead + "    allow:\n      \"entity:light.sofa\": [control]\n",
+			[]Finding{{CodeControlWithoutService, "p", `allow "entity:light.sofa" [control]`, 7, msg("light")}}},
+		{"a domain's service", profileHead + "    allow:\n      \"entity:light.*\": [control]\n      \"service:light.turn_on\": [control]\n", nil},
+		{"every service", profileHead + "    allow:\n      \"entity:light.*\": [control]\n      \"service:*\": [control]\n", nil},
+		{"a wildcard domain in the service", profileHead + "    allow:\n      \"entity:light.*\": [control]\n      \"service:*.turn_on\": [control]\n", nil},
+		{"everything", profileHead + "    allow:\n      \"*\": [control]\n", nil},
+		{"write", profileHead + "    allow:\n      \"entity:light.*\": [write]\n      \"service:light.*\": [write]\n", nil},
+		{"another domain's service", profileHead + "    allow:\n      \"entity:light.*\": [control]\n      \"service:switch.*\": [control]\n",
+			[]Finding{{CodeControlWithoutService, "p", `allow "entity:light.*" [control]`, 7, msg("light")}}},
+		{"a service allow without control", profileHead + "    allow:\n      \"entity:light.*\": [control]\n      \"service:light.*\": [read]\n",
+			[]Finding{{CodeControlWithoutService, "p", `allow "entity:light.*" [control]`, 7, msg("light")}}},
+		{"no default: deny", "version: 1\nactive: p\nprofiles:\n  p:\n    allow:\n      \"entity:light.*\": [control]\n", nil},
+		{"a wildcard entity domain", profileHead + "    allow:\n      \"entity:*\": [control]\n", nil},
+		{"read only", profileHead + "    allow:\n      \"entity:light.*\": [read]\n", nil},
+	}
+	for _, c := range cases {
+		got := controlWithoutService(mustLoad(t, c.body))
+		if !reflect.DeepEqual(got, c.want) && (len(got) != 0 || len(c.want) != 0) {
+			t.Errorf("%s: findings %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	rep := Lint(mustLoad(t, cases[0].body), nil)
+	if !slices.ContainsFunc(rep.Findings, func(f Finding) bool { return f.Code == CodeControlWithoutService }) {
+		t.Errorf("Lint findings %+v, want %s", rep.Findings, CodeControlWithoutService)
+	}
+}

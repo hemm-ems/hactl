@@ -102,6 +102,7 @@ func TestLintFindings(t *testing.T) {
 	want := []string{
 		"implicit-allow-all@:0",
 		"redundant-allow@open:5",
+		"control-without-service@closed:9",
 		"unreachable@closed:9",
 	}
 	if !reflect.DeepEqual(got, want) {

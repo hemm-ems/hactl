@@ -232,3 +232,61 @@ func TestMCPCarriesTheTrailerBesideTheAnswer(t *testing.T) {
 		t.Errorf("the second item %v, want the trailer", trailer)
 	}
 }
+
+// TestTrailerCountsOnlyShownMasks (D-216): the trailer's masked count is the
+// masked parts the shown output holds. `ent ls` masks a denied attribute it
+// never prints — the trailer does not claim it; `ent show` prints it, and the
+// trailer counts it. A row hidden counts whatever the output shows.
+func TestTrailerCountsOnlyShownMasks(t *testing.T) {
+	f := buildContractFixture(t)
+	writePolicyFile(t, f.dir, `version: 1
+active: agent
+profiles:
+  agent:
+    deny:
+      "entity:binary_sensor.*": [read]
+      "entity:sensor.next_scheduled_backup/attr/device_class": [read]
+`)
+	out, _, err := runReads(t, f.dir, "ent", "ls")
+	if err != nil {
+		t.Fatalf("ent ls: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if last, want := lines[len(lines)-1], "hidden by policy: 1 (profile agent)"; strings.Contains(out, "<denied>") || last != want {
+		t.Errorf("ent ls: last line %q, want %q — the masked attribute is not shown\n%s", last, want, out)
+	}
+	out, _, err = runReads(t, f.dir, "ent", "show", "sensor.next_scheduled_backup", "--full")
+	if err != nil {
+		t.Fatalf("ent show: %v\n%s", err, out)
+	}
+	lines = strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if last, want := lines[len(lines)-1], "hidden by policy: 0, masked: 1 (profile agent)"; !strings.Contains(out, "<denied>") || last != want {
+		t.Errorf("ent show: last line %q, want %q\n%s", last, want, out)
+	}
+}
+
+// TestShownMasked (D-216) pins the count rule: a key whose owner the output
+// names counts; without any owner named, the `<denied>` values count, at
+// most the keys; no `<denied>`, nothing.
+func TestShownMasked(t *testing.T) {
+	keys := []string{"entity:person.anna/attr/latitude", "entity:person.anna/attr/longitude", "entity:lock.a/state"}
+	for _, c := range []struct {
+		shown string
+		want  int
+	}{
+		{"person.anna  latitude <denied>  longitude <denied>", 2},
+		{"lock.a <denied>\nperson.anna <denied> <denied>", 3},
+		{"Anna  <denied>", 1},
+		{"<denied> <denied> <denied> <denied>", 3},
+		{`{"state":"<denied>"}`, 1},
+		{"person.anna  home", 0},
+		{"", 0},
+	} {
+		if got := shownMasked(keys, []byte(c.shown)); got != c.want {
+			t.Errorf("shownMasked(%q) = %d, want %d", c.shown, got, c.want)
+		}
+	}
+	if got := shownMasked(nil, []byte("<denied>")); got != 0 {
+		t.Errorf("no keys: %d, want 0", got)
+	}
+}

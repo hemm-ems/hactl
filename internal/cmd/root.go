@@ -291,13 +291,13 @@ func markGeneratedScript(c *cobra.Command) {
 // --tokensmax and a chopped help screen is worse than a long one. Structured
 // output (structuredOutput) skips it for the same reason one step further on:
 // a capped document does not parse at all — see markStructuredOutput.
-func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
+func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) (shown []byte) {
 	if flagJSON {
 		if flagTokens {
 			fmt.Fprintf(os.Stderr, "[~%d tok]\n", estimateTokens(int64(len(data))))
 		}
 		_, _ = dst.Write(data)
-		return
+		return data
 	}
 	tokens := estimateTokens(int64(len(data)))
 	if flagTokens {
@@ -313,9 +313,10 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 		_, _ = dst.Write(data[:limit])
 		hint := truncationHint(cmdPath)
 		_, _ = fmt.Fprintf(dst, "\n\u2026output capped at %d tok; %s\n", maxTok, hint)
-	} else {
-		_, _ = dst.Write(data)
+		return data[:limit]
 	}
+	_, _ = dst.Write(data)
+	return data
 }
 
 // effectiveTokensMax is the cap applyTokenPolicy enforces, after --full.
@@ -450,6 +451,7 @@ func Execute() error {
 	// kept that promise. RunWithOutputContext, the path the MCP server and the
 	// integration tier take, has always flushed on both paths, so the CLI was
 	// the one of the two entry points that answered differently.
+	var shown []byte
 	if capBuf.Len() > 0 {
 		cmdPath := rootCmd.CommandPath()
 		if executed != nil {
@@ -457,10 +459,11 @@ func Execute() error {
 			// advice (rootCmd.CommandPath() is always just "hactl").
 			cmdPath = executed.CommandPath()
 		}
-		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
+		shown = applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
-	// What the reads hid and masked, once, after the answer (D-139).
-	writePolicyTrailer(os.Stdout, os.Stderr)
+	// What the reads hid and masked, once, after the answer (D-139),
+	// counting the masks the shown output holds (D-216).
+	writePolicyTrailer(os.Stdout, os.Stderr, shown)
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -554,10 +557,11 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	}
 
 	cmdPath := "hactl " + strings.Join(args[1:], " ")
-	applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
-	// What the reads hid and masked, once, after the answer (D-139); stderr
-	// is the caller's (mcpserver.WithStderr) or the process's.
-	writePolicyTrailer(w, mcpserver.Stderr(ctx))
+	shown := applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
+	// What the reads hid and masked, once, after the answer (D-139),
+	// counting the masks the shown output holds (D-216); stderr is the
+	// caller's (mcpserver.WithStderr) or the process's.
+	writePolicyTrailer(w, mcpserver.Stderr(ctx), shown)
 
 	if flagStats {
 		writeStats(w, int64(capBuf.Len()))

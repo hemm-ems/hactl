@@ -53,6 +53,10 @@ const (
 	// profile that denies reading anything (D-206). A template hactl cannot
 	// name the reads of then reads every state, also the denied ones.
 	CodeTemplateReadsDenied = "template-reads-denied"
+	// CodeControlWithoutService: under `default: deny`, an allow of control
+	// on a domain's entities while no allow of the profile grants a service
+	// of that domain (D-213) — every service call on them is refused.
+	CodeControlWithoutService = "control-without-service"
 )
 
 // Finding is one lint result.
@@ -230,6 +234,7 @@ func Lint(p *Policy, inv Inventory) LintReport {
 	rep.Findings = append(rep.Findings, l.findings...)
 	rep.Findings = append(rep.Findings, verbNotApplicable(p)...)
 	rep.Findings = append(rep.Findings, templateReadsDenied(p)...)
+	rep.Findings = append(rep.Findings, controlWithoutService(p)...)
 	sortFindings(rep.Findings)
 	rep.Unchecked = append(rep.Unchecked, l.sortedUnchecked()...)
 	return rep
@@ -401,6 +406,67 @@ func templateReadsDenied(p *Policy) []Finding {
 		}
 	}
 	return out
+}
+
+// controlWithoutService is CodeControlWithoutService (D-213): in a profile
+// with `default: deny`, each allow listing control on `entity:<domain>.<…>`
+// with a literal domain, when no allow of the profile listing control can
+// match a service of that domain.
+func controlWithoutService(p *Policy) []Finding {
+	var out []Finding
+	for _, pr := range p.profiles {
+		if pr.deflt != Deny {
+			continue
+		}
+		for _, r := range pr.rules {
+			domain, ok := entityControlDomain(r)
+			if !ok || grantsServiceOf(pr, domain) {
+				continue
+			}
+			out = append(out, Finding{Code: CodeControlWithoutService, Profile: pr.name, Rule: r.Text(), Line: r.Line,
+				Message: "this allow lets the agent control " + domain + " entities, but no allow grants a " + domain +
+					" service, so every service call on them is refused — add \"service:" + domain + ".*\": [control]"})
+		}
+	}
+	return out
+}
+
+// entityControlDomain is the literal domain of an allow listing control on
+// `entity:<domain>.<…>` as a whole; ok false for any other rule.
+func entityControlDomain(r Rule) (string, bool) {
+	if r.Effect != Allow || r.addr.any || r.addr.kind != KindEntity || len(r.addr.sub) > 0 ||
+		len(r.addr.id) != 1 || !slices.Contains(r.Verbs, Control) {
+		return "", false
+	}
+	domain, _, found := strings.Cut(r.addr.id[0], ".")
+	if !found || domain == "" || glob.HasWildcard(domain) {
+		return "", false
+	}
+	return domain, true
+}
+
+// grantsServiceOf reports whether an allow of pr listing control can match
+// some service of domain: `*`, a service pattern whose domain part matches
+// it or holds a wildcard, or a dotless service pattern with a wildcard.
+func grantsServiceOf(pr *profile, domain string) bool {
+	for _, r := range pr.rules {
+		if r.Effect != Allow || !slices.Contains(r.Verbs, Control) {
+			continue
+		}
+		if r.addr.any {
+			return true
+		}
+		if r.addr.kind != KindService || len(r.addr.id) != 1 {
+			continue
+		}
+		id := r.addr.id[0]
+		before, _, dotted := strings.Cut(id, ".")
+		switch {
+		case !dotted && glob.HasWildcard(id), dotted && glob.HasWildcard(before), dotted && glob.Match(domain, before):
+			return true
+		}
+	}
+	return false
 }
 
 // createOnly reports whether r's only verb is create (D-171).

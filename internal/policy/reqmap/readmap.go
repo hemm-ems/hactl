@@ -67,7 +67,7 @@ const (
 	// entity:<e>/history`, each row masked like a state.
 	FilterHistory FilterKind = "history"
 	// FilterLogbook — GET /api/logbook: each row by `read entity:<e>` (D-142);
-	// a row without an entity is hidden (D-141).
+	// a row without an entity is shown (D-214).
 	FilterLogbook FilterKind = "logbook"
 	// FilterServices — GET /api/services: each service by `read service:<d>.<s>`.
 	FilterServices FilterKind = "services"

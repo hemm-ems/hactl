@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -60,6 +61,20 @@ func (s *Session) ReadCounts() (hidden, masked, refused int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reads.hidden, s.reads.masked, s.reads.refused
+}
+
+// MaskedKeys returns the address of every part this invocation's reads
+// masked so far, sorted — for the trailer to count only the parts the shown
+// output masks (D-216).
+func (s *Session) MaskedKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.reads.maskedKeys))
+	for k := range s.reads.maskedKeys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // countKeys adds what one answer hid and masked to the invocation's counts:
@@ -933,12 +948,20 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	}
 	// A logbook row is an event, not a thing: each hidden row counts
 	// (D-139 as refined), so it is not recorded by its entity's address.
+	// A row without an entity — Home Assistant started, stopped — names
+	// nothing a profile can deny: it is shown, its context decided as
+	// every row's (D-214).
 	e, ok := stringField(o, "entity_id")
-	if !ok || !f.s.readable(policy.KindEntity, e, "") {
+	if raw, has := o["entity_id"]; has && !ok && !isNull(raw) {
+		return nil, false, nil // an entity_id hactl cannot read: unaddressable (D-141)
+	}
+	if ok && !f.s.readable(policy.KindEntity, e, "") {
 		return raw, false, nil
 	}
 	before := f.masked
-	f.maskState(e, o)
+	if ok {
+		f.maskState(e, o)
+	}
 	// The entity that caused the row (an automation, a script, a person) is
 	// the row's context: its id, name, state and message are that entity's,
 	// masked when the profile may not read it (D-196).

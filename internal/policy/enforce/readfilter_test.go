@@ -435,14 +435,14 @@ profiles:
 		{states, `[{"entity_id":"lock.a","state":"x"},{"entity_id":"sensor.t","state":"1","attributes":{"secret":1}}]`},
 		{states, `[{"entity_id":"lock.a","state":"x"},{"entity_id":"sensor.t","state":"1","attributes":{"secret":1}}]`},
 		{reg, `[{"entity_id":"lock.a"},{"entity_id":"sensor.t"}]`},
-		{logbook, `[{"message":"started"},{"message":"stopped"}]`},
+		{logbook, `[{"entity_id":"lock.a","message":"locked"},{"entity_id":"lock.a","message":"unlocked"}]`},
 	} {
 		if _, err := s.Filter(ctx, c.req, []byte(c.answer)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if hidden, masked, _ := s.ReadCounts(); hidden != 3 || masked != 1 {
-		t.Errorf("hidden %d masked %d, want 3 (lock.a once, two rows without an entity) and 1", hidden, masked)
+		t.Errorf("hidden %d masked %d, want 3 (lock.a once, its two logbook rows) and 1", hidden, masked)
 	}
 }
 
@@ -505,5 +505,36 @@ profiles:
 		if hidden, _, _ := s.ReadCounts(); hidden != c.hidden {
 			t.Errorf("%s: hidden %d, want %d (each hidden row counts)", c.name, hidden, c.hidden)
 		}
+	}
+}
+
+// TestLogbookRowWithoutEntityIsShown (D-214): a logbook row without an
+// entity — Home Assistant started, stopped — names nothing a profile can
+// deny and is shown, counted nowhere; its context is still masked when the
+// profile may not read the context entity, and a row whose entity_id is not
+// a string stays hidden (unaddressable, D-141).
+func TestLogbookRowWithoutEntityIsShown(t *testing.T) {
+	s, _ := newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", nil)
+	logbook := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/logbook/x"}
+	answer := `[{"name":"Home Assistant","message":"started","domain":"homeassistant"},` +
+		`{"name":"Home Assistant","message":"stopped","entity_id":null},` +
+		`{"message":"fired","context_entity_id":"lock.a","context_name":"Front door"},` +
+		`{"message":"odd","entity_id":7}]`
+	out, err := s.Filter(context.Background(), logbook, []byte(answer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0]["message"] != "started" || rows[1]["message"] != "stopped" {
+		t.Fatalf("rows without an entity were not shown: %s", out)
+	}
+	if rows[2]["context_entity_id"] != "<denied>" || rows[2]["context_name"] != "<denied>" {
+		t.Errorf("the context of a row without an entity was not masked: %s", out)
+	}
+	if hidden, _, _ := s.ReadCounts(); hidden != 1 {
+		t.Errorf("hidden %d, want 1 (the row whose entity_id is not a string)", hidden)
 	}
 }

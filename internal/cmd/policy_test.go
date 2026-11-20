@@ -380,6 +380,8 @@ profiles:
 		got = append(got, f.Code+"@"+f.Rule)
 	}
 	want := []string{
+		// The profile allows control of lights but no light service (D-213).
+		`control-without-service@allow "entity:light.*" [control]`,
 		`no-match@deny "entity:lokc.*" [write]`,
 		`no-match@deny "automation:morning" [delete]`,
 	}

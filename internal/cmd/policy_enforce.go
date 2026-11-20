@@ -53,11 +53,22 @@ var (
 	// policyRecorder, when a test sets it, sees every check a session makes
 	// (R-12's coverage harness). Production code never sets it.
 	policyRecorder enforce.Recorder
-	// policyTrailer is the ended invocation's `hidden by policy` line (D-139),
-	// "" when its reads hid and masked nothing or no profile was in effect.
-	// The entry points print it once, after the command's output.
-	policyTrailer string
+	// policyTrailer is what the ended invocation's reads hid and masked, for
+	// its `hidden by policy` line (D-139); the zero value when no profile
+	// was in effect or the invocation was refused. The entry points print
+	// the line once, after the command's output, counting the masks that
+	// output shows (D-216).
+	policyTrailer trailerState
 )
+
+// trailerState is an ended invocation's read counts: the rows its answers
+// dropped, and the address of every part they masked.
+type trailerState struct {
+	set     bool
+	hidden  int
+	masked  []string
+	profile string
+}
 
 // policyExemptPaths are the commands that still run on a broken policy.yaml
 // (D-60 as refined): `policy show` and `policy lint` report the problems; the
@@ -125,7 +136,7 @@ func policyExempt(cmd *cobra.Command) bool {
 // nothing: each tool call it serves runs this pre-run again (D-60, D-72).
 func startPolicySession(cmd *cobra.Command, args []string) error {
 	endPolicySession()
-	policyTrailer = ""
+	policyTrailer = trailerState{}
 	// `policy lint` without a terminal reads its inventory through the
 	// active profile's read filter (D-173): it stays exempt from refusal
 	// (D-60), but while a profile is in effect it runs under the session.
@@ -238,7 +249,7 @@ func finishPolicySession(err error) error {
 			err = r
 		}
 	}
-	hidden, masked, refused := sess.ReadCounts()
+	hidden, _, refused := sess.ReadCounts()
 	if err == nil {
 		hidden += refused
 	}
@@ -246,9 +257,43 @@ func finishPolicySession(err error) error {
 	// with its hint (D-118), a refused read names what it refused. The
 	// trailer describes an answer that was given (D-139).
 	if policyErrorClass(err) == "" {
-		policyTrailer = readTrailer(hidden, masked, sess.Policy().Active())
+		policyTrailer = trailerState{set: true, hidden: hidden, masked: sess.MaskedKeys(), profile: sess.Policy().Active()}
 	}
 	return err
+}
+
+// shownMasked is how many of the masked parts the shown output masks
+// (D-216): a part counts when the output holds a `<denied>` value and names
+// the part's owner (the id between the address's kind and its first `/`);
+// when the output holds `<denied>` but names none of the owners, as many as
+// it holds `<denied>` values, at most the parts masked. Output without one
+// masks none.
+func shownMasked(keys []string, shown []byte) int {
+	occ := bytes.Count(shown, []byte(enforce.Denied)) + bytes.Count(shown, []byte(`\u003c`+strings.Trim(enforce.Denied, "<>")+`\u003e`))
+	if occ == 0 || len(keys) == 0 {
+		return 0
+	}
+	n := 0
+	for _, k := range keys {
+		_, rest, _ := strings.Cut(k, ":")
+		owner, _, _ := strings.Cut(rest, "/")
+		if owner != "" && bytes.Contains(shown, []byte(owner)) {
+			n++
+		}
+	}
+	if n == 0 {
+		return min(occ, len(keys))
+	}
+	return n
+}
+
+// trailerFor is st's `hidden by policy` line for the shown output, "" when
+// it hid and shows masked nothing.
+func trailerFor(st trailerState, shown []byte) string {
+	if !st.set {
+		return ""
+	}
+	return readTrailer(st.hidden, shownMasked(st.masked, shown), st.profile)
 }
 
 // renderReadRefusal makes a refused read the invocation's whole answer, as a
@@ -284,9 +329,9 @@ func readTrailer(hidden, masked int, profile string) string {
 // writePolicyTrailer prints the ended invocation's trailer once (D-139): the
 // last stdout line in prose; under --json — and for any document the command
 // marked as one — on stderr, so the document keeps its shape.
-func writePolicyTrailer(stdout, stderr io.Writer) {
-	line := policyTrailer
-	policyTrailer = ""
+func writePolicyTrailer(stdout, stderr io.Writer, shown []byte) {
+	line := trailerFor(policyTrailer, shown)
+	policyTrailer = trailerState{}
 	if line == "" {
 		return
 	}

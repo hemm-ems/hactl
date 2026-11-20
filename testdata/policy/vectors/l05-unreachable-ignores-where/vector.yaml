@@ -11,6 +11,12 @@
     },
     "findings": [
       {
+        "code": "control-without-service",
+        "profile": "agent",
+        "rule": "allow \"entity:light.*\" [control] where area=wohnzimmer",
+        "line": 7
+      },
+      {
         "code": "unreachable",
         "profile": "agent",
         "rule": "allow \"entity:light.*\" [control] where area=wohnzimmer",
