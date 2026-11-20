@@ -560,7 +560,7 @@ var readVectors = []vector{
 	{name: "ingress session is transport", req: ws("supervisor/api", map[string]any{"endpoint": "/ingress/session", "method": "post"}), disp: reqmap.Exempt, row: "ws supervisor/api POST /ingress/session"},
 
 	{name: "trace list of a domain", req: ws("trace/list", map[string]any{"domain": "automation"}), disp: reqmap.Read, row: "ws trace/list", filter: reqmap.FilterTraces},
-	{name: "trace get", req: ws("trace/get", map[string]any{"domain": "script", "item_id": "morning", "run_id": "r"}), disp: reqmap.Read, row: "ws trace/get", checks: []string{"read script:morning/trace"}},
+	{name: "trace get", req: ws("trace/get", map[string]any{"domain": "script", "item_id": "morning", "run_id": "r"}), disp: reqmap.Read, row: "ws trace/get", checks: []string{"read script:morning/trace"}, filter: reqmap.FilterTrace},
 	{name: "validate_config is read system:check_config", req: ws("validate_config", map[string]any{"triggers": []any{}}), disp: reqmap.Read, row: "ws validate_config", checks: []string{"read system:check_config"}},
 	{name: "system log", req: ws("system_log/list", nil), disp: reqmap.Read, row: "ws system_log/list", checks: []string{"read system:logs"}},
 	{name: "repairs", req: ws("repairs/list_issues", nil), disp: reqmap.Read, row: "ws repairs/list_issues", checks: []string{"read system:logs"}},

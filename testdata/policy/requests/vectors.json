@@ -1308,7 +1308,8 @@
       "verb": "read",
       "resource": "automation:prod_heating/trace"
      }
-    ]
+    ],
+    "filter": "trace"
    },
    "facts_ref": "house"
   },

@@ -398,6 +398,8 @@ func (f *answerFilter) apply(resp []byte) ([]byte, error) {
 		return f.object(resp, f.dashboardConfig)
 	case reqmap.FilterTraces:
 		return f.list(resp, "", f.traceRow)
+	case reqmap.FilterTrace:
+		return f.object(resp, f.traceRun)
 	case reqmap.FilterStatisticIDs:
 		return f.list(resp, "", f.statisticRow)
 	case reqmap.FilterStatistics:
@@ -416,13 +418,7 @@ func (f *answerFilter) apply(resp []byte) ([]byte, error) {
 		return f.object(resp, f.coreConfig)
 	case reqmap.FilterFiles:
 		return f.object(resp, func(o map[string]json.RawMessage) (bool, error) {
-			return true, f.listField(o, "files", func(raw json.RawMessage) (json.RawMessage, bool, error) {
-				var p string
-				if err := json.Unmarshal(raw, &p); err != nil {
-					return nil, false, fmt.Errorf("a file is not a string: %w", err)
-				}
-				return raw, f.keep(policy.KindFile, p, ""), nil
-			})
+			return true, f.listField(o, "files", f.fileRow)
 		})
 	case reqmap.FilterConfigBlock:
 		return f.object(resp, f.configBlock)
@@ -653,6 +649,154 @@ func (f *answerFilter) stateRow(raw json.RawMessage) (json.RawMessage, bool, err
 	return b, true, err
 }
 
+// logbookContextFields are a logbook row's fields that describe the entity
+// in its context (context_entity_id).
+var logbookContextFields = []string{"context_entity_id", "context_entity_id_name", "context_name", "context_state", "context_message"}
+
+// entityShaped reports whether s is an entity id hactl can address — not
+// `all`, `none` or another word.
+func entityShaped(s string) bool {
+	if !strings.Contains(s, ".") {
+		return false
+	}
+	_, err := policy.ParseResource("entity:" + s)
+	return err == nil
+}
+
+// fileRow keeps a file listing's path the profile may read.
+func (f *answerFilter) fileRow(raw json.RawMessage) (json.RawMessage, bool, error) {
+	var p string
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, false, fmt.Errorf("a file is not a string: %w", err)
+	}
+	return raw, f.keep(policy.KindFile, p, ""), nil
+}
+
+// traceRun masks one trace/get answer (D-196): each of its values is walked
+// by maskEntities.
+func (f *answerFilter) traceRun(o map[string]json.RawMessage) (bool, error) {
+	for k, v := range o {
+		if nv, changed := f.maskEntities(v); changed {
+			o[k] = nv
+			f.dirty = true
+		}
+	}
+	return true, nil
+}
+
+// maskEntities masks, anywhere in a trace document, what is an entity's
+// that the profile may not read (D-196): a state object (`entity_id` with
+// `state`) of such an entity reads `<denied>` whole, one of an entity it may
+// read in part is masked as in a listing (maskState), and an `entity_id`
+// value — a string or a list — naming such an entity reads `<denied>`. A
+// value a template computed from a state is not the entity's by any key and
+// is not found (D-196 names the limit).
+func (f *answerFilter) maskEntities(raw json.RawMessage) (json.RawMessage, bool) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 {
+		return raw, false
+	}
+	switch t[0] {
+	case '{':
+		var o map[string]json.RawMessage
+		if json.Unmarshal(t, &o) != nil {
+			return raw, false
+		}
+		if e, ok := stringField(o, "entity_id"); ok && entityShaped(e) {
+			if _, isState := o["state"]; isState {
+				return f.maskStateObject(raw, e, o)
+			}
+		}
+		return f.maskMembers(raw, o)
+	case '[':
+		var list []json.RawMessage
+		if json.Unmarshal(t, &list) != nil {
+			return raw, false
+		}
+		return f.maskItems(raw, list, f.maskEntities)
+	}
+	return raw, false
+}
+
+// maskStateObject masks a state object of entity e found in a trace.
+func (f *answerFilter) maskStateObject(raw json.RawMessage, e string, o map[string]json.RawMessage) (json.RawMessage, bool) {
+	if !f.s.readable(policy.KindEntity, e, "") {
+		f.masked++
+		f.maskedKeys = append(f.maskedKeys, "entity:"+e)
+		return deniedJSON, true
+	}
+	before := f.masked
+	f.maskState(e, o)
+	if f.masked == before {
+		return raw, false
+	}
+	return remarshal(o)
+}
+
+// maskMembers walks each member of a trace object; an `entity_id` member is
+// an id or a list of ids.
+func (f *answerFilter) maskMembers(raw json.RawMessage, o map[string]json.RawMessage) (json.RawMessage, bool) {
+	changed := false
+	for k, v := range o {
+		walk := f.maskEntities
+		if k == "entity_id" {
+			walk = f.maskEntityIDs
+		}
+		if nv, ch := walk(v); ch {
+			o[k] = nv
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	return remarshal(o)
+}
+
+// maskItems walks each item of a trace list with walk.
+func (f *answerFilter) maskItems(raw json.RawMessage, list []json.RawMessage, walk func(json.RawMessage) (json.RawMessage, bool)) (json.RawMessage, bool) {
+	changed := false
+	for i, v := range list {
+		if nv, ch := walk(v); ch {
+			list[i] = nv
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	return remarshal(list)
+}
+
+// remarshal encodes a masked trace part; one that cannot be encoded is
+// masked whole.
+func remarshal(v any) (json.RawMessage, bool) {
+	b, err := marshal(v)
+	if err != nil {
+		return deniedJSON, true
+	}
+	return b, true
+}
+
+// maskEntityIDs masks an `entity_id` value: each entity id in it the profile
+// may not read reads `<denied>`.
+func (f *answerFilter) maskEntityIDs(raw json.RawMessage) (json.RawMessage, bool) {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		if entityShaped(one) && !f.s.readable(policy.KindEntity, one, "") {
+			f.masked++
+			f.maskedKeys = append(f.maskedKeys, "entity:"+one)
+			return deniedJSON, true
+		}
+		return raw, false
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) != nil {
+		return f.maskEntities(raw)
+	}
+	return f.maskItems(raw, list, f.maskEntityIDs)
+}
+
 // registryFields are the registry fields the grammar addresses (closed set,
 // internal/policy KindSpecs) that a read can mask; `entity_id` is the row's own
 // address and is decided with the row.
@@ -794,6 +938,16 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	}
 	before := f.masked
 	f.maskState(e, o)
+	// The entity that caused the row (an automation, a script, a person) is
+	// the row's context: its id, name, state and message are that entity's,
+	// masked when the profile may not read it (D-196).
+	if c, ok := stringField(o, "context_entity_id"); ok && entityShaped(c) && !f.s.readable(policy.KindEntity, c, "") {
+		for _, k := range logbookContextFields {
+			if _, has := o[k]; has {
+				f.mask(o, k, deniedJSON, "entity:"+c)
+			}
+		}
+	}
 	if f.masked == before {
 		return raw, true, nil
 	}
