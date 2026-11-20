@@ -14,6 +14,7 @@ package companiontest
 // task passes, each negative twin is refused.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -73,6 +74,23 @@ func h3Setup(t *testing.T) {
 		"touch /config/secrets.yaml && grep -q h3_pw /config/secrets.yaml || printf '\\nh3_pw: "+h3SecretValue+"\\n' >> /config/secrets.yaml; cat /config/secrets.yaml")
 	out, err := cmd.CombinedOutput()
 	t.Logf("secrets.yaml: %v %s", err, huntLine(string(out), 200))
+}
+
+// h3DropAutomation removes an automation from automations.yaml by text and
+// reloads: Home Assistant's config editor answers 500 for every automation
+// while the file holds a `!secret` tag, so the editor cannot delete it.
+func h3DropAutomation(t *testing.T, id string) {
+	t.Helper()
+	script := "awk -v id='- id: " + id + "' '$0==id{skip=1;next} skip&&/^- /{skip=0} !skip' /config/automations.yaml > /tmp/a.yaml && cat /tmp/a.yaml > /config/automations.yaml"
+	out, err := exec.CommandContext(context.Background(), "docker", "exec", "hactl-companion-test-ha", "sh", "-c", script).CombinedOutput() //nolint:gosec // G204: fixed container; id is a test constant
+	if err != nil {
+		t.Errorf("drop %s from automations.yaml: %v %s", id, err, out)
+		return
+	}
+	huntSvc(t, "automation", "reload", map[string]any{})
+	if code, _ := huntHTTP(t, http.MethodGet, "/api/config/automation/config/pg_h3_none", nil); code == http.StatusInternalServerError {
+		t.Errorf("after dropping %s the automation editor still answers 500", id)
+	}
 }
 
 func h3Changes(t *testing.T, dir string) string {
@@ -235,6 +253,9 @@ func TestE2EPolicyHunt3ControlRoutes(t *testing.T) {
 			body += "actions:\n" + k.actions
 		}
 		pe, ce, rep := h3Auto(t, k.dir, tmp, k.id, body)
+		if ce == 0 && strings.Contains(body, "!secret") {
+			t.Cleanup(func() { h3DropAutomation(t, k.id) })
+		}
 		if ce == 0 {
 			out, _ := exec.CommandContext(t.Context(), "docker", "exec", "hactl-companion-test-ha", "sh", "-c", "grep -n -A12 'id: "+k.id+"' /config/automations.yaml | head -20").CombinedOutput() //nolint:gosec // G204: fixed container; k.id is a test constant
 			t.Logf("automations.yaml for %s:\n%s", k.id, out)
@@ -369,9 +390,12 @@ func TestE2EPolicyHunt3OverRefusal(t *testing.T) {
 	} {
 		dir := policyE2EDir(t, pgE2EPolicy(prof.body))
 		for _, k := range ordinary {
-			if out, c := auto(dir, k.id, k.body); c != 0 {
+			out, c := auto(dir, k.id, k.body)
+			if c != 0 {
 				t.Errorf("over-refusal: %s %s refused (exit %d)\n      %s", prof.name, k.id, c, huntLine(out, 700))
+				continue
 			}
+			t.Logf("allowed %s %s: %s", prof.name, k.id, huntLine(out, 160))
 		}
 		if o, e, c := runPolicyE2E(t, dir, nil, "tpl", "eval", "{{ now().hour }}"); c != 0 {
 			t.Errorf("over-refusal: %s tpl eval now().hour: exit %d %s", prof.name, c, huntLine(o+" // "+e, 500))
