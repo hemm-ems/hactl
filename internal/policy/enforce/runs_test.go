@@ -146,6 +146,27 @@ func TestRunChecksExpandStoredConfig(t *testing.T) {
 	}
 }
 
+// TestRunChecksSkipAnAlreadyRefusedCall (D-207): a start its own checks
+// already refuse is refused by that rule — its stored config is not read, so
+// no companion is needed to name it.
+func TestRunChecksSkipAnAlreadyRefusedCall(t *testing.T) {
+	const pol = runsPolicy + "      \"script:allowed/run\": [control]\n"
+	f := runsFetcher()
+	err := runCall(t, pol, f.fakeFetcher, "script", "turn_on", `{"entity_id":"script.allowed"}`)
+	if !deniedWith(err, "script:allowed/run", "") {
+		t.Errorf("a denied script run: %v, want it refused by its run rule", err)
+	}
+	if strings.Contains(refusalText(err), enforce.RuleStoredConfigUnreadable) {
+		t.Errorf("a denied script run was also refused as unreadable:\n%s", refusalText(err))
+	}
+	if err := runCall(t, pol, f, "script", "turn_on", `{"entity_id":"script.allowed"}`); !deniedWith(err, "script:allowed/run", "") {
+		t.Errorf("with a readable config: %v", err)
+	}
+	if slices.ContainsFunc(f.asked, func(a string) bool { return strings.HasPrefix(a, "stored ") }) {
+		t.Errorf("a refused start read stored configs: %q", f.asked)
+	}
+}
+
 // TestRunChecksCycleGuard (D-207): scripts that start each other are expanded
 // once each, and what they do is still checked.
 func TestRunChecksCycleGuard(t *testing.T) {

@@ -355,19 +355,26 @@ profiles:
 		lockTarget = "locked"
 	}
 
-	// R-1: homeassistant.* is not one domain's entity service, so the whole
-	// area counts — the lock too, although homeassistant.toggle never
-	// switches a lock.
-	t.Run("area/homeassistant.toggle", func(t *testing.T) {
-		refused(t, lockDir, pgSvc("homeassistant.toggle", fmt.Sprintf(`{"area_id":%q}`, area)), lockDenied)
+	// R-1 as D-211 narrows it: Home Assistant calls <domain>.toggle per domain of
+	// the target and skips a domain without it — a lock keeps its state
+	// (TestOracleHomeassistantGroupAndAll) — so the area's lock is not
+	// reached, and a light in a group is.
+	t.Run("area/homeassistant.toggle skips the lock", func(t *testing.T) {
+		assertPolicyAllowedPreview(t, lockDir, pgSvc("homeassistant.toggle", fmt.Sprintf(`{"area_id":%q}`, area))...)
+	})
+	t.Run("group/homeassistant.toggle", func(t *testing.T) {
+		refused(t, lightDir, pgSvc("homeassistant.toggle", pgEntityData("group.pg_policy_lights")), lightDeniedEntry)
 	})
 	// The light domain's own service counts only the area's lights.
 	t.Run("area/light.toggle counts lights only", func(t *testing.T) {
 		assertPolicyAllowedPreview(t, lockDir, pgSvc("light.toggle", fmt.Sprintf(`{"area_id":%q}`, area))...)
 	})
 	// `all` on a non-entity service means every live entity of every domain.
-	t.Run("entity_id all/homeassistant.toggle", func(t *testing.T) {
-		refused(t, lockDir, pgSvc("homeassistant.toggle", `{"entity_id":"all"}`), lockDenied)
+	// homeassistant.turn_off (it starts no script, D-207) over `all`: every
+	// live entity of a domain with turn_off — a superset, Home Assistant
+	// itself refuses `all` (400).
+	t.Run("entity_id all/homeassistant.turn_off", func(t *testing.T) {
+		refused(t, lightDir, pgSvc("homeassistant.turn_off", `{"entity_id":"all"}`), lightDeniedEntry)
 	})
 	// An entity named in --data, outside the target: a mapping key.
 	t.Run("data key/scene.apply", func(t *testing.T) {
@@ -435,9 +442,20 @@ profiles:
 		})
 	}
 
+	// An allowed start is checked by what its stored config does (D-207),
+	// which this tier cannot read — no companion — so it is refused,
+	// naming the run; under `indirect: unchecked` it runs. The companion
+	// tier runs an allowed script under a deny
+	// (TestE2EPolicyAcceptance20261120Runs).
 	beforeAllowed := lastTriggered(allowedEntity)
-	assertPolicyAllowedPreview(t, runDir, "script", "run", "pg_policy_allowed")
-	if out, err := runHactlDirErr(t, runDir, "script", "run", "pg_policy_allowed", "--confirm"); err != nil {
+	out, err := runHactlDirErr(t, runDir, "script", "run", "pg_policy_allowed")
+	if pgExitCode(err) != 1 || !strings.Contains(out, "fail-closed: stored config unreadable (run of script.pg_policy_allowed: ") {
+		t.Errorf("allowed script run without a companion: exit %d, want refused as unreadable, naming the run\n%s", pgExitCode(err), out)
+	}
+	uncheckedDir := pgInstanceDir(t, inst.URL(), inst.Token(),
+		strings.Replace(runPolicy, "    deny:\n", "    indirect: unchecked\n    deny:\n", 1))
+	assertPolicyAllowedPreview(t, uncheckedDir, "script", "run", "pg_policy_allowed")
+	if out, err := runHactlDirErr(t, uncheckedDir, "script", "run", "pg_policy_allowed", "--confirm"); err != nil {
 		t.Fatalf("allowed script run --confirm refused: %v\n%s", err, out)
 	}
 	deadline := time.Now().Add(5 * time.Second)

@@ -537,6 +537,27 @@ func TestLogbookRowWithoutEntityIsShown(t *testing.T) {
 	if hidden, _, _ := s.ReadCounts(); hidden != 1 {
 		t.Errorf("hidden %d, want 1 (the row whose entity_id is not a string)", hidden)
 	}
+
+	// A profile that reads nothing shows none of them (the W-6 read sweep).
+	for _, pol := range []string{
+		"version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n",
+		"version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:light.*\": [control]\n",
+		"version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"*\": [read]\n",
+	} {
+		ns, _ := newSession(t, pol, nil)
+		out, err := ns.Filter(context.Background(), logbook, []byte(answer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != "[]" {
+			t.Errorf("a profile reading nothing showed %s\n%s", out, pol)
+		}
+	}
+	// One read allow anywhere is enough: the rows name no entity.
+	s, _ = newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:light.*\": [read]\n", nil)
+	if out, err := s.Filter(context.Background(), logbook, []byte(answer)); err != nil || !strings.Contains(string(out), "started") {
+		t.Errorf("a lights-only reader: %s %v, want the started row", out, err)
+	}
 }
 
 // TestFilterTraceMasksValuesWhenConfigReadsDenied (D-208): the acceptance

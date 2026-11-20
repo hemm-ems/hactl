@@ -899,12 +899,10 @@ profiles:
 	jr := pgReadsOK(t, bin, dir, "changes", "--since", "1h", "--json")
 	rows := pgReadsJSONArray(t, jr)
 	for _, row := range rows {
-		id, _ := row["entity_id"].(string)
-		switch id {
-		case ib:
+		// A row without an entity (Home Assistant started) names nothing a
+		// deny addresses: it is shown (D-214).
+		if id, _ := row["entity_id"].(string); id == ib {
 			t.Errorf("`changes --json` still holds a row for %s: %v", ib, row)
-		case "":
-			t.Errorf("`changes --json` holds a row without an entity — a row hactl cannot address is hidden (D-141): %v", row)
 		}
 	}
 	if pgLogbookCount(raw, "lock.pg_policy_lock") > 0 && pgLogbookCount(rows, "lock.pg_policy_lock") == 0 {

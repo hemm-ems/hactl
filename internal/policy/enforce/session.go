@@ -380,9 +380,11 @@ func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Resul
 			res.Checks = reqmap.MergeChecks(res.Checks, more)
 		}
 	}
-	if res.Disposition == reqmap.Write && len(res.Runs) > 0 {
+	if res.Disposition == reqmap.Write && len(res.Runs) > 0 && !s.anyDenied(res.Checks) {
 		// What the scripts and automations it starts do is part of the
-		// call (D-207).
+		// call (D-207). A call its own checks already refuse is not
+		// expanded: the refusal stands and names that rule, whatever the
+		// stored configs hold or whether they can be read.
 		more, denials := s.runChecks(ctx, res.Runs)
 		if len(denials) > 0 {
 			d := denials[0]
@@ -403,6 +405,16 @@ func (s *Session) classify(ctx context.Context, req reqmap.Request) reqmap.Resul
 	}
 	res.Checks = reqmap.MergeChecks(res.Checks, more)
 	return res
+}
+
+// anyDenied reports whether the policy refuses one of checks.
+func (s *Session) anyDenied(checks []reqmap.Check) bool {
+	for _, c := range checks {
+		if !s.decide(c).Allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // factsFor renders the cache with what the policy itself contributes. The

@@ -783,6 +783,23 @@ func deniesSomeRead(pol *policy.Policy) bool {
 	return false
 }
 
+// readsNothing reports whether the profile in effect grants no read at all:
+// a deny on `*` listing read, or `default: deny` with no allow listing read.
+func readsNothing(pol *policy.Policy) bool {
+	if pol == nil || !pol.InEffect() {
+		return false
+	}
+	rules := pol.Rules()
+	if slices.ContainsFunc(rules, func(r policy.Rule) bool {
+		return r.Effect == policy.Deny && r.Pattern == "*" && slices.Contains(r.Verbs, policy.Read)
+	}) {
+		return true
+	}
+	return pol.Default() == policy.Deny && !slices.ContainsFunc(rules, func(r policy.Rule) bool {
+		return r.Effect == policy.Allow && slices.Contains(r.Verbs, policy.Read)
+	})
+}
+
 // maskTraceValues replaces every leaf value of each trace step's
 // `changed_variables` and `result` by <denied>, keys, lists and nesting kept
 // (D-208); the trace counts once as masked, when anything was replaced.
@@ -1120,11 +1137,14 @@ func (f *answerFilter) logbookRow(raw json.RawMessage) (json.RawMessage, bool, e
 	// A logbook row is an event, not a thing: each hidden row counts
 	// (D-139 as refined), so it is not recorded by its entity's address.
 	// A row without an entity — Home Assistant started, stopped — names
-	// nothing a profile can deny: it is shown, its context decided as
-	// every row's (D-214).
+	// nothing a deny can address: it is shown, its context decided as
+	// every row's, unless the profile reads nothing at all (D-214).
 	e, ok := stringField(o, "entity_id")
 	if v, has := o["entity_id"]; has && !ok && !isNull(v) {
 		return nil, false, nil // an entity_id hactl cannot read: unaddressable (D-141)
+	}
+	if !ok && readsNothing(f.s.pol) {
+		return raw, false, nil
 	}
 	if ok && !f.s.readable(policy.KindEntity, e, "") {
 		return raw, false, nil
