@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:light.*": [control]
+      "entity:switch.*": [control]
+    where:
+      "entity:light.*": {}
+      "entity:switch.*": { area: [] }

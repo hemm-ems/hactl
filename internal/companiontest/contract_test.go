@@ -115,16 +115,24 @@ func TestClientEndpointsInSpec(t *testing.T) {
 }
 
 // TestSpecPathCountMatchesClient derives the expected path count from the client
-// endpoint list rather than a hardcoded number, so drift in either direction
-// (a spec path the client doesn't use, or a client path missing from the spec)
-// is caught after `make sync-spec`.
+// endpoint list plus the spec paths hactl deliberately never calls
+// (companion.NeverCalledSpecPaths, D-81) rather than a hardcoded number, so
+// drift in either direction (a spec path the client neither uses nor lists as
+// never called, or a client path missing from the spec) is caught after
+// `make sync-spec`.
 func TestSpecPathCountMatchesClient(t *testing.T) {
 	spec := loadSpec(t)
 	uniquePaths := map[string]bool{}
 	for _, ep := range clientEndpoints {
 		uniquePaths[ep.path] = true
 	}
+	for path := range companion.NeverCalledSpecPaths {
+		if uniquePaths[path] {
+			t.Errorf("spec path %s is called by the client and listed as never called", path)
+		}
+		uniquePaths[path] = true
+	}
 	if got, want := spec.Paths.Len(), len(uniquePaths); got != want {
-		t.Errorf("spec has %d paths, client covers %d — vendored spec may be stale (run: make sync-spec)", got, want)
+		t.Errorf("spec has %d paths, client covers %d (never-called included) — vendored spec may be stale (run: make sync-spec)", got, want)
 	}
 }

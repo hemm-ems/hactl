@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "file:packages/*": [read]
+      "file:packages/**": [edit]
+      "file:**": [create]
+      "helper:input_boolean/*": [read]
+      "dashboard:main/views/*": [edit]

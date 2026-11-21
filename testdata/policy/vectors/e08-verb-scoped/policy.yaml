@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "automation:*": [read, edit, delete]
+    deny:
+      "automation:*": [delete]

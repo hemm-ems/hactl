@@ -219,7 +219,7 @@ func readConfigFileE2E(t *testing.T, path string) string {
 
 func writeConfigFileE2E(t *testing.T, path, content string) {
 	t.Helper()
-	if _, err := testClient.WriteConfigFile(context.Background(), path, content, false); err != nil {
+	if err := putConfigFile(context.Background(), path, content); err != nil {
 		t.Fatalf("writing %s: %v — if HA rejected it, this is not a layout a real instance can have", path, err)
 	}
 }

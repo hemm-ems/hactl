@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:switch.*": [control]
+    where:
+      "entity:switch.*": { label: agent_ok }

@@ -92,3 +92,136 @@ func runnableCommandPaths(root *cobra.Command) []string {
 	walk(root, "")
 	return out
 }
+
+// The reverse of the two gates above: every command the manual NAMES exists.
+// The core's "Full command set" tells every caller "No other commands exist —
+// never invent one", and its quick-routing table says what to run; a
+// manual-first contract commit put `policy show|check|lint` in both while the
+// binary answered `unknown command "policy"` (exit 1 — which the routed
+// command's own contract reads as "denied"). Both directions were needed: the
+// tree→manual gates were green throughout. Every FamilySections key must also
+// be a real top-level command, or the family's prose is delivered for nothing.
+func TestEveryCommandTheManualNamesExists(t *testing.T) {
+	core := docs.Manual
+	start := strings.Index(core, "Full command set")
+	end := strings.Index(core, "No other commands exist")
+	qs := strings.Index(core, "## Quick routing")
+	if start < 0 || end < start || qs < 0 || qs > start {
+		t.Fatal("the manual core has no quick-routing table followed by a \"Full command set\" … \"No other commands exist\" block — this gate has nothing to check")
+	}
+
+	listed := 0
+	for _, span := range backtickSpans(core[start:end]) {
+		for _, path := range commandSetPaths(span) {
+			assertManualPathExists(t, path, "Full command set")
+			listed++
+		}
+	}
+	if listed < 50 {
+		t.Fatalf("parsed only %d command paths from the Full command set — the parser has stopped matching the manual", listed)
+	}
+
+	routed := 0
+	for _, span := range quickRoutingSpans(core[qs:start]) {
+		words := leadingCommandWords(span)
+		if len(words) == 0 {
+			continue
+		}
+		found, _, err := rootCmd.Find(words)
+		if err != nil || found == rootCmd || isFamilyGroup(found) {
+			t.Errorf("quick routing names `%s`, which does not resolve to a command (err=%v)", span, err)
+		}
+		routed++
+	}
+	if routed < 10 {
+		t.Fatalf("parsed only %d routed commands from the quick-routing table — the parser has stopped matching the manual", routed)
+	}
+
+	for _, fam := range manual.Families() {
+		assertManualPathExists(t, []string{fam}, "internal/manual FamilySections")
+	}
+}
+
+// commandSetPaths expands one "Full command set" entry — `label|area|floor
+// ls|create|delete`, `log [show <id>]`, `grep` — into command paths.
+func commandSetPaths(span string) [][]string {
+	words := strings.Fields(span)
+	if len(words) == 0 {
+		return nil
+	}
+	var subs []string
+	for _, w := range words[1:] {
+		w = strings.Trim(w, "[]")
+		if w == "" || strings.HasPrefix(w, "<") || strings.HasSuffix(w, ">") {
+			continue
+		}
+		subs = strings.Split(w, "|")
+		break
+	}
+	var out [][]string
+	for fam := range strings.SplitSeq(words[0], "|") {
+		if len(subs) == 0 {
+			out = append(out, []string{fam})
+			continue
+		}
+		for _, sub := range subs {
+			out = append(out, []string{fam, sub})
+		}
+	}
+	return out
+}
+
+// quickRoutingSpans returns the backtick spans of the "Run, in order" column.
+func quickRoutingSpans(table string) []string {
+	var out []string
+	for line := range strings.SplitSeq(table, "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) < 4 || strings.HasPrefix(strings.TrimSpace(cells[2]), "---") || strings.Contains(cells[2], "Run, in order") {
+			continue
+		}
+		out = append(out, backtickSpans(cells[2])...)
+	}
+	return out
+}
+
+// leadingCommandWords is the command path a routed invocation starts with:
+// the lowercase words before its first flag, placeholder or argument.
+func leadingCommandWords(span string) []string {
+	var words []string
+	for w := range strings.FieldsSeq(span) {
+		if !isCommandWord(w) {
+			break
+		}
+		words = append(words, w)
+	}
+	return words
+}
+
+func assertManualPathExists(t *testing.T, path []string, where string) {
+	t.Helper()
+	found, rest, err := rootCmd.Find(path)
+	if err != nil || len(rest) != 0 || found.CommandPath() != "hactl "+strings.Join(path, " ") {
+		t.Errorf("%s names `hactl %s`, which is not a command (err=%v)", where, strings.Join(path, " "), err)
+	}
+}
+
+func backtickSpans(s string) []string {
+	parts := strings.Split(s, "`")
+	var out []string
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
+}
+
+func isCommandWord(w string) bool {
+	if w == "" {
+		return false
+	}
+	for _, r := range w {
+		if (r < 'a' || r > 'z') && r != '-' {
+			return false
+		}
+	}
+	return !strings.HasPrefix(w, "-")
+}

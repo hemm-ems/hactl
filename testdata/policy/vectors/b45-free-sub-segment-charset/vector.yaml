@@ -1,0 +1,13 @@
+clause: "D-68 (refined 2026-10-31): every free sub segment (attr/<name>, views/<path>, block/<id>, reload/<domain>) refuses leading or trailing white space, control characters and format characters (Cf: ZWSP, word joiner, RLO, soft hyphen) — at the start, the end or inside — a broken file, each named with its line; an interior space in an attribute name or a dashboard view path is allowed"
+load_error:
+  file_is_policy_yaml: true
+  count: 8
+  problems:
+    - {line: 7}
+    - {line: 8}
+    - {line: 9}
+    - {line: 10}
+    - {line: 11}
+    - {line: 12}
+    - {line: 13}
+    - {line: 16}

@@ -1,0 +1,9 @@
+clause: "D-63: an entity or service pattern whose id has neither a `.` nor a wildcard can never match a real id — a broken file (D-60), each named with its line; a wildcard pattern without a dot and a domain-less kind (area) are valid"
+load_error:
+  file_is_policy_yaml: true
+  count: 4
+  problems:
+    - {line: 7, contains: ["hallway"]}
+    - {line: 9, contains: ["turn_on"]}
+    - {line: 12, contains: ["front_door"]}
+    - {line: 13, contains: ["Unlock"]}

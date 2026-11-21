@@ -1,0 +1,7 @@
+clause: "D-62: top-level `active:` selects the profile (the manual's example file, verbatim)"
+view: {exists: true, selected_by: active, active: agent, allow_all: false, default: deny, profiles: [agent, default], what_if: false}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [read write]', line: 16, profile: agent}
+  - {resource: "entity:sensor.temp", verb: read, allowed: true, rule: 'allow "entity:*" [read]', line: 11, profile: agent}
+  - {resource: "automation:pg_heating", verb: edit, allowed: true, rule: 'allow "automation:pg_*" [read edit create]', line: 13, profile: agent}
+  - {resource: "entity:device_tracker.jan/attr/latitude", verb: read, allowed: false, rule: 'deny "entity:device_tracker.*/attr/latitude" [read]', line: 17, profile: agent}

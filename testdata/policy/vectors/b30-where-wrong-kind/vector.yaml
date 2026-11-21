@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: a `where` on a kind other than entity/device, or on `*`",
+  "load_error": {
+    "problems": [
+      {
+        "line": 10
+      },
+      {
+        "line": 11
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

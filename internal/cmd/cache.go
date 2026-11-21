@@ -15,6 +15,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/cache"
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var cacheCmd = family(&cobra.Command{
@@ -125,6 +126,13 @@ func runCacheRefresh(ctx context.Context, w io.Writer, category string) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
+	}
+
+	// A local write with no --confirm, checked before the cache is opened:
+	// refreshing rewrites stored data, so it is edit system:cache (D-79). Its
+	// requests to Home Assistant are reads.
+	if _, perr := checkWritePlan(w, false, newWritePlan("refresh the cache").add(policy.Edit, policy.KindSystem, "cache", "")); perr != nil {
+		return perr
 	}
 
 	store, err := cache.Open(ctx, cfg.Dir)
@@ -243,6 +251,13 @@ func runCacheClear(ctx context.Context, w io.Writer) error {
 	cfg, err := config.Load(flagDir)
 	if err != nil {
 		return err
+	}
+
+	// A local write with no --confirm, checked before anything is removed:
+	// delete system:cache (D-79). hactl's own bookkeeping — the audit log
+	// among it — is never checked, and survives the clear (D-71).
+	if _, perr := checkWritePlan(w, false, newWritePlan("clear the cache").add(policy.Delete, policy.KindSystem, "cache", "")); perr != nil {
+		return perr
 	}
 
 	store, err := cache.Open(ctx, cfg.Dir)

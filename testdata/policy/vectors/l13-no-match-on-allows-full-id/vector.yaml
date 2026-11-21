@@ -1,0 +1,8 @@
+clause: "Lint no-match applies to ALLOW rules too (`any rule's id`), and the live check uses the policy's matcher — the full id only (D-63): `entity:kitchen*` matches no entity even when light.kitchen_lamp exists"
+lint:
+  inventory:
+    entity: [light.kitchen_lamp]
+  findings:
+    - {code: no-match, profile: agent, rule: 'allow "entity:ligth.*" [read]', line: 7}
+    - {code: no-match, profile: agent, rule: 'allow "entity:kitchen*" [read]', line: 8}
+  unchecked: []

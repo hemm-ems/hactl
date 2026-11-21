@@ -1,0 +1,11 @@
+{
+  "clause": "D-60: the top level is not a mapping (a sequence)",
+  "load_error": {
+    "problems": [
+      {
+        "line": 1
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

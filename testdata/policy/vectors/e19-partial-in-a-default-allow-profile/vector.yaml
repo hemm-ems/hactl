@@ -1,0 +1,5 @@
+clause: "D-66 step 4 follows steps 2-3: a resource allowed by `default: allow` with a descendant deny for the verb is partial — denied for a write verb, naming the descendant deny"
+cases:
+  - {resource: "entity:light.x", verb: edit, allowed: false, rule: 'deny "entity:*/registry/entity_id" [edit]', line: 6, partial: true, partial_denies: [{rule: 'deny "entity:*/registry/entity_id" [edit]', line: 6}]}
+  - {resource: "entity:light.x", verb: read, allowed: true, rule: "default: allow", line: 0, partial: false, partial_denies: []}
+  - {resource: "entity:light.x/registry/name", verb: edit, allowed: true, rule: "default: allow", line: 0, partial: false, partial_denies: []}

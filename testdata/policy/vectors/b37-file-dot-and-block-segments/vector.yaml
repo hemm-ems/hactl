@@ -1,0 +1,12 @@
+clause: "D-67: a file pattern with a `.` or `..` segment is broken (never canonicalised); a segment named `block` (any case) anywhere but second-to-last after at least one path segment is refused as ambiguous with the block sub-resource; `.storage` is not a dot segment, and `x.yaml/block/<id>` is the block sub-resource"
+load_error:
+  file_is_policy_yaml: true
+  count: 7
+  problems:
+    - {line: 10}
+    - {line: 11}
+    - {line: 12, contains: ["block"]}
+    - {line: 13, contains: ["block"]}
+    - {line: 14, contains: ["block"]}
+    - {line: 15}
+    - {line: 16}

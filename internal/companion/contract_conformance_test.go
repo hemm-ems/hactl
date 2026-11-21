@@ -298,9 +298,10 @@ func checkDecoded(t *testing.T, label string, rt reflect.Type, s *openapi3.Schem
 }
 
 // TestEndpointsCoverSpecPaths keeps the Endpoints table complete both ways: every
-// spec path is called by the client and every client path is documented. A new
-// companion route therefore forces a loud classification failure here rather than
-// slipping through unreflected (TC-7).
+// spec path is called by the client or listed as never called, with its reason,
+// and every client path is documented. A new companion route therefore forces a
+// loud classification failure here rather than slipping through unreflected
+// (TC-7).
 func TestEndpointsCoverSpecPaths(t *testing.T) {
 	spec := loadCompanionSpec(t)
 
@@ -309,8 +310,17 @@ func TestEndpointsCoverSpecPaths(t *testing.T) {
 		inTable[ep.Path] = true
 	}
 	for path := range spec.Paths.Map() {
-		if !inTable[path] {
+		_, never := NeverCalledSpecPaths[path]
+		switch {
+		case inTable[path] && never:
+			t.Errorf("spec path %q is called by the client and listed as never called — delete its NeverCalledSpecPaths line", path)
+		case !inTable[path] && !never:
 			t.Errorf("spec path %q is in no companion.Endpoints entry — add the client call or classify it", path)
+		}
+	}
+	for path := range NeverCalledSpecPaths {
+		if spec.Paths.Find(path) == nil {
+			t.Errorf("NeverCalledSpecPaths names %q, which the vendored spec no longer has — delete the line", path)
 		}
 	}
 	for path := range inTable {

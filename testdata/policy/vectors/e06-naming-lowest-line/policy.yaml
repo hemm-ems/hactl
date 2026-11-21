@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*.front_door": [read]
+      "entity:lock.*": [read]
+    deny:
+      "entity:*_door": [control]
+      "entity:lock.front*": [control]

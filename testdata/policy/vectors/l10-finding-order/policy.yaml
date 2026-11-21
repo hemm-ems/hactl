@@ -1,0 +1,8 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    deny:
+      "entity:lokc.*": [write]
+    allow:
+      "entity:ligth.*": [control]

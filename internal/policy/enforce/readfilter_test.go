@@ -1,0 +1,659 @@
+package enforce_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/hemm-ems/hactl/internal/policy"
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
+)
+
+// The read half of the request layer (W-2), held to
+// testdata/policy/requests/read_filters.json: one or more vectors per read row
+// of dev/surfaces/policy.manifest, each a request under a named policy and
+// either the refusal before it is sent or the filtered answer with its hidden
+// and masked counts.
+
+type readVector struct {
+	ID      string            `json:"id"`
+	Why     string            `json:"why"`
+	Row     string            `json:"row"`
+	Policy  string            `json:"policy"`
+	Request vecReadRequest    `json:"request"`
+	Answer  json.RawMessage   `json:"answer"`
+	Files   map[string]string `json:"files"`
+	Expect  struct {
+		Refused string          `json:"refused"`
+		Answer  json.RawMessage `json:"answer"`
+		Hidden  int             `json:"hidden"`
+		Masked  int             `json:"masked"`
+	} `json:"expect"`
+}
+
+type vecReadRequest struct {
+	Transport string         `json:"transport"`
+	Message   map[string]any `json:"message"`
+	Method    string         `json:"method"`
+	Path      string         `json:"path"`
+	Body      string         `json:"body"`
+}
+
+func (r vecReadRequest) build() reqmap.Request {
+	req := reqmap.Request{Transport: reqmap.Transport(r.Transport), Method: r.Method, Path: r.Path}
+	if r.Body != "" {
+		req.Body = []byte(r.Body)
+	}
+	if r.Message != nil {
+		req.Params = map[string]any{}
+		for k, v := range r.Message {
+			if k == "type" {
+				req.Type, _ = v.(string)
+				continue
+			}
+			req.Params[k] = v
+		}
+	}
+	return req
+}
+
+type readVectorFile struct {
+	About    string            `json:"about"`
+	Policies map[string]string `json:"policies"`
+	Vectors  []readVector      `json:"vectors"`
+}
+
+func loadReadVectors(t *testing.T) readVectorFile {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod above the working directory")
+		}
+		dir = parent
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "testdata", "policy", "requests", "read_filters.json")) //nolint:gosec // fixed path under the repository root
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f readVectorFile
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&f); err != nil {
+		t.Fatalf("decoding the read vectors: %v", err)
+	}
+	return f
+}
+
+// fileFetcher is a fetcher that also reads config files (the typed owner of
+// a wide read's hit, D-142).
+type fileFetcher struct {
+	fakeFetcher
+
+	files map[string]string
+	read  []string
+}
+
+func (f *fileFetcher) ConfigFile(ctx context.Context, loc string) ([]byte, error) {
+	if !reqgate.IsOwn(ctx) {
+		return nil, errors.New("a config file was read without the session's own mark")
+	}
+	f.read = append(f.read, loc)
+	c, ok := f.files[loc]
+	if !ok {
+		return nil, errors.New("no such file")
+	}
+	return []byte(c), nil
+}
+
+func jsonEqual(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+// TestEveryReadRowIsEnforced — W-2's contract, one vector or more per read row:
+// what a read names itself is refused before it is sent when denied (D-138);
+// its answer is filtered before any command decodes it — rows dropped and
+// counted, parts masked `<denied>` and counted (D-139, D-140), a row hactl
+// cannot address hidden (D-141), a wide read's hit decided by its file and
+// typed owner (D-142), `tpl eval` by system:template (D-143), files by
+// file:<path> (D-144). And the table is closed: every read row of the
+// classifier has a vector here, and every vector's request maps to its row.
+func TestEveryReadRowIsEnforced(t *testing.T) {
+	vf := loadReadVectors(t)
+	covered := map[string]bool{}
+	for _, v := range vf.Vectors {
+		covered[v.Row] = true
+		t.Run(v.ID, func(t *testing.T) {
+			body, ok := vf.Policies[v.Policy]
+			if !ok {
+				t.Fatalf("policy %q is not in the file", v.Policy)
+			}
+			runReadVector(t, v, body)
+		})
+	}
+	for _, r := range reqmap.Rows() {
+		if r.Disposition == reqmap.Read && !covered[r.Key] {
+			t.Errorf("read row %q has no vector in read_filters.json", r.Key)
+		}
+	}
+}
+
+// runReadVector runs one vector: the request is checked, its answer filtered,
+// and the outcome held to the vector — then the same request as the session's
+// own question, which is never refused or filtered.
+func runReadVector(t *testing.T, v readVector, body string) {
+	t.Helper()
+	s, dir := newSession(t, body, &fileFetcher{files: v.Files})
+	req := v.Request.build()
+	if res := reqmap.Classify(req, nil); res.Row != v.Row || res.Disposition != reqmap.Read {
+		t.Fatalf("%s: the request maps to %q (%s), want the read row %q", v.Why, res.Row, res.Disposition, v.Row)
+	}
+	ctx := context.Background()
+	err := s.Check(ctx, req)
+	var out []byte
+	if err == nil {
+		out, err = s.Filter(ctx, req, v.Answer)
+	}
+	if v.Expect.Refused != "" {
+		assertReadRefused(t, s, v, out, err)
+	} else {
+		assertReadFiltered(t, s, v, out, err)
+	}
+	if l := auditLines(t, dir); len(l) != 0 {
+		t.Errorf("%s: a read was audited (D-146): %v", v.Why, l)
+	}
+	own := reqgate.Own(ctx)
+	if err := s.Check(own, req); err != nil {
+		t.Errorf("%s: the session's own read was refused: %v", v.Why, err)
+	}
+	if v.Answer != nil {
+		if got, err := s.Filter(own, req, v.Answer); err != nil || string(got) != string(v.Answer) {
+			t.Errorf("%s: the session's own read was filtered: %s, %v", v.Why, got, err)
+		}
+	}
+}
+
+func assertReadRefused(t *testing.T, s *enforce.Session, v readVector, out []byte, err error) {
+	t.Helper()
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !ref.Read {
+		t.Fatalf("%s: got %v (answer %s), want a read refusal naming %q", v.Why, err, out, v.Expect.Refused)
+	}
+	named := false
+	for _, d := range ref.Denied {
+		named = named || strings.Contains(d.Text(), v.Expect.Refused)
+	}
+	if !named || ref.PolicyClass() != enforce.ClassDenied || ref.ExitCode() != 1 {
+		t.Errorf("%s: denied %v (class %s), want policy_denied naming %q", v.Why, ref.Denied, ref.PolicyClass(), v.Expect.Refused)
+	}
+	// Reported like a denied write (D-155): the D-119 count on the error
+	// line, `would read <what>` as the report's action.
+	if want := fmt.Sprintf("policy_denied: %d of %d resources denied (profile %s)", len(ref.Denied), ref.Checked, ref.Profile); !strings.HasPrefix(ref.Error(), want) {
+		t.Errorf("%s: error line %q, want it to start %q", v.Why, ref.Error(), want)
+	}
+	if !strings.HasPrefix(ref.Action, "read ") {
+		t.Errorf("%s: action %q, want `read <what>`", v.Why, ref.Action)
+	}
+	if hidden, masked, refused := s.ReadCounts(); refused != 1 || hidden != 0 || masked != 0 {
+		t.Errorf("%s: counts hidden %d masked %d refused %d, want one refused read", v.Why, hidden, masked, refused)
+	}
+	if s.RefusedMidRun() != nil {
+		t.Errorf("%s: a refused read became the invocation's refusal", v.Why)
+	}
+}
+
+func assertReadFiltered(t *testing.T, s *enforce.Session, v readVector, out []byte, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: refused: %v", v.Why, err)
+	}
+	if !jsonEqual(out, v.Expect.Answer) {
+		t.Errorf("%s:\n answer %s\n   want %s", v.Why, out, v.Expect.Answer)
+	}
+	if hidden, masked, _ := s.ReadCounts(); hidden != v.Expect.Hidden || masked != v.Expect.Masked {
+		t.Errorf("%s: hidden %d masked %d, want %d and %d", v.Why, hidden, masked, v.Expect.Hidden, v.Expect.Masked)
+	}
+	if v.Expect.Hidden == 0 && v.Expect.Masked == 0 && string(out) != string(v.Answer) {
+		t.Errorf("%s: an answer the filter changed nothing in was not returned byte for byte:\n %s\n %s", v.Why, out, v.Answer)
+	}
+}
+
+// TestReadFilterKeepsNumbersAsSent — a filtered answer is re-encoded, but a
+// number in it is the number Home Assistant sent (H-21's sibling rule): a
+// masked row next to an unmasked one keeps `1.10`, `0.50` and a big integer
+// byte for byte.
+func TestReadFilterKeepsNumbersAsSent(t *testing.T) {
+	s, _ := newSession(t, `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "entity:lock.*": [read]
+      "entity:sensor.x/attr/secret": [read]
+`, nil)
+	req := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states"}
+	in := `[{"entity_id":"lock.a","state":"x"},{"entity_id":"sensor.x","state":"1.10","attributes":{"secret":1,"p":1.10,"q":0.50,"big":12345678901234567890}}]`
+	out, err := s.Filter(context.Background(), req, []byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`1.10`, `0.50`, `12345678901234567890`, `"secret":"<denied>"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("filtered answer %s lost %s", out, want)
+		}
+	}
+	if strings.Contains(string(out), "lock.a") {
+		t.Errorf("a denied entity survived: %s", out)
+	}
+}
+
+// TestReadFilterRefusesAnAnswerItCannotRead — an answer whose shape the filter
+// cannot read is refused, never passed unchecked (D-141): a listing that is
+// not a list, a row that is not an object, an object answer that is not one.
+func TestReadFilterRefusesAnAnswerItCannotRead(t *testing.T) {
+	s, _ := newSession(t, `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "entity:lock.*": [read]
+`, nil)
+	for _, c := range []struct {
+		req    reqmap.Request
+		answer string
+	}{
+		{reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states"}, `{"entity_id":"lock.a"}`},
+		{reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states"}, `["lock.a"]`},
+		{reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/history/period/x"}, `[{"entity_id":"lock.a"}]`},
+		{reqmap.Request{Transport: reqmap.WS, Type: "recorder/statistics_during_period", Params: map[string]any{}}, `[]`},
+		{reqmap.Request{Transport: reqmap.Companion, Method: "GET", Path: "/v1/config/helpers"}, `[]`},
+		{reqmap.Request{Transport: reqmap.Companion, Method: "GET", Path: "/v1/config/helpers"}, `{"helpers":{"a":1}}`},
+		{reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/services"}, `[{"domain":"x","services":[]}]`},
+		{reqmap.Request{Transport: reqmap.Companion, Method: "GET", Path: "/v1/ref/scan"}, `{"hits":[1]}`},
+	} {
+		_, err := s.Filter(context.Background(), c.req, []byte(c.answer))
+		var ref *enforce.DeniedError
+		if !errors.As(err, &ref) || !ref.Read || len(ref.Denied) != 1 || !strings.HasPrefix(ref.Denied[0].Rule, "fail-closed: the answer cannot be filtered") {
+			t.Errorf("%s %s with %s: %v, want a fail-closed read refusal", c.req.Transport, c.req.Path+c.req.Type, c.answer, err)
+		}
+	}
+}
+
+// TestTemplateReadNeedsAnExactAllowWhileAnythingIsDenied — D-190 (tightening
+// D-143) as a pure rule, shared by the request layer and `policy check`:
+// while the profile denies anything, only an allow naming system:template
+// exactly grants it — never a wildcard, never the default.
+func TestTemplateReadNeedsAnExactAllowWhileAnythingIsDenied(t *testing.T) {
+	tpl := policy.Resource{Kind: policy.KindSystem, ID: "template"}
+	for _, c := range []struct {
+		name, body string
+		deniesAny  bool
+		allowed    bool
+	}{
+		{"nothing denied", "version: 1\nactive: a\nprofiles:\n  a:\n    allow:\n      \"entity:*\": [read]\n", false, true},
+		{"only a control denied", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [control]\n", true, false},
+		{"a read denied, the default allows", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", true, false},
+		{"a read denied, an exact allow", "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n    allow:\n      \"system:template\": [read]\n", true, true},
+		{"default deny without an allow", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:*\": [read]\n", true, false},
+		{"default deny, a wildcard reading everything", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"*\": [read]\n", true, false},
+		{"default deny, system:* read", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"system:*\": [read]\n", true, false},
+		{"default deny, the exact allow", "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"*\": [read]\n      \"system:template\": [read]\n", true, true},
+		{"the exact allow loses to a deny", "version: 1\nactive: a\nprofiles:\n  a:\n    allow:\n      \"system:template\": [read]\n    deny:\n      \"system:*\": [read]\n", true, false},
+	} {
+		pol, _ := loadPolicy(t, c.body)
+		if got := enforce.DeniesAnything(pol); got != c.deniesAny {
+			t.Errorf("%s: DeniesAnything %v, want %v", c.name, got, c.deniesAny)
+		}
+		v := enforce.TemplateRead(pol, tpl, pol.Decide(tpl, policy.Read, nil))
+		if v.Allowed != c.allowed {
+			t.Errorf("%s: read system:template allowed %v (%s), want %v", c.name, v.Allowed, v.Rule, c.allowed)
+		}
+	}
+}
+
+// TestDeletingAnUnreadableViewIsRefused — D-153: a command saves the config
+// its read had a denied view dropped from (D-140); the save would delete that
+// view, which no allow may grant — at the plan and at the request layer.
+func TestDeletingAnUnreadableViewIsRefused(t *testing.T) {
+	body := `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "dashboard:main/views/secret": [read]
+`
+	f := &fakeFetcher{dash: map[string]reqmap.StoredDashboard{"main": {Config: json.RawMessage(`{"views":[{"path":"home"},{"path":"secret"}]}`)}}}
+	s, _ := newSession(t, body, f)
+	ctx := context.Background()
+	stored, found, err := s.StoredDashboard(ctx, "main")
+	if err != nil || !found || !strings.Contains(string(stored), "secret") {
+		t.Fatalf("the session's own stored config: %s %v %v, want it unfiltered", stored, found, err)
+	}
+	checks, err := reqmap.DiffDashboard("main", stored, json.RawMessage(`{"views":[{"path":"home"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.CheckPlan(enforce.Plan{Action: "save dashboard config", Checks: checks}, true, false)
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || ref.Denied[0].Rule != enforce.RuleUnreadViewDelete || ref.Denied[0].Resource != "dashboard:main/views/secret" {
+		t.Fatalf("plan: %v, want delete dashboard:main/views/secret refused by %q", err, enforce.RuleUnreadViewDelete)
+	}
+	// The request layer diffs the save against the same stored config.
+	save := reqmap.Request{Transport: reqmap.WS, Type: "lovelace/config/save", Params: map[string]any{"url_path": "main", "config": map[string]any{"views": []any{map[string]any{"path": "home"}}}}}
+	if err := s.Check(ctx, save); !errors.As(err, &ref) || ref.Denied[0].Rule != enforce.RuleUnreadViewDelete {
+		t.Fatalf("request: %v, want the same refusal", err)
+	}
+	// A save that keeps the view deletes nothing and passes.
+	keep := reqmap.Request{Transport: reqmap.WS, Type: "lovelace/config/save", Params: map[string]any{"url_path": "main", "config": map[string]any{"views": []any{map[string]any{"path": "home", "title": "x"}, map[string]any{"path": "secret"}}}}}
+	if err := s.Check(ctx, keep); err != nil {
+		t.Errorf("a save keeping the view: %v", err)
+	}
+}
+
+// TestAWriteCommandsOwnReadsAreExempt — D-82: in a write command the reads
+// it makes before it writes are neither refused nor filtered (its plan decides
+// the write); the same reads in any other command are. An unmapped read is
+// refused in both (D-145).
+func TestAWriteCommandsOwnReadsAreExempt(t *testing.T) {
+	body := `version: 1
+active: a
+profiles:
+  a:
+    default: deny
+    allow:
+      "entity:light.a/registry/labels": [edit]
+`
+	ctx := context.Background()
+	one := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states/light.a"}
+	list := reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/list"}
+	answer := []byte(`[{"entity_id":"light.a","labels":["x"]}]`)
+	unmapped := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/no_such_read"}
+
+	w, _ := newSession(t, body, nil, func(o *enforce.Options) { o.WriteCommand = true })
+	if err := w.Check(ctx, one); err != nil {
+		t.Errorf("a write command's own read was refused: %v", err)
+	}
+	if out, err := w.Filter(ctx, list, answer); err != nil || string(out) != string(answer) {
+		t.Errorf("a write command's own read was filtered: %s %v", out, err)
+	}
+	if h, m, r := w.ReadCounts(); h+m+r != 0 {
+		t.Errorf("a write command counted hidden %d masked %d refused %d", h, m, r)
+	}
+	if err := w.Check(ctx, unmapped); err == nil {
+		t.Error("an unmapped read in a write command was not refused (D-145)")
+	}
+
+	r, _ := newSession(t, body, nil)
+	if err := r.Check(ctx, one); err == nil {
+		t.Error("a read command's read of a denied entity was not refused")
+	}
+	if out, err := r.Filter(ctx, list, answer); err != nil || string(out) != "[]" {
+		t.Errorf("a read command's listing was not filtered: %s %v", out, err)
+	}
+}
+
+// TestTheTrailerCountsAThingOnce — D-139's count is of things not shown: an
+// entity two reads of one invocation hide (its state and its registry row)
+// counts once, an attribute masked in two answers once, a row without an
+// address on its own.
+func TestTheTrailerCountsAThingOnce(t *testing.T) {
+	s, _ := newSession(t, `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "entity:lock.*": [read]
+      "entity:sensor.t/attr/secret": [read]
+`, nil)
+	ctx := context.Background()
+	states := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/states"}
+	reg := reqmap.Request{Transport: reqmap.WS, Type: "config/entity_registry/list"}
+	logbook := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/logbook/x"}
+	for _, c := range []struct {
+		req    reqmap.Request
+		answer string
+	}{
+		{states, `[{"entity_id":"lock.a","state":"x"},{"entity_id":"sensor.t","state":"1","attributes":{"secret":1}}]`},
+		{states, `[{"entity_id":"lock.a","state":"x"},{"entity_id":"sensor.t","state":"1","attributes":{"secret":1}}]`},
+		{reg, `[{"entity_id":"lock.a"},{"entity_id":"sensor.t"}]`},
+		{logbook, `[{"entity_id":"lock.a","message":"locked"},{"entity_id":"lock.a","message":"unlocked"}]`},
+	} {
+		if _, err := s.Filter(ctx, c.req, []byte(c.answer)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hidden, masked, _ := s.ReadCounts(); hidden != 3 || masked != 1 {
+		t.Errorf("hidden %d masked %d, want 3 (lock.a once, its two logbook rows) and 1", hidden, masked)
+	}
+}
+
+// TestFilteringAWriteAsksNothing — filtering the answer to a write asks
+// Home Assistant nothing: a service call's reach is not asked a second time
+// for its answer. The answer itself is shown under the read rules (D-182).
+func TestFilteringAWriteAsksNothing(t *testing.T) {
+	f := &fakeFetcher{}
+	s, _ := newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", f)
+	req := reqmap.Request{Transport: reqmap.REST, Method: "POST", Path: "/api/services/light/turn_on", Body: []byte(`{"entity_id":"light.a"}`)}
+	answer := []byte(`[{"entity_id":"lock.a","state":"locked"}]`)
+	out, err := s.Filter(context.Background(), req, answer)
+	if err != nil || string(out) != "[]" {
+		t.Errorf("a service call's answer was not filtered: %s %v", out, err)
+	}
+	if len(f.asked) != 0 {
+		t.Errorf("filtering a write's answer asked %v", f.asked)
+	}
+}
+
+// TestTheTrailerCountsEveryHiddenOccurrence — D-139 as refined: the trailer
+// counts the rows a listing does not show. A row that is an occurrence, not a
+// thing — a logbook row, a history or statistics point, a trace, a search
+// hit, an energy source — counts each time, even when many of them belong to
+// one denied entity, statistic or path.
+func TestTheTrailerCountsEveryHiddenOccurrence(t *testing.T) {
+	body := `version: 1
+active: a
+profiles:
+  a:
+    deny:
+      "entity:lock.*": [read]
+      "entity:sensor.p/stats": [read]
+      "automation:prod_*": [read]
+      "file:secrets.yaml": [read]
+`
+	for _, c := range []struct {
+		name   string
+		req    reqmap.Request
+		answer string
+		hidden int
+	}{
+		{"four logbook rows of one entity", reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/logbook/x"},
+			`[{"entity_id":"lock.a","state":"on"},{"entity_id":"lock.a","state":"off"},{"entity_id":"lock.a","state":"on"},{"entity_id":"lock.a","state":"off"},{"entity_id":"light.b","state":"on"}]`, 4},
+		{"three history points of one entity", reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/history/period/x"},
+			`[[{"entity_id":"lock.a","state":"on"},{"state":"off"},{"state":"on"}],[{"entity_id":"light.b","state":"on"}]]`, 3},
+		{"two statistics points of one statistic", reqmap.Request{Transport: reqmap.WS, Type: "recorder/statistics_during_period", Params: map[string]any{}},
+			`{"sensor.p":[{"sum":1},{"sum":2}],"sensor.q":[{"sum":3}]}`, 2},
+		{"three traces of one automation", reqmap.Request{Transport: reqmap.WS, Type: "trace/list", Params: map[string]any{"domain": "automation"}},
+			`[{"domain":"automation","item_id":"prod_x","run_id":"1"},{"domain":"automation","item_id":"prod_x","run_id":"2"},{"domain":"automation","item_id":"prod_x","run_id":"3"},{"domain":"automation","item_id":"ok","run_id":"4"}]`, 3},
+		{"a key hit and a value hit at one path", reqmap.Request{Transport: reqmap.Companion, Method: "GET", Path: "/v1/ref/grep"},
+			`{"hits":[{"location":"secrets.yaml","path":"a","kind":"key"},{"location":"secrets.yaml","path":"a","kind":"value"}]}`, 2},
+		{"two energy rows naming one statistic", reqmap.Request{Transport: reqmap.WS, Type: "energy/get_prefs"},
+			`{"energy_sources":[{"type":"solar","stat_energy_from":"sensor.p"}],"device_consumption":[{"stat_consumption":"sensor.p"},{"stat_consumption":"sensor.q"}]}`, 2},
+	} {
+		s, _ := newSession(t, body, nil)
+		if _, err := s.Filter(context.Background(), c.req, []byte(c.answer)); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if hidden, _, _ := s.ReadCounts(); hidden != c.hidden {
+			t.Errorf("%s: hidden %d, want %d (each hidden row counts)", c.name, hidden, c.hidden)
+		}
+	}
+}
+
+// TestLogbookRowWithoutEntityIsShown (D-214): a logbook row without an
+// entity — Home Assistant started, stopped — names nothing a profile can
+// deny and is shown, counted nowhere; its context is still masked when the
+// profile may not read the context entity, and a row whose entity_id is not
+// a string stays hidden (unaddressable, D-141).
+func TestLogbookRowWithoutEntityIsShown(t *testing.T) {
+	s, _ := newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"entity:lock.*\": [read]\n", nil)
+	logbook := reqmap.Request{Transport: reqmap.REST, Method: "GET", Path: "/api/logbook/x"}
+	answer := `[{"name":"Home Assistant","message":"started","domain":"homeassistant"},` +
+		`{"name":"Home Assistant","message":"stopped","entity_id":null},` +
+		`{"message":"fired","context_entity_id":"lock.a","context_name":"Front door"},` +
+		`{"message":"odd","entity_id":7}]`
+	out, err := s.Filter(context.Background(), logbook, []byte(answer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0]["message"] != "started" || rows[1]["message"] != "stopped" {
+		t.Fatalf("rows without an entity were not shown: %s", out)
+	}
+	if rows[2]["context_entity_id"] != "<denied>" || rows[2]["context_name"] != "<denied>" {
+		t.Errorf("the context of a row without an entity was not masked: %s", out)
+	}
+	if hidden, _, _ := s.ReadCounts(); hidden != 1 {
+		t.Errorf("hidden %d, want 1 (the row whose entity_id is not a string)", hidden)
+	}
+
+	// A profile that reads nothing shows none of them (the W-6 read sweep).
+	for _, pol := range []string{
+		"version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n",
+		"version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:light.*\": [control]\n",
+		"version: 1\nactive: a\nprofiles:\n  a:\n    deny:\n      \"*\": [read]\n",
+	} {
+		ns, _ := newSession(t, pol, nil)
+		out, err := ns.Filter(context.Background(), logbook, []byte(answer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != "[]" {
+			t.Errorf("a profile reading nothing showed %s\n%s", out, pol)
+		}
+	}
+	// One read allow anywhere is enough: the rows name no entity.
+	s, _ = newSession(t, "version: 1\nactive: a\nprofiles:\n  a:\n    default: deny\n    allow:\n      \"entity:light.*\": [read]\n", nil)
+	if out, err := s.Filter(context.Background(), logbook, []byte(answer)); err != nil || !strings.Contains(string(out), "started") {
+		t.Errorf("a lights-only reader: %s %v, want the started row", out, err)
+	}
+}
+
+// TestFilterTraceMasksValuesWhenConfigReadsDenied (D-208): the acceptance
+// case — hallway_motion's variable `anna_where` computed from person.anna's
+// latitude and longitude under a profile denying every latitude — reads
+// <denied> in the trace, keys kept; a trace whose config reads nothing denied,
+// and any trace under a profile that denies no read, come back byte for byte.
+func TestFilterTraceMasksValuesWhenConfigReadsDenied(t *testing.T) {
+	const house = `version: 1
+active: house
+profiles:
+  house:
+    deny:
+      "entity:*/attr/latitude": [read]
+      "entity:*/attr/longitude": [read]
+      "entity:lock.*": [control]
+`
+	const lightsOnly = `version: 1
+active: lights
+profiles:
+  lights:
+    deny:
+      "entity:lock.*": [control]
+`
+	trace := func(item, config string) []byte {
+		return []byte(`{"domain":"automation","item_id":"` + item + `","run_id":"r1","trace":{"trigger/0":[{"path":"trigger/0","changed_variables":{"trigger":{"platform":"state","to_state":null}}}],` +
+			`"action/0":[{"path":"action/0","changed_variables":{"anna_where":"52.37,4.89","n":[1,2.5]},"result":{"params":{"domain":"notify","service":"notify","service_data":{"message":"Anna at 52.37,4.89"}}}}]},` +
+			`"config":` + config + `}`)
+	}
+	const hallway = `{"id":"hallway_motion","triggers":[{"trigger":"state","entity_id":"binary_sensor.hall_motion"}],` +
+		`"variables":{"anna_where":"{{ state_attr('person.anna','latitude') }},{{ state_attr('person.anna','longitude') }}"},` +
+		`"actions":[{"action":"notify.notify","data":{"message":"Anna at {{ anna_where }}"}}]}`
+	const unrelated = `{"id":"porch","triggers":[{"trigger":"state","entity_id":"binary_sensor.hall_motion"}],"actions":[{"action":"light.turn_on","target":{"entity_id":"light.hall"},"data":{"brightness":"{{ 40 + 2 }}"}}]}`
+	const opaque = `{"id":"opaque","actions":[{"action":"notify.notify","data":{"message":"{{ states | count }}"}}]}`
+	const blueprint = `{"id":"bp","use_blueprint":{"path":"missing.yaml","input":{}}}`
+	const unnamed = `{"id":"unnamed","actions":[{"action":"notify.notify","data":{"message":"{{ x | from_json }}"}}]}`
+	fetcher := func() *fakeFetcher {
+		return &fakeFetcher{live: []string{"person.anna", "light.hall", "binary_sensor.hall_motion"},
+			attrs: map[string][]string{"person.anna": {"latitude", "longitude", "friendly_name"}}, reg: &reqmap.Registries{}, complete: true}
+	}
+	req := reqmap.Request{Transport: reqmap.WS, Type: "trace/get", Params: map[string]any{"domain": "automation", "item_id": "x", "run_id": "r1"}}
+	for _, c := range []struct {
+		name, policy, config string
+		masked               bool
+	}{
+		{"a template reads a denied attribute", house, hallway, true},
+		{"a config that reads nothing denied", house, unrelated, false},
+		{"a construct hactl cannot name the reads of", house, opaque, true},
+		{"a blueprint hactl cannot expand", house, blueprint, true},
+		{"a name hactl cannot resolve", house, unnamed, true},
+		{"no config", house, "null", true},
+		{"a profile that denies no read, no config", lightsOnly, "null", false},
+		{"a profile that denies no read, a blueprint hactl cannot expand", lightsOnly, blueprint, false},
+		{"a profile that denies no read", lightsOnly, hallway, false},
+		{"a profile that denies no read, an opaque template", lightsOnly, opaque, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newSession(t, c.policy, fetcher())
+			in := trace("hallway_motion", c.config)
+			out, err := s.Filter(context.Background(), req, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, masked, _ := s.ReadCounts()
+			if !c.masked {
+				if string(out) != string(in) || masked != 0 {
+					t.Errorf("changed (masked %d):\n %s\n %s", masked, out, in)
+				}
+				return
+			}
+			var got struct {
+				Trace  map[string][]map[string]any `json:"trace"`
+				Config json.RawMessage             `json:"config"`
+			}
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatal(err)
+			}
+			step := got.Trace["action/0"][0]
+			want := map[string]any{"anna_where": enforce.Denied, "n": []any{enforce.Denied, enforce.Denied}}
+			if !reflect.DeepEqual(step["changed_variables"], want) {
+				t.Errorf("changed_variables %v, want %v", step["changed_variables"], want)
+			}
+			if !strings.Contains(string(out), `"service_data":{"message":"<denied>"}`) || strings.Contains(string(out), "52.37,4.89\"") ||
+				!strings.Contains(string(out), `"to_state":"<denied>"`) || step["path"] != "action/0" {
+				t.Errorf("answer %s", out)
+			}
+			if masked != 1 {
+				t.Errorf("masked %d, want the trace once", masked)
+			}
+		})
+	}
+
+	// A trace that is not the step lists hactl knows is withheld whole.
+	s, _ := newSession(t, house, fetcher())
+	out, err := s.Filter(context.Background(), req, []byte(`{"domain":"automation","item_id":"h","run_id":"r1","trace":{"x":1},"config":`+hallway+`}`))
+	if err != nil || !strings.Contains(string(out), `"trace":"<denied>"`) {
+		t.Errorf("a trace of another shape: %s, %v", out, err)
+	}
+}

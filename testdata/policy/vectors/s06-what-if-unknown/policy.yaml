@@ -1,0 +1,20 @@
+# <instance>/policy.yaml
+version: 1
+active: agent                     # the profile in effect, for CLI and MCP alike
+profiles:
+  default:                        # in effect when there is no active:
+    deny:
+      "entity:lock.*":                  [write]
+  agent:
+    default: deny
+    allow:
+      "entity:*":                       [read]
+      "entity:light.*":                 [control]
+      "automation:pg_*":                [read, edit, create]
+      "entity:*/registry/labels":       [edit]
+    deny:
+      "entity:lock.*":                  [read, write]
+      "entity:device_tracker.*/attr/latitude":  [read]
+      "file:**":                        [write]
+    where:
+      "entity:light.*": { area: wohnzimmer }

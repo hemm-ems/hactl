@@ -1,0 +1,17 @@
+clause: "Manual matching: ids match segment by segment, `*`/`?` never cross a `/`, `**` (file ids only) spans zero or more whole segments; a sub-resource pattern does not cover its parent"
+cases:
+  - {resource: "file:packages/heating.yaml", verb: read, allowed: true, rule: 'allow "file:packages/*" [read]', line: 7}
+  - {resource: "file:packages/heating.yaml/block/climate", verb: read, allowed: true, rule: 'allow "file:packages/*" [read]', line: 7}
+  - {resource: "file:packages/sub/heating.yaml", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "file:packages/sub/heating.yaml", verb: edit, allowed: true, rule: 'allow "file:packages/**" [edit]', line: 8}
+  - {resource: "file:packages/heating.yaml", verb: edit, allowed: true, rule: 'allow "file:packages/**" [edit]', line: 8}
+  - {resource: "file:packages", verb: edit, allowed: true, rule: 'allow "file:packages/**" [edit]', line: 8}
+  - {resource: "file:packages/heating.yaml/block/climate", verb: edit, allowed: true, rule: 'allow "file:packages/**" [edit]', line: 8}
+  - {resource: "file:automations.yaml", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "file:automations.yaml", verb: create, allowed: true, rule: 'allow "file:**" [create]', line: 9}
+  - {resource: "file:a/b/c.yaml", verb: create, allowed: true, rule: 'allow "file:**" [create]', line: 9}
+  - {resource: "helper:input_boolean/guest_mode", verb: read, allowed: true, rule: 'allow "helper:input_boolean/*" [read]', line: 10}
+  - {resource: "helper:input_number/guest_mode", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "dashboard:main/views/home", verb: edit, allowed: true, rule: 'allow "dashboard:main/views/*" [edit]', line: 11}
+  - {resource: "dashboard:main", verb: edit, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "dashboard:other/views/home", verb: edit, allowed: false, rule: "default: deny", line: 0}

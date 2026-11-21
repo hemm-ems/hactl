@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:light.*": [control]
+    where:
+      "entity:light.*": { area: "Living Room" }

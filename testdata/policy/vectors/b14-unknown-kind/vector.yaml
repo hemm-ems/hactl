@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: a pattern with an unknown kind",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "entiy"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

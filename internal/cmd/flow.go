@@ -20,6 +20,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var configCmd = family(&cobra.Command{
@@ -328,6 +329,17 @@ func runConfigShow(ctx context.Context, w io.Writer, entryID string) error {
 		canProbe := status == http.StatusNotFound && entry.SupportsOptions
 		switch {
 		case canProbe && flagConfigProbeOptions:
+			// The probe starts (and aborts) an options flow, and a start can
+			// already persist options: it is checked as edit
+			// config_entry:<id>/options before it is sent. Denied, it is
+			// skipped with a note — config show itself is a read and is never
+			// refused for it (D-79).
+			refused := checkProbePlan(newWritePlan("probe the options flow of config entry").
+				add(policy.Edit, policy.KindConfigEntry, entryID, "options"))
+			if refused != nil {
+				result.Note = joinNote(reason, "options-flow probe skipped: "+refused.FirstDenial())
+				break
+			}
 			opts, warning, note := readOptionsFlowValues(ctx, client, entryID)
 			if opts != nil {
 				result.ConfigSource = "options_flow"
@@ -587,11 +599,24 @@ func runConfigDelete(ctx context.Context, w io.Writer, entryID string) error {
 		return err
 	}
 
+	// The plan (H-29): the entry, and every device and entity whose registry
+	// row names it — the cascade as a deliberate superset (a device of other
+	// entries too is checked), enumerated from the registries exactly as the
+	// request layer maps the delete; a device list that does not say which
+	// entries a device belongs to makes it every device and entity (D-76,
+	// D-88).
+	plan := newWritePlan("delete config entry").addRequestMapping(ctx, configEntryDeleteRequest(entryID))
+	note, err := checkWritePlan(w, !flagConfigConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagConfigConfirm {
 		return dryRun("delete config entry").
 			with("entry_id", entry.EntryID).
 			with("domain", entry.Domain).
 			with("title", entry.Title).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -639,12 +664,22 @@ func runConfigOptions(ctx context.Context, w io.Writer, entryID string) error {
 		return fmt.Errorf("config entry %q (%s) has no options flow", entryID, entry.Domain)
 	}
 
+	// The plan (H-29): starting an options flow can already persist options,
+	// so it is edit config_entry:<id>/options (D-83: the flow's handler is
+	// the entry_id).
+	plan := newWritePlan("start an options flow for config entry").add(policy.Edit, policy.KindConfigEntry, entryID, "options")
+	note, err := checkWritePlan(w, !flagConfigConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagConfigConfirm {
 		return dryRun("start an options flow for config entry").
 			with("entry_id", entry.EntryID).
 			with("domain", entry.Domain).
 			with("title", entry.Title).
 			withHint("use --confirm to start").
+			withPolicy(note).
 			render(w)
 	}
 
@@ -675,6 +710,15 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 	// confirmed StartConfigFlow lazily loaded it and succeeded — the dry run
 	// failed exactly where the confirmed run worked, the inverse of the H-2
 	// contract, and it broke the command's whole reason for existing.
+	//
+	// The plan (H-29) is checked first, in the preview and under --confirm
+	// alike: a new entry has no id until Home Assistant answers, so create on
+	// every config entry id (D-75).
+	plan := newWritePlan("start a config flow for integration").addKindWide(policy.Create, policy.KindConfigEntry, "")
+	note, err := checkWritePlan(w, !flagConfigConfirm, plan)
+	if err != nil {
+		return err
+	}
 	if !flagConfigConfirm {
 		if handlerErr := ensureConfigFlowHandler(ctx, client, domain); handlerErr != nil {
 			return handlerErr
@@ -682,6 +726,7 @@ func runConfigFlowStart(ctx context.Context, w io.Writer, domain string) error {
 		return dryRun("start a config flow for integration").
 			with("domain", domain).
 			withHint("use --confirm to start").
+			withPolicy(note).
 			render(w)
 	}
 	data, err := client.StartConfigFlowOnce(ctx, domain)
@@ -719,6 +764,14 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 		return fmt.Errorf("invalid --data JSON: %w", jsonErr)
 	}
 
+	// The plan (H-29), checked before anything is sent — the preview's own
+	// lookup below is a GET of the flow, which runs its current step (D-74,
+	// R-5), so it is that same write.
+	note, err := checkWritePlan(w, !flagConfigConfirm, configFlowPlan("submit data to advance the flow", flagFlowOptions))
+	if err != nil {
+		return err
+	}
+
 	if !flagConfigConfirm {
 		endpoint := "config flow"
 		if flagFlowOptions {
@@ -735,6 +788,7 @@ func runConfigFlowStep(ctx context.Context, w io.Writer, flowID string) error {
 			with("endpoint", endpoint).
 			with("data", flagFlowData).
 			withHint("use --confirm to submit (a step may complete the flow and create a config entry)").
+			withPolicy(note).
 			render(w)
 	}
 
@@ -751,6 +805,12 @@ func runConfigFlowInspect(ctx context.Context, w io.Writer, flowID string) error
 		return err
 	}
 	client := haapi.New(cfg.URL, cfg.Token)
+	// Asking Home Assistant for a flow runs its current step — it can finish
+	// the flow (D-74, R-5) — so this command without --confirm checks the
+	// step's plan before the GET; refused, it has nothing else to do (D-80).
+	if _, perr := checkWritePlan(w, false, configFlowPlan("inspect the flow (which runs its current step)", flagFlowOptions)); perr != nil {
+		return perr
+	}
 	data, err := client.InspectFlow(ctx, flowID, flagFlowOptions)
 	if err != nil {
 		return flowLookupError(flowID, flagFlowOptions, fmt.Errorf("inspecting flow: %w", err))

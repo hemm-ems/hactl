@@ -1,0 +1,11 @@
+pg_policy_allowed:
+  alias: PG Policy Allowed Runner
+  sequence:
+    - event: pg_policy_allowed_ran
+  mode: single
+
+pg_policy_denied:
+  alias: PG Policy Denied Runner
+  sequence:
+    - event: pg_policy_denied_ran
+  mode: single

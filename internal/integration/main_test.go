@@ -46,5 +46,11 @@ func TestMain(m *testing.M) {
 	if idlessHA != nil {
 		idlessHA.Stop()
 	}
+	if policyEnforceHA != nil {
+		policyEnforceHA.Stop()
+	}
+	if setupBinDir != "" {
+		_ = os.RemoveAll(setupBinDir)
+	}
 	os.Exit(exitCode)
 }

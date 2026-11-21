@@ -1,0 +1,8 @@
+clause: "D-60 (confirmed 2026-10-31) + LoadError order (H-16): a second YAML document is broken, and it is listed in line order with the first document's problems (version not 1 on line 1, unknown key on line 2) — never in the order the checks ran"
+load_error:
+  file_is_policy_yaml: true
+  count: 3
+  problems:
+    - {line: 1}
+    - {line: 2}
+    - {line_in: [3, 4]}

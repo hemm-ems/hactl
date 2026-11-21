@@ -1,0 +1,6 @@
+clause: "D-62: `As(name)` evaluates another declared profile; selection `what-if`, every verdict WhatIf"
+as: default
+view: {exists: true, selected_by: what-if, active: default, allow_all: false, default: allow, profiles: [agent, default], what_if: true}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 7, profile: default}
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: "default: allow", line: 0, profile: default}

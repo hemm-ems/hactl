@@ -1,0 +1,81 @@
+# policyenforce fixture — the Docker rig for the permission policy's write
+# enforcement (phase 2, stage 2b; INVARIANTS.md H-29, docs/manual.md
+# "Enforcement (writes)").
+#
+# `demo:` is here for the same reason as in the targets fixture: it is the only
+# supported way to get real DEVICES carrying lights and locks, and a service
+# call's reach (E-1) through an area, a label on a device, or a device_id cannot
+# be built without them. `group:` loads the old-style group integration so the
+# test can create a group at runtime with `group.set`. Areas, labels and
+# placements have no YAML form; the tests build them over the websocket.
+#
+# The two scripts are what a script start (`script run`, `svc call
+# script.<x>`, `homeassistant.turn_on` on a script entity) is checked against:
+# one a profile allows to run, one it denies. Each fires an event, so a run
+# that slipped through leaves `last_triggered` set.
+
+homeassistant:
+  name: Policy Enforce
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+demo:
+
+group:
+
+logger:
+  default: warning
+
+script: !include scripts.yaml
+
+# A lock with a registry entry. The demo integration's locks have none (no
+# unique_id — observed on HA stable, 2026-11-01), so they cannot be placed in
+# an area; the reach cases need a lock in an area beside an allowed light.
+input_boolean:
+  pg_policy_lock_state:
+    name: PG Policy Lock State
+    initial: true
+
+template:
+  - lock:
+      - name: PG Policy Lock
+        unique_id: pg_policy_lock
+        state: "{{ is_state('input_boolean.pg_policy_lock_state', 'on') }}"
+        lock:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.pg_policy_lock_state
+        unlock:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.pg_policy_lock_state
+
+# D-106: a light group forwards a call on it to its members, which Home
+# Assistant's extract_from_target does not expand (only old-style group.*
+# entities are). Its members are demo lights; the test reads them from the
+# group's own `entity_id` attribute. No device, so buildPGRig never picks it.
+light:
+  - platform: group
+    name: PG Policy All Lights
+    unique_id: pg_policy_all_lights
+    entities:
+      - light.bed_light
+      - light.ceiling_lights
+
+# D-107: an automation addressed by its config id — the typed address a
+# service call on automation.<x> is also checked against (denies only).
+automation:
+  - id: pg_policy_prod_heating
+    alias: PG Policy Prod Heating
+    triggers:
+      - trigger: event
+        event_type: pg_policy_never_fired
+    actions:
+      - delay: "00:00:01"

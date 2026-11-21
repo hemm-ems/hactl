@@ -1,0 +1,6 @@
+clause: "D-52 order independence: e06's rules reordered (deny block first, entries swapped) give the same verdicts; only the NAMED rule follows the line"
+cases:
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: 'allow "entity:lock.*" [read]', line: 10, profile: agent}
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.front*" [control]', line: 7, profile: agent}
+  - {resource: "entity:lock.back", verb: read, allowed: true, rule: 'allow "entity:lock.*" [read]', line: 10, profile: agent}
+  - {resource: "entity:lock.back", verb: control, allowed: false, rule: "default: deny", line: 0, profile: agent}

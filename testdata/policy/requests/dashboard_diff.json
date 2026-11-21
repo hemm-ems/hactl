@@ -1,0 +1,830 @@
+{
+ "about": "Per-view diff vectors for lovelace/config/save (dev/surfaces/policy.manifest, D-66 as refined, D-72): (url_path, stored config or null, updated config) in, the (resource, verb) set out, or an error when a view path does not parse as one grammar segment. Checks compare as a set.",
+ "vectors": [
+  {
+   "id": "view-changed",
+   "why": "a changed view with a path: edit that view",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       },
+       {
+        "type": "markdown"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main/views/kitchen"
+     }
+    ]
+   }
+  },
+  {
+   "id": "view-added",
+   "why": "an added view with a path: create it",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     },
+     {
+      "path": "garage",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "dashboard:main/views/garage"
+     }
+    ]
+   }
+  },
+  {
+   "id": "view-removed",
+   "why": "a removed view with a path: delete it",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "dashboard:main/views/office"
+     }
+    ]
+   }
+  },
+  {
+   "id": "non-view-key",
+   "why": "a changed non-view key: edit the dashboard itself",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "House",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main"
+     }
+    ]
+   }
+  },
+  {
+   "id": "pathless-view-changed",
+   "why": "a changed view without a path has no address: the dashboard as a whole",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": [
+       {
+        "type": "markdown"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main"
+     }
+    ]
+   }
+  },
+  {
+   "id": "pathless-view-added",
+   "why": "an added view without a path: the dashboard as a whole",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     },
+     {
+      "title": "Another",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main"
+     }
+    ]
+   }
+  },
+  {
+   "id": "several",
+   "why": "each change addressed at its finest address",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "House",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main/views/kitchen"
+     },
+     {
+      "verb": "delete",
+      "resource": "dashboard:main/views/office"
+     },
+     {
+      "verb": "edit",
+      "resource": "dashboard:main"
+     }
+    ]
+   }
+  },
+  {
+   "id": "path-renamed",
+   "why": "a view whose path changed: the old address goes, the new one comes",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "cooking",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "delete",
+      "resource": "dashboard:main/views/kitchen"
+     },
+     {
+      "verb": "create",
+      "resource": "dashboard:main/views/cooking"
+     }
+    ]
+   }
+  },
+  {
+   "id": "no-stored-config",
+   "why": "no stored config to compare: the dashboard as a whole",
+   "url_path": "main",
+   "stored": null,
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:main"
+     }
+    ]
+   }
+  },
+  {
+   "id": "strategy-to-views",
+   "why": "a strategy dashboard taking stored views: the strategy key goes (edit) and each view is created",
+   "url_path": "map",
+   "stored": {
+    "strategy": {
+     "type": "map"
+    }
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "plan",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:map"
+     },
+     {
+      "verb": "create",
+      "resource": "dashboard:map/views/plan"
+     }
+    ]
+   }
+  },
+  {
+   "id": "default-dashboard",
+   "why": "the default dashboard is dashboard: (empty id)",
+   "url_path": "",
+   "stored": {
+    "views": [
+     {
+      "path": "home",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "home",
+      "cards": [
+       {
+        "type": "markdown"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:/views/home"
+     }
+    ]
+   }
+  },
+  {
+   "id": "path-with-slash",
+   "why": "a view path that is not one grammar segment: unmappable",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kit/chen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "error": true
+   }
+  },
+  {
+   "id": "path-with-zwsp",
+   "why": "D-69: a format character in a view path: unmappable",
+   "url_path": "main",
+   "stored": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     }
+    ]
+   },
+   "updated": {
+    "title": "Home",
+    "views": [
+     {
+      "path": "kitchen",
+      "title": "Kitchen",
+      "cards": [
+       {
+        "type": "light",
+        "entity": "light.kitchen"
+       }
+      ]
+     },
+     {
+      "path": "office",
+      "title": "Office",
+      "cards": []
+     },
+     {
+      "title": "Untitled",
+      "cards": []
+     },
+     {
+      "path": "gar\u200bage",
+      "cards": []
+     }
+    ]
+   },
+   "expect": {
+    "error": true
+   }
+  },
+  {
+   "id": "pathless-view-moved-among-paths",
+   "why": "a path-less view moved between two views with a path changes their sequence (the path-less view is a placeholder in it): the dashboard as a whole, never no check",
+   "url_path": "d-x",
+   "stored": {
+    "views": [
+     {
+      "path": "a"
+     },
+     {
+      "title": "X"
+     },
+     {
+      "path": "b"
+     }
+    ]
+   },
+   "updated": {
+    "views": [
+     {
+      "title": "X"
+     },
+     {
+      "path": "a"
+     },
+     {
+      "path": "b"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "stored-not-an-object",
+   "why": "a stored config that is not a JSON object is no basis for a diff: the save is checked whole, never let through unchecked",
+   "url_path": "d-x",
+   "stored": [],
+   "updated": {
+    "views": []
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "view-path-empty-string",
+   "why": "a view whose path is the empty string has no path: its change is checked as the dashboard whole, not as an empty views/ segment",
+   "url_path": "d-x",
+   "stored": {
+    "views": [
+     {
+      "path": "",
+      "title": "old"
+     }
+    ]
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "",
+      "title": "new"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "edit",
+      "resource": "dashboard:d-x"
+     }
+    ]
+   }
+  },
+  {
+   "id": "stored-views-null",
+   "why": "stored views: null is an empty list of views, so an added view with a path is a create of that view",
+   "url_path": "d-x",
+   "stored": {
+    "views": null
+   },
+   "updated": {
+    "views": [
+     {
+      "path": "a"
+     }
+    ]
+   },
+   "expect": {
+    "checks": [
+     {
+      "verb": "create",
+      "resource": "dashboard:d-x/views/a"
+     }
+    ]
+   }
+  }
+ ]
+}

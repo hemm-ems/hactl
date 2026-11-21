@@ -1,0 +1,46 @@
+# Outer starts inner by its per-script service, and via_turn_on starts inner2
+# through script.turn_on: both forms of a nested start.
+pg_run_outer:
+  alias: PG Run Outer
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.pg_run_outer_ran
+    - action: script.pg_run_inner
+  mode: single
+
+pg_run_inner:
+  alias: PG Run Inner
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.pg_run_inner_ran
+  mode: single
+
+pg_run_via_turn_on:
+  alias: PG Run Via Turn On
+  sequence:
+    - action: script.turn_on
+      target:
+        entity_id: script.pg_run_inner2
+  mode: single
+
+pg_run_inner2:
+  alias: PG Run Inner2
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.pg_run_inner2_ran
+  mode: single
+
+# Goodnight-shaped: a mark, then the front door locked.
+pg_run_goodnight:
+  alias: PG Run Goodnight
+  sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.pg_run_night_ran
+    - action: lock.lock
+      target:
+        entity_id: lock.front_door
+  mode: single

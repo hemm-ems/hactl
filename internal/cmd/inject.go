@@ -99,6 +99,8 @@ func markRTFMDelivered() {
 	switch {
 	case flagRtfmFamilies:
 		return // listing only — no manual content was shown
+	case flagRtfmSkill != "":
+		return // a skill is not the manual — none of it was shown (D-165)
 	case flagRtfmCore || len(flagRtfmFamily) > 0:
 		if flagRtfmCore {
 			scopes = append(scopes, "core")
@@ -193,7 +195,11 @@ func noteDryRun(cmd *cobra.Command, args []string) {
 	if confirmed, err := cmd.Flags().GetBool("confirm"); err != nil || confirmed {
 		return
 	}
-	recordWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, time.Now())
+	now := time.Now()
+	recordWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, now)
+	// The policy the preview passed under, for a refused --confirm's hint
+	// (D-215); none while no profile was in effect.
+	recordPolicyWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, policyWitnessID, now)
 }
 
 // stateCacheDir locates the per-instance cache dir for session state. It

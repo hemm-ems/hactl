@@ -1,0 +1,6 @@
+clause: "D-61: without `active:`, the profile named `default` applies"
+view: {exists: true, selected_by: default-profile, active: default, allow_all: false, default: allow, profiles: [agent, default], what_if: false}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 6, profile: default}
+  - {resource: "entity:lock.front_door", verb: read, allowed: true, rule: "default: allow", line: 0, profile: default}
+  - {resource: "automation:other", verb: delete, allowed: true, rule: "default: allow", line: 0, profile: default}

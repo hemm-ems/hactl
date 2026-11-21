@@ -1,0 +1,17 @@
+clause: "D-52 / manual matching: a pattern without a sub-resource covers the resource and everything below it, on every kind"
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/attr/brightness", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/attr", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/state", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/registry/name", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/history", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/stats", verb: read, allowed: true, rule: 'allow "entity:light.kitchen" [read]', line: 7}
+  - {resource: "entity:light.kitchen/attr/brightness", verb: control, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "entity:light.kitchen_2", verb: read, allowed: false, rule: "default: deny", line: 0}
+  - {resource: "file:packages/heating.yaml/block/climate_schedule", verb: edit, allowed: true, rule: 'allow "file:packages/heating.yaml" [edit]', line: 8}
+  - {resource: "dashboard:main/views/home", verb: read, allowed: true, rule: 'allow "dashboard:main" [read]', line: 9}
+  - {resource: "dashboard:main/resources", verb: read, allowed: true, rule: 'allow "dashboard:main" [read]', line: 9}
+  - {resource: "helper:input_boolean/guest_mode/config", verb: read, allowed: true, rule: 'allow "helper:input_boolean/guest_mode" [read]', line: 10}
+  - {resource: "system:reload/automation", verb: control, allowed: true, rule: 'allow "system:reload" [control]', line: 11}
+  - {resource: "system:logs", verb: control, allowed: false, rule: "default: deny", line: 0}

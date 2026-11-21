@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "automation:pg_*": [edit]
+      "*": [read]
+    where:
+      "automation:pg_*": { label: agent_ok }
+      "*": { area: wohnzimmer }

@@ -1,0 +1,29 @@
+clause: "D-55: an area selector narrows the allow to resources whose effective area matches; with no Live, or a Live error, the narrowed allow does NOT match and a note says so"
+live:
+  entities:
+    light.wz: {area: {id: wohnzimmer, name: Wohnzimmer}}
+    light.kueche: {area: {id: kueche, name: Küche}}
+    light.noarea: {}
+cases:
+  - {resource: "entity:light.wz", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer', line: 7, notes: 0}
+  - {resource: "entity:light.wz/state", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer', line: 7, notes: 0}
+  - {resource: "entity:light.kueche", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:light.noarea", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:light.unregistered", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:light.wz", verb: read, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - resource: "entity:light.wz"
+    verb: control
+    live: {mode: nil}
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 1
+    notes_contains: [["where not evaluated", '"entity:light.*"']]
+  - resource: "entity:light.wz"
+    verb: control
+    live: {mode: error, error: "registry unreachable"}
+    allowed: false
+    rule: "default: deny"
+    line: 0
+    notes: 1
+    notes_contains: [["where not evaluated", '"entity:light.*"']]

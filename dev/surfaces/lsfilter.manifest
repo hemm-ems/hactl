@@ -41,3 +41,4 @@ hactl cc ls = exempt: custom components number a handful per instance and the ta
 hactl dash ls = exempt: dashboards are a handful of url_paths per instance; dash show/grep take the url_path the listing prints
 hactl floor ls = exempt: floors are the smallest registry of all (ground/upper/attic); the listing is already the answer
 hactl label ls = exempt: labels are a hand-curated registry like areas; the listing feeds --label filters elsewhere and fits any budget
+hactl agent ls = exempt: lists the agent directories under one root — a handful, each a whole instance; there is nothing to narrow by an identifier, and its rows are local directories, not Home Assistant ids

@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  base: &base
+    default: deny
+  agent:
+    <<: *base
+    allow:
+      "entity:light.*": [read]

@@ -1,0 +1,14 @@
+{
+  "clause": "D-60 / manual format: `version` is the integer 1; the string \"1\" is not",
+  "load_error": {
+    "problems": [
+      {
+        "line": 1,
+        "contains": [
+          "version"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

@@ -1,0 +1,19 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:lock.* ": [read]
+      "entity:lock.\t*": [read]
+      "entity:l\u043eck.*": [read]
+      "entity:light.wohn-zimmer": [read]
+      "service:light.turn-on": [control]
+      "helper:input_boolean/guest mode": [read]
+      "helper:input-boolean/x": [read]
+      "area:wohn-zimmer": [read]
+      "floor:erdgescho\u00df": [read]
+      "label:agent ok": [read]
+      "entity:Light.Kitchen_2": [read]
+      "area:Wohn*": [read]
+      "label:agent_?k": [read]

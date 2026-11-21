@@ -1,0 +1,33 @@
+{
+  "clause": "Lint unreachable: per (allow, verb), every live match (with the allow's sub path appended) denied for that verb by a deny of the same profile; `write` in the deny counts; a parent deny covers the child",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "lock.front_door",
+        "lock.back_door",
+        "light.kitchen"
+      ]
+    },
+    "findings": [
+      {
+        "code": "unreachable",
+        "profile": "agent",
+        "rule": "allow \"entity:lock.*\" [read edit]",
+        "line": 7
+      },
+      {
+        "code": "unreachable",
+        "profile": "agent",
+        "rule": "allow \"entity:lock.*\" [read edit]",
+        "line": 7
+      },
+      {
+        "code": "unreachable",
+        "profile": "agent",
+        "rule": "allow \"entity:*/registry/labels\" [edit]",
+        "line": 9
+      }
+    ],
+    "unchecked": []
+  }
+}

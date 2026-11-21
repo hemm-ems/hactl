@@ -1,0 +1,6 @@
+clause: "D-62: a what-if may evaluate any declared profile, also when the effective view is the implicit allow-all"
+as: agent
+view: {exists: true, selected_by: what-if, active: agent, allow_all: false, default: deny, profiles: [agent, other], what_if: true}
+cases:
+  - {resource: "entity:lock.front_door", verb: control, allowed: false, rule: 'deny "entity:lock.*" [write]', line: 6, profile: agent}
+  - {resource: "entity:light.kitchen", verb: read, allowed: false, rule: "default: deny", line: 0, profile: agent}

@@ -1,0 +1,13 @@
+{
+  "clause": "D-60 / Load: a policy saved as policy.yml must not silently be no policy",
+  "load_error": {
+    "problems": [
+      {
+        "line_any": true,
+        "contains": [
+          "policy.yml"
+        ]
+      }
+    ]
+  }
+}

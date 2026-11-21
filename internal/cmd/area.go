@@ -11,6 +11,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/config"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
+	"github.com/hemm-ems/hactl/internal/policy"
 )
 
 var areaCmd = family(&cobra.Command{
@@ -143,11 +144,19 @@ func runAreaCreate(ctx context.Context, w io.Writer, name string) error {
 		return err
 	}
 
+	// The plan (H-29), checked in the preview and again before the write:
+	// Home Assistant mints the area id, so create on every area id (D-75).
+	note, err := checkWritePlan(w, !flagAreaConfirm, newWritePlan("create area").addKindWide(policy.Create, policy.KindArea, ""))
+	if err != nil {
+		return err
+	}
+
 	if !flagAreaConfirm {
 		return dryRun("create area").
 			with("name", name).
 			withIf(flagAreaIcon != "", "icon", flagAreaIcon).
 			withIf(flagAreaFloor != "", "floor", flagAreaFloor).
+			withPolicy(note).
 			render(w)
 	}
 
@@ -202,10 +211,20 @@ func runAreaDelete(ctx context.Context, w io.Writer, areaID string) error {
 		return fmt.Errorf("area %q not found (use 'area ls' to see available areas)", areaID)
 	}
 
+	// The plan (H-29): the area, and the area_id of every entity and device
+	// whose own area it is — the cascade as a deliberate superset, enumerated
+	// from the registries exactly as the request layer maps the delete (D-76).
+	plan := newWritePlan("delete area").addRequestMapping(ctx, registryDeleteRequest(policy.KindArea, entry.AreaID))
+	note, err := checkWritePlan(w, !flagAreaConfirm, plan)
+	if err != nil {
+		return err
+	}
+
 	if !flagAreaConfirm {
 		return dryRun("delete area").
 			with("area_id", entry.AreaID).
 			with("name", entry.Name).
+			withPolicy(note).
 			render(w)
 	}
 

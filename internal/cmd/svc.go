@@ -59,9 +59,9 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 		return err
 	}
 
-	var data map[string]any
-	if unmarshalErr := json.Unmarshal(jsonData, &data); unmarshalErr != nil {
-		return fmt.Errorf("invalid --data JSON: %w", unmarshalErr)
+	data, err := parseServiceData(jsonData)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.Load(flagDir)
@@ -91,6 +91,21 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 		}
 	}
 
+	// The policy plan (H-29's command layer, manual "Service calls"): the
+	// request layer's own mapping of exactly the request --confirm sends —
+	// control on the service always (E-2, R-10), on every entity its target
+	// reaches (asked of Home Assistant, D-59, R-1) and every entity --data
+	// names (D-73), the per-domain services homeassistant.* fans out into and
+	// every script it starts (R-2, D-84). Decided here, in the preview and
+	// again under --confirm, before the call. With no profile in effect it
+	// asks nothing and adds nothing (D-58).
+	policyPlan := newWritePlan(fmt.Sprintf("call %s.%s", domain, service)).
+		addServiceCall(ctx, domain, service, data)
+	note, err := checkWritePlan(w, !flagSvcConfirm, policyPlan)
+	if err != nil {
+		return err
+	}
+
 	if !flagSvcConfirm {
 		plan := dryRun(fmt.Sprintf("call %s.%s", domain, service)).
 			with("domain", domain).
@@ -100,6 +115,7 @@ func runSvcCall(ctx context.Context, w io.Writer, target string) error {
 			plan = plan.with("targets", reach)
 		}
 		return plan.
+			withPolicy(note).
 			withHint("re-run with --confirm after the user explicitly confirms this exact action").
 			render(w)
 	}
@@ -217,4 +233,38 @@ func resolveData(s string) ([]byte, error) {
 		return bytes.TrimSpace(data), nil
 	}
 	return []byte(s), nil
+}
+
+// parseServiceData reads --data (D-122): a JSON object, with or without a
+// policy. Any other JSON value — null, a list, a string, a number, a boolean —
+// is refused before anything is asked or sent: Home Assistant's service data
+// is an object, and `null` used to preview as a call that "would reach
+// nothing" while a profile refused it as unmappable.
+func parseServiceData(raw []byte) (map[string]any, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("invalid --data JSON: %w", err)
+	}
+	data, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid --data: want a JSON object ({…}), got %s", jsonValueKind(v))
+	}
+	return data, nil
+}
+
+// jsonValueKind names a decoded JSON value that is not an object.
+func jsonValueKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case []any:
+		return "a list"
+	case string:
+		return "a string"
+	case float64:
+		return "a number"
+	case bool:
+		return "a boolean"
+	}
+	return fmt.Sprintf("%T", v)
 }

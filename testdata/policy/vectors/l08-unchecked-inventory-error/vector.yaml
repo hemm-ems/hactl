@@ -1,0 +1,25 @@
+{
+  "clause": "Lint: an inventory error makes the kind Unchecked with the error's text as the reason; no no-match is reported for it",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "light.kitchen"
+      ]
+    },
+    "errors": {
+      "device": "device registry unreachable",
+      "automation": "automation list failed"
+    },
+    "findings": [],
+    "unchecked": [
+      {
+        "kind": "device",
+        "reason": "device registry unreachable"
+      },
+      {
+        "kind": "automation",
+        "reason": "automation list failed"
+      }
+    ]
+  }
+}

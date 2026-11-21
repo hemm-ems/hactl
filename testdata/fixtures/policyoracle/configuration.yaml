@@ -1,0 +1,28 @@
+# policyoracle fixture — the rig for the two NEEDS-ORACLE markers in
+# dev/surfaces/policy.manifest (permission policy, phase 2).
+#
+# 1. Options flows: does an options flow's `handler` equal the config entry's
+#    entry_id? The entry under test is the met weather entry HA itself creates
+#    during onboarding (default_config); nothing here configures it, so its
+#    entry_id is HA-minted and can never coincide with its domain.
+# 2. YAML scripts: is a script's entity-registry unique_id its config key?
+#    scripts.yaml gives each script an alias that slugs to something OTHER than
+#    its key, so an entity id derived from the alias would be visible, and the
+#    test renames the entity in the registry so key and entity id diverge.
+
+homeassistant:
+  name: Policy Oracle
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+logger:
+  default: warning
+
+script: !include scripts.yaml

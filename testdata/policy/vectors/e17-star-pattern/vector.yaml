@@ -1,0 +1,13 @@
+clause: "Manual matching: the pattern `*` matches every resource of every kind, including sub-resources and the default dashboard"
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "entity:light.kitchen/attr/brightness", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "system:logs", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "file:packages/x.yaml", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "dashboard:", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "service:light.turn_on", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "helper:input_boolean/guest_mode/config", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "config_entry:abc123/options", verb: read, allowed: true, rule: 'allow "*" [read]', line: 7}
+  - {resource: "entity:light.kitchen", verb: delete, allowed: false, rule: 'deny "*" [delete]', line: 9}
+  - {resource: "area:kitchen", verb: delete, allowed: false, rule: 'deny "*" [delete]', line: 9}
+  - {resource: "entity:light.kitchen", verb: control, allowed: false, rule: "default: deny", line: 0}

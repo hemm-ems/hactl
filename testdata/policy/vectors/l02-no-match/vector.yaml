@@ -1,0 +1,29 @@
+{
+  "clause": "Lint no-match: a pattern whose id matches no live id of its kind (a typo in a deny is a silent hole), allow or deny",
+  "lint": {
+    "inventory": {
+      "entity": [
+        "lock.front_door",
+        "light.kitchen"
+      ],
+      "automation": [
+        "heating"
+      ]
+    },
+    "findings": [
+      {
+        "code": "no-match",
+        "profile": "agent",
+        "rule": "allow \"automation:pg_*\" [edit]",
+        "line": 8
+      },
+      {
+        "code": "no-match",
+        "profile": "agent",
+        "rule": "deny \"entity:lokc.*\" [read write]",
+        "line": 10
+      }
+    ],
+    "unchecked": []
+  }
+}

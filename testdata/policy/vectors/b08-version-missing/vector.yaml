@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: `version` missing",
+  "load_error": {
+    "problems": [
+      {
+        "line_any": true,
+        "contains": [
+          "version"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

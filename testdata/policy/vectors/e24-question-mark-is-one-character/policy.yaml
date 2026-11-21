@@ -1,0 +1,9 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "file:**": [edit]
+    deny:
+      "file:k?che.yaml": [edit]

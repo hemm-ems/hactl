@@ -1,0 +1,4 @@
+clause: "D-66: a verdict with no profile in effect (implicit allow-all, D-61) is never partial"
+view: {selected_by: implicit-allow-all, allow_all: true}
+cases:
+  - {resource: "entity:light.x", verb: edit, allowed: true, partial: false, partial_denies: []}

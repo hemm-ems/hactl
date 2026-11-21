@@ -1,0 +1,15 @@
+clause: "D-68: entity/service ids take ASCII letters, digits, `_` and `.`; helper ids the same without `.` in each of two segments; area/floor/label ASCII letters, digits and `_`; letters in any case, `*`/`?` in patterns — a trailing space, a tab, a Cyrillic letter, a `-`, a ß or a space is a broken file, each named with its line"
+load_error:
+  file_is_policy_yaml: true
+  count: 10
+  problems:
+    - {line: 7}
+    - {line: 8}
+    - {line: 9}
+    - {line: 10}
+    - {line: 11}
+    - {line: 12}
+    - {line: 13}
+    - {line: 14}
+    - {line: 15}
+    - {line: 16}

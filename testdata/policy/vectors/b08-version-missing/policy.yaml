@@ -1,0 +1,4 @@
+active: agent
+profiles:
+  agent:
+    default: deny

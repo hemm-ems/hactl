@@ -77,16 +77,24 @@ func TestCheckFailsOnAPhantomProof(t *testing.T) {
 }
 
 // TestCheckFailsOnAStaleEntry — a ledger that describes code which is gone has
-// stopped describing the code.
+// stopped describing the code, whatever the line's kind: a proven row whose
+// site is gone is as stale as an exempt one, and its proof existing does not
+// keep it alive.
 func TestCheckFailsOnAStaleEntry(t *testing.T) {
-	root := writeManifest(t, "#ceiling 0\ngone = "+longReason("exempt")+"\n")
-	m, err := surfaceaudit.LoadManifest(root, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res := surfaceaudit.Check(siteSurface(), m, allProofsExist)
-	if !res.Failed() || len(res.Stale) != 1 {
-		t.Fatalf("a stale disposition passed the gate: %+v", res)
+	for _, line := range []string{
+		"gone = proven: TestThatStillExists",
+		"gone = " + longReason("exempt"),
+		"gone = " + longReason("debt"),
+	} {
+		root := writeManifest(t, "#ceiling 1\n"+line+"\n")
+		m, err := surfaceaudit.LoadManifest(root, "demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := surfaceaudit.Check(siteSurface(), m, allProofsExist)
+		if !res.Failed() || len(res.Stale) != 1 {
+			t.Errorf("%q: a stale disposition passed the gate: %+v", line, res)
+		}
 	}
 }
 

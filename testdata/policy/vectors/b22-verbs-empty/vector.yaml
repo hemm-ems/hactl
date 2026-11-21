@@ -1,0 +1,11 @@
+{
+  "clause": "D-60: an empty verb list",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

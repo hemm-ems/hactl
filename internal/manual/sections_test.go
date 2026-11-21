@@ -24,6 +24,43 @@ func TestMappedHeadingsExist(t *testing.T) {
 	}
 }
 
+// TestReferenceHeadingsExistAndAreNeverDelivered (D-121): every reference
+// heading is in the manual, belongs to a known family, and is neither a core
+// nor a family heading — a reference reaches a caller only on request.
+func TestReferenceHeadingsExistAndAreNeverDelivered(t *testing.T) {
+	s := Sections()
+	delivered := map[string]bool{}
+	for _, h := range CoreHeadings {
+		delivered[h] = true
+	}
+	for _, f := range Families() {
+		for _, h := range FamilySections[f] {
+			delivered[h] = true
+		}
+	}
+	for _, f := range Families() {
+		for _, h := range ReferenceSections[f] {
+			if _, ok := s[h]; !ok {
+				t.Errorf("family %s: reference heading not found in manual: %s", f, h)
+			}
+			if delivered[h] {
+				t.Errorf("family %s: reference heading %s is also delivered", f, h)
+			}
+		}
+	}
+	for f := range ReferenceSections {
+		if _, ok := FamilySections[f]; !ok {
+			t.Errorf("reference for unknown family %s", f)
+		}
+	}
+	if text := ReferenceText("policy"); !strings.HasPrefix(text, "### Policy reference") {
+		t.Errorf("ReferenceText(policy) starts %q", text[:min(len(text), 40)])
+	}
+	if ReferenceText("auto") != "" {
+		t.Error("ReferenceText(auto) is not empty")
+	}
+}
+
 func TestAliasTargetsExist(t *testing.T) {
 	for alias, family := range Aliases {
 		if _, ok := FamilySections[family]; !ok {
@@ -75,10 +112,16 @@ func TestFamiliesListMatchesMap(t *testing.T) {
 // other commands exist — never invent one", so a command missing from it is a
 // command an agent is told not to run. The core sat 27 bytes under the old
 // bound; everything else about `grep` lives in its family section.
+//
+// And 9472 to 9536 for the policy setup flow (W-4/W-5, D-148..D-152): the full
+// command set names `policy review|activate` and `agent add|ls`, one line's
+// worth, for the same reason as `grep` — "No other commands exist" would
+// otherwise tell an agent the owner's flow does not exist. The core sat 18
+// bytes over the old bound; everything else lives in the policy family.
 func TestCoreTextSize(t *testing.T) {
 	n := len(CoreText())
-	if n < 4096 || n > 9472 {
-		t.Errorf("CoreText() is %d bytes, want 4096..9472 (~1-2k tokens)", n)
+	if n < 4096 || n > 9536 {
+		t.Errorf("CoreText() is %d bytes, want 4096..9536 (~1-2k tokens)", n)
 	}
 }
 

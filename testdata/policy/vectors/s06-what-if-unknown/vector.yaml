@@ -1,0 +1,3 @@
+clause: "D-62: `--as` must name a declared profile; the error names the declared ones"
+as: agnet
+as_error_contains: [agent, default]

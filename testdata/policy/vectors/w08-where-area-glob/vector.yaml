@@ -1,0 +1,8 @@
+clause: "D-55 / manual selectors: area values glob like patterns (`wohn*` holds for area wohnzimmer), never exact-only"
+live:
+  entities:
+    light.a: {area: {id: wohnzimmer, name: Wohnzimmer}}
+    light.b: {area: {id: kueche, name: Kueche}}
+cases:
+  - {resource: "entity:light.a", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohn*', line: 7}
+  - {resource: "entity:light.b", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}

@@ -281,3 +281,23 @@ func TestSetup_PromptsNotBuffered(t *testing.T) {
 		t.Errorf("setup output went through cobra buffer — prompts would be invisible: %q", cobraBuf.String())
 	}
 }
+
+// TestSetupKeepsThePolicyRequirement — D-136: rewriting .env must not lift
+// HACTL_POLICY=required.
+func TestSetupKeepsThePolicyRequirement(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("HA_URL=http://old\nHA_TOKEN=x\nHACTL_POLICY=required\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeInstanceEnv(dir, envPath, "http://new", "y"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Clean(envPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "HACTL_POLICY=required\n") || !strings.Contains(string(b), "HA_URL=http://new\n") {
+		t.Errorf(".env after setup:\n%s", b)
+	}
+}

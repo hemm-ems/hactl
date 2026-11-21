@@ -64,8 +64,8 @@ func TestNonIdempotentWritesAreIssuedOnce(t *testing.T) {
 			_, err := c.RenderTemplate(context.Background(), "{{ 1 }}")
 			return err
 		}},
-		{"StartConfigFlow", func(c *Client) error {
-			_, err := c.StartConfigFlow(context.Background(), "mqtt")
+		{"StartConfigFlowOnce", func(c *Client) error {
+			_, err := c.StartConfigFlowOnce(context.Background(), "mqtt")
 			return err
 		}},
 		{"StartOptionsFlow", func(c *Client) error {

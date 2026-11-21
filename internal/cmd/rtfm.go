@@ -13,9 +13,11 @@ import (
 )
 
 var (
-	flagRtfmCore     bool
-	flagRtfmFamily   []string
-	flagRtfmFamilies bool
+	flagRtfmCore      bool
+	flagRtfmFamily    []string
+	flagRtfmReference []string
+	flagRtfmFamilies  bool
+	flagRtfmSkill     string
 )
 
 var rtfmCmd = &cobra.Command{
@@ -23,7 +25,9 @@ var rtfmCmd = &cobra.Command{
 	Args:  takesNone(),
 	Short: "Print the full hactl manual",
 	Long: "Display the embedded hactl manual. Intended for LLM self-teaching.\n" +
-		"Use --core / --family for a token-frugal subset, --families to see the split.",
+		"Use --core / --family for a token-frugal subset, --families to see the split, " +
+		"--reference for a family's full contract that no command delivers on its own, " +
+		"--skill for a step-by-step procedure for an agent (policy-setup).",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// rtfm IS the manual — cap it only when the user explicitly asks.
 		if !rootCmd.PersistentFlags().Changed("tokensmax") {
@@ -31,10 +35,12 @@ var rtfmCmd = &cobra.Command{
 		}
 		w := cmd.OutOrStdout()
 		switch {
+		case cmd.Flags().Changed("skill"):
+			return runRTFMSkill(w, flagRtfmSkill)
 		case flagRtfmFamilies:
 			return runRTFMFamilies(w)
-		case flagRtfmCore || len(flagRtfmFamily) > 0:
-			return runRTFMSections(w, flagRtfmCore, flagRtfmFamily)
+		case flagRtfmCore || len(flagRtfmFamily) > 0 || len(flagRtfmReference) > 0:
+			return runRTFMSections(w, flagRtfmCore, flagRtfmFamily, flagRtfmReference)
 		}
 		return runRTFM(w)
 	},
@@ -45,10 +51,18 @@ func init() {
 		"print only the core manual (routing table, conventions, global flags)")
 	rtfmCmd.Flags().StringArrayVar(&flagRtfmFamily, "family", nil,
 		"print only this command family's how-to sections (repeatable, alias-aware)")
+	rtfmCmd.Flags().StringArrayVar(&flagRtfmReference, "reference", nil,
+		"print only this command family's reference section, which no command delivers on its own (repeatable, alias-aware)")
 	rtfmCmd.Flags().BoolVar(&flagRtfmFamilies, "families", false,
 		"list command families, their aliases and section sizes")
+	rtfmCmd.Flags().StringVar(&flagRtfmSkill, "skill", "",
+		"print this skill — a step-by-step procedure for an agent, shipped in the binary (e.g. policy-setup); alone")
+	for _, other := range []string{"core", "family", "reference", "families"} {
+		rtfmCmd.MarkFlagsMutuallyExclusive("skill", other)
+	}
 	rtfmCmd.MarkFlagsMutuallyExclusive("families", "core")
 	rtfmCmd.MarkFlagsMutuallyExclusive("families", "family")
+	rtfmCmd.MarkFlagsMutuallyExclusive("families", "reference")
 	rootCmd.AddCommand(rtfmCmd)
 }
 
@@ -57,7 +71,18 @@ func runRTFM(w io.Writer) error {
 	return err
 }
 
-func runRTFMSections(w io.Writer, core bool, families []string) error {
+// runRTFMSkill prints one embedded skill verbatim (D-165); an unknown name is
+// refused with the list.
+func runRTFMSkill(w io.Writer, name string) error {
+	text, ok := docs.Skill(name)
+	if !ok {
+		return fmt.Errorf("unknown skill %q; valid: %s", name, strings.Join(docs.SkillNames(), ", "))
+	}
+	_, err := fmt.Fprint(w, text)
+	return err
+}
+
+func runRTFMSections(w io.Writer, core bool, families, references []string) error {
 	var blocks []string
 	if core {
 		blocks = append(blocks, manual.CoreText())
@@ -65,10 +90,9 @@ func runRTFMSections(w io.Writer, core bool, families []string) error {
 	seen := map[string]bool{}      // family dedup (e.g. --family trace --family auto)
 	delivered := map[string]bool{} // heading dedup across overlapping families
 	for _, name := range families {
-		family, ok := manual.FamilyFor(name)
-		if !ok {
-			return fmt.Errorf("unknown family %q; valid: %s", name,
-				strings.Join(manual.Families(), ", "))
+		family, err := rtfmFamily(name)
+		if err != nil {
+			return err
 		}
 		if seen[family] {
 			continue
@@ -83,8 +107,33 @@ func runRTFMSections(w io.Writer, core bool, families []string) error {
 		}
 		blocks = append(blocks, text)
 	}
+	seenRef := map[string]bool{}
+	for _, name := range references {
+		family, err := rtfmFamily(name)
+		if err != nil {
+			return err
+		}
+		if seenRef[family] {
+			continue
+		}
+		seenRef[family] = true
+		text := manual.ReferenceText(family)
+		if text == "" {
+			text = fmt.Sprintf("(no reference section for '%s')", family)
+		}
+		blocks = append(blocks, text)
+	}
 	_, err := fmt.Fprintln(w, strings.Join(blocks, "\n\n"))
 	return err
+}
+
+// rtfmFamily resolves a --family or --reference name, alias-aware.
+func rtfmFamily(name string) (string, error) {
+	family, ok := manual.FamilyFor(name)
+	if !ok {
+		return "", fmt.Errorf("unknown family %q; valid: %s", name, strings.Join(manual.Families(), ", "))
+	}
+	return family, nil
 }
 
 func runRTFMFamilies(w io.Writer) error {
@@ -102,8 +151,12 @@ func runRTFMFamilies(w io.Writer) error {
 		if len(a) > 0 {
 			aliasNote = " (aliases: " + strings.Join(a, ", ") + ")"
 		}
-		_, _ = fmt.Fprintf(w, "%-12s%d sections  ~%d tok%s\n",
-			family, len(headings), estimateTokens(int64(len(text))), aliasNote)
+		refNote := ""
+		if ref := manual.ReferenceText(family); ref != "" {
+			refNote = fmt.Sprintf("  + reference ~%d tok (rtfm --reference %s)", estimateTokens(int64(len(ref))), family)
+		}
+		_, _ = fmt.Fprintf(w, "%-12s%d sections  ~%d tok%s%s\n",
+			family, len(headings), estimateTokens(int64(len(text))), refNote, aliasNote)
 	}
 	return nil
 }

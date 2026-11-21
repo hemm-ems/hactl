@@ -100,17 +100,16 @@ func TestContentTypePerEndpoint(t *testing.T) {
 	ctx := context.Background()
 	_, _ = c.RefReplace(ctx, "a", "b", true)
 	_, _ = c.CreateHelper(ctx, "x:\n  name: y\n", "input_boolean")
-	_, _ = c.UpdateHelper(ctx, "x", "name: y\n")
 	_, _ = c.CreateTemplate(ctx, "x", "sensor")
-	_, _ = c.WriteConfigFile(ctx, "a.yaml", "x: 1\n", true)
+	_, _ = c.WriteScriptDef(ctx, "x", "x:\n  sequence: []\n", true)
 
-	wantJSON := []string{"POST /v1/ref/replace", "POST /v1/config/helper", "PUT /v1/config/helper"}
+	wantJSON := []string{"POST /v1/ref/replace", "POST /v1/config/helper"}
 	for _, key := range wantJSON {
 		if seen[key] != mimeJSON {
 			t.Errorf("%s Content-Type = %q, want %q", key, seen[key], mimeJSON)
 		}
 	}
-	wantText := []string{"POST /v1/config/template", "PUT /v1/config/file"}
+	wantText := []string{"POST /v1/config/template", "PUT /v1/config/script"}
 	for _, key := range wantText {
 		if seen[key] != mimeText {
 			t.Errorf("%s Content-Type = %q, want %q", key, seen[key], mimeText)

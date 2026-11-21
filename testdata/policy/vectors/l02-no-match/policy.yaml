@@ -1,0 +1,10 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+      "automation:pg_*": [edit]
+    deny:
+      "entity:lokc.*": [read, write]

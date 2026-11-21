@@ -1,0 +1,26 @@
+{
+  "clause": "D-60 / LoadError: every problem is listed (not only the first), each at its own line, ordered by line",
+  "load_error": {
+    "problems": [
+      {
+        "line": 2,
+        "contains": [
+          "agnet"
+        ]
+      },
+      {
+        "line": 7,
+        "contains": [
+          "entiy"
+        ]
+      },
+      {
+        "line": 9,
+        "contains": [
+          "\"wirte\""
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

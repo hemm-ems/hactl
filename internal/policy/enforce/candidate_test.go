@@ -1,0 +1,332 @@
+package enforce_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/hemm-ems/hactl/internal/policy/enforce"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
+)
+
+const candidatePolicy = `version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:*": [read]
+      "automation:pg_*": [read, edit, create]
+      "service:light.*": [control]
+      "entity:light.*": [control]
+    deny:
+      "entity:lock.*": [read, write]
+`
+
+func candidateCheckStrings(cs []reqmap.Check) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.String())
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestCandidateChecksAreTheServiceCallsItWouldMake — each action is checked
+// as the svc call it makes (the service and its target), a mention as read
+// (D-133), the state a trigger compares as its state read (D-202).
+func TestCandidateChecksAreTheServiceCallsItWouldMake(t *testing.T) {
+	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+		{EntityID: "light.hall", Platform: "demo"}, {EntityID: "lock.front", Platform: "demo"}, {EntityID: "binary_sensor.door", Platform: "demo"},
+	}}
+	f := &fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front", "binary_sensor.door"}, reach: map[string][]string{
+		`{"entity_id":["lock.front"]}`: {"lock.front"},
+		`{"entity_id":["light.hall"]}`: {"light.hall"},
+	}}
+	s, _ := newSession(t, candidatePolicy, f)
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(`
+id: pg_a
+triggers: [{trigger: state, entity_id: binary_sensor.door}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+  - action: lock.unlock
+    target: {entity_id: lock.front}
+`))
+	if len(denials) != 0 {
+		t.Fatalf("denials = %+v", denials)
+	}
+	want := []string{"control entity:light.hall", "control entity:lock.front", "control service:light.turn_on", "control service:lock.unlock", "read entity:binary_sensor.door", "read entity:binary_sensor.door/state"}
+	if got := candidateCheckStrings(checks); !slices.Equal(got, want) {
+		t.Errorf("checks = %q, want %q", got, want)
+	}
+}
+
+// TestCandidateChecksRefusesAnUnreadableCandidate — a candidate that does not
+// parse, or whose live set cannot be read, is refused: never "nothing found".
+func TestCandidateChecksRefusesAnUnreadableCandidate(t *testing.T) {
+	s, _ := newSession(t, candidatePolicy, &fakeFetcher{live: []string{"light.hall"}})
+	_, denials := s.CandidateChecks(context.Background(), "automation", []byte("actions: [\n"))
+	if len(denials) != 1 || denials[0].Rule != reqmap.RuleCandidateUnreadable {
+		t.Errorf("unparsable candidate: denials = %+v, want %s", denials, reqmap.RuleCandidateUnreadable)
+	}
+	s2, _ := newSession(t, candidatePolicy, &fakeFetcher{liveErr: errors.New("down")})
+	_, denials = s2.CandidateChecks(context.Background(), "automation", []byte("actions: []\n"))
+	if len(denials) != 1 || denials[0].Rule != enforce.RuleLiveUnread {
+		t.Errorf("live set unread: denials = %+v, want %s", denials, enforce.RuleLiveUnread)
+	}
+}
+
+// TestCandidateChecksOffUnderIndirectUnchecked — D-135.
+func TestCandidateChecksOffUnderIndirectUnchecked(t *testing.T) {
+	body := strings.Replace(candidatePolicy, "    default: deny\n", "    default: deny\n    indirect: unchecked\n", 1)
+	f := &fakeFetcher{live: []string{"lock.front"}}
+	s, _ := newSession(t, body, f)
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte("actions: [{action: lock.unlock, target: {entity_id: lock.front}}]\n"))
+	if len(checks) != 0 || len(denials) != 0 || len(f.asked) != 0 {
+		t.Errorf("indirect: unchecked still checked: %v %v, asked %q", checks, denials, f.asked)
+	}
+}
+
+// TestRequestLayerChecksTheCandidateOnItsOwn — the companion write that
+// carries a candidate is refused for what the candidate would do, without any
+// command plan: the request layer is the guarantee (H-29), the plan its
+// preview. An automation that unlocks a denied lock is refused; the same
+// automation switching an allowed light passes; a templated target is
+// refused fail-closed.
+func TestRequestLayerChecksTheCandidateOnItsOwn(t *testing.T) {
+	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+		{EntityID: "light.hall", Platform: "demo"}, {EntityID: "lock.front", Platform: "demo"},
+	}}
+	newF := func() *fakeFetcher {
+		return &fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front"}, reach: map[string][]string{
+			`{"entity_id":["lock.front"]}`: {"lock.front"},
+			`{"entity_id":["light.hall"]}`: {"light.hall"},
+		}}
+	}
+	req := func(method, target string) reqmap.Request {
+		path := "/v1/config/automation"
+		if method == "PUT" {
+			path += "?id=pg_a"
+		}
+		return reqmap.Request{Transport: reqmap.Companion, Method: method, Path: path,
+			Body: []byte("id: pg_a\nalias: a\ntriggers: []\nactions:\n  - action: " + target + "\n")}
+	}
+	for _, method := range []string{"POST", "PUT"} {
+		s, _ := newSession(t, candidatePolicy, newF())
+		err := s.Check(context.Background(), req(method, "lock.unlock\n    target: {entity_id: lock.front}"))
+		var ref *enforce.DeniedError
+		if !errors.As(err, &ref) || !slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool { return d.Resource == "entity:lock.front" }) {
+			t.Errorf("%s with an action on the denied lock: Check = %v, want a refusal naming entity:lock.front", method, err)
+		}
+		s, _ = newSession(t, candidatePolicy, newF())
+		if allowErr := s.Check(context.Background(), req(method, "light.turn_on\n    target: {entity_id: light.hall}")); allowErr != nil {
+			t.Errorf("%s with an allowed action: Check = %v, want allowed", method, allowErr)
+		}
+		s, _ = newSession(t, candidatePolicy, newF())
+		err = s.Check(context.Background(), req(method, "light.turn_on\n    target: {entity_id: \"{{ 'lock.front' }}\"}"))
+		if !errors.As(err, &ref) || !strings.Contains(err.Error()+fmt.Sprint(ref.Denied), reqmap.RuleActionTargetTemplate) {
+			t.Errorf("%s with a templated target: Check = %v, want %s", method, err, reqmap.RuleActionTargetTemplate)
+		}
+	}
+}
+
+// lockBlueprint is an automation blueprint whose action target is an input.
+const lockBlueprint = `blueprint:
+  name: Unlock
+  domain: automation
+  input:
+    door:
+      name: Door
+      default: {entity_id: light.hall}
+actions:
+  - action: lock.unlock
+    target: !input door
+`
+
+// TestCandidateChecksExpandBlueprints — D-185 (F4): a use_blueprint
+// candidate is checked as what the blueprint expands to, at the command plan
+// and at the request layer alike; a blueprint the session cannot read refuses
+// the write, never passes it.
+func TestCandidateChecksExpandBlueprints(t *testing.T) {
+	reg := &reqmap.Registries{Entities: []reqmap.RegistryEntity{
+		{EntityID: "light.hall", Platform: "demo"}, {EntityID: "lock.front", Platform: "demo"},
+	}}
+	newF := func() *fileFetcher {
+		return &fileFetcher{
+			fakeFetcher: fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front"}, reach: map[string][]string{
+				`{"entity_id":["lock.front"]}`: {"lock.front"},
+				`{"entity_id":["light.hall"]}`: {"light.hall"},
+			}},
+			files: map[string]string{"blueprints/automation/pg/unlock.yaml": lockBlueprint},
+		}
+	}
+	cand := "id: pg_bp\nuse_blueprint:\n  path: pg/unlock.yaml\n  input:\n    door: {entity_id: lock.front}\n"
+	// The lock is readable, its service allowed: only switching it is denied —
+	// the F4 shape, where the input alone (a mention) passes as a read.
+	pol := strings.Replace(candidatePolicy, `"entity:lock.*": [read, write]`, `"entity:lock.*": [write]`, 1)
+	pol = strings.Replace(pol, `"service:light.*": [control]`, `"service:light.*": [control]
+      "service:lock.*": [control]`, 1)
+
+	f := newF()
+	s, _ := newSession(t, pol, f)
+	checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand))
+	if len(denials) != 0 {
+		t.Fatalf("denials = %+v", denials)
+	}
+	if got := candidateCheckStrings(checks); !slices.Contains(got, "control entity:lock.front") || !slices.Contains(got, "control service:lock.unlock") {
+		t.Errorf("checks = %q, want control on lock.front and lock.unlock (the blueprint's action on the given input)", got)
+	}
+	if !slices.Equal(f.read, []string{"blueprints/automation/pg/unlock.yaml"}) {
+		t.Errorf("read %q, want the blueprint from the automation folder", f.read)
+	}
+
+	// The request layer: the same write is refused naming the lock.
+	s, _ = newSession(t, pol, newF())
+	err := s.Check(context.Background(), reqmap.Request{Transport: reqmap.Companion, Method: "POST", Path: "/v1/config/automation", Body: []byte(cand)})
+	var ref *enforce.DeniedError
+	if !errors.As(err, &ref) || !slices.ContainsFunc(ref.Denied, func(d enforce.Denial) bool { return d.Resource == "entity:lock.front" }) {
+		t.Errorf("request layer: Check = %v, want a refusal naming entity:lock.front", err)
+	}
+
+	// No config-file reader: refused fail-closed.
+	s, _ = newSession(t, pol, &fakeFetcher{reg: reg, complete: true, live: []string{"light.hall", "lock.front"}})
+	_, denials = s.CandidateChecks(context.Background(), "automation", []byte(cand))
+	if len(denials) != 1 || !strings.HasPrefix(denials[0].Rule, reqmap.RuleBlueprintUnexpandable) {
+		t.Errorf("no reader: denials = %+v, want %s", denials, reqmap.RuleBlueprintUnexpandable)
+	}
+}
+
+// TestCandidateChecksAskSystemTemplateForUnsafeTemplates — D-188, D-190, as
+// refined by D-198: a template construct whose read hactl cannot name needs
+// `read system:template`, which
+// only an allow by that exact name grants while the profile denies anything;
+// the refusal names the construct and where it is. A template of safe
+// constructs only needs nothing more.
+func TestCandidateChecksAskSystemTemplateForUnsafeTemplates(t *testing.T) {
+	f := func() *fakeFetcher {
+		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.hall"}}
+	}
+	cand := []byte("sensor:\n  - unique_id: pg_x\n    state: \"{{ state_attr(now() | string, 'friendly_name') }}\"\n")
+	s, _ := newSession(t, candidatePolicy, f())
+	_, denials := s.CandidateChecks(context.Background(), "template", cand)
+	if len(denials) != 1 || denials[0].Resource != "system:template" || denials[0].Verb != "read" ||
+		!strings.HasPrefix(denials[0].Rule, "default: deny") || !strings.Contains(denials[0].Rule, "uses state_attr") ||
+		!strings.Contains(denials[0].Rule, "/sensor/0/state") {
+		t.Errorf("an unsafe template under a denying profile: denials = %+v", denials)
+	}
+	wild := strings.Replace(candidatePolicy, "    allow:\n", "    allow:\n      \"system:*\": [read]\n", 1)
+	s, _ = newSession(t, wild, f())
+	if _, denials = s.CandidateChecks(context.Background(), "template", cand); len(denials) != 1 || !strings.HasPrefix(denials[0].Rule, enforce.RuleTemplateNeedsAllow) {
+		t.Errorf("a wildcard granted system:template: denials = %+v", denials)
+	}
+	exact := strings.Replace(candidatePolicy, "    allow:\n", "    allow:\n      \"system:template\": [read]\n", 1)
+	s, _ = newSession(t, exact, f())
+	checks, denials := s.CandidateChecks(context.Background(), "template", cand)
+	if len(denials) != 0 || !slices.Contains(candidateCheckStrings(checks), "read system:template") {
+		t.Errorf("the exact allow: checks %q, denials %+v", candidateCheckStrings(checks), denials)
+	}
+	s, _ = newSession(t, candidatePolicy, f())
+	checks, denials = s.CandidateChecks(context.Background(), "template", []byte("sensor:\n  - unique_id: pg_y\n    state: \"{{ now().hour + 1 }}\"\n"))
+	if len(denials) != 0 || slices.Contains(candidateCheckStrings(checks), "read system:template") {
+		t.Errorf("a safe template: checks %q, denials %+v", candidateCheckStrings(checks), denials)
+	}
+}
+
+// TestCandidateChecksDecideTemplateReads — D-198, D-202: what a template
+// reads and what a condition or trigger compares is decided as a read, by
+// the profile's read rules; a denied one refuses naming the template or the
+// condition and where it is; an allowed one is a check, no system:template.
+func TestCandidateChecksDecideTemplateReads(t *testing.T) {
+	f := func() *fakeFetcher {
+		return &fakeFetcher{reg: &reqmap.Registries{}, complete: true, live: []string{"light.hall", "lock.front", "sun.sun"}}
+	}
+	run := func(cand string) ([]string, []enforce.Denial) {
+		t.Helper()
+		s, _ := newSession(t, candidatePolicy, f())
+		checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand))
+		return candidateCheckStrings(checks), denials
+	}
+	checks, denials := run(`
+id: pg_ok
+triggers: [{trigger: state, entity_id: sun.sun}]
+conditions: "{{ is_state('sun.sun', 'below_horizon') }}"
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {brightness: "{{ 255 if now().hour < 20 else 80 }}"}
+`)
+	if len(denials) != 0 || !slices.Contains(checks, "read entity:sun.sun/state") || slices.Contains(checks, "read system:template") {
+		t.Errorf("an allowed read: checks %q, denials %+v", checks, denials)
+	}
+	_, denials = run(`
+id: pg_tpl
+triggers: [{trigger: time, at: "07:00"}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {brightness: "{{ 255 if is_state('lock.front', 'locked') else 0 }}"}
+`)
+	if len(denials) != 1 || denials[0].Resource != "entity:lock.front/state" || denials[0].Verb != "read" ||
+		!strings.Contains(denials[0].Rule, "the template at /actions/0/data/brightness uses is_state") {
+		t.Errorf("a denied template read: denials %+v", denials)
+	}
+	_, denials = run(`
+id: pg_cmp
+triggers: [{trigger: time, at: "07:00"}]
+conditions:
+  - condition: state
+    entity_id: lock.front
+    attribute: code_format
+    state: number
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+`)
+	if !slices.ContainsFunc(denials, func(d enforce.Denial) bool {
+		return d.Resource == "entity:lock.front/attr/code_format" && strings.Contains(d.Rule, "the state condition at /conditions/0 compares it")
+	}) {
+		t.Errorf("a denied compare: denials %+v", denials)
+	}
+	_, denials = run(`
+id: pg_trig
+triggers: [{trigger: state, entity_id: lock.front}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {flash: "{{ trigger.to_state.attributes.friendly_name }}"}
+`)
+	if !slices.ContainsFunc(denials, func(d enforce.Denial) bool {
+		return d.Resource == "entity:lock.front/attr/friendly_name" && strings.Contains(d.Rule, "trigger.to_state")
+	}) {
+		t.Errorf("trigger.to_state of a denied entity (D-201): denials %+v", denials)
+	}
+
+	// A whole-entity read of a partly denied entity is refused; the state
+	// alone is not (D-198: Whole).
+	partly := strings.Replace(candidatePolicy, `      "entity:lock.*": [read, write]`,
+		`      "entity:lock.*": [read, write]
+      "entity:light.hall/attr/friendly_name": [read]`, 1)
+	runPartly := func(tpl string) []enforce.Denial {
+		t.Helper()
+		s, _ := newSession(t, partly, f())
+		_, d := s.CandidateChecks(context.Background(), "automation", []byte(`
+id: pg_whole
+triggers: [{trigger: time, at: "07:00"}]
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.hall}
+    data: {flash: "`+tpl+`"}
+`))
+		return d
+	}
+	if d := runPartly("{{ states.light.hall }}"); len(d) != 1 || d[0].Resource != "entity:light.hall" || !d[0].Partial {
+		t.Errorf("a whole read of a partly denied entity: denials %+v, want one partial refusal of entity:light.hall", d)
+	}
+	if d := runPartly("{{ states('light.hall') }}"); len(d) != 0 {
+		t.Errorf("the state of a partly denied entity: denials %+v, want none", d)
+	}
+}

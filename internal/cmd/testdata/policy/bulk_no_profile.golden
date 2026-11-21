@@ -1,0 +1,267 @@
+$ hactl ref replace sensor.old sensor.new
+dry-run: would rename "sensor.old" → "sensor.new" (3 occurrence(s))
+source     location          path                       status 
+config     automations.yaml  [0].triggers[0].entity_id  pending
+dashboard  (default)         views[0].cards[0].entity   pending
+dashboard  wall-panel        views[0].cards[0].entity   pending
+use --confirm to apply
+companion: ref/replace dry_run=true
+ws config/entity_registry/update: 0
+ws lovelace/config: 2
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ref replace sensor.old sensor.new --json
+{
+  "details": {
+    "from": "sensor.old",
+    "occurrences": 3,
+    "rows": [
+      [
+        "config",
+        "automations.yaml",
+        "[0].triggers[0].entity_id",
+        "pending"
+      ],
+      [
+        "dashboard",
+        "(default)",
+        "views[0].cards[0].entity",
+        "pending"
+      ],
+      [
+        "dashboard",
+        "wall-panel",
+        "views[0].cards[0].entity",
+        "pending"
+      ]
+    ],
+    "to": "sensor.new"
+  },
+  "action": "rename \"sensor.old\" to \"sensor.new\"",
+  "hint": "use --confirm to apply",
+  "dry_run": true
+}
+companion: ref/replace dry_run=true
+ws config/entity_registry/update: 0
+ws lovelace/config: 2
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ref replace sensor.old sensor.new --confirm
+renamed "sensor.old" → "sensor.new" (3 occurrence(s))
+source     location          path                       status 
+config     automations.yaml  [0].triggers[0].entity_id  applied
+dashboard  (default)         views[0].cards[0].entity   saved  
+dashboard  wall-panel        views[0].cards[0].entity   saved  
+companion: ref/replace dry_run=false
+ws config/entity_registry/update: 0
+ws lovelace/config: 4
+ws lovelace/config/save: 2
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ref replace sensor.old sensor.new --confirm --json
+[
+  {
+    "location": "automations.yaml",
+    "path": "[0].triggers[0].entity_id",
+    "source": "config",
+    "status": "applied"
+  },
+  {
+    "location": "(default)",
+    "path": "views[0].cards[0].entity",
+    "source": "dashboard",
+    "status": "saved"
+  },
+  {
+    "location": "wall-panel",
+    "path": "views[0].cards[0].entity",
+    "source": "dashboard",
+    "status": "saved"
+  }
+]
+companion: ref/replace dry_run=false
+ws config/entity_registry/update: 0
+ws lovelace/config: 4
+ws lovelace/config/save: 2
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ent rename sensor.old sensor.new
+dry-run: would rename entity
+  entity_id:     sensor.old
+  new_entity_id: sensor.new
+  platform:      template
+  references:    2
+use --confirm to rename the registry entry and rewrite every reference (reference detail: hactl ref scan sensor.old)
+companion: ref/scan
+ws config/entity_registry/update: 0
+ws lovelace/config: 2
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ent rename sensor.old sensor.new --json
+{
+  "details": {
+    "entity_id": "sensor.old",
+    "new_entity_id": "sensor.new",
+    "platform": "template",
+    "references": 2
+  },
+  "action": "rename entity",
+  "hint": "use --confirm to rename the registry entry and rewrite every reference (reference detail: hactl ref scan sensor.old)",
+  "dry_run": true
+}
+companion: ref/scan
+ws config/entity_registry/update: 0
+ws lovelace/config: 2
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl ent rename sensor.old sensor.new --confirm
+renamed registry entry sensor.old -> sensor.new
+renamed "sensor.old" → "sensor.new" (3 occurrence(s))
+source     location          path                       status 
+config     automations.yaml  [0].triggers[0].entity_id  applied
+dashboard  (default)         views[0].cards[0].entity   saved  
+dashboard  wall-panel        views[0].cards[0].entity   saved  
+companion: ref/scan, ref/replace dry_run=false
+ws config/entity_registry/update: 1
+ws lovelace/config: 6
+ws lovelace/config/save: 2
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 2
+----
+$ hactl dash replace sensor.old sensor.new wall-panel
+dry-run: would replace in dashboard wall-panel
+  dashboard:   wall-panel
+  from:        sensor.old
+  to:          sensor.new
+  occurrences: 1
+  paths:       [views[0].cards[0].entity]
+use --confirm to apply
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 1
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash replace sensor.old sensor.new wall-panel --confirm --json
+{
+  "details": {
+    "dashboard": "wall-panel",
+    "from": "sensor.old",
+    "occurrences": 1,
+    "paths": [
+      "views[0].cards[0].entity"
+    ],
+    "to": "sensor.new"
+  },
+  "action": "replace in dashboard wall-panel",
+  "ok": true,
+  "dry_run": false
+}
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 2
+ws lovelace/config/save: 1
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash save wall-panel -f @cfg
+dry-run: would save dashboard config
+  url_path:     wall-panel
+  title:        Wall
+  config_bytes: 61
+use --confirm to apply
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 0
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash save wall-panel -f @cfg --confirm
+saved dashboard config for wall-panel
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 1
+ws lovelace/config/save: 1
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash create --url-path new-one --title New
+dry-run: would create dashboard
+  url_path: new-one
+  title:    New
+  icon:     
+  sidebar:  true
+  admin:    false
+use --confirm to apply
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 0
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash create --url-path new-one --title New --confirm
+created dashboard "new-one" (id: new_one)
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 0
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 1
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash delete wall-panel
+dry-run: would delete dashboard
+  url_path: wall-panel
+  title:    Wall
+use --confirm to apply
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 0
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 0
+ws lovelace/dashboards/list: 1
+----
+$ hactl dash delete wall-panel --confirm --json
+{
+  "details": {
+    "title": "Wall",
+    "url_path": "wall-panel"
+  },
+  "action": "delete dashboard",
+  "ok": true,
+  "dry_run": false
+}
+companion: 
+ws config/entity_registry/update: 0
+ws lovelace/config: 0
+ws lovelace/config/save: 0
+ws lovelace/dashboards/create: 0
+ws lovelace/dashboards/delete: 1
+ws lovelace/dashboards/list: 1
+----

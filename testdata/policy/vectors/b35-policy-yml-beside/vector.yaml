@@ -1,0 +1,13 @@
+{
+  "clause": "D-60 / Load: a policy.yml beside policy.yaml is refused (hactl reads only policy.yaml)",
+  "load_error": {
+    "problems": [
+      {
+        "line_any": true,
+        "contains": [
+          "policy.yml"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: more sub segments than the grammar allows",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7
+      },
+      {
+        "line": 8
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

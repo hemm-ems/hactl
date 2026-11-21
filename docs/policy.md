@@ -1,0 +1,732 @@
+# Permission policy
+
+A `policy.yaml` in your instance directory tells hactl what an agent may read
+and change, per entity, automation, dashboard and so on. For example: "read
+everything except locks, switch lights only in the living room, edit only the
+`pg_*` automations, change labels but never names".
+
+> **A guardrail, not a lock.** The policy catches *mistakes*: a misread
+> instruction, a target wider than intended, a typo in an id. It does not stop
+> anything that wants to get around it. The token in `.env` can do everything,
+> and anything with a shell can call Home Assistant directly or edit the file.
+
+> **Status: writes and reads are enforced.** Every command that changes
+> something refuses a denied change, already in its dry run, before anything
+> is written. Every command that reads is filtered before it sees the answer: a
+> listing drops what the profile may not read and ends with `hidden by policy:
+> N`, a denied attribute reads `<denied>`, and reading one denied thing is
+> refused. See [What hactl enforces](#what-hactl-enforces).
+
+## Quick start
+
+Create `policy.yaml` next to your instance's `.env`:
+
+```yaml
+version: 1
+active: agent                 # the profile hactl applies, for CLI and MCP alike
+profiles:
+  agent:
+    default: deny             # whatever no rule allows is denied
+    allow:
+      "entity:*":                 [read]
+      "entity:light.*":           [control]
+      "automation:pg_*":          [read, edit, create]
+      "entity:*/registry/labels": [edit]
+    deny:
+      "entity:lock.*":            [read, write]
+      "entity:*/attr/latitude":   [read]   # where anyone is: device trackers,
+      "entity:*/attr/longitude":  [read]   # persons, zones — every entity
+```
+
+The two location rules cover every entity that carries coordinates — a
+`device_tracker`, a `person` (which repeats its tracker's coordinates), a
+`zone`. Denying `latitude` alone leaves `longitude` readable, and denying it on
+`device_tracker.*` alone leaves the same coordinates readable on `person.*`.
+They do not get in the way of templates over a whole domain of entities that
+hold no coordinates: `{{ states.light | selectattr('state', 'eq', 'on') | list }}`
+stays allowed, because no light has a `latitude`.
+
+Tip: also deny `edit` on the automations and scripts that keep the house safe
+— `"automation:night_lockup": [edit, delete]`, `"script:goodnight": [edit,
+delete]`. Running one is checked against what it does (see [What hactl
+enforces](#what-hactl-enforces)), so an agent that may not lock the door
+cannot run a script that does; but one allowed to edit it could change what it
+does for whoever runs it next — the owner, or Home Assistant at 23:30.
+
+Then ask it questions:
+
+```console
+$ hactl policy check entity:lock.front_door control
+denied: entity:lock.front_door control
+rule: deny "entity:lock.*" [read write] (line 12)
+profile: agent (selected by active)
+
+$ hactl policy check entity:light.sofa control
+allowed: entity:light.sofa control
+rule: allow "entity:light.*" [control] (line 8)
+profile: agent (selected by active)
+```
+
+The exit code is the answer: `0` allowed, `1` denied. Every answer names the
+rule that decided it. To ask about every kind of change at once, use `write`:
+
+```console
+$ hactl policy check entity:light.sofa write
+denied: entity:light.sofa write
+control: allowed — allow "entity:light.*" [control] (line 8)
+edit: denied — default: deny
+create: denied — default: deny
+delete: denied — default: deny
+profile: agent (selected by active)
+enforced: a write command refuses what this verdict denies
+```
+
+It answers each write verb that can apply to that resource and exits `0` only
+if all of them are allowed. One exception: `control` on an automation, script,
+helper or template address is shown, but a denial there by `default: deny`
+alone does not count, because no command enforces it (see [Switching typed
+entries](#switching-typed-entries)).
+
+Finally, run `hactl policy lint` against your live instance to catch typos (see
+[Checking a policy](#checking-a-policy)).
+
+With no `policy.yaml`, nothing changes: everything is allowed, exactly as
+without the feature, and hactl makes no extra request to check anything.
+
+## Which profile applies
+
+A file can hold several profiles. **The file alone decides which one applies.**
+There is no `--profile` flag and no environment variable, so an agent cannot
+pick a friendlier profile for itself. You switch profiles by editing `active:`.
+
+| The file has | In effect |
+|---|---|
+| `active: agent` | profile `agent` |
+| no `active:`, but a profile named `default` | profile `default` |
+| no `active:` and no `default` profile | nothing: everything is allowed, and `policy show` says `ALLOW-ALL` |
+| no file at all | nothing: everything is allowed |
+
+To see what *another* profile would decide without switching, use
+`--as <profile>` on `policy show` or `policy check`. The output is marked
+`what-if`, and the effective profile does not change.
+
+An MCP server started with `hactl mcp --dir <instance>` sticks to that
+instance. A tool call that tries another `--dir` is refused, so it cannot reach
+a different instance's policy, or an instance with none.
+
+## Writing rules
+
+A rule is `"<resource pattern>": [verbs]` under `allow:` or `deny:`.
+
+### Resources
+
+`<kind>:<id>`, optionally followed by a sub-resource path:
+
+| kind | id | examples |
+|---|---|---|
+| `entity` | entity_id | `entity:light.kitchen`, `entity:light.kitchen/attr/brightness`, `entity:*/registry/labels` |
+| `device` | device_id | `device:abc123/registry/area_id` |
+| `area`, `floor`, `label` | registry id | `area:wohnzimmer` |
+| `automation` | config id (not the alias) | `automation:pg_*` |
+| `script` | object id | `script:goodnight/run` |
+| `template` | unique_id | `template:solar_total` |
+| `helper` | `<domain>/<id>` | `helper:input_boolean/guest_mode` |
+| `dashboard` | url_path (`dashboard:` alone is the default dashboard) | `dashboard:main/views/secret` |
+| `config_entry` | entry_id | `config_entry:01J…/options` |
+| `file` | path in the config directory | `file:packages/**`, `file:automations.yaml/block/alarm` |
+| `service` | `<domain>.<service>` | `service:lock.unlock` |
+| `system` | `logs`, `wireguard`, `reload`, `check_config`, `cache`, `template` | `system:reload/automation` |
+
+Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
+`registry/<field>`, where field is one of `name`, `area_id`, `labels`, `icon`,
+`disabled_by` or `entity_id`. The full table is in the
+[manual](manual.md#resources).
+
+The pattern `"*"` on its own matches every resource of every kind:
+`"*": [read]` lets the agent read everything but templates (see `tpl eval`
+below), `"*": [write]` under `deny:` makes a read-only profile.
+
+A `template:` is a template entity from YAML, addressed by its `unique_id`. A
+template helper made in the UI (Settings → Helpers) is a config entry, not a
+`template:` — address its entity (`entity:sensor.x`) or its config entry
+(`config_entry:<entry_id>`).
+
+### Verbs
+
+| verb | means | e.g. |
+|---|---|---|
+| `read` | see it | `ent show`, `dash show` |
+| `control` | change runtime state | `svc call`, `script run` |
+| `edit` | change existing config or a registry field | `auto apply`, `ent set-label` |
+| `create` | make something new | `auto create`, `area create` |
+| `delete` | remove it | `auto delete` |
+
+Helpers have no edit command: `helper create` and `helper delete` are all
+hactl does to a helper's config, so `edit` on `helper:` decides nothing.
+Switching a helper (`input_boolean.turn_on`) is `control` on its entity
+(`entity:input_boolean.guest_mode`) and on the service.
+
+`write` is shorthand for `control, edit, create, delete` — **as far as they
+can change what the rule points at.** Nothing ever "switches" a registry
+field, so `"entity:*/registry/entity_id": [write]` never covers `control`,
+while `"entity:lock.*": [write]` covers everything you can do to a lock.
+
+A deny on a part also stops whatever would change that part from above:
+deleting or creating the whole thing, a service call on an entity (it changes
+the entity's `state` and `attr/…`), and an edit of a file (it rewrites the
+file's `block/…`). So `deny "automation:x/config": [write]` also refuses
+deleting automation `x`, and a deny on `entity:lock.*/state` refuses switching
+a lock. An allow on a part grants only the part.
+
+**The no-renames rule is `deny "entity:*/registry/entity_id": [edit]`.**
+With `[write]` it also refuses deleting and creating every entity, because
+deleting an entity deletes its entity_id: `auto delete` and `helper delete`
+are then refused, whatever you allow. `policy lint` reports each allow such a
+deny overrides as `blocked-by-part`.
+
+`hactl policy show` prints what each rule ends up meaning (after a `write`,
+`→ [edit create delete]`; `expanded` in `--json`), and the manual's reference
+has the full table of which verbs apply where. If you write a verb that can change nothing where you put it
+(`"entity:*/registry/labels": [control]`), the file still loads, and
+`policy lint` tells you (`verb-not-applicable`).
+
+### Matching
+
+- `*` matches any run of characters and `?` exactly one character, but neither
+  crosses a `/`. Only `file` ids also accept `**`, which matches across folders
+  (`file:packages/**`).
+- Matching ignores case.
+- **A pattern matches the full id.** `entity:sensor.*` does not match
+  `binary_sensor.x`. To match a name in every domain, make the domain a
+  wildcard: `entity:*.front_door`. A bare `entity:front_door` is rejected,
+  because it could never match anything.
+- **A pattern without a wildcard is exact.** `entity:light.kitchen` does not
+  match `light.kitchen_2`.
+
+### How a decision is made
+
+For one resource and one verb:
+
+1. A matching **deny** wins. Deny always beats allow, wherever the rules are in
+   the file.
+2. Otherwise a matching **allow** grants.
+3. Otherwise the profile's **`default:`** decides. Only `default: deny` denies.
+   Without it, everything not explicitly denied is allowed.
+
+A rule covers everything below it: `read` on `entity:light.kitchen` covers its
+attributes. An allow on a sub-resource grants only that sub-resource:
+`"entity:*/registry/labels": [edit]` lets the agent change labels and nothing
+else about the entity.
+
+**Partly denied.** Suppose an entity is allowed, but something *inside* it is
+denied, like the latitude and longitude attributes in the example above. Then:
+
+- **changing** the whole entity is denied, because it would touch the denied
+  part — counting only denies whose verb can change what they protect, so a
+  deny on a registry field never blocks switching the entity;
+- **reading** it is allowed, and the answer lists the denied part:
+
+```console
+$ hactl policy check entity:device_tracker.jan read
+allowed: entity:device_tracker.jan read
+rule: allow "entity:*" [read] (line 7)
+partial: deny "entity:*/attr/latitude" [read] (line 13)
+partial: deny "entity:*/attr/longitude" [read] (line 14)
+```
+
+### Narrowing an allow by area or label
+
+```yaml
+    where:
+      "entity:light.*": { area: wohnzimmer }
+```
+
+The allow on `entity:light.*` then applies only to lights in the living room.
+`where:` works on `entity` and `device` allows. It accepts `area`, `label` or
+both, each with one value or a list; a value may be an id or a name and may
+contain wildcards. An entity's area is its own, or else its device's. Labels
+are not inherited from the device.
+
+The check runs against the live instance every time. If you move a lamp into
+the living room, the allow applies to it at once. If Home Assistant cannot be
+reached, the narrowed allow does not apply.
+
+When a narrowed allow matched but its area or label did not hold, a denial says
+so instead of just `default: deny`:
+
+```console
+$ hactl policy check entity:input_boolean.pg_guest control
+denied: entity:input_boolean.pg_guest control
+rule: default: deny
+where not met: allow "entity:*.pg_*" [control] where label=pg_core_label (line 9) — input_boolean.pg_guest has no label pg_core_label
+profile: agent (selected by active)
+```
+
+Two things to watch:
+
+- **A misspelt area or label denies everything the allow was meant to grant.**
+  `policy lint` looks every `where:` value up in your areas and labels and
+  reports one that matches nothing.
+- **Don't let the agent satisfy its own `where:`.** If the same profile lets it
+  edit labels (`"entity:*/registry/labels": [edit]`) on the entities a
+  `where: {label: …}` allow covers, it can add the label and then use the
+  allow. The same goes for areas, including a device's area. `policy lint`
+  reports this as `self-grant` and names both rules. The policy is a guardrail
+  and does not stop it; close it by denying that field edit on those entities.
+
+`where:` cannot exclude anything: there is no "everything except". To keep one
+domain out of a wildcard allow such as `entity:*.pg_*`, list the domains you
+mean (`entity:light.pg_*`, `entity:switch.pg_*`, …).
+
+### Protecting one automation
+
+An automation has two addresses: its config (`automation:<config id>`, what
+`auto apply`, `auto delete` and switching it check) and its entity
+(`entity:automation.<object id>`, what renaming, relabelling, moving and
+disabling it check). For an automation made in the UI the two ids differ.
+`hactl auto ls --json` shows both: `id` is the entity's object id, `config_id`
+the config id.
+
+```yaml
+    deny:
+      "automation:pg_v9_auto_1":               [write]   # its config
+      "entity:automation.pg_v9_verify_auto":   [write]   # its entity
+```
+
+With only one of the two, `policy lint` warns (`half-protected`) and names the
+address you are missing. Scripts, helpers and template entities work the same
+way.
+
+### Protecting one dashboard view
+
+`dash save` checks each view it changes: editing view `secret` of dashboard
+`main` is `edit dashboard:main/views/secret`, adding it `create`, removing it
+`delete`. A change outside the views, such as the title, is checked on the
+dashboard as a whole, so any view deny refuses it. Choose the verbs by what
+you want to keep:
+
+- `deny "dashboard:main/views/secret": [edit]` stops changes to the view, but
+  not removing it (or adding it back) when the profile allows `create` or
+  `delete` on `dashboard:main` — those grant the views too.
+- `deny "dashboard:main/views/secret": [write]` stops that as well, but a deny
+  that holds `create` and `delete` on a view also holds them on the dashboard
+  (deleting the dashboard deletes the view), so `main` can then be neither
+  deleted nor created. `policy lint` says so (`blocked-by-part`).
+
+The first `dash save` on a dashboard nothing is stored for yet (right after
+`dash create`) creates the views it brings, so `create` on those views is what
+it needs; anything else in it, such as a title, needs `edit` on the dashboard.
+A first save that brings no view at all (`{}`, an empty `views` list) still
+stores a dashboard where none was — on the auto-generated default dashboard it
+replaces what users see — so it needs `edit` on the dashboard too. So does a
+save of the config the dashboard already holds: hactl still sends it, Home
+Assistant rewrites the dashboard and tells every open frontend to reload, so
+it is checked as `edit` on the dashboard rather than let through as a no-op.
+
+### Switching typed entries
+
+**`control` on an automation, script, helper or template address itself is
+only ever denied, never granted.** `allow "automation:pg_*": [control]` lets
+nothing be switched: switching is allowed on the entity
+(`entity:automation.pg_*`) and the service. `policy lint` reports such an allow
+as `no-effect` (a `script:<id>` allow is the exception: it also grants the
+script's `run`), and `policy check` adds a note when an allow decided `control`
+on one of these addresses.
+
+## Checking a policy
+
+| Command | What it tells you |
+|---|---|
+| `hactl policy show` | the file, the profile in effect and why, its rules in order, and a reminder that this is a guardrail |
+| `hactl policy check <resource> <verb>` | allowed or denied, and which rule decided (exit 0 or 1) |
+| `hactl policy lint` | the file is valid, **and** every rule matches something real on your instance |
+
+**Lint before you rely on a deny.** A deny with a typo (`entity:lokc.*`)
+matches nothing, so it protects nothing. `policy lint` checks the rules of
+*every* profile, not only the active one, against your live instance. It
+reports:
+
+- `no-match`: the rule matches nothing on the instance, which usually means a
+  typo;
+- `unreachable`: an allow that a deny always overrides;
+- `redundant-allow`: an allow in a profile without `default: deny`, where it
+  changes nothing;
+- `implicit-allow-all`: profiles exist, but none is in effect;
+- `verb-not-applicable`: a verb that cannot apply where the rule points;
+- `no-effect`: an allow of `control` on an automation, helper or template
+  address, which never grants anything;
+- `blocked-by-part`: an allow whose `create` or `delete` (or another verb) a
+  deny on a part always refuses — such as `allow "entity:automation.pg_*":
+  [delete]` with `deny "entity:*/registry/entity_id": [write]`; the message
+  names both rules and, where it helps, the narrower deny (`[edit]`). A
+  deliberate exception ("every light except one") is written as a deny on
+  the entity itself, `deny "entity:light.x": [control]`, not on its `state`,
+  and draws no finding;
+- `self-grant`: a `where:` allow the agent could satisfy itself;
+- `half-protected`: a deny on an automation's config without its entity, or
+  the other way round;
+- `template-reads-denied`: an allow of `system:template` in a profile that
+  denies reading anything — a template it lets through can read every state,
+  also what the profile denies;
+- `control-without-service`: under `default: deny`, an allow of `control` on
+  a domain's entities (`entity:light.*`) with no allow of any service of that
+  domain — every service call on them is refused; add
+  `"service:light.*": [control]`.
+
+Lint checks ids against your instance: entities, devices, areas, floors,
+labels, automations, scripts, dashboards, services, helpers (YAML and the ones
+made in the UI), template entities and config entries, and every `where:`
+value against your areas and labels. Some things it cannot check: file paths,
+dashboard view paths and file blocks. It lists them as **unchecked** and exits
+1, so a partial check never passes as clean. `--allow-partial` accepts the
+unchecked entries but still lists them.
+
+All three commands support `--json`.
+
+## What hactl enforces
+
+**Every write is checked before it happens, and the dry run already tells
+you.** A command that would switch, edit, create or delete something works out
+everything its `--confirm` run would touch and checks all of it while
+previewing. If anything is denied, the preview is refused — and `--confirm`
+would be refused the same way, naming the same rule. Nothing is ever half
+written:
+
+```console
+$ hactl ref replace light.old light.new
+policy_denied: would rename "light.old" to "light.new" — refused by policy, nothing was written
+  denied: edit file:packages/locks.yaml — deny "file:packages/lock*" [write] (line 15)
+  denied: edit dashboard:security — deny "dashboard:security" [write] (line 16)
+  checked: 41 resources, 2 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 15, 16; allowed: 39 of 41 checked resources, but the command is refused as a whole — ask the owner; a change goes through a draft and `hactl policy activate`
+```
+
+The exit code is `1`, and stderr gets a one-line count,
+`policy_denied: 2 of 41 resources denied (profile agent)`. The `hint:` line
+says what kind of refusal it is: a rule you wrote (and which line), nothing
+allowing it under `default: deny`, or something hactl could not check. With `--json` you get the same as one object: the usual
+preview object with `"ok": false`, `"error": "policy_denied"`, and the denied
+list under `details.policy.denied`. If one of 40 files is denied, none of the
+40 is written. (One narrow gap: a file that starts containing the old name in
+the instant between `ref replace`'s own check and its write is written
+unchecked; hactl then exits 1 and names that file.)
+
+A preview that passed is not a promise forever. `--confirm` checks again, with
+the policy file as it is then, the areas and labels as they are then, and the
+entities a service call reaches then. If you moved a lamp or relabelled
+something in between, `--confirm` can still be refused — and it says the
+preview had passed under this policy. If the policy changed (another profile,
+an edited file), the earlier preview does not count: a refused `--confirm`
+then says no preview of this command passed under this policy.
+
+A few things worth knowing:
+
+- **Service calls are checked by what they reach.** `svc call light.turn_on`
+  with an area, a label or a group as target needs `control` on every light it
+  would actually switch; hactl asks Home Assistant for that set. Services that
+  are not one domain's own — `homeassistant.turn_on`, or an integration's
+  service that acts on, say, your locks — are checked against *everything* the
+  target names, in every domain, and `entity_id: all` then means every entity
+  you have. `homeassistant.turn_on`, `turn_off` and `toggle` are the
+  exception: Home Assistant passes them on only to the domains that have a
+  service of that name and skips the rest — `homeassistant.turn_off` on a
+  label holding a light and a lock turns off the light and leaves the lock
+  — so hactl counts only those entities (it reads Home Assistant's service
+  list for that). They also need each such domain's own service
+  (`light.turn_off`, `script.turn_on`, …), and anything that starts a script
+  needs that script's `run`. Entity ids anywhere in `--data` count too, so
+  `scene.apply` with a lock in it needs `control` on the lock. A light group
+  and a scene pass the call on to what they hold: turning on a light group
+  needs `control` on every light in it, and turning on a scene needs `control`
+  on every entity the scene sets — hactl reads them from the group's or scene's
+  own state, since Home Assistant's answer names the group or scene alone. If
+  Home Assistant cannot tell hactl what a call would reach, the call is
+  refused.
+- **Some services name what they act on another way, and are checked by
+  that.** `group.set` and `group.remove` act on `group.<object_id>`,
+  `scene.create` on `scene.<scene_id>`, so each needs `control` on that group
+  or scene. `recorder.purge_entities` deletes the history of every entity of
+  the `domains` it names and every entity its `entity_globs` match (matched
+  exactly as Home Assistant does: `[!a]ock.*` matches `lock.front_door`), and
+  `recorder.purge` of every entity, so they need `control` on each;
+  `recorder.get_statistics` needs `read` on each entity's statistics. The
+  `shopping_list` services change the shopping list's own entity.
+  `homeassistant.set_location` moves `zone.home`, so it needs `control` on
+  `zone.home`. `homeassistant.reload_config_entry` sets up an integration
+  again, and its entities come back the way the integration starts them — a
+  demo light you turned off is on again — so it needs `control` on every
+  entity of that config entry (and of every entry its target belongs to).
+- **Removing counts as deleting.** `scene.delete` and `group.remove` need
+  `delete` on the scene or group. Reloading scenes or restarting Home
+  Assistant is not checked as deleting, although it drops every scene and
+  group made at run time (`scene.create`, `group.set`): it needs only its
+  service.
+- **Some services act on things no field of the call names** — Assist's
+  `conversation.process` does what a sentence means; `shell_command.*`,
+  `python_script.*`, `rest_command.*` and `pyscript.*` do whatever they were
+  written to; `ai_task.*`, `assist_satellite.start_conversation`,
+  `file.read_file` and `device_tracker.see` too. While your profile denies
+  anything, such a service needs an allow by its **exact** name —
+  `"service:conversation.process": [control]` — and then may do whatever it
+  does: a wildcard such as `"service:*"` and the default never grant it. The
+  services of a custom integration are checked by their target and the entity
+  ids in their data only.
+- **What an automation, script or template entity you write would do is
+  checked when you write it.** It needs `control` on everything its actions
+  would switch, exactly as `svc call` would, and `read` on every other entity
+  it mentions. hactl reads every template in it: one it can compute
+  (`{{ 'input_boolean.' ~ 'guard' }}`) is checked as what it renders to; one
+  it cannot compute where an action names entities is refused; and what a
+  template reads counts as reading it: `{{ states('sun.sun') }}` and
+  `is_state('sun.sun', 'below_horizon')` need `read` on `sun.sun`'s state,
+  `state_attr('person.me', 'latitude')` on that attribute,
+  `states.light | selectattr('state', 'eq', 'on')` on every light, and
+  `expand('group.x')` and the area, floor, label and device functions on
+  everything they lead to. `trigger.to_state` needs the same read on the
+  entities that trigger it, and a `state` or `numeric_state` trigger or
+  condition on an `attribute:` needs `read` on that attribute (on the state
+  without one). Where hactl cannot tell what a template reads — an id it
+  computes from a state, `closest`, a name lookup such as `area_name`, a
+  macro, a name hactl does not know, or a variable set from any of them — it
+  needs `"system:template": [read]` by that exact name. Time, math, text and
+  list functions need nothing. A template hactl cannot parse is refused, and
+  so is one that reuses Home Assistant's own names `trigger`, `this`, `wait`,
+  `repeat` or `context` for a variable of its own. One built from a blueprint (`use_blueprint`) is checked as the
+  blueprint expands with your inputs and the blueprint's defaults: hactl reads
+  the blueprint through the companion, and refuses the write if it cannot read
+  or expand it. A later change to the blueprint file itself is not checked.
+- **Running an automation or a script is checked like writing it.** `script
+  run goodnight`, `svc call script.goodnight`, `script.turn_on` (also through
+  `homeassistant.turn_on`) and `automation.trigger` read the stored config
+  of what they start, as `script cat` and `auto cat` do, and need everything
+  it would do — and what a script it starts would do, and so on. A profile
+  that may not lock the front door cannot run the script that locks it:
+
+  ```console
+  $ hactl script run goodnight
+  policy_denied: would execute script.goodnight — refused by policy, nothing was written
+    denied: control entity:lock.front_door — deny "entity:lock.front_door" [control] (line 5) (run of script.goodnight: action at /sequence/1)
+  ```
+
+  Without a companion, hactl reads the stored config from Home Assistant's
+  config API instead, which serves what `scripts.yaml` and `automations.yaml`
+  hold (what the UI edits). A script or automation defined anywhere else — a
+  package, an `!include` of another file — is readable only through the
+  companion: without it, and whenever hactl cannot read the stored config,
+  the run is refused. What Home Assistant runs on its own — an automation firing on its
+  trigger at 23:30 — is not checked: only what the agent starts.
+- **Putting something where an automation looks counts as switching it.**
+  Labelling an entity, moving it (or its device) to an area, or renaming it
+  needs `control` on that entity when an automation, script or template entity
+  — yours or anyone's — targets the new label, area, floor or name with an
+  action that can switch it: from then on, that automation switches it. An
+  action of another domain does not count — `lock.lock` on the area
+  `hallway` does not switch a light moved there, and `homeassistant.turn_off`
+  on a label never switches a lock — nor does a label only a trigger or a
+  condition looks at. The refusal names the automation: `(because
+  automation.hallway_area_lock targets area:hallway)`. Labelling and moving
+  things nothing targets needs only the label or area edit. Deleting an area
+  counts too: an entity in it falls back to its device's area.
+- **Switching an automation, a script, a helper or a template entity also asks
+  its own address.** `deny "automation:prod_*": [write]` refuses turning
+  `prod_heating` off, not just editing it; the same goes for
+  `script:<id>`, `helper:<domain>/<id>` and `template:<unique_id>`. Only a deny
+  decides this: allowing the entity (`entity:automation.*`) and the service is
+  enough to switch it, even under `default: deny`.
+- **The service itself is always checked**, also for services without any
+  target such as `homeassistant.restart` — even when every entity is allowed.
+  With `default: deny`, allow the services you want
+  (`"service:light.*": [control]`); without it, a service no deny matches is
+  allowed.
+- **Commands that do more than one thing need every part.** `script apply`
+  also reloads scripts (`service:script.reload`). `script run` needs
+  `script:<id>/run` and the service `script.turn_on`. Deleting an automation,
+  script, helper or template also removes its entity from the registry, so it
+  needs `delete` on that entity as well. Deleting a label, an area or a floor
+  changes everything that holds it, so it needs `edit` on each holder's label
+  or area field (or on the areas of a floor); deleting an integration's config
+  entry needs `delete` on every device and entity registered to it. hactl
+  lists these from the registries, and may check a little more than Home
+  Assistant actually changes — never less.
+- **Renaming needs both names.** `ent rename a b` needs `edit` on `a`'s
+  `registry/entity_id` and `create` on `b`, plus every file, automation,
+  script, template and dashboard the rename rewrites. `auto apply` with a file
+  whose `id:` differs from the target renames the automation, so it needs
+  `create` on the new id; a file with no `id:` at all is refused. `ref replace`
+  that rewrites an automation's `id:` is a rename too.
+- **A rewritten file is also checked as what is in it.** `ref replace` (and
+  `ent rename`) reads each file it would rewrite to see which automation,
+  script or template entity every change lies in, and needs `edit` on that
+  entry's config as well as on the file, so one denied entry in the file
+  refuses the whole replace. If hactl cannot read the file, or
+  cannot find the change in it, the rewrite is refused rather than checked as
+  the file alone. A change in a part of the file that other entries share —
+  a YAML anchor (`&x`) another automation refers to with `*x` or `<<: *x` —
+  lies in every entry sharing it, and a change in a file that an automation,
+  script or template pulls in with `!include` lies in that entry too. A change
+  hactl cannot place in such an entry — an automation without an `id:`, a
+  template entity without a `unique_id` — is checked as its file only.
+- **Partly denied means denied.** If an entity is allowed but its
+  `registry/entity_id` is denied, a command that would change the whole entity
+  is refused. hactl writes at the finest level it can — `ent set-label` checks
+  only `registry/labels`, `dash save` checks each changed view. But a change
+  hactl can only address as a whole is refused by any denied part, even one it
+  does not touch: with one view of a dashboard denied, changing the
+  dashboard's title is refused, and with one `block/…` of a file denied,
+  `ref replace` editing that file is refused.
+- **Looking at a config flow counts as stepping it.** Asking Home Assistant
+  for a flow's current state runs its current step, which can finish the flow,
+  so `config flow-inspect` is checked like `config flow-step`.
+- **New areas, floors, labels and integrations.** Home Assistant picks their id
+  itself, so hactl cannot know it in advance. It checks `create` on *every* id
+  of that kind: allow `"area:*": [create]`, and a deny on any one area's
+  `create` blocks creating areas at all. The refusal names `area:*`.
+- **Some side effects are not checked**, because they happen inside Home
+  Assistant after an allowed write and hactl cannot list them in advance:
+  the companion reloads what it wrote, an automation that fires on its own
+  trigger does whatever it does (running one, or a script, *is* checked,
+  above), and reloading scenes or restarting Home Assistant
+  drops the scenes and groups made at run time. A label, area or floor that changes outside hactl, a
+  group helper whose members change through its options, a template helper
+  made in the UI, and (without a companion) a YAML template entity are not
+  searched for what they target.
+
+**Every read is filtered before the command sees it.** A listing leaves out
+what the profile may not read and ends with a line saying how many it left out
+(and how many values it shows as `<denied>`);
+a part you may not read — an attribute, an entity's state, a registry field — is
+shown with its value `<denied>`; reading one thing you may not read is refused,
+naming the rule and its line:
+
+```console
+$ hactl ent ls --domain lock
+entity_id          state     area  labels last_changed
+lock.garage        locked                 11-05 09:12
+hidden by policy: 1 (profile agent)
+$ hactl ent show lock.front_door
+policy_denied: would read entity:lock.front_door — refused by policy, nothing was written
+  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
+  checked: 1 resources, 1 denied
+  profile: agent (selected by active)
+  hint: the owner would change the rule on line 12 — ask the owner; a change goes through a draft and `hactl policy activate`
+```
+
+A refused read looks exactly like a refused write: the report above on
+stdout (the refusal object under `--json`), and the one-line count
+`policy_denied: 1 of 1 resources denied (profile agent)` on stderr.
+
+With `--json` the JSON keeps its shape and the `hidden by policy` line goes to
+stderr. A few things worth knowing:
+
+- **Wide reads are filtered per hit.** `grep` and `ref scan` drop a hit in a
+  file you may not read, or in an automation, script or template entity whose
+  config you may not read; `log` needs `read` on `system:logs` as a whole, and a
+  logbook row needs `read` on its entity. `log show` of an id from an
+  earlier `log` needs `read` on `system:logs` too. Raw file contents
+  (`config file`) are checked as the file, not redacted.
+- **`tpl eval` is checked as what the template reads**, as a written
+  template is: `{{ now().hour }}` needs nothing, `{{ states('sun.sun') }}`
+  needs `read` on `sun.sun`'s state, and a template that uses an entity as a
+  whole (`{{ states.light.hall }}`, `expand(…)`) is refused when a part of
+  that entity it holds is denied — its state, or an attribute it has: a deny
+  on every `latitude` refuses `{{ states.person | list }}`, not
+  `{{ states.light | list }}`. A list that ends in `map(attribute='…')`
+  reads only what it maps and what it selects or sorts by on the way:
+  `{{ states | selectattr('name', 'search', 'anna') | map(attribute='entity_id') | list }}`
+  reads each entity's name, never its coordinates. A loop over a list of ids
+  (`{% for e in ['light.a', 'light.b'] %}`) reads each of them. A template whose reads hactl cannot tell needs
+  `"system:template": [read]` allowed by that exact name — `"*": [read]`,
+  `"system:*": [read]` and the default do not grant it. `policy check read
+  system:template` answers that last question. Such an allow lets templates
+  read every state, also what the profile denies, so `policy lint` reports it
+  (`template-reads-denied`) in a profile that denies reading anything.
+- **Traces and the logbook are masked too.** In `trace show` (also `--full`
+  and `--json`) every state of an entity you may not read, and every
+  `entity_id` naming one, reads `<denied>`; and when the traced automation or
+  script reads something you may not read (`state_attr('person.anna',
+  'latitude')`), every variable and every step result in the trace reads
+  `<denied>` too, since a value computed from it is not recognisable. In
+  `changes`, the entity that caused a row is masked when you may not read it;
+  Home Assistant's own rows (started, stopped) are shown.
+- **A write command's own reads are not filtered.** A command that changes
+  something reads what it changes first; those reads belong to the write, and
+  the write's own check decides it. So a profile may allow `edit` on
+  something without `read` — the write works, and its preview may show what
+  it changes — while every read command still hides it. Saving a dashboard
+  without a view you may not read (which would delete it) is refused.
+- **What a write prints about other things is filtered where it can be.**
+  `svc call --confirm` lists only the changed entities you may read, and
+  `svc call --return` leaves out the response for an entity you may not read;
+  the trailer counts them. What a write command prints about the thing it
+  changes is not filtered: its name and current values, the diff `auto apply`
+  and `script apply` show, the files and views `ref replace`, `ent rename` and
+  `dash replace` would rewrite (other automations' files among them), and the
+  current options a `config options` form offers. Nor is a refusal's
+  explanation, which can name an entity's area and labels, and names every
+  entity it refused — also one you may not read that a service call's area or
+  label reaches.
+- **Devices and groups show what they hold.** A device whose entity you may
+  not read is still listed and shown by `device ls` and `device show`, with
+  its own name, which is often the entity's name too. A group's (a light
+  group's, a scene's) `entity_id` attribute lists its members' ids as they
+  are, also members you may not read; deny reading the group, or its
+  `attr/entity_id`, to hide them.
+- **Whether something exists can show through.** `helper show` and
+  `helper cat` refuse a helper you may not read but say `not found` for one
+  that does not exist, and `config block` does the same for a block addressed
+  by its alias or position. A write command's preview says `not found` for a
+  missing target and shows its plan — allowed or refused — for an existing
+  one, whatever you may read. A listing says how many things it left out.
+  None of these shows what the thing holds.
+
+**Over MCP**, `hactl mcp` without `--allow-writes` still refuses every write
+first; with `--allow-writes`, the policy decides each one as on the command
+line.
+
+**The audit log.** While a policy is in effect, every write check — allowed or
+denied, preview or real — is appended to `cache/policy-audit.log` in your
+instance directory, one JSON line each, with the rule that decided it. Without
+a policy there is no log. If hactl cannot write the log, it refuses the write
+rather than act unrecorded.
+
+## A broken file is refused
+
+hactl never reads a broken file leniently, because a typo must not quietly turn
+into "allow everything". Unknown verbs, unknown keys, duplicate keys, YAML
+anchors, `active:` naming a profile that does not exist, and ids with invisible
+characters or stray spaces at the ends are all refused. Every problem is named
+with its line:
+
+```console
+$ hactl policy check entity:light.sofa control
+policy_broken: /home/me/ha/policy.yaml:12: verbs for "entity:lock.*": unknown verb "wirte" (want read, control, edit, create, delete or write) — did you mean "write"?
+policy_broken: policy.yaml belongs to the owner; only the owner changes it, through `hactl policy activate` — report this, do not edit it
+```
+
+The same lines appear in `policy show`, `policy lint` and every refused
+command, and the last one tells an agent that the fix is yours.
+
+`policy show` and `policy lint` still run and list every problem. **Every
+other command refuses until the file is fixed**, reads and `setup` included,
+except `version`, `help`, `completion` and `rtfm`, which read no instance. An
+MCP server keeps running and refuses each call the same way, with the same
+exceptions; it reads the file again on every call, so fixing it is enough.
+
+The same goes for invisible characters anywhere in an id, a sub-resource or a
+`where:` value: any kind of space other than the plain ASCII space (a no-break
+space, an ideographic space, a tab), invisible characters such as zero-width
+spaces, variation selectors or a byte-order mark, and text that is not valid
+UTF-8 are all refused (D-69). An id that looks right but holds one would be a
+rule that matches nothing.
+
+The file is yours. hactl writes `policy.yaml` only when you run `hactl policy activate` in a
+terminal of your own (an agent drafts `policy.draft.yaml`; you review and activate it), and
+once as `hactl agent add`'s read-only starter. See "Setting up an agent" in the manual.
+
+---
+
+For the exact rules, every `--json` field and edge cases, see the
+[manual's reference](manual.md#policy-reference) (`hactl rtfm --reference
+policy` prints it). For why each choice was made,
+see `docs/decisions.md`, rows D-51 onward.

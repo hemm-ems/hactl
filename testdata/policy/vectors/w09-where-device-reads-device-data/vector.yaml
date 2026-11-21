@@ -1,0 +1,17 @@
+clause: "D-55 / manual selectors: on a device pattern `area` and `label` read the DEVICE's own area and labels — never an entity's (decoy entities share the device ids and hold the opposite answer)"
+live:
+  devices:
+    a1: {area: {id: garage, name: Garage}}
+    a2: {area: {id: haus, name: Haus}}
+    b1: {labels: [{id: agent_ok, name: Agent OK}]}
+    b2: {}
+  entities:
+    a1: {area: {id: haus, name: Haus}}
+    a2: {area: {id: garage, name: Garage}}
+    b1: {}
+    b2: {labels: [{id: agent_ok, name: Agent OK}]}
+cases:
+  - {resource: "device:a1", verb: edit, allowed: true, rule: 'allow "device:a*" [edit] where area=garage', line: 7}
+  - {resource: "device:a2", verb: edit, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "device:b1", verb: control, allowed: true, rule: 'allow "device:b*" [control] where label=agent_ok', line: 8}
+  - {resource: "device:b2", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}

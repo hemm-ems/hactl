@@ -90,6 +90,35 @@ func recordWitness(cacheDir, session, cmdPath string, args []string, now time.Ti
 	saveWitness(cacheDir, data)
 }
 
+// policyWitnessKey is witnessKey narrowed to the policy a preview passed
+// under — the active profile and the policy file's content hash (D-215).
+// It is a second record beside the confirm guard's, read only for the
+// refusal's hint: the guard keeps its own key.
+func policyWitnessKey(session, cmdPath string, args []string, policyID string) string {
+	return witnessKey(session, cmdPath, args) + "|policy:" + policyID
+}
+
+// recordPolicyWitness notes that the dry-run form of a write passed under
+// policyID (D-215); silent on failure, as recordWitness.
+func recordPolicyWitness(cacheDir, session, cmdPath string, args []string, policyID string, now time.Time) {
+	if cacheDir == "" || policyID == "" {
+		return
+	}
+	data := loadWitness(cacheDir, now)
+	data.Previews[policyWitnessKey(session, cmdPath, args, policyID)] = now
+	saveWitness(cacheDir, data)
+}
+
+// hasPolicyWitness reports whether the dry-run form of this command and
+// target passed under policyID within witnessTTL.
+func hasPolicyWitness(cacheDir, session, cmdPath string, args []string, policyID string, now time.Time) bool {
+	if cacheDir == "" || policyID == "" {
+		return false
+	}
+	at, ok := loadWitness(cacheDir, now).Previews[policyWitnessKey(session, cmdPath, args, policyID)]
+	return ok && now.Sub(at) <= witnessTTL
+}
+
 // hasWitness reports whether the dry-run form of this command and target ran
 // within witnessTTL.
 func hasWitness(cacheDir, session, cmdPath string, args []string, now time.Time) bool {

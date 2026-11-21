@@ -82,6 +82,7 @@ not an act at all. That asymmetry is the whole design.
 | `outputformat` | the live cobra tree | a command declaring an output-format flag beside `--json` refuses the combination rather than silently picking a winner (H-10) |
 | `flagcontract` | the live cobra tree | a flag more than one command offers means one thing in all of them, and every command that offers it acts on it (H-25) |
 | `unmake` | every leaf command in the live cobra tree named `set-*` | every assignment a command can make, it can also unmake (H-27) |
+| `policy` | the request builders and senders of the hactl binary's packages, and the live cobra tree with an SSA call graph from each command's Run | every request hactl sends carries a policy verdict, and every write command checks its whole plan before its first write (H-29) |
 | `invariant` | `INVARIANTS.md` headings | a universal law is enforced by a gate that quantifies over its set |
 
 Two gates need no manifest, because their failures are never debt:

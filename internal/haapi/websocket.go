@@ -15,6 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/hemm-ems/hactl/internal/degeneracy"
+	"github.com/hemm-ems/hactl/internal/policy/reqgate"
+	"github.com/hemm-ems/hactl/internal/policy/reqmap"
 )
 
 // WSClient is a WebSocket client for the Home Assistant API.
@@ -22,7 +24,7 @@ import (
 // WS API source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/websocket_api/
 // Auth flow: https://github.com/home-assistant/core/blob/dev/homeassistant/components/websocket_api/auth.py
 type WSClient struct {
-	conn    *websocket.Conn
+	conn    *wsConn
 	baseURL string
 	token   string
 	// connectErr is why the last Connect failed, kept because the reason a
@@ -125,6 +127,11 @@ func (ws *WSClient) TraceList(ctx context.Context, domain string) (TraceListResu
 		}
 		return nil, fmt.Errorf("trace/list failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	// HA returns a flat array of trace summaries: [{...}, {...}, ...].
 	// Group them by "domain.item_id" to build the TraceListResult map.
@@ -177,7 +184,7 @@ func (ws *WSClient) TraceGet(ctx context.Context, domain, itemID, runID string) 
 		return nil, fmt.Errorf("trace/get failed: %s", errMsg)
 	}
 
-	return resp.Result, nil
+	return ws.conn.filter(msg, resp.Result)
 }
 
 // ValidateResult is the per-section outcome of a validate_config call.
@@ -230,6 +237,11 @@ func (ws *WSClient) ValidateConfig(ctx context.Context, triggers, conditions, ac
 		}
 		return nil, fmt.Errorf("validate_config failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	var result map[string]ValidateResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
@@ -269,6 +281,11 @@ func (ws *WSClient) SystemLogList(ctx context.Context) ([]SystemLogEntry, error)
 		}
 		return nil, fmt.Errorf("system_log/list failed: %s", errMsg)
 	}
+	filtered, ferr := ws.conn.filter(msg, resp.Result)
+	if ferr != nil {
+		return nil, ferr
+	}
+	resp.Result = filtered
 
 	var result []SystemLogEntry
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
@@ -385,6 +402,33 @@ func (ws *WSClient) UserList(ctx context.Context) ([]UserEntry, error) {
 		return nil, err
 	}
 	return entries, nil
+}
+
+// CreateLongLivedToken mints a long-lived access token for the connection's
+// own Home Assistant user, named clientName and valid lifespanDays — what
+// `hactl agent add` gives each agent (M-6, D-160). Home Assistant accepts it on
+// a connection authenticated with a long-lived token (oracle
+// TestOracleLongLivedTokenFromLongLivedConnection, HA 2026.11.0). Never
+// retried: a second send would mint a second token.
+//
+// WS command: auth/long_lived_access_token
+// Source: https://github.com/home-assistant/core/blob/dev/homeassistant/components/auth/__init__.py
+func (ws *WSClient) CreateLongLivedToken(ctx context.Context, clientName string, lifespanDays int) (string, error) {
+	result, err := ws.sendCommand(ctx, "auth/long_lived_access_token", map[string]any{
+		"client_name": clientName,
+		"lifespan":    lifespanDays,
+	})
+	if err != nil {
+		return "", err
+	}
+	var token string
+	if err := json.Unmarshal(result, &token); err != nil {
+		return "", fmt.Errorf("parsing auth/long_lived_access_token result: %w", err)
+	}
+	if token == "" {
+		return "", errors.New("auth/long_lived_access_token answered success with no token")
+	}
+	return token, nil
 }
 
 // DeviceRegistryList returns all device registry entries via WS.
@@ -728,16 +772,99 @@ func (ws *WSClient) ResourceList(ctx context.Context) ([]LovelaceResource, error
 	return entries, nil
 }
 
+// ExtractFromTarget asks Home Assistant which entities a service target
+// references — the function its service path runs — with groups expanded
+// (D-59). It is the policy check's own oracle for a service call's reach: the
+// answer is every referenced entity, across domains; the caller restricts it.
+// `entity_id: all` must never be sent here (Home Assistant refuses it with
+// invalid_format); the caller classifies `all` itself.
+// WS command: extract_from_target
+func (ws *WSClient) ExtractFromTarget(ctx context.Context, target map[string]any) ([]string, error) {
+	result, err := ws.sendCommand(ctx, "extract_from_target", map[string]any{
+		"target":       target,
+		"expand_group": true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var answer struct {
+		ReferencedEntities *[]string `json:"referenced_entities"`
+	}
+	if err := json.Unmarshal(result, &answer); err != nil {
+		return nil, fmt.Errorf("parsing extract_from_target answer: %w", err)
+	}
+	if answer.ReferencedEntities == nil {
+		// An answer without the set is no answer: the reach stays unknown
+		// (fail closed, D-73), never empty.
+		return nil, errors.New("extract_from_target answered without referenced_entities")
+	}
+	return *answer.ReferencedEntities, nil
+}
+
+// SearchRelated asks Home Assistant what is related to one item — a label,
+// an area, a floor, an entity — the search the UI's "Related" panel runs. The
+// answer maps an item type (automation, script, entity, device, …) to ids.
+// The policy check asks it which automations and scripts target a container
+// an entity is about to join (D-186); it changes nothing.
+// WS command: search/related
+func (ws *WSClient) SearchRelated(ctx context.Context, itemType, itemID string) (map[string][]string, error) {
+	result, err := ws.sendCommand(ctx, "search/related", map[string]any{
+		"item_type": itemType,
+		"item_id":   itemID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var answer map[string][]string
+	if err := json.Unmarshal(result, &answer); err != nil {
+		return nil, fmt.Errorf("parsing search/related answer: %w", err)
+	}
+	if answer == nil {
+		return nil, errors.New("search/related answered without a mapping")
+	}
+	return answer, nil
+}
+
+// DeviceConfigEntries maps each device id to the config entries its registry
+// row names, from config/device_registry/list. complete is false when any row
+// carries no `config_entries` key at all: then the answer cannot say which
+// devices an entry owns, and a caller enumerating a config entry's cascade
+// must check every device instead (D-76's superset, never fewer).
+// WS command: config/device_registry/list
+func (ws *WSClient) DeviceConfigEntries(ctx context.Context) (entries map[string][]string, complete bool, err error) {
+	result, err := ws.sendCommand(ctx, "config/device_registry/list", nil)
+	if err != nil {
+		return nil, false, err
+	}
+	var rows []struct {
+		ConfigEntries *[]string `json:"config_entries"`
+		ID            string    `json:"id"`
+	}
+	if err := json.Unmarshal(result, &rows); err != nil {
+		return nil, false, fmt.Errorf("parsing device list: %w", err)
+	}
+	entries = make(map[string][]string, len(rows))
+	complete = true
+	for _, r := range rows {
+		if r.ConfigEntries == nil {
+			complete = false
+			continue
+		}
+		entries[r.ID] = *r.ConfigEntries
+	}
+	return entries, complete, nil
+}
+
 // sendCommand sends a generic WS command and returns the raw result.
 func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[string]any) (json.RawMessage, error) {
 	_ = ctx
 
-	id := ws.nextID.Add(1)
-	msg := map[string]any{
-		"id":   id,
-		"type": cmdType,
-	}
+	// The parameters go in first and the id and type last: the policy surface
+	// keys this send by cmdType (H-29), so no parameter may replace it.
+	msg := map[string]any{}
 	maps.Copy(msg, params)
+	msg["id"] = ws.nextID.Add(1)
+	msg["type"] = cmdType
 
 	ws.mu.Lock()
 	err := ws.conn.WriteJSON(msg)
@@ -753,8 +880,83 @@ func (ws *WSClient) sendCommand(ctx context.Context, cmdType string, params map[
 	if !resp.Success {
 		return nil, newAPIError(cmdType, resp.Error)
 	}
+	if g := reqgate.Current(); g != nil {
+		if req, reqErr := wsRequest(msg); reqErr == nil {
+			g.Observe(req, resp.Result)
+		}
+	}
+	return ws.conn.filter(msg, resp.Result)
+}
 
-	return resp.Result, nil
+// wsConn is the websocket connection every message leaves through. WriteJSON
+// asks the policy gate first (reqgate, H-29), so sendCommand, the direct
+// senders and the auth handshake share one hook by construction: a send that
+// does not pass the gate has no connection to write to. With no gate
+// installed — no profile in effect — it writes exactly what it always wrote
+// (D-58).
+type wsConn struct {
+	raw *websocket.Conn
+	// ctx is the context the connection was opened under, without its
+	// cancellation: what the gate asks to decide a message (a reach, the
+	// registries) is bounded by its own timeouts.
+	ctx context.Context
+}
+
+// WriteJSON decides the message, then writes it. A message the gate refuses
+// is never written; one that cannot be read as a websocket command at all is
+// refused while a gate is installed (fail closed).
+func (c *wsConn) WriteJSON(msg any) error {
+	if g := reqgate.Current(); g != nil {
+		req, err := wsRequest(msg)
+		if err != nil {
+			return fmt.Errorf("policy: websocket message cannot be mapped: %w", err)
+		}
+		if err := g.Check(c.ctx, req); err != nil {
+			return err
+		}
+	}
+	return c.raw.WriteJSON(msg)
+}
+
+// ReadJSON reads the next message.
+func (c *wsConn) ReadJSON(v any) error { return c.raw.ReadJSON(v) }
+
+// Close closes the connection.
+func (c *wsConn) Close() error { return c.raw.Close() }
+
+// filter is what the caller may decode of a successful answer to msg (W-2):
+// the gate's filtered answer, or its refusal — before the caller decodes it
+// (H-21). With no gate it is the answer as it is (D-58).
+func (c *wsConn) filter(msg any, result json.RawMessage) (json.RawMessage, error) {
+	g := reqgate.Current()
+	if g == nil {
+		return result, nil
+	}
+	req, err := wsRequest(msg)
+	if err != nil {
+		return nil, fmt.Errorf("policy: websocket message cannot be mapped: %w", err)
+	}
+	return g.Filter(c.ctx, req, result)
+}
+
+// wsRequest reads an outgoing message the way it goes on the wire — its JSON
+// — as the classifier's request: the type, and every other key but the id.
+func wsRequest(msg any) (reqmap.Request, error) {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return reqmap.Request{}, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return reqmap.Request{}, err
+	}
+	typ, ok := m["type"].(string)
+	if !ok || typ == "" {
+		return reqmap.Request{}, errors.New("the message has no string type")
+	}
+	delete(m, "type")
+	delete(m, "id")
+	return reqmap.Request{Transport: reqmap.WS, Type: typ, Params: m}, nil
 }
 
 // APIError is returned by WS commands when HA responds with success=false.
@@ -804,7 +1006,7 @@ func (ws *WSClient) connect(ctx context.Context) error {
 	// The response is READ rather than discarded: on a redirect it is the 3xx
 	// carrying the Location, which is the only place the cause of a "bad
 	// handshake" is written down (#76).
-	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
+	raw, resp, err := dialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		if resp != nil {
 			defer func() { _ = resp.Body.Close() }()
@@ -814,6 +1016,9 @@ func (ws *WSClient) connect(ctx context.Context) error {
 		}
 		return fmt.Errorf("connecting to websocket: %w", err)
 	}
+	// Every message leaves through the gated connection, the handshake's own
+	// auth included (H-29: one hook for every websocket send).
+	conn := &wsConn{raw: raw, ctx: context.WithoutCancel(ctx)}
 
 	// Read auth_required
 	var authReq wsMessage

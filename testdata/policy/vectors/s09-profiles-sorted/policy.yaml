@@ -1,0 +1,8 @@
+version: 1
+active: zeta
+profiles:
+  zeta:
+    default: deny
+  beta: {}
+  Alpha:
+    default: allow

@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: `version` not 1",
+  "load_error": {
+    "problems": [
+      {
+        "line": 1,
+        "contains": [
+          "version"
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

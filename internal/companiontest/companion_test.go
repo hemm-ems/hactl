@@ -92,63 +92,19 @@ func TestPathTraversal(t *testing.T) {
 	}
 }
 
-func TestDryRun(t *testing.T) {
-	ctx := context.Background()
-	f, err := testClient.ReadConfigFile(ctx, "configuration.yaml")
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	wr, err := testClient.WriteConfigFile(ctx, "configuration.yaml", f.Content, true)
-	if err != nil {
-		t.Fatalf("dry run: %v", err)
-	}
-	if wr.Status != "dry_run" {
-		t.Errorf("status = %q, want dry_run", wr.Status)
-	}
-}
-
-func TestWriteNewFile(t *testing.T) {
-	ctx := context.Background()
-	content := "hactl_e2e_test:\n  key: value\n"
-
-	wr, err := testClient.WriteConfigFile(ctx, "hactl-e2e-test.yaml", content, false)
-	if err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if wr.Status != "applied" {
-		t.Errorf("status = %q, want applied", wr.Status)
-	}
-
-	// Verify readable
-	f, err := testClient.ReadConfigFile(ctx, "hactl-e2e-test.yaml")
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	if f.Content == "" {
-		t.Error("written file has empty content on readback")
-	}
-}
-
 // --- Template CRUD integration tests ---
 
-func TestListTemplates(t *testing.T) {
-	r, err := testClient.ListTemplates(context.Background())
+// TestSeededTemplateReadsBack — the fixture's template sensor is readable by
+// its unique_id, the address every template command uses. (It used to list
+// GET /v1/config/templates through a client method no command called; D-81
+// deleted it.)
+func TestSeededTemplateReadsBack(t *testing.T) {
+	got, err := testClient.GetTemplate(context.Background(), "seeded_test_sensor")
 	if err != nil {
-		t.Fatalf("list templates: %v", err)
+		t.Fatalf("get seeded template: %v", err)
 	}
-	// We seeded one template sensor
-	if len(r.Templates) == 0 {
-		t.Fatal("expected at least 1 template (seeded)")
-	}
-	found := false
-	for _, tpl := range r.Templates {
-		if tpl.UniqueID == "seeded_test_sensor" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("seeded_test_sensor not found in templates: %+v", r.Templates)
+	if got.UniqueID != "seeded_test_sensor" || !strings.Contains(got.Content, "Seeded Test Sensor") {
+		t.Errorf("seeded template read back as %+v", got)
 	}
 }
 
@@ -179,16 +135,6 @@ func TestCreateAndGetTemplate(t *testing.T) {
 		t.Error("content is empty")
 	}
 
-	// Update with dry-run
-	updated := "name: E2E Updated\nunique_id: " + cr.UniqueID + "\nstate: \"{{ 99 }}\"\n"
-	wr, err := testClient.WriteTemplate(ctx, cr.UniqueID, updated, true)
-	if err != nil {
-		t.Fatalf("write template dry_run: %v", err)
-	}
-	if wr.Status != "dry_run" {
-		t.Errorf("write status = %q, want dry_run", wr.Status)
-	}
-
 	// Delete it
 	del, err := testClient.DeleteTemplate(ctx, cr.UniqueID)
 	if err != nil {
@@ -201,7 +147,7 @@ func TestCreateAndGetTemplate(t *testing.T) {
 
 // TestCreateAndGetNonSensorTemplate drives the full CLI↔companion↔HA path for a
 // non-sensor template domain (Option C): a `number:` full block is created,
-// listed with the right domain, fetched, and deleted. The `set_value` action
+// fetched, and deleted. The `set_value` action
 // template is carried verbatim.
 func TestCreateAndGetNonSensorTemplate(t *testing.T) {
 	ctx := context.Background()
@@ -221,22 +167,6 @@ func TestCreateAndGetNonSensorTemplate(t *testing.T) {
 	}
 	if cr.Status != "created" || cr.UniqueID != "e2e_test_tpl_number" {
 		t.Fatalf("create result = %+v, want created e2e_test_tpl_number", cr)
-	}
-
-	// Listed with the number domain (domain-agnostic extraction).
-	list, err := testClient.ListTemplates(ctx)
-	if err != nil {
-		t.Fatalf("list templates: %v", err)
-	}
-	var domain string
-	for _, tpl := range list.Templates {
-		if tpl.UniqueID == "e2e_test_tpl_number" {
-			domain = tpl.Domain
-			break
-		}
-	}
-	if domain != "number" {
-		t.Errorf("listed domain = %q, want number (templates: %+v)", domain, list.Templates)
 	}
 
 	// Fetchable, action template preserved verbatim.
@@ -260,23 +190,14 @@ func TestCreateAndGetNonSensorTemplate(t *testing.T) {
 
 // --- Script CRUD integration tests ---
 
-func TestListScriptDefs(t *testing.T) {
-	r, err := testClient.ListScriptDefs(context.Background())
+// TestSeededScriptReadsBack — the fixture's script is readable by its key.
+func TestSeededScriptReadsBack(t *testing.T) {
+	got, err := testClient.GetScriptDef(context.Background(), "seeded_test_script")
 	if err != nil {
-		t.Fatalf("list scripts: %v", err)
+		t.Fatalf("get seeded script: %v", err)
 	}
-	if len(r.Scripts) == 0 {
-		t.Fatal("expected at least 1 script (seeded)")
-	}
-	found := false
-	for _, s := range r.Scripts {
-		if s.ID == "seeded_test_script" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("seeded_test_script not found in scripts: %+v", r.Scripts)
+	if got.ID != "seeded_test_script" || !strings.Contains(got.Content, "Seeded Test Script") {
+		t.Errorf("seeded script read back as %+v", got)
 	}
 }
 
@@ -329,23 +250,15 @@ func TestCreateAndGetScript(t *testing.T) {
 
 // --- Automation CRUD integration tests ---
 
-func TestListAutomationDefs(t *testing.T) {
-	r, err := testClient.ListAutomationDefs(context.Background())
+// TestSeededAutomationReadsBack — the fixture's automation is readable by its
+// config id.
+func TestSeededAutomationReadsBack(t *testing.T) {
+	got, err := testClient.GetAutomationDef(context.Background(), "seeded_test_auto")
 	if err != nil {
-		t.Fatalf("list automations: %v", err)
+		t.Fatalf("get seeded automation: %v", err)
 	}
-	if len(r.Automations) == 0 {
-		t.Fatal("expected at least 1 automation (seeded)")
-	}
-	found := false
-	for _, a := range r.Automations {
-		if a.ID == "seeded_test_auto" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("seeded_test_auto not found in automations: %+v", r.Automations)
+	if got.ID != "seeded_test_auto" || !strings.Contains(got.Content, "Seeded Test Automation") {
+		t.Errorf("seeded automation read back as %+v", got)
 	}
 }
 
@@ -446,7 +359,7 @@ func TestCreateAndGetHelper(t *testing.T) {
 		t.Errorf("domain = %q, want input_boolean", got.Domain)
 	}
 
-	del, err := testClient.DeleteHelper(ctx, cr.ID)
+	del, err := testClient.DeleteHelper(ctx, cr.ID, "")
 	if err != nil {
 		t.Fatalf("delete helper: %v", err)
 	}

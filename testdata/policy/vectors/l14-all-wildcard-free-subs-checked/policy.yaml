@@ -1,0 +1,14 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    deny:
+      "dashboard:main/views/*": [read]
+      "system:reload/*": [read]
+      "dashboard:*/views/*": [edit]
+      "dashboard:main/views/a*": [read]
+      "system:reload/auto*": [read]
+      "entity:*/attr/*": [read]
+      "file:x.yaml/block/*": [read]
+      "file:x.yaml/block/clim*": [read]

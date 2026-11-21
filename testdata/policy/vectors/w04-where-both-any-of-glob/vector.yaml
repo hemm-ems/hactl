@@ -1,0 +1,14 @@
+clause: "D-55 / manual selectors: several values of one key are alternatives, `area` and `label` together must both hold, values glob case-insensitively; Where.Text renders `area=a|b label=v`"
+live:
+  entities:
+    light.a: {area: {id: wohnzimmer, name: Wohnzimmer}, labels: [{id: agent_ok, name: Agent OK}]}
+    light.b: {area: {id: kueche, name: Küche}, labels: [{id: agent_x, name: X}]}
+    light.c: {area: {id: wohnzimmer, name: Wohnzimmer}}
+    light.d: {area: {id: bad, name: Bad}, labels: [{id: agent_ok, name: Agent OK}]}
+    light.e: {area: {id: KUECHE, name: Kitchen}, labels: [{id: AGENT_OK, name: Upper}]}
+cases:
+  - {resource: "entity:light.a", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer|kueche label=agent*', line: 7}
+  - {resource: "entity:light.b", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer|kueche label=agent*', line: 7}
+  - {resource: "entity:light.c", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:light.d", verb: control, allowed: false, rule: "default: deny", line: 0, notes: 0}
+  - {resource: "entity:light.e", verb: control, allowed: true, rule: 'allow "entity:light.*" [control] where area=wohnzimmer|kueche label=agent*', line: 7}

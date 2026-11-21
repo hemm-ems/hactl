@@ -1,0 +1,7 @@
+clause: "D-60 + LoadError order: a policy.yml beside a broken policy.yaml is one more problem (line 0, so first), listed with the file's own problems in (line, message) order"
+load_error:
+  file_is_policy_yaml: true
+  count: 2
+  problems:
+    - {line: 0, contains: ["policy.yml"]}
+    - {line: 2}

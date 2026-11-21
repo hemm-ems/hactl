@@ -1,0 +1,14 @@
+{
+  "clause": "D-60: an unknown verb, quoted in the message",
+  "load_error": {
+    "problems": [
+      {
+        "line": 7,
+        "contains": [
+          "\"wirte\""
+        ]
+      }
+    ],
+    "file_is_policy_yaml": true
+  }
+}

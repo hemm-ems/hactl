@@ -393,7 +393,7 @@ func seedConfigFiles() error {
       state: "{{ 42 }}"
       unit_of_measurement: "W"
 `
-	if _, err := testClient.WriteConfigFile(ctx, "template.yaml", templateYAML, false); err != nil {
+	if err := putConfigFile(ctx, "template.yaml", templateYAML); err != nil {
 		return fmt.Errorf("seeding template.yaml: %w", err)
 	}
 
@@ -404,7 +404,7 @@ func seedConfigFiles() error {
   sequence:
     - delay: "00:00:01"
 `
-	if _, err := testClient.WriteConfigFile(ctx, "scripts.yaml", scriptsYAML, false); err != nil {
+	if err := putConfigFile(ctx, "scripts.yaml", scriptsYAML); err != nil {
 		return fmt.Errorf("seeding scripts.yaml: %w", err)
 	}
 
@@ -437,7 +437,7 @@ func seedConfigFiles() error {
   action:
     - delay: "00:00:02"
 `
-	if _, err := testClient.WriteConfigFile(ctx, "automations.yaml", automationsYAML, false); err != nil {
+	if err := putConfigFile(ctx, "automations.yaml", automationsYAML); err != nil {
 		return fmt.Errorf("seeding automations.yaml: %w", err)
 	}
 
@@ -447,7 +447,7 @@ func seedConfigFiles() error {
 	// refuses the write outright; without `template:` it writes happily and HA
 	// never reads the file — no template entity ever appears, and `tpl create`
 	// cannot be proven against HA at all.
-	if _, err := testClient.WriteConfigFile(ctx, "input_boolean.yaml", "# seeded by companiontest\n", false); err != nil {
+	if err := putConfigFile(ctx, "input_boolean.yaml", "# seeded by companiontest\n"); err != nil {
 		return fmt.Errorf("seeding input_boolean.yaml: %w", err)
 	}
 	rawConfig, err := testClient.ReadConfigFileRaw(ctx, "configuration.yaml")
@@ -466,7 +466,7 @@ func seedConfigFiles() error {
 	newConfig += "\n"
 	configRewritten := newConfig != rawConfig.Content
 	if configRewritten {
-		if _, err := testClient.WriteConfigFile(ctx, "configuration.yaml", newConfig, false); err != nil {
+		if err := putConfigFile(ctx, "configuration.yaml", newConfig); err != nil {
 			return fmt.Errorf("wiring includes into configuration.yaml: %w", err)
 		}
 	}
@@ -587,12 +587,13 @@ func missingReloadServices(ctx context.Context) ([]string, error) {
 	client := haapi.New(haURL, haToken)
 	var missing []string
 	for _, domain := range reloadServicesNeeded {
-		exists, err := client.ServiceExists(ctx, domain, "reload")
+		_, err := client.LookupService(ctx, domain, "reload")
+		if errors.Is(err, haapi.ErrServiceNotRegistered) {
+			missing = append(missing, domain+".reload")
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("checking %s.reload: %w", domain, err)
-		}
-		if !exists {
-			missing = append(missing, domain+".reload")
 		}
 	}
 	return missing, nil

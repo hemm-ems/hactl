@@ -11,6 +11,9 @@ package haapi
 // WS command: config/entity_registry/list
 // Source: homeassistant/components/config/entity_registry.py → websocket_list_entities
 type EntityRegistryEntry struct {
+	// ID is the registry entry's own id, the uuid a device action names its
+	// target entity by (D-137, TestOracleDeviceActionEntityIdentifier).
+	ID         string            `json:"id"`
 	Categories map[string]string `json:"categories"`
 	EntityID   string            `json:"entity_id"`
 	Name       string            `json:"name"`
@@ -20,14 +23,14 @@ type EntityRegistryEntry struct {
 	// ConfigEntryID names the config entry that owns this entity — empty for
 	// YAML-configured platforms. Carried by config/entity_registry/list;
 	// TestOracleEntityRegistryListCarriesIdentityFields is the wire proof.
-	ConfigEntryID string `json:"config_entry_id"`
-	AreaID        string `json:"area_id"`
-	DisabledBy string            `json:"disabled_by"`
-	HiddenBy   string            `json:"hidden_by"`
-	OrigName   string            `json:"original_name"`
-	UniqueID   string            `json:"unique_id"`
-	Labels     []string          `json:"labels"`
-	Aliases    []string          `json:"aliases"`
+	ConfigEntryID string   `json:"config_entry_id"`
+	AreaID        string   `json:"area_id"`
+	DisabledBy    string   `json:"disabled_by"`
+	HiddenBy      string   `json:"hidden_by"`
+	OrigName      string   `json:"original_name"`
+	UniqueID      string   `json:"unique_id"`
+	Labels        []string `json:"labels"`
+	Aliases       []string `json:"aliases"`
 }
 
 // AreaEntry is an entry from the HA area (room) registry.

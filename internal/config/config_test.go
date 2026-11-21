@@ -366,3 +366,19 @@ func TestLoad_CompanionToken_FallsBackToToken(t *testing.T) {
 		t.Errorf("CompanionToken = %q, want it to fall back to Token %q", cfg.CompanionToken, cfg.Token)
 	}
 }
+
+// TestPolicyRequiredIsOffForAnExistingInstance — an instance set up before
+// policies existed (a .env with only HA_URL and HA_TOKEN, or none at all)
+// requires no policy (D-136, D-58): upgrading must not refuse it.
+func TestPolicyRequiredIsOffForAnExistingInstance(t *testing.T) {
+	dir := t.TempDir()
+	if req, err := PolicyRequired(dir); req || err != nil {
+		t.Errorf("no .env: required=%v err=%v, want false, nil", req, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("# hactl\nHA_URL=http://ha:8123\nHA_TOKEN=x\nCOMPANION_URL=http://c\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if req, err := PolicyRequired(dir); req || err != nil {
+		t.Errorf("a pre-policy .env: required=%v err=%v, want false, nil", req, err)
+	}
+}

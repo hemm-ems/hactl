@@ -91,12 +91,20 @@ func (p *dryRunPlan) render(w io.Writer) error {
 	var b strings.Builder
 	b.WriteString("dry-run: would " + p.action + "\n")
 	width := 0
+	var policyNote *planPolicyNote
 	for _, k := range p.keys {
+		if n, ok := p.details[k].(planPolicyNote); ok && k == "policy" {
+			policyNote = &n
+			continue
+		}
 		if len(k) > width {
 			width = len(k)
 		}
 	}
 	for _, k := range p.keys {
+		if policyNote != nil && k == "policy" {
+			continue
+		}
 		// A nil detail is how a plan says "this becomes nothing" — `set-area
 		// --clear` sets new_area to nil so that --json renders the null a
 		// machine needs. %v spells that `<nil>`, which is Go's word for it and
@@ -108,6 +116,12 @@ func (p *dryRunPlan) render(w io.Writer) error {
 			value = "(none)"
 		}
 		_, _ = fmt.Fprintf(&b, "  %-*s %v\n", width+1, k+":", value)
+	}
+	// An allowed plan's note is its own line, last and never padded to the
+	// details' column: the manual promises the literal
+	// `policy: <n> checked, allowed (profile <p>)` (D-70).
+	if policyNote != nil {
+		_, _ = fmt.Fprintf(&b, "  policy: %v\n", *policyNote)
 	}
 	b.WriteString(p.hint + "\n")
 	_, err := io.WriteString(w, b.String())

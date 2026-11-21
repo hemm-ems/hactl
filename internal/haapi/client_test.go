@@ -286,27 +286,6 @@ func TestGetConfigEntries(t *testing.T) {
 	}
 }
 
-func TestGetAutomationConfig(t *testing.T) {
-	configJSON := `{"id":"climate_schedule","alias":"Climate Schedule"}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/config/automation/config/climate_schedule" {
-			t.Errorf("path = %q, want /api/config/automation/config/climate_schedule", r.URL.Path)
-		}
-		_, _ = fmt.Fprint(w, configJSON)
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "tok")
-	body, err := c.GetAutomationConfig(context.Background(), "climate_schedule")
-	if err != nil {
-		t.Fatalf("GetAutomationConfig: %v", err)
-	}
-	if string(body) != configJSON {
-		t.Errorf("body = %q, want %q", string(body), configJSON)
-	}
-}
-
-
 func TestCallService(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -323,25 +302,6 @@ func TestCallService(t *testing.T) {
 	c := New(srv.URL, "tok")
 	if _, err := c.CallService(context.Background(), "automation", "reload", nil); err != nil {
 		t.Fatalf("CallService: %v", err)
-	}
-}
-
-func TestGetEvents(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/events" {
-			t.Errorf("path = %q, want /api/events", r.URL.Path)
-		}
-		_, _ = fmt.Fprint(w, `[{"event_type":"state_changed"}]`)
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "tok")
-	body, err := c.GetEvents(context.Background())
-	if err != nil {
-		t.Fatalf("GetEvents: %v", err)
-	}
-	if len(body) == 0 {
-		t.Error("GetEvents returned empty body")
 	}
 }
 
@@ -463,26 +423,6 @@ func TestGetConfigEntryDiagnostics_404(t *testing.T) {
 	// so callers can branch on 404 without string-matching the body.
 	if status, ok := HTTPStatus(err); !ok || status != http.StatusNotFound {
 		t.Errorf("HTTPStatus = (%d, %v), want (404, true)", status, ok)
-	}
-}
-
-func TestStartConfigFlow(t *testing.T) {
-	flowJSON := `{"flow_id":"cfg1","type":"form","step_id":"init","handler":"mqtt"}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/config/config_entries/flow" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		_, _ = fmt.Fprint(w, flowJSON)
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL, "tok")
-	body, err := c.StartConfigFlow(context.Background(), "mqtt")
-	if err != nil {
-		t.Fatalf("StartConfigFlow: %v", err)
-	}
-	if string(body) != flowJSON {
-		t.Errorf("body = %q, want %q", string(body), flowJSON)
 	}
 }
 

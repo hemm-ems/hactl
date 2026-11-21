@@ -1437,3 +1437,30 @@ func TestWSClient_DashboardList_Error(t *testing.T) {
 		t.Fatal("expected error from DashboardList when WS returns error")
 	}
 }
+
+// TestSendCommandTypeIsTheOneKeyed — the policy surface keys every
+// sendCommand by its literal type (H-29), so the type on the wire must be that
+// literal: a params map carrying "type" or "id" must not replace them.
+func TestSendCommandTypeIsTheOneKeyed(t *testing.T) {
+	got := make(chan map[string]any, 1)
+	srv := startWSTestServer(t, func(c *websocket.Conn, cmd map[string]any) {
+		got <- cmd
+		sendWSResult(t, c, cmd, nil)
+	})
+	defer srv.Close()
+	ws := connectWSTest(t, srv)
+	defer func() { _ = ws.Close() }()
+
+	_, _ = ws.sendCommand(context.Background(), "config/area_registry/list",
+		map[string]any{"type": "config/area_registry/delete", "id": 999, "area_id": "kitchen"})
+	cmd := <-got
+	if cmd["type"] != "config/area_registry/list" {
+		t.Errorf("wire type %v, want the keyed config/area_registry/list", cmd["type"])
+	}
+	if id, _ := cmd["id"].(float64); id == 999 {
+		t.Error("a params id replaced the client's own message id")
+	}
+	if cmd["area_id"] != "kitchen" {
+		t.Errorf("an ordinary parameter was lost: %v", cmd)
+	}
+}

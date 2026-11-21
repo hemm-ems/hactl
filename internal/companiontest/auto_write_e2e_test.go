@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/hemm-ems/hactl/internal/haapi"
 )
 
 // The `auto` family's write half, end to end against a real Home Assistant and
@@ -128,8 +126,7 @@ func TestE2EAutoApplyWritesOnlyItsOwnEntryCLI(t *testing.T) {
 	if !strings.Contains(automationEntry(t, after, "seeded_test_auto"), newAlias) {
 		t.Errorf("the confirmed apply did not write the new alias:\n%s", automationEntry(t, after, "seeded_test_auto"))
 	}
-	client := haapi.New(haURL, haToken)
-	raw, err := client.GetAutomationConfig(context.Background(), "seeded_test_auto")
+	raw, err := haAutomationConfig(context.Background(), "seeded_test_auto")
 	if err != nil {
 		t.Fatalf("reading the config back from HA: %v", err)
 	}

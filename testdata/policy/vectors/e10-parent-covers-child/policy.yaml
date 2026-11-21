@@ -1,0 +1,11 @@
+version: 1
+active: agent
+profiles:
+  agent:
+    default: deny
+    allow:
+      "entity:light.kitchen": [read]
+      "file:packages/heating.yaml": [edit]
+      "dashboard:main": [read]
+      "helper:input_boolean/guest_mode": [read]
+      "system:reload": [control]

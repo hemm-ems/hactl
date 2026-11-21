@@ -1,0 +1,23 @@
+clause: "D-66: a deny of the same profile and verb on a strict descendant makes an allowed verdict PARTIAL — a write verb is denied, naming the first descendant deny (line, then column); read stays allowed by its allow and lists the descendant denies in file order; a deny on the resource itself or an ancestor is step 1, never partial; a file path is not a descendant of another path; and (D-110, D-125) a descendant deny counts only for a verb that applies where the deny sits or changes it from above — control changes an entity's attributes and an edit of a file its blocks, so both make the parent partial"
+cases:
+  - {resource: "entity:light.x", verb: edit, allowed: false, rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10, partial: true, partial_denies: [{rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10}]}
+  - {resource: "entity:light.x/registry", verb: edit, allowed: false, rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10, partial: true, partial_denies: [{rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10}]}
+  - {resource: "entity:light.x/registry/labels", verb: edit, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: false, partial_denies: []}
+  - {resource: "entity:light.x/registry/entity_id", verb: edit, allowed: false, rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10, partial: false, partial_denies: []}
+  - {resource: "entity:light.x", verb: read, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: false, partial_denies: []}
+  - {resource: "entity:device_tracker.jan", verb: read, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: true, partial_denies: [{rule: 'deny "entity:device_tracker.*/attr/latitude" [read]', line: 11}, {rule: 'deny "entity:device_tracker.*/attr/longitude" [read control]', line: 12}]}
+  - {resource: "entity:device_tracker.jan/attr", verb: read, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: true, partial_denies: [{rule: 'deny "entity:device_tracker.*/attr/latitude" [read]', line: 11}, {rule: 'deny "entity:device_tracker.*/attr/longitude" [read control]', line: 12}]}
+  - {resource: "entity:device_tracker.jan/attr/latitude", verb: read, allowed: false, rule: 'deny "entity:device_tracker.*/attr/latitude" [read]', line: 11, partial: false, partial_denies: []}
+  - {resource: "entity:device_tracker.jan/attr/battery", verb: read, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: false, partial_denies: []}
+  - {resource: "entity:device_tracker.jan", verb: control, allowed: false, rule: 'deny "entity:device_tracker.*/attr/longitude" [read control]', line: 12, partial: true, partial_denies: [{rule: 'deny "entity:device_tracker.*/attr/longitude" [read control]', line: 12}]}
+  - {resource: "entity:device_tracker.jan/attr/longitude", verb: control, allowed: false, rule: 'deny "entity:device_tracker.*/attr/longitude" [read control]', line: 12, partial: false, partial_denies: []}
+  - {resource: "entity:light.x", verb: control, allowed: true, rule: 'allow "entity:*" [read edit control]', line: 7, partial: false, partial_denies: []}
+  - {resource: "entity:lock.front", verb: edit, allowed: false, rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10, partial: true, partial_denies: [{rule: 'deny "entity:*/registry/entity_id" [edit]', line: 10}, {rule: 'deny "entity:lock.*/registry" [edit]', line: 15}]}
+  - {resource: "entity:lock.front/registry", verb: edit, allowed: false, rule: 'deny "entity:lock.*/registry" [edit]', line: 15, partial: false, partial_denies: []}
+  - {resource: "entity:light.x", verb: delete, allowed: false, rule: "default: deny", line: 0, partial: false, partial_denies: []}
+  - {resource: "file:pkgs", verb: edit, allowed: true, rule: 'allow "file:**" [read edit]', line: 8, partial: false, partial_denies: []}
+  - {resource: "file:pkgs/x.yaml", verb: edit, allowed: false, rule: 'deny "file:pkgs/x.yaml" [edit]', line: 13, partial: false, partial_denies: []}
+  - {resource: "file:pkgs/y.yaml", verb: edit, allowed: false, rule: 'deny "file:pkgs/y.yaml/block/b" [edit]', line: 14, partial: true, partial_denies: [{rule: 'deny "file:pkgs/y.yaml/block/b" [edit]', line: 14}]}
+  - {resource: "file:pkgs/y.yaml/block/b", verb: edit, allowed: false, rule: 'deny "file:pkgs/y.yaml/block/b" [edit]', line: 14, partial: false, partial_denies: []}
+  - {resource: "file:pkgs/y.yaml", verb: read, allowed: true, rule: 'allow "file:**" [read edit]', line: 8, partial: false, partial_denies: []}
+  - {resource: "file:pkgs/y.yaml/block/c", verb: edit, allowed: true, rule: 'allow "file:**" [read edit]', line: 8, partial: false, partial_denies: []}

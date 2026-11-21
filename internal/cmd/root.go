@@ -18,6 +18,7 @@ import (
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 	"github.com/hemm-ems/hactl/internal/instancelock"
+	"github.com/hemm-ems/hactl/internal/mcpserver"
 )
 
 // defaultTimeout is the bound every connection carries when the caller names
@@ -63,7 +64,7 @@ var rootCmd = family(&cobra.Command{
 // rootPreRun is the root's PersistentPreRunE, installed in init() rather than
 // in the literal above: it calls confirmGuard, which walks a command's parent
 // chain up to rootCmd, and Go rejects that as an initialization cycle.
-func rootPreRun(cmd *cobra.Command, _ []string) error {
+func rootPreRun(cmd *cobra.Command, args []string) error {
 	// The domain check runs before the value is installed anywhere, so a
 	// duration that cannot bound a connection never reaches one: `--timeout
 	// -1s` used to arrive at net.Dialer as a deadline already in the past and
@@ -73,6 +74,12 @@ func rootPreRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	haapi.DefaultTimeout = flagTimeout
+	// The policy is read once per invocation, before anything is checked or
+	// sent: a broken file refuses here (D-60), and while a profile is in
+	// effect every request of this invocation passes its gate (H-29).
+	if err := startPolicySession(cmd, args); err != nil {
+		return err
+	}
 	// Both of these need the command cobra RESOLVED and the flags it PARSED —
 	// the guard checks the target that would be written, and the lock is taken
 	// only for a write. That is why they run here and not in Execute(): the
@@ -133,7 +140,7 @@ func acquireWriteLock(cmd *cobra.Command) error {
 		//nolint:nilerr // a --confirm that does not parse is cobra's error to report
 		return nil
 	}
-	cacheDir := stateCacheDir(flagDir)
+	cacheDir := writeLockDir(flagDir)
 	if heldWriteLock.Held() && heldWriteLockDir == cacheDir {
 		return nil // already holding this instance's lock
 	}
@@ -146,6 +153,21 @@ func acquireWriteLock(cmd *cobra.Command) error {
 	return nil
 }
 
+// writeLockDir is where the write lock of the instance at dirFlag lives: one
+// lock per Home Assistant, keyed by the instance's HA_URL, in the user's cache
+// directory (D-152, D-168) — so two agents' directories on one Home Assistant
+// serialize their writes. Without a loadable HA_URL or a user cache directory
+// it is the instance's own cache directory, the per-directory lock H-26 had
+// before: such a command cannot write to Home Assistant anyway.
+func writeLockDir(dirFlag string) string {
+	if cfg, err := config.Load(dirFlag); err == nil {
+		if d, keyErr := instancelock.DirForURL(cfg.URL); keyErr == nil {
+			return d
+		}
+	}
+	return stateCacheDir(dirFlag)
+}
+
 // releaseWriteLock gives back whatever acquireWriteLock took. Safe when
 // nothing was taken, so both entry points can defer it unconditionally.
 func releaseWriteLock() {
@@ -155,6 +177,7 @@ func releaseWriteLock() {
 
 func init() {
 	rootCmd.PersistentPreRunE = rootPreRun
+	rootCmd.PersistentPostRunE = rootPostRun
 	rootCmd.PersistentFlags().StringVar(&flagDir, "dir", "", "instance directory (overrides HACTL_DIR and auto-discovery)")
 	// `--since` is deliberately NOT here: it is declared on the nine commands
 	// that read it (see sinceCommands in since.go), because a flag on a command
@@ -268,13 +291,13 @@ func markGeneratedScript(c *cobra.Command) {
 // --tokensmax and a chopped help screen is worse than a long one. Structured
 // output (structuredOutput) skips it for the same reason one step further on:
 // a capped document does not parse at all — see markStructuredOutput.
-func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
+func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) (shown []byte) {
 	if flagJSON {
 		if flagTokens {
 			fmt.Fprintf(os.Stderr, "[~%d tok]\n", estimateTokens(int64(len(data))))
 		}
 		_, _ = dst.Write(data)
-		return
+		return data
 	}
 	tokens := estimateTokens(int64(len(data)))
 	if flagTokens {
@@ -290,9 +313,10 @@ func applyTokenPolicy(dst io.Writer, data []byte, cmdPath string) {
 		_, _ = dst.Write(data[:limit])
 		hint := truncationHint(cmdPath)
 		_, _ = fmt.Fprintf(dst, "\n\u2026output capped at %d tok; %s\n", maxTok, hint)
-	} else {
-		_, _ = dst.Write(data)
+		return data[:limit]
 	}
+	_, _ = dst.Write(data)
+	return data
 }
 
 // effectiveTokensMax is the cap applyTokenPolicy enforces, after --full.
@@ -390,6 +414,8 @@ func Execute() error {
 	defer rootCmd.SetOut(nil)
 
 	executed, err := rootCmd.ExecuteC()
+	err = finishPolicySession(err)
+	renderReadRefusal(&capBuf, err)
 	markGeneratedScript(executed)
 	if err == nil {
 		// A preview that ran and succeeded is what authorizes the matching
@@ -425,6 +451,7 @@ func Execute() error {
 	// kept that promise. RunWithOutputContext, the path the MCP server and the
 	// integration tier take, has always flushed on both paths, so the CLI was
 	// the one of the two entry points that answered differently.
+	var shown []byte
 	if capBuf.Len() > 0 {
 		cmdPath := rootCmd.CommandPath()
 		if executed != nil {
@@ -432,15 +459,20 @@ func Execute() error {
 			// advice (rootCmd.CommandPath() is always just "hactl").
 			cmdPath = executed.CommandPath()
 		}
-		applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
+		shown = applyTokenPolicy(os.Stdout, capBuf.Bytes(), cmdPath)
 	}
+	// What the reads hid and masked, once, after the answer (D-139),
+	// counting the masks the shown output holds (D-216).
+	writePolicyTrailer(os.Stdout, os.Stderr, shown)
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		// Name the instance the failing command was talking to — with
-		// multi-instance discovery the target is otherwise invisible.
+		// multi-instance discovery the target is otherwise invisible. Not
+		// under a policy refusal, whose stderr is its own summary (D-70: one
+		// line for a denial, one per problem for a broken file).
 		var nf *config.ConfigNotFoundError
-		if dir := config.ResolvedDir(); dir != "" && !errors.As(err, &nf) {
+		if dir := config.ResolvedDir(); dir != "" && !errors.As(err, &nf) && policyErrorClass(err) == "" {
 			fmt.Fprintf(os.Stderr, "instance: %s\n", dir)
 		}
 		return err
@@ -503,7 +535,18 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	if target, _, findErr := rootCmd.Find(args[1:]); findErr == nil {
 		target.SetContext(ctx)
 	}
-	err := rootCmd.ExecuteContext(ctx)
+	executed, execErr := rootCmd.ExecuteContextC(ctx)
+	err := finishPolicySession(execErr)
+	renderReadRefusal(&capBuf, err)
+	if err == nil && executed != nil {
+		// A preview that succeeded authorizes the matching --confirm here
+		// exactly as in Execute(): an MCP tool call runs through this entry
+		// point inside `hactl mcp`'s own Execute(), so the confirm guard is
+		// active for it, and without the witness every --confirm a client
+		// sent after its dry run was refused (the manual: "the dry-run +
+		// --confirm write path still applies").
+		noteDryRun(executed, executed.Flags().Args())
+	}
 
 	// After, not before: cobra adds the `completion` subtree lazily during
 	// ExecuteC, so a Find ahead of the run cannot resolve it and the mark would
@@ -514,7 +557,11 @@ func RunWithOutputContext(ctx context.Context, args []string, w io.Writer) error
 	}
 
 	cmdPath := "hactl " + strings.Join(args[1:], " ")
-	applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
+	shown := applyTokenPolicy(w, capBuf.Bytes(), cmdPath)
+	// What the reads hid and masked, once, after the answer (D-139),
+	// counting the masks the shown output holds (D-216); stderr is the
+	// caller's (mcpserver.WithStderr) or the process's.
+	writePolicyTrailer(w, mcpserver.Stderr(ctx), shown)
 
 	if flagStats {
 		writeStats(w, int64(capBuf.Len()))
@@ -534,6 +581,7 @@ func resetSubcommandFlags() {
 	flagRtfmCore = false
 	flagRtfmFamily = nil
 	flagRtfmFamilies = false
+	flagRtfmSkill = ""
 	flagTplFile = ""
 	flagEntPattern = ""
 	flagEntDomain = ""
@@ -589,6 +637,8 @@ func resetSubcommandFlags() {
 	flagRefExitCode = false
 	flagRefAllowPartial = false
 	flagDashAllowPartial = false
+	flagPolicyAs = ""
+	flagPolicyAllowPartial = false
 	// Reset all cobra internal flags (including --help) on every command
 	// to prevent stale flag state between repeated Execute() calls.
 	resetCobraFlags(rootCmd)

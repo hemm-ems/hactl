@@ -1,0 +1,4 @@
+clause: "Policy.Profiles: every declared profile, sorted by byte order (H-16), whatever the file order"
+view: {exists: true, selected_by: active, active: zeta, default: deny, profiles: [Alpha, beta, zeta]}
+cases:
+  - {resource: "entity:light.kitchen", verb: read, allowed: false, rule: "default: deny", line: 0, profile: zeta}
