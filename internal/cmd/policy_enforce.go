@@ -218,7 +218,8 @@ func startPolicySession(cmd *cobra.Command, args []string) error {
 	}
 	policySession = sess
 	policyUninstall = reqgate.Install(sess)
-	policyInvocation.cmdPath, policyInvocation.args = cmd.CommandPath(), append([]string(nil), args...)
+	// The witness words, as noteDryRun records them: arguments and set flags.
+	policyInvocation.cmdPath, policyInvocation.args = cmd.CommandPath(), witnessArgs(cmd, args)
 	policyInvocation.confirmable = cmd.Flags().Lookup("confirm") != nil
 	policyWitnessID = pol.Active() + "@" + pol.Hash()
 	return nil

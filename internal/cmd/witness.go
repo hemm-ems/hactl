@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // A witness is hactl's record that a caller has SEEN what a write would do —
@@ -62,16 +66,90 @@ type witnessData struct {
 }
 
 // witnessKey names one previewable write by one caller: the session, the
-// resolved command path, and the positional arguments that say what it acts on.
+// resolved command path, and the words that say what it writes — the
+// positional arguments and the flags the caller set (witnessArgs).
 //
-// All three matter. Without the command path, a dry-run of `auto diff X` would
-// authorize `auto delete X`. Without the arguments, a dry-run of
+// All of it matters. Without the command path, a dry-run of `auto diff X`
+// would authorize `auto delete X`. Without the arguments, a dry-run of
 // `auto apply pg_test` would authorize `auto apply` on anything — the
 // instance-wide hole this file exists to close, rebuilt one level down.
+// Without the flags, a dry-run of `svc call light.turn_on --data
+// '{"entity_id":"light.a"}'` authorized the same call on light.b (F-8): the
+// positional argument names the service, the flag names what it acts on.
 // Without the session, one caller's preview authorizes another's write, which
 // is #61 itself rebuilt two levels down.
 func witnessKey(session, cmdPath string, args []string) string {
 	return session + "|" + cmdPath + "|" + strings.Join(args, " ")
+}
+
+// witnessArgs is what a witness records of one invocation besides its command
+// path: the positional arguments, then every flag the caller set explicitly,
+// sorted by name, each shell-quoted so the result is unambiguous and can be
+// run as it stands (dryRunForm prints it). The rule has two exceptions:
+// --confirm itself, which is the one word a preview and its write differ by,
+// and hactl's global flags (--json, --top, --timeout, --dir, …), which shape
+// the output or the transport, not what is written — the record is already
+// kept per instance directory. A persistent flag of a family (`wireguard
+// --tunnel`) is not global and counts.
+//
+// A flag is keyed on its value as typed: `-f cand.yaml` is the same write as
+// any other `-f cand.yaml`, whatever the file holds by the time --confirm
+// runs. The guard catches a caller confirming something it did not preview,
+// not a file edited between the two.
+func witnessArgs(cmd *cobra.Command, args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		out = append(out, shellQuote(a))
+	}
+	// VisitAll + Changed, not Visit: Visit walks pflag's own record of what
+	// was ever set, which the in-process runners' reset (Changed = false,
+	// RunWithOutputContext) does not clear — an MCP call would inherit the
+	// flags of the call before it.
+	var set []*pflag.Flag
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if !f.Changed || f.Name == "confirm" || rootCmd.PersistentFlags().Lookup(f.Name) == f {
+			return
+		}
+		set = append(set, f)
+	})
+	sort.Slice(set, func(i, j int) bool { return set[i].Name < set[j].Name })
+	for _, f := range set {
+		out = append(out, flagWords(f)...)
+	}
+	return out
+}
+
+// flagWords renders one set flag the way a caller would type it again: a
+// true boolean as `--name`, a repeatable flag once per value, anything else
+// as `--name <value>`.
+func flagWords(f *pflag.Flag) []string {
+	name := "--" + f.Name
+	if f.Value.Type() == "bool" {
+		if f.Value.String() == "true" {
+			return []string{name}
+		}
+		return []string{name + "=" + f.Value.String()}
+	}
+	if sv, ok := f.Value.(pflag.SliceValue); ok {
+		var words []string
+		for _, v := range sv.GetSlice() {
+			words = append(words, name, shellQuote(v))
+		}
+		return words
+	}
+	return []string{name, shellQuote(f.Value.String())}
+}
+
+// shellQuote returns s as one POSIX shell word: unchanged when it holds only
+// characters no shell treats specially, otherwise single-quoted.
+func shellQuote(s string) string {
+	plain := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./_-", r)
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // recordWitness notes that the dry-run form of a write ran and succeeded, so

@@ -55,7 +55,8 @@ func policyIDOf(t *testing.T, dir string) string {
 
 // recordPreview records the witnesses a passing preview of `hactl svc call` args
 // leaves under the policy now in dir: the confirm guard's and the one keyed
-// by the policy (D-215).
+// by the policy (D-215). args are the witness words (witnessArgs): the
+// arguments, then the set flags, shell-quoted.
 func recordPreview(t *testing.T, dir string, args []string) {
 	t.Helper()
 	const cmdPath = "hactl svc call"

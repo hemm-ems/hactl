@@ -199,14 +199,18 @@ type policyShowDoc struct {
 	// EnforcedVerbs are the verbs commands enforce in this version, in the
 	// order read, control, edit, create, delete — the four write verbs while
 	// a profile is in effect, [] otherwise (D-70).
-	EnforcedVerbs []string         `json:"enforced_verbs"`
-	Profile       string           `json:"profile"`
-	SelectedBy    string           `json:"selected_by"`
-	WhatIf        bool             `json:"what_if"`
-	AllowAll      bool             `json:"allow_all"`
-	Default       string           `json:"default"`
-	Profiles      []string         `json:"profiles"`
-	Rules         []policyShowRule `json:"rules"`
+	EnforcedVerbs []string `json:"enforced_verbs"`
+	Profile       string   `json:"profile"`
+	SelectedBy    string   `json:"selected_by"`
+	WhatIf        bool     `json:"what_if"`
+	AllowAll      bool     `json:"allow_all"`
+	// Required is the instance's HACTL_POLICY=required (D-136; an invalid
+	// value counts). With it and no profile in effect every command but the
+	// exempt ones is refused, so allow_all is false then (F-6).
+	Required bool             `json:"required"`
+	Default  string           `json:"default"`
+	Profiles []string         `json:"profiles"`
+	Rules    []policyShowRule `json:"rules"`
 	// Hint is the owner sentence, only on a broken file (D-117).
 	Hint string `json:"hint,omitempty"`
 	// Indirect is "unchecked" when the profile switched off the check of
@@ -232,11 +236,18 @@ func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 	}
 
 	enforced, verbs := policyEnforcement(pol)
+	// An instance that requires a policy and has none in effect refuses every
+	// command but the exempt ones (D-136): that state is not "allow-all", and
+	// show is one of the few commands that can still say so (F-6). A what-if
+	// or a draft view describes another policy than the one in effect.
+	required, reqErr := config.PolicyRequired(cfg.Dir)
+	required = required || reqErr != nil
+	refusing := required && !pol.InEffect() && !pol.WhatIf() && !pol.Draft()
 	doc := policyShowDoc{
 		File: pol.Source(), Exists: pol.Exists(), Valid: true, Problems: []policyProblem{},
 		Level: policy.Level, Disclaimer: policy.Disclaimer, Enforced: enforced, EnforcedVerbs: verbs,
 		Profile: pol.Active(), SelectedBy: string(pol.Selection()), WhatIf: pol.WhatIf(),
-		AllowAll: pol.AllowAll(), Default: string(pol.Default()),
+		AllowAll: pol.AllowAll() && !refusing, Required: required, Default: string(pol.Default()),
 		Profiles: pol.Profiles(), Rules: []policyShowRule{}, Draft: pol.Draft(),
 	}
 	if enforced {
@@ -263,9 +274,12 @@ func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 		return writeJSON(w, doc)
 	}
 
-	if !pol.Exists() {
+	switch {
+	case !pol.Exists() && refusing:
+		_, _ = fmt.Fprintf(w, "no policy file (looked for %s), and this instance requires one\n", pol.Source())
+	case !pol.Exists():
 		_, _ = fmt.Fprintf(w, "no policy file (looked for %s): everything is allowed, exactly as without a policy\n", pol.Source())
-	} else {
+	default:
 		_, _ = fmt.Fprintf(w, "file: %s\n", fileText(pol))
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", policy.Disclaimer)
@@ -273,6 +287,10 @@ func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 	switch {
 	case pol.Draft():
 		_, _ = fmt.Fprintln(w, "enforced: nothing — a draft is not in effect; hactl policy activate puts it in effect")
+	case refusing:
+		_, _ = fmt.Fprintf(w, "enforced: no profile is in effect and %s, so every command except version, help, "+
+			"completion, rtfm, policy show and policy lint is refused (policy_missing) until the owner restores it\n",
+			requirementText(reqErr))
 	case enforced:
 		_, _ = fmt.Fprintln(w, "enforced: writes and reads")
 		if !pol.IndirectChecked() {
@@ -298,6 +316,11 @@ func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 		if ps := pol.Profiles(); len(ps) > 0 {
 			declared = strings.Join(ps, ", ")
 		}
+		if refusing {
+			_, _ = fmt.Fprintf(w, "NO PROFILE: the file has no active: and no profile named default, so no profile is in effect "+
+				"and commands are refused, not allowed (declared profiles: %s)\n", declared)
+			return nil
+		}
 		_, _ = fmt.Fprintf(w, "ALLOW-ALL: the file has no active: and no profile named default, so no profile is in effect "+
 			"and everything is allowed (declared profiles: %s)\n", declared)
 		return nil
@@ -314,6 +337,15 @@ func runPolicyShow(w io.Writer, as string, asSet bool, file string) error {
 	}
 	_, _ = fmt.Fprintf(w, "profiles: %s\n", strings.Join(pol.Profiles(), ", "))
 	return nil
+}
+
+// requirementText says why the instance requires a policy: its
+// HACTL_POLICY=required, or a value that is not valid and counts as required.
+func requirementText(reqErr error) string {
+	if reqErr != nil {
+		return "this instance's requirement cannot be read (" + reqErr.Error() + "), which counts as required"
+	}
+	return "this instance requires one (HACTL_POLICY=required in .env)"
 }
 
 // expansionText is what a rule holding `write` expands to at its address,
