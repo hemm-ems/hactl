@@ -501,6 +501,10 @@ A few things worth knowing:
   blueprint expands with your inputs and the blueprint's defaults: hactl reads
   the blueprint through the companion, and refuses the write if it cannot read
   or expand it. A later change to the blueprint file itself is not checked.
+  A profile that denies nothing — no deny rule and no `default: deny` — has
+  nothing these checks protect, so it refuses none of them: a templated
+  target, a template hactl cannot read and a blueprint it cannot expand are
+  written as they are.
 - **Running an automation or a script is checked like writing it.** `script
   run goodnight`, `svc call script.goodnight`, `script.turn_on` (also through
   `homeassistant.turn_on`) and `automation.trigger` read the stored config
@@ -628,8 +632,16 @@ stderr. A few things worth knowing:
   file you may not read, or in an automation, script or template entity whose
   config you may not read; `log` needs `read` on `system:logs` as a whole, and a
   logbook row needs `read` on its entity. `log show` of an id from an
-  earlier `log` needs `read` on `system:logs` too. Raw file contents
-  (`config file`) are checked as the file, not redacted.
+  earlier `log` needs `read` on `system:logs` too.
+- **A config file is read as one piece.** `config file` needs `read` on the
+  file, and is refused whole — naming the rule — when a block of it is
+  denied (`file:template.yaml/block/<id>`) or when it defines an automation,
+  script or template entity whose config you may not read
+  (`deny "automation:prod_*": [read]` refuses `config file automations.yaml`).
+  `config block` is refused the same way by what the block defines. Nothing
+  is redacted, and what the file *says* about an entity you may not read is
+  not checked. An entry hactl does not recognise as one — inside a package,
+  or split over an `!include` — is checked as its file only.
 - **`tpl eval` is checked as what the template reads**, as a written
   template is: `{{ now().hour }}` needs nothing, `{{ states('sun.sun') }}`
   needs `read` on `sun.sun`'s state, and a template that uses an entity as a
