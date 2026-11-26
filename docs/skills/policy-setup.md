@@ -50,6 +50,7 @@ profiles:
       "service:light.*":          [control]
       "automation:agent_*":       [read, edit, create, delete]
       "entity:automation.agent_*": [control, create, delete]
+      "service:automation.*":     [control]
     deny:
       "entity:lock.*":            [read, write]
 ```

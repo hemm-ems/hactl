@@ -30,6 +30,7 @@ profiles:
     allow:
       "entity:*":                 [read]
       "entity:light.*":           [control]
+      "service:light.*":          [control]
       "automation:pg_*":          [read, edit, create]
       "entity:*/registry/labels": [edit]
     deny:
@@ -37,6 +38,10 @@ profiles:
       "entity:*/attr/latitude":   [read]   # where anyone is: device trackers,
       "entity:*/attr/longitude":  [read]   # persons, zones — every entity
 ```
+
+Switching a light is a service call: `light.turn_on` needs `control` on the
+service as well as on the light, so the profile allows the `light` services
+next to the lights. Under `default: deny`, a service no rule allows is denied.
 
 The two location rules cover every entity that carries coordinates — a
 `device_tracker`, a `person` (which repeats its tracker's coordinates), a
@@ -58,7 +63,7 @@ Then ask it questions:
 ```console
 $ hactl policy check entity:lock.front_door control
 denied: entity:lock.front_door control
-rule: deny "entity:lock.*" [read write] (line 12)
+rule: deny "entity:lock.*" [read write] (line 13)
 profile: agent (selected by active)
 
 $ hactl policy check entity:light.sofa control
@@ -230,8 +235,8 @@ denied, like the latitude and longitude attributes in the example above. Then:
 $ hactl policy check entity:device_tracker.jan read
 allowed: entity:device_tracker.jan read
 rule: allow "entity:*" [read] (line 7)
-partial: deny "entity:*/attr/latitude" [read] (line 13)
-partial: deny "entity:*/attr/longitude" [read] (line 14)
+partial: deny "entity:*/attr/latitude" [read] (line 14)
+partial: deny "entity:*/attr/longitude" [read] (line 15)
 ```
 
 ### Narrowing an allow by area or label
@@ -606,10 +611,10 @@ lock.garage        locked                 11-05 09:12
 hidden by policy: 1 (profile agent)
 $ hactl ent show lock.front_door
 policy_denied: would read entity:lock.front_door — refused by policy, nothing was written
-  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
+  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 13)
   checked: 1 resources, 1 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 12 — ask the owner; a change goes through a draft and `hactl policy activate`
+  hint: the owner would change the rule on line 13 — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 A refused read looks exactly like a refused write: the report above on
