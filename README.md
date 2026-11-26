@@ -88,7 +88,7 @@ To the model, CLI-over-shell and MCP differ only in tool schema (~0.1k vs ~2.5k 
 
 Config writes (`auto apply`/`create`/`delete`, `script apply`, templates, helpers, dashboards, registry changes) are dry-run by default and need an explicit `--confirm`. Automation and script configs are validated with HA's own `validate_config` before anything is written, and a backup is saved before every apply write (`hactl auto rollback` undoes automation applies). Template syntax is evaluated by HA's real Jinja engine, not a mock.
 
-Two command families execute immediately, because acting is their purpose: `svc call` (service calls like `light.turn_on`) and `script run`. If you hand an agent unrestricted shell access to hactl, it can call services — the bundled LLM tool wrappers in `integrations/llm/` deliberately expose only read-only commands.
+`svc call` (service calls like `light.turn_on`) and `script run` are dry-run by default too and only act with `--confirm`. Run non-interactively (an agent, a script), a `--confirm` is refused unless the same command ran as a dry run first, so the plan is shown before anything happens. The bundled LLM tool wrappers in `integrations/llm/` keep writes dry-run by default and tell the model to confirm only after the user approved the exact action. A [permission policy](docs/policy.md) can additionally limit what an agent may touch, as a guardrail against mistakes rather than a lock.
 
 ## Multi-instance
 
