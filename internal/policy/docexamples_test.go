@@ -30,7 +30,7 @@ var fenceRe = regexp.MustCompile("^(\\s*)```(\\S*)\\s*$")
 // "<file>:<line of its first line>".
 func docExamples(t *testing.T, file string) map[string]string {
 	t.Helper()
-	data, err := os.ReadFile(file)
+	data, err := os.ReadFile(file) //nolint:gosec // a fixed document of the repository (docExampleFiles)
 	if err != nil {
 		t.Fatalf("reading %s: %v", file, err)
 	}
@@ -75,8 +75,9 @@ func TestDocumentedExamplePoliciesLintClean(t *testing.T) {
 				t.Errorf("%s: the example does not load: %v", at, err)
 				continue
 			}
-			var codes []string
-			for _, f := range Lint(pol, nil).Findings {
+			findings := Lint(pol, nil).Findings
+			codes := make([]string, 0, len(findings))
+			for _, f := range findings {
 				if !slices.Contains(docExampleIntended[at], f.Code) {
 					t.Errorf("%s: finding %s on line %d (%s): %s", at, f.Code, f.Line, f.Rule, f.Message)
 				}

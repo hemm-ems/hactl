@@ -79,11 +79,21 @@ func RefChangeOwners(location string, content []byte, changePath, oldVal, newVal
 // YAML defines no entry Home Assistant loads, so it has no owners; a file too
 // large or too shared to walk is an error (fail closed).
 func FileOwners(location string, content []byte) ([]TypedOwner, error) {
-	root, err := parseRoot(location, content)
-	if err != nil {
+	root := loadedRoot(location, content)
+	if root == nil {
 		return nil, nil
 	}
 	return rootOwners(location, root)
+}
+
+// loadedRoot is the content's root node, or nil for content Home Assistant
+// would not load: it does not parse as YAML, or holds no document.
+func loadedRoot(location string, content []byte) *yaml.Node {
+	root, err := parseRoot(location, content)
+	if err != nil {
+		return nil
+	}
+	return root
 }
 
 // BlockOwners are the typed config entries a config block defines (D-217).
@@ -92,8 +102,8 @@ func FileOwners(location string, content []byte) ([]TypedOwner, error) {
 // which: it is placed both ways — as the file's root and as the one item of
 // a list — a superset, as [RefChangeOwners] is where a file is ambiguous.
 func BlockOwners(location string, content []byte) ([]TypedOwner, error) {
-	root, err := parseRoot(location, content)
-	if err != nil {
+	root := loadedRoot(location, content)
+	if root == nil {
 		return nil, nil
 	}
 	out, err := rootOwners(location, root)
