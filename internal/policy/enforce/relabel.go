@@ -88,7 +88,7 @@ var targetKeys = map[string]bool{"label_id": true, "area_id": true, "floor_id": 
 // cannot get counts as targeting. With no profile in effect, `indirect:
 // unchecked`, or a profile that denies nothing, it adds nothing.
 func (s *Session) RegistryReachChecks(ctx context.Context, ch RegistryChange) ([]reqmap.Check, []Denial) {
-	if !s.pol.IndirectChecked() || !DeniesAnything(s.pol) {
+	if !s.checksIndirect() {
 		return nil, nil
 	}
 	s.gather(ctx, reqmap.Request{}, needs{registries: true})

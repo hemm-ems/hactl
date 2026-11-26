@@ -44,7 +44,7 @@ func withRun(ctx context.Context, key string) context.Context {
 // read is a denial (RuleStoredConfigUnreadable). Under `indirect:
 // unchecked`, or in a profile that denies nothing, nothing is added.
 func (s *Session) runChecks(ctx context.Context, runs []reqmap.Run) ([]reqmap.Check, []Denial) {
-	if len(runs) == 0 || !s.pol.IndirectChecked() || !DeniesAnything(s.pol) {
+	if len(runs) == 0 || !s.checksIndirect() {
 		return nil, nil
 	}
 	chain := runChain(ctx)

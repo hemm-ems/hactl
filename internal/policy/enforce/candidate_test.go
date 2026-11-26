@@ -134,6 +134,41 @@ func TestRequestLayerChecksTheCandidateOnItsOwn(t *testing.T) {
 	}
 }
 
+// TestCandidateChecksOffUnderAProfileThatDeniesNothing — D-218: a profile
+// that denies nothing (no deny rule, no `default: deny`) can refuse nothing a
+// candidate would do, so the candidate check adds nothing and asks Home
+// Assistant nothing, as the sibling checks of D-184, D-186, D-190 and D-207
+// do: a templated action target and a blueprint hactl cannot read pass, at the
+// command plan and at the request layer. A profile with any deny keeps
+// refusing both fail-closed.
+func TestCandidateChecksOffUnderAProfileThatDeniesNothing(t *testing.T) {
+	const templated = "id: pg_a\nalias: a\ntriggers: []\nactions:\n  - action: light.turn_off\n    target:\n      entity_id: \"{{ states.light | selectattr('state','eq','on') | map(attribute='entity_id') | list }}\"\n"
+	const blueprint = "id: pg_bp\nalias: bp\nuse_blueprint:\n  path: pg/missing.yaml\n"
+	nothing := "version: 1\nactive: agent\nprofiles:\n  agent:\n    allow:\n      \"entity:*\": [read]\n"
+	oneDeny := "version: 1\nactive: agent\nprofiles:\n  agent:\n    deny:\n      \"entity:*/attr/latitude\": [read]\n"
+	newF := func() *fakeFetcher {
+		return &fakeFetcher{complete: true, reg: &reqmap.Registries{}, live: []string{"light.hall"}}
+	}
+	for _, cand := range []string{templated, blueprint} {
+		f := newF()
+		s, _ := newSession(t, nothing, f)
+		checks, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand))
+		if len(checks)+len(denials) != 0 || len(f.asked) != 0 {
+			t.Errorf("deny-nothing profile, %q: checks %v denials %+v asked %q, want nothing", cand, checks, denials, f.asked)
+		}
+		s, _ = newSession(t, nothing, newF())
+		if err := s.Check(context.Background(), reqmap.Request{Transport: reqmap.Companion, Method: "POST", Path: "/v1/config/automation", Body: []byte(cand)}); err != nil {
+			t.Errorf("deny-nothing profile, request layer, %q: %v, want allowed", cand, err)
+		}
+
+		s, _ = newSession(t, oneDeny, newF())
+		if _, denials := s.CandidateChecks(context.Background(), "automation", []byte(cand)); len(denials) == 0 ||
+			!strings.HasPrefix(denials[0].Rule, "fail-closed: ") {
+			t.Errorf("a profile with a deny, %q: denials %+v, want it refused fail-closed", cand, denials)
+		}
+	}
+}
+
 // lockBlueprint is an automation blueprint whose action target is an input.
 const lockBlueprint = `blueprint:
   name: Unlock

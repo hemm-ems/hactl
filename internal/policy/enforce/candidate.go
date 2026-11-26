@@ -40,9 +40,11 @@ const RuleLiveUnread = "fail-closed: live entities unread"
 // The command layer adds these to its plan and the request layer to the
 // companion write that carries the candidate, through this one function, so
 // both decide alike (R-12). With `indirect: unchecked` on the profile
-// (D-135) nothing is added.
+// (D-135), or in a profile that denies nothing (D-218, the gate of D-184,
+// D-186, D-190 and D-207), nothing is added: such a profile can refuse
+// nothing the candidate would do, so nothing about it is fail-closed either.
 func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate []byte) ([]reqmap.Check, []Denial) {
-	if !s.pol.IndirectChecked() {
+	if !s.checksIndirect() {
 		return nil, nil
 	}
 	var doc any
@@ -56,7 +58,7 @@ func (s *Session) CandidateChecks(ctx context.Context, domain string, candidate 
 // renders a run path (D-207) from a place in the candidate ("" for none):
 // every check and denial then carries it.
 func (s *Session) candidateDoc(ctx context.Context, domain string, doc any, via func(path string) string) ([]reqmap.Check, []Denial) {
-	if !s.pol.IndirectChecked() {
+	if !s.checksIndirect() {
 		return nil, nil
 	}
 	// A blueprint's actions are in its file: check what it expands to (D-185).
@@ -114,6 +116,14 @@ func (s *Session) candidateDoc(ctx context.Context, domain string, doc any, via 
 		applyVia(checks, denials, via(""))
 	}
 	return dedupeChecks(checks), denials
+}
+
+// checksIndirect reports whether what a write leads to beyond its own
+// address is checked: the profile does not opt out (`indirect: unchecked`,
+// D-135) and denies something (D-218) — a profile that denies nothing can
+// refuse nothing, so nothing is fail-closed under it either.
+func (s *Session) checksIndirect() bool {
+	return s.pol.IndirectChecked() && DeniesAnything(s.pol)
 }
 
 // applyVia gives every check without a run path, and every denial, the
