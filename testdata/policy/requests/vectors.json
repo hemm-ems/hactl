@@ -4063,7 +4063,8 @@
       "resource": "file:*",
       "kind_wide": true
      }
-    ]
+    ],
+    "filter": "config_file"
    },
    "facts_ref": "house"
   },

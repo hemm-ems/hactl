@@ -600,7 +600,11 @@ var readVectors = []vector{
 	{name: "companion wiring", req: comp("GET", "/v1/config/wiring?domain=input_boolean", ""), disp: reqmap.Exempt, row: "companion GET /v1/config/wiring"},
 	{name: "check-config is a POST that reads", req: comp("POST", "/v1/ha/check-config", ""), disp: reqmap.Read, row: "companion POST /v1/ha/check-config", checks: []string{"read system:check_config"}},
 	{name: "file list", req: comp("GET", "/v1/config/files", ""), disp: reqmap.Read, row: "companion GET /v1/config/files", filter: reqmap.FilterFiles},
-	{name: "one file", req: comp("GET", "/v1/config/file?path=packages/x.yaml", ""), disp: reqmap.Read, row: "companion GET /v1/config/file", checks: []string{"read file:packages/x.yaml"}},
+	// D-217: one opaque body; the companion resolves unless told not to, so a
+	// read without `resolve` needs read on every file it may inline.
+	{name: "one file", req: comp("GET", "/v1/config/file?path=packages/x.yaml", ""), disp: reqmap.Read, row: "companion GET /v1/config/file", checks: []string{"read file:*", "read file:packages/x.yaml"}, filter: reqmap.FilterConfigFile},
+	{name: "one raw file", req: comp("GET", "/v1/config/file?path=packages/x.yaml&resolve=false", ""), disp: reqmap.Read, row: "companion GET /v1/config/file", checks: []string{"read file:packages/x.yaml"}, filter: reqmap.FilterConfigFile},
+	{name: "a resolve the companion reads as true", req: comp("GET", "/v1/config/file?path=packages/x.yaml&resolve=true&resolve=false", ""), disp: reqmap.Read, row: "companion GET /v1/config/file", checks: []string{"read file:*", "read file:packages/x.yaml"}, filter: reqmap.FilterConfigFile},
 	{name: "one block", req: comp("GET", "/v1/config/block?path=automations.yaml&id=a1", ""), disp: reqmap.Read, row: "companion GET /v1/config/block", checks: []string{"read file:automations.yaml/block/a1"}, filter: reqmap.FilterConfigBlock},
 	{name: "related", req: comp("GET", "/v1/related/entity?entity_id=light.kitchen", ""), disp: reqmap.Read, row: "companion GET /v1/related/entity", checks: []string{"read entity:light.kitchen"}, filter: reqmap.FilterRelated},
 	{name: "ref scan", req: comp("GET", "/v1/ref/scan?target=light.kitchen", ""), disp: reqmap.Read, row: "companion GET /v1/ref/scan", filter: reqmap.FilterRefHits},

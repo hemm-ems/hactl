@@ -521,6 +521,59 @@ func TestPolicyHuntReadsAroundSecret(t *testing.T) {
 	t.Logf("RESULT reads around read-denied %s:\n%s", huntSecret, strings.Join(hits, "\n"))
 }
 
+// TestE2EPolicyConfigFileIsOneOpaqueBodyCLI — D-217: `config file` hands out
+// a whole file, so a read the profile denies inside it refuses the read,
+// naming the rule, and nothing is redacted. A denied block refuses its file;
+// a file that defines an automation the profile may not read is refused, and
+// so is the resolved configuration.yaml that inlines it, while the raw one,
+// which only names the include, passes; `config block` of that automation is
+// refused too. A profile that denies no config read shows the file as it is.
+func TestE2EPolicyConfigFileIsOneOpaqueBodyCLI(t *testing.T) {
+	const id = "pg_rf_secret"
+	const marker = "PG RF Secret Marker"
+	ctx := t.Context()
+	_, _ = testClient.DeleteAutomationDef(ctx, id)
+	t.Cleanup(func() { _, _ = testClient.DeleteAutomationDef(context.Background(), id) })
+	if _, err := testClient.CreateAutomationDef(ctx, "id: "+id+"\nalias: "+marker+"\ntriggers:\n  - trigger: event\n    event_type: pg_rf_never\nactions:\n  - delay: 1\n"); err != nil {
+		t.Fatalf("fixture: creating %s as the owner: %v", id, err)
+	}
+	if o, _, code := runPolicyE2E(t, policyE2EDir(t, pgE2EPolicy("    deny:\n      \"entity:lock.*\": [control]\n")), nil, "config", "file", "automations.yaml"); code != 0 || !strings.Contains(o, marker) {
+		t.Fatalf("a profile that denies no read: config file automations.yaml exit %d, want 0 showing %q\n%s", code, marker, huntLine(o, 400))
+	}
+
+	refused := func(dir, rule string, args ...string) {
+		t.Helper()
+		o, e, code := runPolicyE2E(t, dir, nil, args...)
+		if code == 0 || !strings.Contains(o+e, rule) || strings.Contains(o+e, marker) {
+			t.Errorf("hactl %v: exit %d, want refused naming %s and showing nothing of the file\n%s", args, code, rule, huntLine(o+e, 600))
+		}
+		jo, _, _ := runPolicyE2E(t, dir, nil, append(slices.Clone(args), "--json")...)
+		if !strings.Contains(jo, `"policy_denied"`) || strings.Contains(jo, marker) {
+			t.Errorf("hactl %v --json: want a policy_denied envelope without the file\n%s", args, huntLine(jo, 600))
+		}
+	}
+	allowed := func(dir string, args ...string) {
+		t.Helper()
+		if o, e, code := runPolicyE2E(t, dir, nil, args...); code != 0 {
+			t.Errorf("hactl %v: exit %d, want 0\n%s", args, code, huntLine(o+e, 600))
+		}
+	}
+
+	block := pgE2EPolicy("    deny:\n      \"file:automations.yaml/block/pg_rf_block\": [read]\n")
+	blockDir := policyE2EDir(t, block)
+	refused(blockDir, `deny "file:automations.yaml/block/pg_rf_block" [read]`, "config", "file", "automations.yaml", "--raw")
+	allowed(blockDir, "config", "file", "configuration.yaml", "--raw")
+
+	auto := pgE2EPolicy("    deny:\n      \"automation:" + id + "\": [read]\n")
+	autoDir := policyE2EDir(t, auto)
+	rule := `deny "automation:` + id + `" [read]`
+	refused(autoDir, rule, "config", "file", "automations.yaml")
+	refused(autoDir, rule, "config", "file", "automations.yaml", "--raw")
+	refused(autoDir, rule, "config", "file", "configuration.yaml")
+	refused(autoDir, rule, "config", "block", "automations.yaml", id)
+	allowed(autoDir, "config", "file", "configuration.yaml", "--raw")
+}
+
 // sectionsBlueprint is an automation blueprint with an input inside a section
 // and a top-level input, both with defaults — the shape reqmap's
 // TestBlueprintExpansion expands.

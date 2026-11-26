@@ -405,3 +405,51 @@ func TestReplaceTokenMatchesTheCompanionsBoundaries(t *testing.T) {
 		t.Error("a whole-string token was not replaced")
 	}
 }
+
+// TestFileOwners — D-217: a whole file's typed entries, by the shapes
+// RefChangeOwners places a change in, in every layout: an automations list,
+// a scripts mapping, a template list with its block-shared and per-entity
+// parts, a configuration.yaml whose includes the companion resolved inline,
+// and a one-entry file. A block is placed as a root and as a list item.
+// Content that is no YAML, or no entry, has no owners.
+func TestFileOwners(t *testing.T) {
+	for _, c := range []struct {
+		name, loc, content string
+		want               []string
+	}{
+		{"automations", "automations.yaml", "- id: prod_heating\n  triggers: []\n  actions: []\n- alias: no id\n  actions: []\n- id: pg_a\n  use_blueprint: {path: x.yaml}\n",
+			[]string{"automation:pg_a", "automation:prod_heating"}},
+		{"scripts", "scripts.yaml", "wake_up:\n  sequence: []\nbp:\n  use_blueprint: {path: y.yaml}\n",
+			[]string{"script:bp", "script:wake_up"}},
+		{"templates", "template.yaml", "- sensor:\n    - {name: A, unique_id: tpl_a, state: x}\n    - {name: B, state: y}\n- binary_sensor:\n    unique_id: tpl_b\n    state: z\n",
+			[]string{"template:tpl_a", "template:tpl_b"}},
+		{"resolved configuration", "configuration.yaml", "homeassistant: {name: Home}\nautomation:\n  - {id: prod_x, triggers: [], actions: []}\nscript:\n  s1: {sequence: []}\ntemplate:\n  - sensor: [{unique_id: tpl_c, state: x}]\n",
+			[]string{"automation:prod_x", "script:s1", "template:tpl_c"}},
+		{"one entry", "automations/one.yaml", "id: one\ntriggers: []\nactions: []\n", []string{"automation:one"}},
+		{"no entries", "customize.yaml", "light.x: {friendly_name: X}\n", nil},
+		{"not yaml", "notes.txt", "a: [\n", nil},
+		{"empty", "empty.yaml", "", nil},
+	} {
+		got, err := FileOwners(c.loc, []byte(c.content))
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if g := ownerStrings(got); !slices.Equal(g, c.want) && len(g)+len(c.want) > 0 {
+			t.Errorf("%s: owners %q, want %q", c.name, g, c.want)
+		}
+	}
+
+	// A block as the companion dumps it: one automation item, one template
+	// block, one script key.
+	for _, c := range []struct{ loc, content, want string }{
+		{"automations.yaml", "id: prod_heating\ntriggers: []\nactions: []\n", "automation:prod_heating"},
+		{"template.yaml", "sensor:\n  - {unique_id: tpl_secret, state: x}\n", "template:tpl_secret"},
+		{"scripts.yaml", "wipe:\n  sequence: []\n", "script:wipe"},
+	} {
+		got, err := BlockOwners(c.loc, []byte(c.content))
+		if err != nil || !slices.Contains(ownerStrings(got), c.want) {
+			t.Errorf("block of %s: owners %q (%v), want %s among them", c.loc, ownerStrings(got), err, c.want)
+		}
+	}
+}
