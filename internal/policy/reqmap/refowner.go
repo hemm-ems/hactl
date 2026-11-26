@@ -72,6 +72,92 @@ func RefChangeOwners(location string, content []byte, changePath, oldVal, newVal
 	return out, nil
 }
 
+// FileOwners are the typed config entries a whole file's content defines
+// (D-217): every automation entry, script key and template entity
+// [RefChangeOwners] would place a change in, for any path into the file. A
+// read of the file hands each of them out. Content that does not parse as
+// YAML defines no entry Home Assistant loads, so it has no owners; a file too
+// large or too shared to walk is an error (fail closed).
+func FileOwners(location string, content []byte) ([]TypedOwner, error) {
+	root := loadedRoot(location, content)
+	if root == nil {
+		return nil, nil
+	}
+	return rootOwners(location, root)
+}
+
+// loadedRoot is the content's root node, or nil for content Home Assistant
+// would not load: it does not parse as YAML, or holds no document.
+func loadedRoot(location string, content []byte) *yaml.Node {
+	root, err := parseRoot(location, content)
+	if err != nil {
+		return nil
+	}
+	return root
+}
+
+// BlockOwners are the typed config entries a config block defines (D-217).
+// The block is the companion's dump of one item of a list-rooted file or of
+// one `{key: value}` of a mapping-rooted one, and the answer does not say
+// which: it is placed both ways — as the file's root and as the one item of
+// a list — a superset, as [RefChangeOwners] is where a file is ambiguous.
+func BlockOwners(location string, content []byte) ([]TypedOwner, error) {
+	root := loadedRoot(location, content)
+	if root == nil {
+		return nil, nil
+	}
+	out, err := rootOwners(location, root)
+	if err != nil {
+		return nil, err
+	}
+	item, err := rootOwners(location, &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{root}})
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range item {
+		if !slices.Contains(out, o) {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+// ownerDepth is how many steps into a file the deepest owner lies: a
+// `template` key, a block of its list, an entity domain key, the entity item.
+const ownerDepth = 4
+
+// rootOwners places every chain of at most ownerDepth steps from root.
+func rootOwners(location string, root *yaml.Node) ([]TypedOwner, error) {
+	var out []TypedOwner
+	visits := 0
+	var walk func(n *yaml.Node, acc []pathStep) error
+	walk = func(n *yaml.Node, acc []pathStep) error {
+		visits++
+		if visits > maxSharedVisits {
+			return fmt.Errorf("%s: %w", location, errTooShared)
+		}
+		for _, o := range ownersOf(location, root, acc, "", "") {
+			o.NewID = "" // no change: no rename
+			if !slices.Contains(out, o) {
+				out = append(out, o)
+			}
+		}
+		if len(acc) == ownerDepth {
+			return nil
+		}
+		for _, step := range childSteps(n) {
+			if err := walk(step.node, append(slices.Clip(acc), step)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(root, nil); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // matchChange parses a file and matches a change's path in it: the root and
 // every way the path walks it. No match is an error.
 func matchChange(location string, content []byte, changePath string) (*yaml.Node, [][]pathStep, error) {

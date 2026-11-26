@@ -1744,7 +1744,7 @@
   },
   {
    "id": "file-allowed",
-   "why": "a readable file passes, contents not redacted",
+   "why": "a readable file whose entries are all readable passes, contents not redacted (D-217)",
    "row": "companion GET /v1/config/file",
    "policy": "reader",
    "request": {
@@ -1754,15 +1754,125 @@
    },
    "answer": {
     "path": "automations.yaml",
-    "content": "x"
+    "content": "- id: pg_a\n  triggers: []\n  actions: []\n"
    },
    "expect": {
     "answer": {
      "path": "automations.yaml",
-     "content": "x"
+     "content": "- id: pg_a\n  triggers: []\n  actions: []\n"
     },
     "hidden": 0,
     "masked": 0
+   }
+  },
+  {
+   "id": "file-denied-block",
+   "why": "a file is one opaque body: a denied block in it refuses the read, naming the block's rule (D-217)",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=template.yaml&resolve=false"
+   },
+   "expect": {
+    "refused": "deny \"file:template.yaml/block/tpl_secret\" [read]"
+   }
+  },
+  {
+   "id": "file-denied-automation",
+   "why": "a file that defines an automation the profile may not read is refused, naming its rule (D-217)",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=automations.yaml&resolve=false"
+   },
+   "answer": {
+    "path": "automations.yaml",
+    "content": "- id: pg_a\n  triggers: []\n  actions: []\n- id: prod_heating\n  alias: Heating\n  triggers: []\n  actions: []\n"
+   },
+   "expect": {
+    "refused": "deny \"automation:prod_*\" [read]"
+   }
+  },
+  {
+   "id": "file-denied-script",
+   "why": "a file that defines a script the profile may not read is refused, naming its rule (D-217)",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=scripts.yaml&resolve=false"
+   },
+   "answer": {
+    "path": "scripts.yaml",
+    "content": "wake:\n  sequence: []\nwipe:\n  sequence: []\n"
+   },
+   "expect": {
+    "refused": "deny \"script:wipe\" [read]"
+   }
+  },
+  {
+   "id": "file-denied-template",
+   "why": "a file that defines a template entity the profile may not read is refused, naming its rule (D-217)",
+   "row": "companion GET /v1/config/file",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=packages/tpl.yaml&resolve=false"
+   },
+   "answer": {
+    "path": "packages/tpl.yaml",
+    "content": "template:\n  - sensor:\n      - unique_id: tpl_secret\n        state: x\n"
+   },
+   "expect": {
+    "refused": "deny \"template:tpl_secret\" [read]"
+   }
+  },
+  {
+   "id": "file-entries-unchecked-when-none-denied",
+   "why": "a profile that denies no automation, script or template read does not place a file's entries (D-217, as D-142's hits)",
+   "row": "companion GET /v1/config/file",
+   "policy": "open",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/file?path=automations.yaml&resolve=false"
+   },
+   "answer": {
+    "path": "automations.yaml",
+    "content": "- id: prod_heating\n  triggers: []\n  actions: []\n"
+   },
+   "expect": {
+    "answer": {
+     "path": "automations.yaml",
+     "content": "- id: prod_heating\n  triggers: []\n  actions: []\n"
+    },
+    "hidden": 0,
+    "masked": 0
+   }
+  },
+  {
+   "id": "block-denied-automation",
+   "why": "a block that defines an automation the profile may not read is refused, naming its rule (D-217)",
+   "row": "companion GET /v1/config/block",
+   "policy": "reader",
+   "request": {
+    "transport": "companion",
+    "method": "GET",
+    "path": "/v1/config/block?path=automations.yaml&id=%5B1%5D"
+   },
+   "answer": {
+    "path": "automations.yaml",
+    "id": "[1]",
+    "content": "id: prod_heating\nalias: Heating\ntriggers: []\nactions: []\n"
+   },
+   "expect": {
+    "refused": "deny \"automation:prod_*\" [read]"
    }
   },
   {

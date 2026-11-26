@@ -447,6 +447,8 @@ func (f *answerFilter) apply(resp []byte) ([]byte, error) {
 		return f.object(resp, func(o map[string]json.RawMessage) (bool, error) {
 			return true, f.listField(o, "files", f.fileRow)
 		})
+	case reqmap.FilterConfigFile:
+		return f.object(resp, f.configFile)
 	case reqmap.FilterConfigBlock:
 		return f.object(resp, f.configBlock)
 	case reqmap.FilterRelated:
@@ -1403,9 +1405,51 @@ func (f *answerFilter) serviceDomain(raw json.RawMessage) (json.RawMessage, bool
 
 // --- companion ------------------------------------------------------------------
 
+// configFile refuses a file whose content defines a typed entry the profile
+// may not read (D-217): the file is one opaque body, so a denied entry in it
+// refuses the read, naming the rule — nothing is redacted.
+func (f *answerFilter) configFile(o map[string]json.RawMessage) (bool, error) {
+	return true, f.contentOwners(o, reqmap.FileOwners)
+}
+
+// contentOwners refuses an answer whose `content` defines a typed entry
+// (automation, script, template entity) whose config the profile may not
+// read (D-217), placed as owners places it — read only when the profile can
+// deny one (ownersMatter), as for a hit (D-142).
+func (f *answerFilter) contentOwners(o map[string]json.RawMessage, owners func(string, []byte) ([]reqmap.TypedOwner, error)) error {
+	if !f.s.ownersMatter() {
+		return nil
+	}
+	path := f.spec.Path
+	if p, has := stringField(o, "path"); has {
+		path = p
+	}
+	content, ok := stringField(o, "content")
+	if !ok {
+		return f.unaddressable("file:"+path, "the answer carries no content to place its entries in")
+	}
+	found, err := owners(path, []byte(content))
+	if err != nil {
+		return err
+	}
+	for _, ow := range found {
+		v, vok := f.s.readVerdict(ow.Kind, ow.ID, "config")
+		switch {
+		case !vok:
+			return f.unaddressable(string(ow.Kind)+":"+ow.ID, "an entry of file:"+path+" whose id is not an address the policy grammar reads")
+		case !v.Allowed:
+			return f.answerDenied(ow.Kind, ow.ID, "config", v)
+		}
+	}
+	return nil
+}
+
 // configBlock refuses a block whose canonical id — in the answer only — is
-// denied.
+// denied, or which defines a typed entry the profile may not read (D-217).
 func (f *answerFilter) configBlock(o map[string]json.RawMessage) (bool, error) {
+	if err := f.contentOwners(o, reqmap.BlockOwners); err != nil {
+		return false, err
+	}
 	id, ok := stringField(o, "id")
 	path := f.spec.Path
 	if p, has := stringField(o, "path"); has {

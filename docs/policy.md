@@ -30,6 +30,7 @@ profiles:
     allow:
       "entity:*":                 [read]
       "entity:light.*":           [control]
+      "service:light.*":          [control]
       "automation:pg_*":          [read, edit, create]
       "entity:*/registry/labels": [edit]
     deny:
@@ -37,6 +38,10 @@ profiles:
       "entity:*/attr/latitude":   [read]   # where anyone is: device trackers,
       "entity:*/attr/longitude":  [read]   # persons, zones — every entity
 ```
+
+Switching a light is a service call: `light.turn_on` needs `control` on the
+service as well as on the light, so the profile allows the `light` services
+next to the lights. Under `default: deny`, a service no rule allows is denied.
 
 The two location rules cover every entity that carries coordinates — a
 `device_tracker`, a `person` (which repeats its tracker's coordinates), a
@@ -58,7 +63,7 @@ Then ask it questions:
 ```console
 $ hactl policy check entity:lock.front_door control
 denied: entity:lock.front_door control
-rule: deny "entity:lock.*" [read write] (line 12)
+rule: deny "entity:lock.*" [read write] (line 13)
 profile: agent (selected by active)
 
 $ hactl policy check entity:light.sofa control
@@ -143,8 +148,11 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 [manual](manual.md#resources).
 
 The pattern `"*"` on its own matches every resource of every kind:
-`"*": [read]` lets the agent read everything but templates (see `tpl eval`
-below), `"*": [write]` under `deny:` makes a read-only profile.
+`"*": [read]` lets the agent read everything — a template it evaluates is
+checked as what the template reads, and only one whose reads hactl cannot
+name needs `"system:template": [read]` by that name while the profile denies
+anything (see `tpl eval` below) — and `"*": [write]` under `deny:` makes a
+read-only profile.
 
 A `template:` is a template entity from YAML, addressed by its `unique_id`. A
 template helper made in the UI (Settings → Helpers) is a config entry, not a
@@ -230,8 +238,8 @@ denied, like the latitude and longitude attributes in the example above. Then:
 $ hactl policy check entity:device_tracker.jan read
 allowed: entity:device_tracker.jan read
 rule: allow "entity:*" [read] (line 7)
-partial: deny "entity:*/attr/latitude" [read] (line 13)
-partial: deny "entity:*/attr/longitude" [read] (line 14)
+partial: deny "entity:*/attr/latitude" [read] (line 14)
+partial: deny "entity:*/attr/longitude" [read] (line 15)
 ```
 
 ### Narrowing an allow by area or label
@@ -496,6 +504,10 @@ A few things worth knowing:
   blueprint expands with your inputs and the blueprint's defaults: hactl reads
   the blueprint through the companion, and refuses the write if it cannot read
   or expand it. A later change to the blueprint file itself is not checked.
+  A profile that denies nothing — no deny rule and no `default: deny` — has
+  nothing these checks protect, so it refuses none of them: a templated
+  target, a template hactl cannot read and a blueprint it cannot expand are
+  written as they are.
 - **Running an automation or a script is checked like writing it.** `script
   run goodnight`, `svc call script.goodnight`, `script.turn_on` (also through
   `homeassistant.turn_on`) and `automation.trigger` read the stored config
@@ -606,10 +618,10 @@ lock.garage        locked                 11-05 09:12
 hidden by policy: 1 (profile agent)
 $ hactl ent show lock.front_door
 policy_denied: would read entity:lock.front_door — refused by policy, nothing was written
-  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 12)
+  denied: read entity:lock.front_door — deny "entity:lock.*" [read write] (line 13)
   checked: 1 resources, 1 denied
   profile: agent (selected by active)
-  hint: the owner would change the rule on line 12 — ask the owner; a change goes through a draft and `hactl policy activate`
+  hint: the owner would change the rule on line 13 — ask the owner; a change goes through a draft and `hactl policy activate`
 ```
 
 A refused read looks exactly like a refused write: the report above on
@@ -623,8 +635,16 @@ stderr. A few things worth knowing:
   file you may not read, or in an automation, script or template entity whose
   config you may not read; `log` needs `read` on `system:logs` as a whole, and a
   logbook row needs `read` on its entity. `log show` of an id from an
-  earlier `log` needs `read` on `system:logs` too. Raw file contents
-  (`config file`) are checked as the file, not redacted.
+  earlier `log` needs `read` on `system:logs` too.
+- **A config file is read as one piece.** `config file` needs `read` on the
+  file, and is refused whole — naming the rule — when a block of it is
+  denied (`file:template.yaml/block/<id>`) or when it defines an automation,
+  script or template entity whose config you may not read
+  (`deny "automation:prod_*": [read]` refuses `config file automations.yaml`).
+  `config block` is refused the same way by what the block defines. Nothing
+  is redacted, and what the file *says* about an entity you may not read is
+  not checked. An entry hactl does not recognise as one — inside a package,
+  or split over an `!include` — is checked as its file only.
 - **`tpl eval` is checked as what the template reads**, as a written
   template is: `{{ now().hour }}` needs nothing, `{{ states('sun.sun') }}`
   needs `read` on `sun.sun`'s state, and a template that uses an entity as a
@@ -647,8 +667,12 @@ stderr. A few things worth knowing:
   script reads something you may not read (`state_attr('person.anna',
   'latitude')`), every variable and every step result in the trace reads
   `<denied>` too, since a value computed from it is not recognisable. In
-  `changes`, the entity that caused a row is masked when you may not read it;
-  Home Assistant's own rows (started, stopped) are shown.
+  `changes`, the entity that caused a row is masked when you may not read it.
+  A row that names no entity is shown: Home Assistant's own rows (started,
+  stopped), and every `logbook.log` entry written without an `entity_id`,
+  whatever its message says. Only a profile that reads nothing at all
+  (`default: deny` with no allow listing `read`, or a deny of `"*"` listing
+  `read`) hides them, counted in `hidden by policy`.
 - **A write command's own reads are not filtered.** A command that changes
   something reads what it changes first; those reads belong to the write, and
   the write's own check decides it. So a profile may allow `edit` on
@@ -723,6 +747,10 @@ rule that matches nothing.
 The file is yours. hactl writes `policy.yaml` only when you run `hactl policy activate` in a
 terminal of your own (an agent drafts `policy.draft.yaml`; you review and activate it), and
 once as `hactl agent add`'s read-only starter. See "Setting up an agent" in the manual.
+"A terminal of your own" is how hactl tells you from an agent: it checks that
+stdin and stdout are a terminal. That was verified for Claude Code, whose
+agent shell and `!` prefix have none; an agent harness that gives the agent a
+pseudo-terminal counts as the owner.
 
 ---
 

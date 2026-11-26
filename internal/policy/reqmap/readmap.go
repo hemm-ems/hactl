@@ -2,6 +2,7 @@ package reqmap
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hemm-ems/hactl/internal/policy"
@@ -77,9 +78,13 @@ const (
 	FilterCoreConfig FilterKind = "core_config"
 	// FilterFiles — companion GET /v1/config/files, by `read file:<path>` (D-144).
 	FilterFiles FilterKind = "files"
+	// FilterConfigFile — companion GET /v1/config/file: one opaque body,
+	// refused when its content defines a typed entry (automation, script,
+	// template entity) whose config the profile may not read (D-217).
+	FilterConfigFile FilterKind = "config_file"
 	// FilterConfigBlock — companion GET /v1/config/block: the block's
 	// canonical id is in the answer only; `read file:<path>/block/<id>`
-	// refuses it.
+	// refuses it, as does a typed entry the block defines (D-217).
 	FilterConfigBlock FilterKind = "config_block"
 	// FilterRelated — companion GET /v1/related/entity: each related entity
 	// by `read entity:<e>`, each stale reference as a hit (FilterRefHits).
@@ -113,7 +118,8 @@ type ReadFilter struct {
 	// URLPath is the canonical dashboard a config answer is of
 	// (FilterDashboardConfig): "" is the default dashboard.
 	URLPath string
-	// Path is the file a block answer lies in (FilterConfigBlock).
+	// Path is the file a file or block answer lies in (FilterConfigFile,
+	// FilterConfigBlock).
 	Path string
 	// Rows is the key holding the hits of a wide read (FilterRefHits):
 	// `hits` (ref/scan, ref/grep) or `entities` (ref/entities).
@@ -283,9 +289,14 @@ func readQueryID(kind policy.Kind, key, sub string) mapper {
 	}
 }
 
-// readConfigFile reads file:<path> whole (D-144: contents are not redacted).
-// A resolved read inlines every file the path !includes, which only the
-// companion knows: it needs read on every file (kind-wide, a superset).
+// readConfigFile reads file:<path> as one opaque body (D-217): a denied part
+// of the file — a block — refuses it, and the answer is refused when it
+// defines an automation, script or template entity the profile may not read
+// (FilterConfigFile). Nothing is redacted. A resolved read inlines every file
+// the path !includes, which only the companion knows: it needs read on every
+// file (kind-wide, a superset). The companion resolves unless `resolve` is
+// one of its false words, and it reads the first value; any value that is
+// not false counts as resolved here.
 func readConfigFile(c *call) (mapping, error) {
 	path, err := c.requiredQuery("path")
 	if err != nil {
@@ -295,8 +306,15 @@ func readConfigFile(c *call) (mapping, error) {
 	if err != nil {
 		return mapping{}, err
 	}
-	m := mapping{checks: []Check{ch}}
-	if vs := c.query["resolve"]; len(vs) > 0 && strings.EqualFold(vs[len(vs)-1], "true") {
+	ch.Whole = true
+	m := mapping{checks: []Check{ch}, filter: ReadFilter{Kind: FilterConfigFile, Path: path}}
+	resolved := len(c.query["resolve"]) == 0
+	for _, v := range c.query["resolve"] {
+		if !slices.Contains([]string{"0", "false", "no", "off"}, strings.ToLower(strings.TrimSpace(v))) {
+			resolved = true
+		}
+	}
+	if resolved {
 		m.checks = append(m.checks, kindWide(policy.Read, policy.KindFile, ""))
 	}
 	return m, nil

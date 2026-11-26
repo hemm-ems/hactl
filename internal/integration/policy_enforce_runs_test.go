@@ -81,4 +81,21 @@ profiles:
 		})
 	}
 	runOracleStays(t, inst, "input_boolean.pg_run_auto_ran", "off", "no refused automation ran")
+
+	// A profile that denies nothing refuses nothing a run does (D-207, the
+	// gate D-218 gives a candidate write too): the same unreadable package
+	// configs pass.
+	open := pgInstanceDir(t, inst.URL(), inst.Token(), fmt.Sprintf(`version: 1
+active: %s
+profiles:
+  %s:
+    allow:
+      "entity:*": [read]
+`, pgProfile, pgProfile))
+	for _, args := range [][]string{
+		{"script", "run", "pg_run_pkg_script"},
+		pgSvc("automation.trigger", pgEntityData("automation.pg_run_pkg_auto")),
+	} {
+		assertPolicyAllowedPreview(t, open, args...)
+	}
 }

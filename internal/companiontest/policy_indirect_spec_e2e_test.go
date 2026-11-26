@@ -613,6 +613,46 @@ func TestE2EPolicyIndirectSpecTemplatedTargetFailsClosedCLI(t *testing.T) {
 	}
 }
 
+// TestE2EPolicyIndirectSpecDenyNothingProfileWritesTemplatesCLI — D-218: a
+// profile that denies nothing can refuse nothing a candidate does, so the
+// same templated candidates Case 7 refuses are allowed under it, and written;
+// so is an automation on a blueprint hactl cannot read. The fail-closed
+// refusal stays for a profile that denies anything (Case 7, and
+// TestE2EBlueprintSubstitutionOracle's missing blueprint).
+func TestE2EPolicyIndirectSpecDenyNothingProfileWritesTemplatesCLI(t *testing.T) {
+	seedW1Booleans(t)
+	dir := policyE2EDir(t, pgE2EPolicy(`    allow:
+      "entity:*": [read]
+`))
+	for name, actions := range map[string]string{
+		"expand_target": `  - action: input_boolean.turn_on
+    target:
+      entity_id: "{{ expand('group.pg_w1_group') | map(attribute='entity_id') | list }}"
+`,
+		"templated_service": `  - action: "{{ 'input_boolean.turn_' ~ 'on' }}"
+    target:
+      entity_id: ` + w1Allowed + `
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := "pg_w1_open_" + name
+			cleanupW1Automation(t, id)
+			file := writeTempYAML(t, "auto.yaml", w1AutoYAML(id, actions))
+			assertW1PreviewAllowed(t, dir, "auto", "create", "-f", file)
+			if out, errOut, code := runPolicyE2E(t, dir, nil, "auto", "create", "-f", file, "--confirm"); code != 0 {
+				t.Fatalf("auto create --confirm under a deny-nothing profile: exit %d\n%s%s", code, out, errOut)
+			}
+			if code, body := haConfigStatus(t, "automation", id); code != http.StatusOK {
+				t.Errorf("the allowed write did not reach HA: GET /api/config/automation/config/%s = HTTP %d %s", id, code, body)
+			}
+		})
+	}
+	t.Run("unreadable_blueprint", func(t *testing.T) {
+		file := writeTempYAML(t, "bp.yaml", "id: pg_w1_open_bp\nalias: PG W1 open bp\nuse_blueprint:\n  path: pg/pg_w1_none.yaml\n")
+		assertW1PreviewAllowed(t, dir, "auto", "create", "-f", file)
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Case 8 — D-137: a device action (device_id, domain, type, no `action:`)
 // needs control on the entity it names. HA names it by the entity registry's
