@@ -45,7 +45,7 @@ var agentCmd = family(&cobra.Command{
 var agentAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Create an agent's instance directory: its own token, HACTL_POLICY=required, a read-only starter policy",
-	Long: "The owner's command; it needs a terminal. Copies HA_URL, COMPANION_URL and TZ from the source " +
+	Long: "The owner's command; it needs a terminal. Copies HA_URL, COMPANION_URL, COMPANION_TOKEN and TZ from the source " +
 		"instance (--from, default: the instance hactl would use), creates a long-lived token of the same user " +
 		"named \"hactl agent <name>\" (or reads one with --token -), writes HACTL_POLICY=required and a read-only " +
 		"starter policy.yaml, and prints the MCP config line. The directory is --path or ~/.hactl/agents/<name>; " +
@@ -240,7 +240,7 @@ func readSecretLine(in io.Reader, out io.Writer, prompt string) (string, error) 
 	return strings.TrimSpace(line), nil
 }
 
-// writeAgentDir writes the agent's instance directory (D-164): the directory
+// writeAgentDir writes the agent's instance directory (D-164, D-230): the directory
 // itself (0700; it must not exist), .env (0600) and the starter policy.yaml —
 // the second of hactl's two writers of policy.yaml (D-148, D-150).
 func writeAgentDir(target string, src *config.Config, token string) error {
@@ -254,6 +254,15 @@ func writeAgentDir(target string, src *config.Config, token string) error {
 	fmt.Fprintf(&env, "HA_URL=%s\nHA_TOKEN=%s\n", src.URL, token)
 	if src.CompanionURL != "" {
 		fmt.Fprintf(&env, "COMPANION_URL=%s\n", src.CompanionURL)
+	}
+	// COMPANION_TOKEN authenticates the add-on, not the agent's Home
+	// Assistant identity, so it is copied (D-230, refining D-164): without
+	// it every companion route answered 401. Only a token the source sets
+	// itself — config falls back to HA_TOKEN when it has none, and the
+	// owner's HA token never reaches the agent; the agent then falls back to
+	// its own, as the owner's instance does.
+	if src.CompanionToken != "" && src.CompanionToken != src.Token {
+		fmt.Fprintf(&env, "COMPANION_TOKEN=%s\n", src.CompanionToken)
 	}
 	if src.TZ != "" {
 		fmt.Fprintf(&env, "TZ=%s\n", src.TZ)

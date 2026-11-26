@@ -77,12 +77,15 @@ func TestAgentAddCreatesTheAgentsDirectory(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if cfg.URL != ts.srv.URL || cfg.Token != "minted-token" || cfg.CompanionURL != "http://companion.local:8099" || cfg.TZ != "Europe/Berlin" {
+	// COMPANION_TOKEN authenticates the add-on and is copied (D-230); the
+	// owner's HA token is not.
+	if cfg.URL != ts.srv.URL || cfg.Token != "minted-token" || cfg.CompanionURL != "http://companion.local:8099" ||
+		cfg.CompanionToken != "owner-secret" || cfg.TZ != "Europe/Berlin" {
 		t.Errorf("agent .env: %+v", cfg)
 	}
 	env := readFile(t, filepath.Join(dir, ".env"))
-	if strings.Contains(env, "owner-token") || strings.Contains(env, "owner-secret") || strings.Contains(env, "COMPANION_TOKEN") {
-		t.Errorf("the owner's secrets reached the agent's .env:\n%s", env)
+	if strings.Contains(env, "owner-token") {
+		t.Errorf("the owner's HA token reached the agent's .env:\n%s", env)
 	}
 	if req, reqErr := config.PolicyRequired(dir); !req || reqErr != nil {
 		t.Errorf("HACTL_POLICY=required not written: %v %v", req, reqErr)
@@ -119,6 +122,33 @@ func TestAgentAddCreatesTheAgentsDirectory(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// D-230: a source without COMPANION_TOKEN authenticates the companion with
+// its HA token (config's fallback). That token is the owner's and is never
+// copied: the agent's .env gets no COMPANION_TOKEN and falls back to its own.
+func TestAgentAddCopiesOnlyACompanionTokenTheSourceSets(t *testing.T) {
+	home := isolateUserCache(t)
+	ts, _ := agentRig(t, "minted-token", "minted-token")
+	env := "HA_URL=" + ts.srv.URL + "\nHA_TOKEN=owner-token\nCOMPANION_URL=http://companion.local:8099\n"
+	if err := os.WriteFile(filepath.Join(ts.dir, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := agentAddIn(t, ts.dir, "", "", "kitchen", ""); err != nil {
+		t.Fatalf("agent add: %v\n%s", err, out)
+	}
+	dir := filepath.Join(home, ".hactl", "agents", "kitchen")
+	written := readFile(t, filepath.Join(dir, ".env"))
+	if strings.Contains(written, "owner-token") || strings.Contains(written, "COMPANION_TOKEN") {
+		t.Errorf("the owner's HA token reached the agent's .env as a companion token:\n%s", written)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CompanionURL != "http://companion.local:8099" || cfg.CompanionToken != "minted-token" {
+		t.Errorf("agent companion config: url %q token %q, want the URL and the agent's own token", cfg.CompanionURL, cfg.CompanionToken)
 	}
 }
 

@@ -170,7 +170,7 @@ func wantField(t *testing.T, what string, m map[string]any, key string, want any
 }
 
 var showKeys = []string{"file", "exists", "valid", "problems", "level", "disclaimer", "enforced", "enforced_verbs",
-	"profile", "selected_by", "what_if", "allow_all", "default", "profiles", "rules"}
+	"profile", "selected_by", "what_if", "allow_all", "required", "default", "profiles", "rules"}
 
 var checkKeys = []string{"resource", "verb", "allowed", "rule", "line", "profile",
 	"selected_by", "what_if", "level", "enforced", "notes", "partial", "partial_denies"}
@@ -213,6 +213,51 @@ func TestPolicyShowWithoutAFile(t *testing.T) {
 	wantField(t, "show/no-file", m, "enforced", false)
 	wantField(t, "show/no-file", m, "enforced_verbs", []string{})
 	wantField(t, "show/no-file", m, "what_if", false)
+	wantField(t, "show/no-file", m, "required", false)
+}
+
+// TestPolicyShowWhenARequiredPolicyIsMissing (F-6, D-136): with
+// HACTL_POLICY=required and no profile in effect every other command is
+// refused with policy_missing, so show must not call that state allow-all —
+// neither with no file nor with a file that selects no profile.
+func TestPolicyShowWhenARequiredPolicyIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, says, never string
+	}{
+		{"no file", "", "no policy file (looked for ", "everything is allowed"},
+		{"no profile selected", "version: 1\nprofiles:\n  agent:\n    default: deny\n", "NO PROFILE:", "ALLOW-ALL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := policyInstance(t, closedHAURL(t), tc.body)
+			env := readFile(t, filepath.Join(dir, ".env")) + "HACTL_POLICY=required\n"
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runPolicyCLI(t, dir, "policy", "show")
+			if cliExitCode(err) != 0 {
+				t.Fatalf("policy show: exit %d (%v)\n%s", cliExitCode(err), err, out)
+			}
+			for _, want := range []string{tc.says, "HACTL_POLICY=required", "is refused (policy_missing)"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("policy show does not say %q:\n%s", want, out)
+				}
+			}
+			for _, never := range []string{tc.never, "enforced: nothing"} {
+				if strings.Contains(out, never) {
+					t.Errorf("policy show says %q on an instance that refuses every command:\n%s", never, out)
+				}
+			}
+			out, err = runPolicyCLI(t, dir, "policy", "show", "--json")
+			if cliExitCode(err) != 0 {
+				t.Fatalf("policy show --json: exit %d (%v)", cliExitCode(err), err)
+			}
+			m := decodeObject(t, out)
+			requireKeys(t, "show/required", m, showKeys...)
+			wantField(t, "show/required", m, "allow_all", false)
+			wantField(t, "show/required", m, "required", true)
+			wantField(t, "show/required", m, "enforced", false)
+		})
+	}
 }
 
 // TestPolicyShowJSONForTheManualExample: the manual's --json shape, field by

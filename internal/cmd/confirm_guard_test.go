@@ -61,16 +61,19 @@ func setupGuardEnv(t *testing.T, session string) string {
 func TestExecute_ConfirmGuardRefusesUnpreviewedWrite(t *testing.T) {
 	dir := setupGuardEnv(t, "guard-no-preview")
 
-	_, errOut, execErr := executeCapture(t, "auto", "create", "-f", filepath.Join(dir, "cand.yaml"), "--confirm")
+	file := filepath.Join(dir, "cand.yaml")
+	_, errOut, execErr := executeCapture(t, "auto", "create", "-f", file, "--confirm")
 	if execErr == nil {
 		t.Fatal("a --confirm with no dry-run behind it must be refused")
 	}
 	if !strings.Contains(execErr.Error(), "--confirm refused") {
 		t.Fatalf("expected guard refusal, got: %v", execErr)
 	}
+	// The dry-run it names is one that works: with its -f (F-8).
+	form := "hactl auto create --file " + shellQuote(file)
 	for _, want := range []string{
-		"no dry-run of \"hactl auto create\" was recorded",
-		"run `hactl auto create` without --confirm",
+		"no dry-run of \"" + form + "\" was recorded",
+		"run `" + form + "` without --confirm",
 		"HACTL_MANUAL_MODE=off",
 	} {
 		if !strings.Contains(execErr.Error(), want) {

@@ -158,7 +158,7 @@ func confirmGuard(cmd *cobra.Command, args []string, rawArgs []string) error {
 	if cacheDir == "" {
 		return nil
 	}
-	if hasWitness(cacheDir, manual.SessionKey(), cmd.CommandPath(), args, time.Now()) {
+	if hasWitness(cacheDir, manual.SessionKey(), cmd.CommandPath(), witnessArgs(cmd, args), time.Now()) {
 		return nil
 	}
 
@@ -170,18 +170,21 @@ func confirmGuard(cmd *cobra.Command, args []string, rawArgs []string) error {
 	}
 	// Name the dry-run to run, verbatim. A refusal a caller cannot act on is a
 	// worse answer than the silence it replaced (H-25's third lesson), and the
-	// dry-run form of any write is the same command with --confirm removed.
+	// dry-run form of any write is the same command with --confirm removed —
+	// its flags included, since they are part of what the witness records.
+	form := dryRunForm(cmd, args)
 	return fmt.Errorf("--confirm refused: no dry-run of %q was recorded for this instance in the last %s, "+
 		"so nothing has shown what this write would change — run `%s` without --confirm, present the plan "+
 		"to the user, and repeat with --confirm only after the user explicitly confirms "+
 		"(scripts: HACTL_MANUAL_MODE=off)",
-		dryRunForm(cmd, args), witnessTTL, dryRunForm(cmd, args))
+		form, witnessTTL, form)
 }
 
 // dryRunForm renders the preview a caller has to run before this write: the
-// resolved command and its target, which is exactly what witnessKey records.
+// resolved command, its target and the flags it was given — exactly what
+// witnessKey records, so running it authorizes this --confirm.
 func dryRunForm(cmd *cobra.Command, args []string) string {
-	return strings.TrimSpace(cmd.CommandPath() + " " + strings.Join(args, " "))
+	return strings.TrimSpace(cmd.CommandPath() + " " + strings.Join(witnessArgs(cmd, args), " "))
 }
 
 // noteDryRun records a successful preview so the matching --confirm is
@@ -195,11 +198,11 @@ func noteDryRun(cmd *cobra.Command, args []string) {
 	if confirmed, err := cmd.Flags().GetBool("confirm"); err != nil || confirmed {
 		return
 	}
-	now := time.Now()
-	recordWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, now)
+	now, words := time.Now(), witnessArgs(cmd, args)
+	recordWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), words, now)
 	// The policy the preview passed under, for a refused --confirm's hint
 	// (D-215); none while no profile was in effect.
-	recordPolicyWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), args, policyWitnessID, now)
+	recordPolicyWitness(stateCacheDir(flagDir), manual.SessionKey(), cmd.CommandPath(), words, policyWitnessID, now)
 }
 
 // stateCacheDir locates the per-instance cache dir for session state. It

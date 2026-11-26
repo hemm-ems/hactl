@@ -268,7 +268,7 @@ func TestWhereSelectorDecidesAWriteLive(t *testing.T) {
 	if err != nil || !strings.Contains(out, " 2 checked, allowed (profile agent)") {
 		t.Fatalf("a light in the allowed area: %v\n%s", err, out)
 	}
-	recordPreview(t, rig.dir, []string{"light.turn_on"})
+	recordPreview(t, rig.dir, []string{"light.turn_on", "--data", shellQuote(`{"entity_id":"light.sofa"}`)})
 
 	rig.registry.set(inArea("kueche"))
 	out, err = runPolicyCLI(t, rig.dir, append(args, "--confirm")...)
