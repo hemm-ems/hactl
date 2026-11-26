@@ -1664,7 +1664,7 @@ Findings are ordered by line, then code, profile and rule. `unchecked` follows t
 1. **The owner creates the agent's instance**, in a terminal: `hactl agent add <name>` (see "Several agents" below). The new agent starts **read-only**: its `policy.yaml` holds one profile that denies every write (D-150), so it can look at everything it needs to propose rules and change nothing.
 2. **The agent drafts.** `hactl rtfm --skill policy-setup` prints the procedure for an agent: inventory the instance, ask the owner in plain language what it may switch, edit and see and what never, write `policy.draft.yaml` beside `policy.yaml` with `default: deny`, check it with `hactl policy lint --file policy.draft.yaml`, and hand over. The agent never writes `policy.yaml`.
 3. **The owner reviews**: `hactl policy review --file policy.draft.yaml` says in counts and names what the draft's active profile would let the agent do on *this* instance — which entities it may switch and see, which automations, scripts and dashboards it may edit, create or delete, which services it may call, what it can never touch, whether what written automations do is checked (D-135), and every lint finding.
-4. **The owner activates**: `hactl policy activate policy.draft.yaml` — **in a terminal of its own** (D-149). It refuses unless stdin and stdout are a terminal, so neither an agent nor Claude Code's `!` prefix can run it (both have none, M-5); over MCP it is never offered. It lints the draft (a broken draft is refused), prints the review, asks for the profile name as confirmation, then writes `policy.yaml` atomically and keeps the previous one as `policy.yaml.prev`.
+4. **The owner activates**: `hactl policy activate policy.draft.yaml` — **in a terminal of its own** (D-149). It refuses unless stdin and stdout are a terminal, so neither an agent nor Claude Code's `!` prefix can run it (both have none, M-5); over MCP it is never offered. That was verified for Claude Code only: an agent harness that gives the agent a pseudo-terminal counts as the owner. It lints the draft (a broken draft is refused), prints the review, asks for the profile name as confirmation, then writes `policy.yaml` atomically and keeps the previous one as `policy.yaml.prev`.
 
 `policy show`, `policy check` and `policy lint` take `--file <path>` to read a draft instead of `policy.yaml`; the answer says so (`file: … (draft, not in effect)`).
 
@@ -1687,7 +1687,7 @@ A grant line names the shorter list: every id it reaches, or `all but <ids>` whe
 
 ```json
 {"file": "/home/u/ha/agents/kitchen/policy.draft.yaml", "draft": true, "profile": "agent", "selected_by": "active",
- "allow_all": false, "default": "deny", "indirect": "checked", "enforced_verbs": ["control", "edit", "create", "delete"],
+ "allow_all": false, "default": "deny", "indirect": "checked", "enforced_verbs": ["read", "control", "edit", "create", "delete"],
  "grants": [{"kind": "entity", "verb": "control", "sub": "", "label": "switch", "allowed": 34, "total": 212,
              "ids": ["light.kitchen", "…"], "unchecked": ""}],
  "create": [{"kind": "automation", "any": false, "rules": [{"rule": "allow \"automation:pg_*\" [read edit create delete]", "line": 9}]}],

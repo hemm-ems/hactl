@@ -148,8 +148,11 @@ Entity sub-resources are `state`, `attr/<name>`, `history`, `stats` and
 [manual](manual.md#resources).
 
 The pattern `"*"` on its own matches every resource of every kind:
-`"*": [read]` lets the agent read everything but templates (see `tpl eval`
-below), `"*": [write]` under `deny:` makes a read-only profile.
+`"*": [read]` lets the agent read everything — a template it evaluates is
+checked as what the template reads, and only one whose reads hactl cannot
+name needs `"system:template": [read]` by that name while the profile denies
+anything (see `tpl eval` below) — and `"*": [write]` under `deny:` makes a
+read-only profile.
 
 A `template:` is a template entity from YAML, addressed by its `unique_id`. A
 template helper made in the UI (Settings → Helpers) is a config entry, not a
@@ -664,8 +667,12 @@ stderr. A few things worth knowing:
   script reads something you may not read (`state_attr('person.anna',
   'latitude')`), every variable and every step result in the trace reads
   `<denied>` too, since a value computed from it is not recognisable. In
-  `changes`, the entity that caused a row is masked when you may not read it;
-  Home Assistant's own rows (started, stopped) are shown.
+  `changes`, the entity that caused a row is masked when you may not read it.
+  A row that names no entity is shown: Home Assistant's own rows (started,
+  stopped), and every `logbook.log` entry written without an `entity_id`,
+  whatever its message says. Only a profile that reads nothing at all
+  (`default: deny` with no allow listing `read`, or a deny of `"*"` listing
+  `read`) hides them, counted in `hidden by policy`.
 - **A write command's own reads are not filtered.** A command that changes
   something reads what it changes first; those reads belong to the write, and
   the write's own check decides it. So a profile may allow `edit` on
@@ -740,6 +747,10 @@ rule that matches nothing.
 The file is yours. hactl writes `policy.yaml` only when you run `hactl policy activate` in a
 terminal of your own (an agent drafts `policy.draft.yaml`; you review and activate it), and
 once as `hactl agent add`'s read-only starter. See "Setting up an agent" in the manual.
+"A terminal of your own" is how hactl tells you from an agent: it checks that
+stdin and stdout are a terminal. That was verified for Claude Code, whose
+agent shell and `!` prefix have none; an agent harness that gives the agent a
+pseudo-terminal counts as the owner.
 
 ---
 
