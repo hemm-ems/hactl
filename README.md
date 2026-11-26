@@ -88,7 +88,15 @@ To the model, CLI-over-shell and MCP differ only in tool schema (~0.1k vs ~2.5k 
 
 Config writes (`auto apply`/`create`/`delete`, `script apply`, templates, helpers, dashboards, registry changes) are dry-run by default and need an explicit `--confirm`. Automation and script configs are validated with HA's own `validate_config` before anything is written, and a backup is saved before every apply write (`hactl auto rollback` undoes automation applies). Template syntax is evaluated by HA's real Jinja engine, not a mock.
 
-`svc call` (service calls like `light.turn_on`) and `script run` are dry-run by default too and only act with `--confirm`. Run non-interactively (an agent, a script), a `--confirm` is refused unless the same command ran as a dry run first, so the plan is shown before anything happens. The bundled LLM tool wrappers in `integrations/llm/` keep writes dry-run by default and tell the model to confirm only after the user approved the exact action. A [permission policy](docs/policy.md) can additionally limit what an agent may touch, as a guardrail against mistakes rather than a lock.
+`svc call` (service calls like `light.turn_on`) and `script run` are dry-run by default too and only act with `--confirm`. Run non-interactively (an agent, a script), a `--confirm` is refused unless the same command ran as a dry run first, so the plan is shown before anything happens. The bundled LLM tool wrappers in `integrations/llm/` keep writes dry-run by default and tell the model to confirm only after the user approved the exact action.
+
+## Permissions for agents
+
+A `policy.yaml` per instance says what an agent may read and change: per entity, automation, script, dashboard or service. For example "read everything except locks, switch lights only in the living room, edit only the `pg_*` automations". hactl checks every command against it, in the dry run already, and names the rule that refused. That includes the indirect routes: an agent that may not lock the door can neither write nor start a script that does.
+
+Each agent gets its own directory with its own token, policy and audit log (`hactl agent add`). An agent can draft its rules, but only you put them into effect, in your own terminal (`hactl policy activate`).
+
+It is a guardrail against mistakes, not a lock: it catches a misread instruction or a target wider than intended, not something that sets out to get around it. Details, examples and the limits: **[Permission policy](docs/policy.md)**.
 
 ## Multi-instance
 
