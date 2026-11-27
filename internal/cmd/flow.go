@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -246,11 +247,14 @@ func runConfigEntries(cmd *cobra.Command, w io.Writer) error {
 		return emptyListing(cmd, w, "config entries", total)
 	}
 
+	owned := fetchEntryOwnership(ctx, cfg)
+
 	tbl := &format.Table{
-		Headers: []string{"entry_id", "domain", "title", "state", "source", "options", "disabled_by"},
+		Headers: []string{"entry_id", "domain", "title", "state", "source", "options", "disabled_by", "entities", "devices"},
 		Rows:    make([][]string, len(entries)),
 	}
 	for i, e := range entries {
+		ents, devs := owned.entities.of(e.EntryID), owned.devices.of(e.EntryID)
 		tbl.Rows[i] = []string{
 			e.EntryID,
 			e.Domain,
@@ -259,7 +263,11 @@ func runConfigEntries(cmd *cobra.Command, w io.Writer) error {
 			e.Source,
 			yesNo(e.SupportsOptions),
 			dashIfEmpty(e.DisabledBy),
+			countCell(ents),
+			countCell(devs),
 		}
+		tbl.SetMachine(i, "entities", countMachine(ents))
+		tbl.SetMachine(i, "devices", countMachine(devs))
 		// Both cells above are renderings for a person; the machine gets what
 		// HA sent (finding #22). `config show --json` already emits the raw
 		// field for disabled_by, and these two were the pair that disagreed.
@@ -273,6 +281,84 @@ func runConfigEntries(cmd *cobra.Command, w io.Writer) error {
 		JSON:    flagJSON,
 		Compact: true,
 	})
+}
+
+// ownedCounts is how many registry rows name each config entry, or unknown
+// when the registry could not be read (D-237). known=false is not zero.
+type ownedCounts struct {
+	byEntry map[string]int
+	known   bool
+}
+
+// of returns the count for one entry, -1 when unknown.
+func (c ownedCounts) of(entryID string) int {
+	if !c.known {
+		return -1
+	}
+	return c.byEntry[entryID]
+}
+
+// countCell renders a count for a person: `-` for unknown, never 0 (H-7).
+func countCell(n int) string {
+	if n < 0 {
+		return "-"
+	}
+	return strconv.Itoa(n)
+}
+
+// countMachine is the JSON value of a count: the number, or null for unknown.
+func countMachine(n int) any {
+	if n < 0 {
+		return nil
+	}
+	return n
+}
+
+// entryOwnership is what `config entries` counts per entry.
+type entryOwnership struct {
+	entities, devices ownedCounts
+}
+
+// fetchEntryOwnership counts each entry's entities and devices from two
+// registry lists in one WS session — never one call per entry (D-237). Any
+// part it cannot read stays unknown; the listing itself does not fail, since
+// the counts are an addition to what it always answered.
+func fetchEntryOwnership(ctx context.Context, cfg *config.Config) entryOwnership {
+	var out entryOwnership
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if err := ws.Connect(ctx); err != nil {
+		slog.Warn("config entries: could not read the registries for counts", "error", err)
+		return out
+	}
+	defer func() { _ = ws.Close() }()
+
+	if ents, err := ws.EntityRegistryList(ctx); err != nil {
+		slog.Warn("config entries: could not read the entity registry", "error", err)
+	} else {
+		out.entities = ownedCounts{byEntry: map[string]int{}, known: true}
+		for _, e := range ents {
+			if e.ConfigEntryID != "" {
+				out.entities.byEntry[e.ConfigEntryID]++
+			}
+		}
+	}
+
+	switch devs, complete, err := ws.DeviceConfigEntries(ctx); {
+	case err != nil:
+		slog.Warn("config entries: could not read the device registry", "error", err)
+	case !complete:
+		// A row without config_entries cannot be attributed to any entry,
+		// so no entry's count is a count.
+		slog.Warn("config entries: a device row carries no config_entries; device counts unknown")
+	default:
+		out.devices = ownedCounts{byEntry: map[string]int{}, known: true}
+		for _, entryIDs := range devs {
+			for _, id := range entryIDs {
+				out.devices.byEntry[id]++
+			}
+		}
+	}
+	return out
 }
 
 // configShowResult is the structured form of `config show`, used verbatim for

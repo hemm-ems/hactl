@@ -248,9 +248,9 @@ func fetchRegistryContext(ctx context.Context, ws *haapi.WSClient) (*registryCon
 		floors = nil
 	}
 
-	devices, err := ws.DeviceRegistryList(ctx)
-	if err != nil {
-		slog.Warn("could not fetch devices", "error", err)
+	devices, devicesErr := ws.DeviceRegistryList(ctx)
+	if devicesErr != nil {
+		slog.Warn("could not fetch devices", "error", devicesErr)
 		devices = nil
 	}
 
@@ -260,6 +260,7 @@ func fetchRegistryContext(ctx context.Context, ws *haapi.WSClient) (*registryCon
 		labelByID:  make(map[string]haapi.LabelEntry, len(labels)),
 		floorByID:  make(map[string]haapi.FloorEntry, len(floors)),
 		deviceByID: make(map[string]haapi.DeviceRegistryEntry, len(devices)),
+		devicesErr: devicesErr,
 	}
 	for _, e := range entities {
 		rc.entityByID[e.EntityID] = e
@@ -285,6 +286,22 @@ type registryContext struct {
 	labelByID  map[string]haapi.LabelEntry
 	floorByID  map[string]haapi.FloorEntry
 	deviceByID map[string]haapi.DeviceRegistryEntry
+	// devicesErr is why the device registry could not be read, nil when it
+	// was. Area and the device column degrade without it; a filter that asks
+	// about devices cannot answer and says so (D-236).
+	devicesErr error
+}
+
+// deviceOf returns the device an entity's registry row names, when that
+// device row could be read. A device the policy profile hides is absent from
+// deviceByID, so the caller shows nothing about it (D-236).
+func (rc *registryContext) deviceOf(entityID string) (haapi.DeviceRegistryEntry, bool) {
+	ent, ok := rc.entityByID[entityID]
+	if !ok || ent.DeviceID == "" {
+		return haapi.DeviceRegistryEntry{}, false
+	}
+	d, ok := rc.deviceByID[ent.DeviceID]
+	return d, ok
 }
 
 // effectiveAreaID returns the area an entity actually sits in, replicating

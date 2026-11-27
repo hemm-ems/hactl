@@ -1,2 +1,2 @@
-entity_id state         area labels last_changed
-sun.sun   <SUN_STATE>             <TIME>
+entity_id state         area labels platform device last_changed
+sun.sun   <SUN_STATE>                             <TIME>

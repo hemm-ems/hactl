@@ -591,6 +591,8 @@ func resetSubcommandFlags() {
 	flagEntPeriod = ""
 	flagEntArea = ""
 	flagEntLabel = ""
+	flagEntPlatform = ""
+	flagEntDevice = ""
 	flagEntConfirm = false
 	flagEntRenameAllowPartial = false
 	flagEntStale = false

@@ -87,6 +87,12 @@ var probes = map[string]filterProbe{
 	"hactl ent ls/label": func(n string) []string {
 		return entityIDs(filterEntitiesByLabel(parityEntities(), parityRegistry(), n))
 	},
+	"hactl ent ls/platform": func(n string) []string {
+		return entityIDs(filterEntitiesByPlatform(parityEntities(), parityOwnershipRegistry(), n))
+	},
+	"hactl ent ls/device": func(n string) []string {
+		return entityIDs(filterEntitiesByDevice(parityEntities(), parityOwnershipRegistry(), n))
+	},
 	"hactl auto ls/pattern": func(n string) []string {
 		rows := filterAutosByPattern(parityAutoRows(), n)
 		out := make([]string, 0, len(rows))
@@ -287,6 +293,20 @@ func parityRegistry() *registryContext {
 		areaByID:  parityAreas(),
 		labelByID: parityLabels(),
 	}
+}
+
+// parityOwnershipRegistry gives the light an owner: a platform spelled like
+// the needle (the --platform match is exact, so it must be the whole value)
+// and a device whose name contains it.
+func parityOwnershipRegistry() *registryContext {
+	rc := parityRegistry()
+	rc.entityByID["light.Wozi_ceiling"] = haapi.EntityRegistryEntry{EntityID: "light.Wozi_ceiling", Platform: "Wozi", DeviceID: "dev_wozi_1"}
+	rc.entityByID["sensor.kitchen_temp"] = haapi.EntityRegistryEntry{EntityID: "sensor.kitchen_temp", Platform: "zha", DeviceID: "dev_other"}
+	rc.deviceByID = map[string]haapi.DeviceRegistryEntry{}
+	for _, d := range parityDevices() {
+		rc.deviceByID[d.ID] = d
+	}
+	return rc
 }
 
 // deviceProbe runs filterDevices with exactly one filter flag set, so that the
