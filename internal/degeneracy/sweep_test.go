@@ -385,6 +385,9 @@ var identityFieldEvidence = map[string]string{
 		"last_changed and none was empty — the same payload whose state was empty 62 times (finding #38)",
 	"historyEntryFull.last_changed": "probed 2026-08-01: as historyEntry.last_changed, same payload " +
 		"and window",
+	"MinimalHistoryRow.last_changed": "oracle 2026-11-27 (HA 2026.11.2, TestOracleDeadHistoryShape): every " +
+		"minimal_response row carries last_changed, the first row of a group and the state-only rows after it; " +
+		"an entity with no rows is absent from the answer, never a blank row",
 	"WireGuardStatusResponse.state": "contract: the companion spec declares state as an enum of " +
 		"active|inactive, so empty is not a value the route can emit",
 }

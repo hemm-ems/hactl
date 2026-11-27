@@ -317,6 +317,7 @@ hactl ent ls --label energy               # filter by label name (substring)
 hactl ent ls --restored                   # only "ghost" entities (restored from registry, no live entity)
 hactl ent ls --platform hue               # filter by integration (registry platform, exact)
 hactl ent ls --device "Wozi TV"           # filter by device (id, or name substring)
+hactl ent ls --dead 7d                    # only entities with no valid state for 7 days (+ undecided ones)
 hactl ent show sensor.wp_vl               # state + key attributes + area + labels + ownership (platform, unique_id, config_entry_id) + attribute count
 hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
@@ -344,6 +345,31 @@ a device the active policy profile may not read leaves `device` and
 name. `--area`, `--label`, `--platform` and `--device` need the entity
 registry: when it cannot be read, `ent ls` fails rather than answer as if
 the filter were not there.
+
+`--dead <dur>` (at most `30d`) lists the entities that had no valid state for
+the whole window, plus the ones hactl cannot decide, never fewer. Valid means
+anything but `unavailable`, and anything but `unknown`, except for the domains
+whose state is a "last used" time and `unknown` until first use (`button`,
+`input_button`, `scene`, `event`, `notify`, `image`, `tts`, `stt`,
+`wake_word`, `conversation`, `ai_task`, `infrared`, `radio_frequency`): a
+never-pressed button is healthy. Two columns say why, `dead` (`yes`, or `?`;
+JSON `true` / `null`) and `dead_reason`:
+
+| `dead_reason` | dead | means |
+|---|---|---|
+| `ghost` | yes | a restored state with no live entity behind it (`--restored`) |
+| `unchanged` | yes | invalid now, and unchanged since before the window opened |
+| `no_valid_state` | yes | the recorder covers the window, and every state in it is invalid |
+| `unrecorded` | ? | the recorder has no rows for it (excluded from the recorder, purged, never recorded) |
+| `partly_recorded` | ? | the recorder's rows start after the window opened; what came before is unknown |
+
+`last_changed` alone cannot answer this: Home Assistant resets it on every
+restart. hactl decides what it can from the states it already holds and asks
+the recorder only about invalid entities that changed inside the window, in
+batches of about a hundred, one after another, minimal rows without
+attributes. If a batch fails, the command fails; it never answers for half the
+entities. A `?` row is not a dead one: check it with `ent hist <id>`, which
+reads the same recorder.
 
 `ent rename` is the one-command form of "rename the entity, then `ref replace`
 its references": the registry entry is renamed first (the authoritative
@@ -435,6 +461,7 @@ hactl device ls                           # device_id, name, area, labels, entit
 hactl device ls --pattern '*heat*'        # glob/substring on device ID or name
 hactl device ls --area basement           # filter by area name or ID
 hactl device ls --label heat_pump         # filter by label name or ID
+hactl device ls --dead 7d                 # only devices whose entities were all dead for 7 days (+ undecided)
 hactl device show summt_heizung           # device profile + registered entities
 hactl device set-area summt_heizung basement            # dry-run (device by ID or name)
 hactl device set-area summt_heizung basement --confirm  # place the device in the area
@@ -442,6 +469,13 @@ hactl device set-area summt_heizung --clear --confirm   # remove the device's ow
 hactl device set-label summt_heizung heat_pump --confirm # add label(s) to the device
 hactl device set-label summt_heizung --remove heat_pump --confirm # take one back off
 ```
+
+`device ls --dead <dur>` judges a device by its enabled entities that have a
+state, with `ent ls --dead`'s rule: alive when any one is alive, dead
+(`all_entities_dead`) when every one is dead, undecided (`?`) when none is
+alive and some are undecided (`entities_undecided`) or when it has no such
+entity at all (`no_stateful_entity`). A device the recorder is asked about
+costs no more than its entities do.
 
 Placing the **device** in a room is the normal HA pattern: a device's area is
 inherited by every one of its entities that has no own `area_id` (H-8), so one
