@@ -197,13 +197,15 @@ type autoRow struct {
 	configID string
 	alias    string
 	state    string
-	lastErr  string
-	area     string
-	traces   []haapi.TraceSummary
-	labels   string
-	runs     int
-	errors   int
-	restored bool
+	// lastTriggered is HA's attribute verbatim (RFC 3339, empty when null).
+	lastTriggered string
+	lastErr       string
+	area          string
+	traces        []haapi.TraceSummary
+	labels        string
+	runs          int
+	errors        int
+	restored      bool
 }
 
 func runAutoLs(cmd *cobra.Command, w io.Writer) error {
@@ -212,6 +214,17 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	// The window is checked before anything is sent: a refused window must
+	// not have cost HA a request (D-233).
+	sinceDur, err := parseSince(sinceWindow())
+	if err != nil {
+		return err
+	}
+	if err = checkLogbookWindow(sinceDur, sinceWindow()); err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-sinceDur)
 
 	client := haapi.New(cfg.URL, cfg.Token)
 
@@ -237,20 +250,10 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(sinceWindow())
-	if err != nil {
-		return err
-	}
-	cutoff := time.Now().Add(-sinceDur)
-
-	// Fetch fire counts from logbook (traces are bounded per automation, so they
-	// undercount runs_24h dramatically for high-fire rules).
-	fires, fErr := fetchAutomationFireCounts(ctx, client, sinceDur)
-	if fErr != nil {
-		slog.Warn("could not fetch logbook fire counts; runs_24h will fall back to trace count", "error", fErr)
-	}
-
-	rows := buildAutoRows(autos, traces, fires, cutoff)
+	// Run counts come later, for the rows that survive the filters (D-232):
+	// until then every row carries its trace count, which is also what it
+	// keeps when the logbook cannot be read.
+	rows := buildAutoRows(autos, traces, fireCounts{}, cutoff)
 	// Before any filter runs — see emptyListing.
 	total := len(rows)
 
@@ -289,6 +292,24 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 	if len(rows) == 0 {
 		return emptyListing(cmd, w, "automations", total, failingHints(flagAutoFailing)...)
 	}
+
+	// Fetch fire counts from the logbook, for exactly the rows listed (traces
+	// are bounded per automation, so they undercount runs_24h dramatically for
+	// high-fire rules).
+	ids := make([]string, len(rows))
+	ran := false
+	for i := range rows {
+		ids[i] = "automation." + rows[i].id
+		// Either source saying "it ran" makes an empty logbook the
+		// not-recording case rather than a zero (D-234). rows[i].runs is
+		// still the trace count here.
+		ran = ran || triggeredSince(rows[i].lastTriggered, cutoff) || rows[i].runs > 0
+	}
+	fires, fErr := fetchAutomationFireCounts(ctx, client, sinceDur, ids, ran)
+	if fErr != nil {
+		slog.Warn("could not fetch logbook fire counts; runs_24h will fall back to trace count", "error", fErr)
+	}
+	applyAutoRuns(rows, fires)
 
 	// #54: HA marks an automation `restored: true` when its state was resurrected
 	// from the registry with no live config behind it — a "ghost" from a deleted
@@ -570,8 +591,7 @@ func (f fireCounts) runs(entityID string) (int, bool) {
 	return f.byEntityID[entityID], true
 }
 
-// fetchAutomationFireCounts pulls a window of logbook entries via REST and buckets
-// them by entity_id where domain == "automation".
+// fetchAutomationFireCounts counts automation runs from the logbook.
 //
 // HA writes exactly one automation-domain logbook entry per RUN — it fires
 // EVENT_AUTOMATION_TRIGGERED after the automation's conditions are evaluated and
@@ -580,52 +600,13 @@ func (f fireCounts) runs(entityID string) (int, bool) {
 // (invariant H-18), and it is HA's own. Counting the logbook rather than the
 // traces also keeps the number honest for high-fire automations, whose trace
 // storage HA caps (default 5).
-func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since time.Duration) (fireCounts, error) {
-	return fetchFireCounts(ctx, client, since, "automation")
-}
-
-// fetchFireCounts is the same query for any domain HA logs one entry per run
-// for. `script ls` needs it too: it counted stored traces, which HA bounds per
-// item (`stored_traces`, default 5), so a script invoked forty times reported
-// five. The comment at the automation call site has said why that is wrong
-// since the automation column was fixed — "traces are bounded per automation,
-// so they undercount runs_24h dramatically for high-fire rules" — and the
-// sibling column was left counting traces anyway. docs/manual.md tells the
-// reader the script one is "a plain count of invocations".
-func fetchFireCounts(ctx context.Context, client *haapi.Client, since time.Duration, domain string) (fireCounts, error) {
-	now := time.Now()
-	startTime := now.Add(-since)
-	data, err := client.GetLogbook(ctx,
-		startTime.Format(time.RFC3339),
-		now.Format(time.RFC3339))
-	if err != nil {
-		return fireCounts{}, fmt.Errorf("fetching logbook: %w", err)
-	}
-
-	var entries []logbookEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return fireCounts{}, fmt.Errorf("parsing logbook: %w", err)
-	}
-	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
-		return fireCounts{}, err
-	}
-
-	counts := make(map[string]int)
-	for _, e := range entries {
-		if e.Domain == domain && e.EntityID != "" {
-			counts[e.EntityID]++
-		}
-	}
-	// A logbook that carries no automation entry AT ALL is not an answer about
-	// automations. Excluding the automation domain from the recorder or the
-	// logbook is ordinary HA tuning, and it makes this endpoint return 200 with
-	// nothing to say about any automation, forever — under "an answered logbook
-	// is authoritative" that would report runs_24h = 0 for the whole instance.
-	// Once even one automation entry is present the logbook is demonstrably
-	// recording them, and its silence about a particular automation is a zero.
-	// On a genuinely idle instance both sources are empty, so standing the
-	// traces in costs nothing.
-	return fireCounts{byEntityID: counts, ok: len(counts) > 0}, nil
+//
+// It asks only about the rows the listing will print, in bounded requests
+// (D-232). `script ls` needs the same query: it counted stored traces, which
+// HA bounds per item (`stored_traces`, default 5), so a script invoked forty
+// times reported five.
+func fetchAutomationFireCounts(ctx context.Context, client *haapi.Client, since time.Duration, entityIDs []string, ranInWindow bool) (fireCounts, error) {
+	return fetchFireCounts(ctx, client, since, "automation", entityIDs, ranInWindow)
 }
 
 func fetchTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceListResult, error) {
@@ -640,6 +621,16 @@ func fetchTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceListRes
 		return nil, fmt.Errorf("fetching traces: %w", err)
 	}
 	return result, nil
+}
+
+// applyAutoRuns replaces each row's trace count with the logbook's, where the
+// logbook answered (H-18: an answer is authoritative even when it is zero).
+func applyAutoRuns(rows []autoRow, fires fireCounts) {
+	for i := range rows {
+		if n, answered := fires.runs("automation." + rows[i].id); answered {
+			rows[i].runs = n
+		}
+	}
 }
 
 // buildAutoRows combines per-automation state, run counts, and trace data.
@@ -661,11 +652,12 @@ func buildAutoRows(autos []automationEntity, traces haapi.TraceListResult, fires
 		id := strings.TrimPrefix(a.EntityID, "automation.")
 
 		row := autoRow{
-			id:       id,
-			configID: a.Attributes.ID,
-			alias:    a.Attributes.FriendlyName,
-			state:    a.State,
-			restored: a.Attributes.Restored,
+			id:            id,
+			configID:      a.Attributes.ID,
+			alias:         a.Attributes.FriendlyName,
+			state:         a.State,
+			lastTriggered: a.Attributes.LastTriggered,
+			restored:      a.Attributes.Restored,
 		}
 
 		// Two different keys, deliberately. HA keys TRACES by the automation's

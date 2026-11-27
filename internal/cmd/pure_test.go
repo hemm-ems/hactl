@@ -288,7 +288,7 @@ func TestBuildScriptRows_Basic(t *testing.T) {
 		},
 	}
 
-	rows := buildScriptRows(scripts, traces, cutoff, fireCounts{})
+	rows := buildScriptRows(scripts, traces, cutoff)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -315,7 +315,7 @@ func TestBuildScriptRows_NoTraces(t *testing.T) {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	scripts := []scriptEntity{{EntityID: "script.empty", State: "on"}}
 
-	rows := buildScriptRows(scripts, nil, cutoff, fireCounts{})
+	rows := buildScriptRows(scripts, nil, cutoff)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -334,7 +334,7 @@ func TestBuildScriptRows_OutsideWindow(t *testing.T) {
 		},
 	}
 
-	rows := buildScriptRows(scripts, traces, cutoff, fireCounts{})
+	rows := buildScriptRows(scripts, traces, cutoff)
 	if rows[0].runs != 0 {
 		t.Errorf("runs outside window = %d, want 0", rows[0].runs)
 	}

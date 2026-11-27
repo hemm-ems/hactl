@@ -166,13 +166,15 @@ type scriptAttributes struct {
 
 // scriptRow holds combined state+trace data for one script.
 type scriptRow struct {
-	id      string
-	state   string
-	lastErr string
-	area    string
-	labels  string
-	runs    int
-	errors  int
+	id    string
+	state string
+	// lastTriggered is HA's attribute verbatim (RFC 3339, empty when null).
+	lastTriggered string
+	lastErr       string
+	area          string
+	labels        string
+	runs          int
+	errors        int
 }
 
 func runScriptLs(cmd *cobra.Command, w io.Writer) error {
@@ -181,6 +183,16 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	// The window is checked before anything is sent (D-233).
+	sinceDur, err := parseSince(sinceWindow())
+	if err != nil {
+		return err
+	}
+	if err = checkLogbookWindow(sinceDur, sinceWindow()); err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-sinceDur)
 
 	client := haapi.New(cfg.URL, cfg.Token)
 	scripts, err := fetchScripts(ctx, client)
@@ -204,21 +216,8 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 		rc, _ = fetchRegistryContext(ctx, ws)
 	}
 
-	sinceDur, err := parseSince(sinceWindow())
-	if err != nil {
-		return err
-	}
-	cutoff := time.Now().Add(-sinceDur)
-
-	// runs_24h comes from the logbook, not the trace table: HA bounds stored
-	// traces per item, so counting them undercounts a busy script. The
-	// automation column has done this since H-18; this one had not.
-	fires, fireErr := fetchFireCounts(ctx, client, sinceDur, "script")
-	if fireErr != nil {
-		slog.Warn("could not fetch logbook run counts; runs_24h will fall back to the (bounded) trace count", "error", fireErr)
-	}
-
-	rows := buildScriptRows(scripts, traces, cutoff, fires)
+	// Run counts come later, for the rows that survive the filters (D-232).
+	rows := buildScriptRows(scripts, traces, cutoff)
 	// Before any filter runs — see emptyListing.
 	total := len(rows)
 
@@ -245,6 +244,29 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 
 	if len(rows) == 0 {
 		return emptyListing(cmd, w, "scripts", total, failingHints(flagScriptFailing)...)
+	}
+
+	// runs_24h comes from the logbook, not the trace table: HA bounds stored
+	// traces per item, so counting them undercounts a busy script. The
+	// automation column has done this since H-18; this one had not. Only the
+	// listed rows are asked about (D-232).
+	ids := make([]string, len(rows))
+	ran := false
+	for i := range rows {
+		ids[i] = "script." + rows[i].id
+		// Either source saying "it ran" makes an empty logbook the
+		// not-recording case rather than a zero (D-234). rows[i].runs is
+		// still the trace count here.
+		ran = ran || triggeredSince(rows[i].lastTriggered, cutoff) || rows[i].runs > 0
+	}
+	fires, fireErr := fetchFireCounts(ctx, client, sinceDur, "script", ids, ran)
+	if fireErr != nil {
+		slog.Warn("could not fetch logbook run counts; runs_24h will fall back to the (bounded) trace count", "error", fireErr)
+	}
+	for i := range rows {
+		if n, answered := fires.runs("script." + rows[i].id); answered {
+			rows[i].runs = n
+		}
 	}
 
 	tbl := &format.Table{
@@ -456,14 +478,17 @@ func fetchScriptTraceList(ctx context.Context, cfg *config.Config) (haapi.TraceL
 	return result, nil
 }
 
-func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutoff time.Time, fires fireCounts) []scriptRow {
+// buildScriptRows counts runs from the traces; the logbook's count replaces
+// it later, once the listing is filtered and the logbook asked (D-232).
+func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutoff time.Time) []scriptRow {
 	rows := make([]scriptRow, 0, len(scripts))
 	for _, s := range scripts {
 		id := strings.TrimPrefix(s.EntityID, "script.")
 
 		row := scriptRow{
-			id:    id,
-			state: s.State,
+			id:            id,
+			state:         s.State,
+			lastTriggered: s.Attributes.LastTriggered,
 		}
 
 		key := s.EntityID
@@ -493,13 +518,7 @@ func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutof
 			}
 		}
 
-		// The logbook is authoritative when it answered; the bounded trace
-		// count stands in only when it did not.
-		if n, ok := fires.runs(key); ok {
-			row.runs = n
-		} else {
-			row.runs = tracedRuns
-		}
+		row.runs = tracedRuns
 
 		rows = append(rows, row)
 	}

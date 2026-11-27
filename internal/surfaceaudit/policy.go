@@ -54,7 +54,7 @@ import (
 // which the extractor refuses to stay silent about.
 var (
 	haapiBuilders = map[string]string{
-		"doGet": "GET", "doDelete": "DELETE", "doPost": "POST", "doPostOnce": "POST",
+		"doGet": "GET", "doGetOnce": "GET", "doDelete": "DELETE", "doPost": "POST", "doPostOnce": "POST",
 	}
 	companionBuilders = map[string]string{
 		"doGet": "GET", "doPostBody": "POST", "doDelete": "DELETE", "doPut": "PUT",
@@ -676,7 +676,7 @@ func requestsOfCall(call *ast.CallExpr, fn *ast.FuncDecl, name, dir string, http
 	}
 	method := sel.Sel.Name
 	if isHTTPConstructor(call, httpIDs) {
-		return nil, fmt.Errorf("http.%s outside the request builders (%s doGet/doDelete/doPost/doPostOnce, %s doGet/doPostBody/doDelete/doPut) builds a request no policy site names", method, haapiDir, companionDir)
+		return nil, fmt.Errorf("http.%s outside the request builders (%s doGet/doGetOnce/doDelete/doPost/doPostOnce, %s doGet/doPostBody/doDelete/doPut) builds a request no policy site names", method, haapiDir, companionDir)
 	}
 	if rawWSSends[method] {
 		return nil, fmt.Errorf("conn.%s puts a websocket message on the wire that no `ws <type>` site can name; send through sendCommand or a WriteJSON of a literal type", method)

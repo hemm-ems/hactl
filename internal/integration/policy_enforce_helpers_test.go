@@ -678,6 +678,9 @@ type recordingProxy struct {
 	srv  *httptest.Server
 	mu   sync.Mutex
 	seen []string
+	// urls is every request's full URL, query included, in order; seen
+	// keeps the method-and-path form the policy tests compare against.
+	urls []*url.URL
 }
 
 func newRecordingProxy(t *testing.T, target string) *recordingProxy {
@@ -695,6 +698,8 @@ func newRecordingProxy(t *testing.T, target string) *recordingProxy {
 		}
 		p.mu.Lock()
 		p.seen = append(p.seen, line)
+		u := *r.URL
+		p.urls = append(p.urls, &u)
 		p.mu.Unlock()
 		// Forward the request as hactl sent it. ReverseProxy would add an
 		// X-Forwarded-For, and HA answers a forwarded request from a proxy
@@ -716,6 +721,17 @@ func (p *recordingProxy) take() []string {
 	defer p.mu.Unlock()
 	out := p.seen
 	p.seen = nil
+	p.urls = nil
+	return out
+}
+
+// takeURLs is take for the full request URLs.
+func (p *recordingProxy) takeURLs() []*url.URL {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := p.urls
+	p.seen = nil
+	p.urls = nil
 	return out
 }
 
