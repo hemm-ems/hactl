@@ -892,9 +892,13 @@ where a script or YAML helper is *defined* — `licht_an:` under `script:` — w
 no value holds), reported with `kind` `key` or `value`. Dashboards: string
 values only (dashboard keys are card schema, never your words). Not searched:
 numbers and booleans, `!secret`/`!input` values, files nothing includes
-(esphome, blueprints, custom_components), and entity display names, registry
-data or states — for display names use the name search under "Filtering &
-discovery".
+(esphome, blueprints, custom_components), config-entry options (where helpers
+and integrations set up in the UI keep their settings), and entity display
+names, registry data or states — for display names use the name search under
+"Filtering & discovery". `config files` lists more than `grep` searches: an
+ESPHome node's YAML is listed and readable there (`config file
+esphome/<node>.yaml`), but nothing includes it, so `grep` and `ref` never see
+it (D-50).
 
 **Matching.** A substring, case-insensitive by default, by the simple Unicode
 lowercase on both halves: `küche` finds `Küche` and `KÜCHE`, `istanbul` finds
@@ -950,9 +954,11 @@ half returns at most **1,000** hit rows; beyond that the answer says
 (`{source, location, key_hits, value_hits}`), `hits` (`{source, location, path,
 key, kind, value}`), `partial` and `unread`.
 
-**A miss** reads `no hit for "<term>" in any config file or dashboard` — a
-verified negative for that substring (or pattern) over both halves. After a
-partial sweep it reads `… in what could be searched` instead.
+**A miss** reads `no hit for "<term>" in the config files Home Assistant loads
+(configuration.yaml and everything it includes) or any dashboard (…; not
+searched: …)` — a verified negative for that substring (or pattern) over both
+halves, and only over them: the line names the sources it did not search. After
+a partial sweep it reads `… in what could be searched` instead.
 
 **Partial sweeps** follow the `ref scan` rule (see References): an unread config
 file or dashboard is named in a `partial sweep: …` line above the answer;
@@ -981,7 +987,13 @@ hactl ref replace sensor.old sensor.new --confirm --allow-partial  # apply even 
 
 Requires hactl-companion — it is what reads the config directory. `ref` is the
 whole-instance version of `dash grep`/`dash replace`: YAML config files
-(following `!include`) **and** every dashboard in one pass. `scan` finds
+(following `!include`) **and** every dashboard in one pass. It reads the same
+sources as `grep` and misses the same ones: ESPHome node YAML, blueprints,
+custom_components, config-entry options (a template, group or min/max helper
+made in the UI names its source entities there), the registry and states. So
+before deleting or renaming an entity, also run `ent related <entity_id>`: it
+lists entities whose config entry names this one (`config-entry-reference`).
+A miss says which sources it covered and which it did not. `scan` finds
 references to an exact id, not free-text terms (a term inside values is
 `grep`, above; display names are the name search under "Filtering &
 discovery") — but its two halves do not match
@@ -1479,7 +1491,7 @@ stderr: `policy_denied: 1 of 2 resources denied (profile agent)` — a count, ne
 
 **Service calls: services that reach what the call does not name** (D-184). `conversation.process`, `ai_task.generate_data`, `ai_task.generate_image`, `ai_task.evaluate`, `assist_satellite.start_conversation`, `file.read_file`, `device_tracker.see`, `demo.randomize_device_tracker_data` and every service of `shell_command`, `python_script`, `rest_command` and `pyscript` act on what a sentence means or a script does — nothing in the call says what that is. While the profile denies anything (a deny rule, or `default: deny`), `control service:<x>` on one of them is allowed only by an allow whose pattern is exactly `service:<x>` and lists `control`; a wildcard allow (`service:*`, `service:shell_command.*`) or the default never grants it, and the refusal is `fail-closed: this service reaches what its call does not name — it needs an allow by its exact name while the profile denies anything`. `policy check service:conversation.process control` answers the same. A profile that denies nothing is unchanged. An exact allow grants whatever the service then does.
 
-**Registry edits that put an entity where an automation looks** (D-186). An automation, script or template entity that targets a label, an area, a floor or an entity id switches whatever is there when it runs, not what was there when it was written. So a registry edit that makes an entity reachable through a container it was not reachable through before needs `control` on that entity, when an automation, script or template entity — written by the agent or not — targets the container with an action that can switch it (D-212): `ent set-label` (each label it adds), `ent set-area` (the new area, its floor and its labels), `device set-label` and `device set-area` (the same, for every entity of the device that the device's label or area reaches; an entity with its own area is not moved by its device's), `ent rename` (the new entity id), and `area delete` — an entity in the deleted area falls back to its device's area (D-195). hactl applies the edit to a copy of the registries and compares every entity's containers before and after, so `floor delete` and `label delete` are checked the same way (they only remove containers). An edit that adds no targeted container needs nothing beyond its registry check, so tidying labels and areas nothing targets stays a plain `edit`. hactl asks Home Assistant's `search/related` which automations and scripts reference each new container, reads each one's stored config (as `auto cat`/`script cat`), and counts only its actions whose target or data names the container and whose service can affect the entity's domain: a service of that domain, `homeassistant.turn_on`/`turn_off`/`toggle` when the domain has the service (D-211), any other service of a domain without live entities (an integration's own, `homeassistant.*`), or a templated service. `lock.lock` on `area_id: hallway` does not make a light moved there need `control`; it does a lock. A mention only in a trigger or a condition switches nothing. A templated target (`label_id: "{{ lab }}"`, or a whole `target:` template) may name any container: a variable can hold it. A stored config hactl cannot read, or one naming the container inside a template, counts for every domain. The check names the targeter after its rule: `(because automation.hallway_area_lock targets area:hallway)`. With a companion, hactl also searches the config files for the container's id as a whole word, under any key (a `variables:` value a templated target reads too), which finds YAML template entities: a hit inside an automation or a script is read as that config, as above; any other hit counts for every domain. A question that gets no answer counts as targeting, and so does a config file the search could not read (a missing include target is not one: Home Assistant reads it as empty). The check runs in the dry run and again on the registry request. Not searched: template helpers made in the UI, YAML template entities when no companion is configured; not checked: a container that changes outside hactl (an area moved to another floor in Home Assistant's UI), and a group helper's members changed through its options flow.
+**Registry edits that put an entity where an automation looks** (D-186). An automation, script or template entity that targets a label, an area, a floor or an entity id switches whatever is there when it runs, not what was there when it was written. So a registry edit that makes an entity reachable through a container it was not reachable through before needs `control` on that entity, when an automation, script or template entity — written by the agent or not — targets the container with an action that can switch it (D-212): `ent set-label` (each label it adds), `ent set-area` (the new area, its floor and its labels), `device set-label` and `device set-area` (the same, for every entity of the device that the device's label or area reaches; an entity with its own area is not moved by its device's), `ent rename` (the new entity id), and `area delete` — an entity in the deleted area falls back to its device's area (D-195). hactl applies the edit to a copy of the registries and compares every entity's containers before and after, so `floor delete` and `label delete` are checked the same way (they only remove containers). An edit that adds no targeted container needs nothing beyond its registry check, so tidying labels and areas nothing targets stays a plain `edit`. hactl asks Home Assistant's `search/related` which automations and scripts reference each new container, reads each one's stored config (as `auto cat`/`script cat`), and counts only its actions whose target or data names the container and whose service can affect the entity's domain: a service of that domain, `homeassistant.turn_on`/`turn_off`/`toggle` when the domain has the service (D-211), any other service of a domain without live entities (an integration's own, `homeassistant.*`), or a templated service. `lock.lock` on `area_id: hallway` does not make a light moved there need `control`; it does a lock. A mention only in a trigger or a condition switches nothing. A templated target (`label_id: "{{ lab }}"`, or a whole `target:` template) may name any container: a variable can hold it. A stored config hactl cannot read, or one naming the container inside a template, counts for every domain. The check names the targeter after its rule: `(because automation.hallway_area_lock targets area:hallway)`. With a companion, hactl also searches the config files for the container's id as a whole word, under any key (a `variables:` value a templated target reads too), which finds YAML template entities: a hit inside an automation or a script is read as that config, as above; any other hit counts for every domain. A question that gets no answer counts as targeting, and so does a config file the search could not read (a missing `!include_dir_*` directory is not one: Home Assistant reads it as empty; a missing plain `!include` file is a load error Home Assistant's config check reports). The check runs in the dry run and again on the registry request. Not searched: template helpers made in the UI, YAML template entities when no companion is configured; not checked: a container that changes outside hactl (an area moved to another floor in Home Assistant's UI), and a group helper's members changed through its options flow.
 
 **Rename** (E-5). Renaming moves a resource to a new id, so it needs `edit` on the old one and `create` on the new one — a deny on the new id stops the rename, and so does a deny on renaming the old. This covers `ent rename` and the hidden renames: `auto apply` (and `auto rollback`) with a file whose `id:` is not the target's, and a `ref replace` that rewrites an automation's `id:` or a template's `unique_id:`.
 

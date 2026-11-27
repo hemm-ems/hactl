@@ -224,6 +224,37 @@ func TestGrepZeroHitsIsEmptyListsNotNull(t *testing.T) {
 	}
 }
 
+// TestGrepMissNamesWhatWasAndWasNotSearched is #199: "no hit … in any config
+// file" read as a negative over every file `config files` lists, esphome/
+// included, which grep never walks (D-50). The miss names the include graph
+// and the sources outside it.
+func TestGrepMissNamesWhatWasAndWasNotSearched(t *testing.T) {
+	cc := startGrepCompanion(t, 0, grepEmptyConfig)
+	grepFixture(t, cc, []any{}, map[string]any{"views": []any{}})
+
+	var buf bytes.Buffer
+	if err := runGrep(context.Background(), &buf, "balkony"); err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		`no hit for "balkony"`,
+		"configuration.yaml and everything it includes",
+		"any dashboard",
+		"not searched: esphome/",
+		"blueprints",
+		"custom_components",
+		"config-entry options",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the miss does not say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "any config file") {
+		t.Errorf("the miss still claims every config file:\n%s", out)
+	}
+}
+
 // TestGrepPartialRefusalGivesGrepsOwnReason: the D-31 refusal is shared with
 // ref scan and dash grep, whose --json is a bare array with nowhere to carry
 // the scope. grep's document has `partial`, so that reason would be false of
@@ -374,7 +405,7 @@ func TestGrepPartialIsStatedAndRefusesUnderJSON(t *testing.T) {
 			t.Fatalf("plain text answers: %v", err)
 		}
 		out := buf.String()
-		if strings.Contains(out, "in any config file or dashboard") {
+		if strings.Contains(out, searchedScope) {
 			t.Errorf("a sweep that did not read the config half may not claim a verified negative:\n%s", out)
 		}
 		if !strings.Contains(out, "in what could be searched") {
@@ -456,7 +487,7 @@ func grepPartialDashboardHalf(t *testing.T) {
 			t.Fatalf("plain text answers: %v", err)
 		}
 		out := buf.String()
-		if strings.Contains(out, "in any config file or dashboard") {
+		if strings.Contains(out, searchedScope) {
 			t.Errorf("a sweep that did not read a dashboard may not claim a verified negative:\n%s", out)
 		}
 		if !strings.Contains(out, "in what could be searched") {

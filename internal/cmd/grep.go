@@ -27,6 +27,16 @@ var (
 // cap and always stated, so a truncated answer is never a silently short one.
 const grepHalfCap = 1000
 
+// searchedScope and notSearchedScope are what a verified negative of grep,
+// ref scan and ref replace covers, spelled the same in all three (#199).
+// "Any config file" read as "every file `config files` lists", which includes
+// esphome/ — and nothing walks that, by decision (D-50). The miss names the
+// include graph it did walk and the sources it did not.
+const (
+	searchedScope    = "the config files Home Assistant loads (configuration.yaml and everything it includes) or any dashboard"
+	notSearchedScope = "not searched: esphome/, blueprints, custom_components, config-entry options (helpers made in the UI), the registry and states"
+)
+
 // grepValueWidth is how wide a hit's value renders in the text table. A leaf
 // can be 2,303 characters (measured); the whole value is in --json and --full.
 const grepValueWidth = 72
@@ -252,7 +262,7 @@ func renderGrepText(w io.Writer, ans grepAnswer) error {
 				"above — the rest was not searched)\n", ans.Term, grepModeWords(ans))
 			return nil
 		}
-		_, _ = fmt.Fprintf(w, "no hit for %q in any config file or dashboard (%s)\n", ans.Term, grepModeWords(ans))
+		_, _ = fmt.Fprintf(w, "no hit for %q in %s (%s; %s)\n", ans.Term, searchedScope, grepModeWords(ans), notSearchedScope)
 		return nil
 	}
 

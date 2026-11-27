@@ -222,9 +222,8 @@ func runRefScan(ctx context.Context, w io.Writer, target string) error {
 			return emitEmptyList(w, "no reference to "+target+" in what could be scanned "+
 				"(see the partial-sweep note above — the rest was not searched)")
 		}
-		return emitEmptyList(w, target+": not referenced as an id in any config file or dashboard "+
-			"(scan matches ids, not free text — for a term or fragment across config files and "+
-			"dashboards: hactl grep "+target+")")
+		return emitEmptyList(w, target+": not referenced as an id in "+searchedScope+
+			" ("+notSearchedScope+"; scan matches ids, not free text — for a term or fragment: hactl grep "+target+")")
 	}
 
 	tbl := &format.Table{
@@ -392,7 +391,7 @@ func finishRefReplace(ctx context.Context, w io.Writer, src *refSources, o refRe
 		total += len(p.changed)
 	}
 	if total == 0 {
-		return emitEmptyList(w, fmt.Sprintf("%q not found in any config file or dashboard", oldVal))
+		return emitEmptyList(w, fmt.Sprintf("%q not found in %s (%s)", oldVal, searchedScope, notSearchedScope))
 	}
 
 	if !flagJSON {
