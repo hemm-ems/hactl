@@ -138,6 +138,7 @@ func init() {
 	entLsCmd.Flags().StringVar(&flagEntLabel, "label", "", "filter entities by label name (substring)")
 	entLsCmd.Flags().StringVar(&flagEntPlatform, "platform", "", "filter by integration platform from the entity registry (exact, e.g. hue, mqtt, template)")
 	entLsCmd.Flags().StringVar(&flagEntDevice, "device", "", "filter by device: its ID exactly, or a substring of its name")
+	entLsCmd.Flags().Var(&flagEntDead, "dead", "show only entities with no valid state for this long, plus those the recorder cannot decide (e.g. 7d, at most 30d)")
 	entLsCmd.Flags().BoolVar(&flagEntRestored, "restored", false, "show only restored 'ghost' entities (state resurrected from the registry with no live entity — deleted or re-authored)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
@@ -264,6 +265,14 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		states = filterEntitiesByRestored(states)
 	}
 
+	var verdicts map[string]deadVerdict
+	if flagEntDead.set() {
+		var deadErr error
+		if states, verdicts, deadErr = filterEntitiesByDead(ctx, client, states); deadErr != nil {
+			return deadErr
+		}
+	}
+
 	if len(states) == 0 {
 		return emptyListing(cmd, w, "entities", total)
 	}
@@ -330,13 +339,16 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		// instant HA sent, with its offset (H-10).
 		tbl.SetMachine(i, "last_changed", formatMachineTime(s.LastChanged))
 	}
+	if verdicts != nil {
+		addDeadColumns(tbl, func(i int) deadVerdict { return verdicts[states[i].EntityID] })
+	}
 
 	return tbl.Render(w, format.RenderOpts{
 		Top:      flagTop,
 		Full:     flagFull,
 		JSON:     flagJSON,
 		Compact:  true,
-		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, --platform <p>, --device <d>, --restored, or --top N",
+		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, --platform <p>, --device <d>, --restored, --dead <dur>, or --top N",
 	})
 }
 

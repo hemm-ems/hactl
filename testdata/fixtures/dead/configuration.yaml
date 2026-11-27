@@ -1,0 +1,66 @@
+# Dead-entity fixture (#198 `--dead`).
+#
+# Each entity's availability is driven by an input_boolean, so a test can make
+# it unavailable, flap it, or leave it valid, and then ask the recorder. One
+# entity is excluded from the recorder outright: the `unrecorded` case, where
+# no history answer may be read as "dead". Dead C renders no value, so it
+# moves between unavailable and unknown and is never valid: the case only the
+# recorder can call dead.
+
+homeassistant:
+  name: Dead Fixture
+  latitude: 52.0
+  longitude: 13.0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  country: DE
+  currency: EUR
+
+default_config:
+
+logger:
+  default: warning
+
+recorder:
+  commit_interval: 1
+  exclude:
+    entities:
+      - sensor.dead_unrecorded
+
+input_boolean:
+  dead_up_a:
+    name: Dead Up A
+    initial: true
+  dead_up_b:
+    name: Dead Up B
+    initial: false
+  dead_up_unrecorded:
+    name: Dead Up Unrecorded
+    initial: false
+  dead_up_c:
+    name: Dead Up C
+    initial: false
+
+input_button:
+  dead_never_pressed:
+    name: Dead Never Pressed
+
+template:
+  - sensor:
+      - name: Dead A
+        unique_id: dead_a
+        state: "1"
+        availability: "{{ is_state('input_boolean.dead_up_a', 'on') }}"
+      - name: Dead B
+        unique_id: dead_b
+        state: "1"
+        availability: "{{ is_state('input_boolean.dead_up_b', 'on') }}"
+      - name: Dead Unrecorded
+        unique_id: dead_unrecorded
+        state: "1"
+        availability: "{{ is_state('input_boolean.dead_up_unrecorded', 'on') }}"
+      - name: Dead C
+        unique_id: dead_c
+        state: "{{ none }}"
+        availability: "{{ is_state('input_boolean.dead_up_c', 'on') }}"

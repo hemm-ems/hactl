@@ -27,6 +27,13 @@ func (e *EntityRegistryEntry) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "entity_id", Value: &e.EntityID}}
 }
 
+// Identity reports the time of a minimal history row: every row carries it,
+// the first one of a group and the state-only ones after it alike
+// (TestOracleDeadHistoryShape). A row without it is not a state change.
+func (r *MinimalHistoryRow) Identity() []degeneracy.Field {
+	return []degeneracy.Field{{Name: "last_changed", Value: &r.LastChanged}}
+}
+
 // Identity reports the area registry key.
 func (a *AreaEntry) Identity() []degeneracy.Field {
 	return []degeneracy.Field{{Name: "area_id", Value: &a.AreaID}}

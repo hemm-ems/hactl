@@ -593,6 +593,8 @@ func resetSubcommandFlags() {
 	flagEntLabel = ""
 	flagEntPlatform = ""
 	flagEntDevice = ""
+	flagEntDead = deadWindow{}
+	flagDeviceDead = deadWindow{}
 	flagEntConfirm = false
 	flagEntRenameAllowPartial = false
 	flagEntStale = false

@@ -91,6 +91,7 @@ func init() {
 	deviceLsCmd.Flags().StringVar(&flagDeviceName, "name", "", "filter by device name substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceArea, "area", "", "filter by area/room name or ID substring")
 	deviceLsCmd.Flags().StringVar(&flagDeviceLabel, "label", "", "filter by label name or ID substring")
+	deviceLsCmd.Flags().Var(&flagDeviceDead, "dead", "show only devices whose entities had no valid state for this long, plus undecided ones (e.g. 7d, at most 30d)")
 	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the area (default is dry-run)")
 	deviceSetAreaCmd.Flags().BoolVar(&flagDeviceAreaClear, "clear", false, "remove the device's area instead of setting one")
 	deviceSetLabelCmd.Flags().BoolVar(&flagDeviceConfirm, "confirm", false, "actually set the labels (default is dry-run)")
@@ -338,6 +339,13 @@ func runDeviceLs(cmd *cobra.Command, w io.Writer) error {
 	}
 
 	devices := filterDevices(rc.devices, rc)
+	var verdicts map[string]deadVerdict
+	if flagDeviceDead.set() && len(devices) > 0 {
+		devices, verdicts, err = filterDevicesByDead(ctx, cfg, rc, devices)
+		if err != nil {
+			return err
+		}
+	}
 	if len(devices) == 0 {
 		return emptyListing(cmd, w, "devices", len(rc.devices))
 	}
@@ -360,6 +368,9 @@ func runDeviceLs(cmd *cobra.Command, w io.Writer) error {
 			d.Manufacturer,
 			d.Model,
 		}
+	}
+	if verdicts != nil {
+		addDeadColumns(tbl, func(i int) deadVerdict { return verdicts[devices[i].ID] })
 	}
 
 	return tbl.Render(w, format.RenderOpts{

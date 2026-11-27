@@ -61,6 +61,7 @@
 --remove        = proven: TestUnmakeSurfaceIsClosed
 --restored      = proven: TestEveryNarrowedListingSaysWhatNarrowedIt
 --since         = proven: TestSinceIsDeclaredOnlyOnTheCommandsThatReadIt
+--dead          = proven: TestDeadMeansOneWindowEverywhere
 --stats         = proven: TestVersionStats
 --timeout       = proven: TestTransportSurfaceIsClosed
 --tokens        = proven: TestRunWithOutput_TokensFlag
