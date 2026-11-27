@@ -97,6 +97,12 @@ func TestRunRefScan_NoReferences(t *testing.T) {
 	for _, want := range []string{
 		"not referenced as an id",
 		"hactl grep sensor.absent",
+		// #199: the negative names the include graph it walked and what it
+		// did not walk, instead of "any config file", which reads as every
+		// file `config files` lists.
+		"configuration.yaml and everything it includes",
+		"not searched: esphome/",
+		"config-entry options",
 	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("miss output missing %q, got: %q", want, buf.String())
