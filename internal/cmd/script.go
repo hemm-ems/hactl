@@ -170,8 +170,11 @@ type scriptRow struct {
 	state string
 	// lastTriggered is HA's attribute verbatim (RFC 3339, empty when null).
 	lastTriggered string
-	lastErr       string
-	area          string
+	// name is HA's friendly_name: the registry name when one is set, else
+	// the config alias (D-235).
+	name    string
+	lastErr string
+	area    string
 	labels        string
 	runs          int
 	errors        int
@@ -270,9 +273,10 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 	}
 
 	tbl := &format.Table{
-		Headers: []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"},
+		Headers: []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err", lastTriggeredColumn, "name"},
 		Rows:    make([][]string, len(rows)),
 	}
+	tbl.SetTimeColumn(lastTriggeredColumn)
 	for i, r := range rows {
 		tbl.Rows[i] = []string{
 			r.id,
@@ -282,7 +286,10 @@ func runScriptLs(cmd *cobra.Command, w io.Writer) error {
 			strconv.Itoa(r.runs),
 			strconv.Itoa(r.errors),
 			r.lastErr,
+			r.lastTriggered,
+			r.name,
 		}
+		tbl.SetMachine(i, lastTriggeredColumn, machineLastTriggered(r.lastTriggered))
 	}
 
 	return tbl.Render(w, format.RenderOpts{
@@ -489,6 +496,7 @@ func buildScriptRows(scripts []scriptEntity, traces haapi.TraceListResult, cutof
 			id:            id,
 			state:         s.State,
 			lastTriggered: s.Attributes.LastTriggered,
+			name:          s.Attributes.FriendlyName,
 		}
 
 		key := s.EntityID
