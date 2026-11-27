@@ -34,6 +34,8 @@ var (
 	flagEntAttr        string
 	flagEntArea        string
 	flagEntLabel       string
+	flagEntPlatform    string
+	flagEntDevice      string
 	flagEntConfirm     bool
 	flagEntStale       bool
 	flagEntRestored    bool
@@ -134,6 +136,8 @@ func init() {
 	entLsCmd.Flags().StringVar(&flagEntDomain, "domain", "", "filter entities by domain (e.g. sensor, binary_sensor)")
 	entLsCmd.Flags().StringVar(&flagEntArea, "area", "", "filter entities by area/room name (substring)")
 	entLsCmd.Flags().StringVar(&flagEntLabel, "label", "", "filter entities by label name (substring)")
+	entLsCmd.Flags().StringVar(&flagEntPlatform, "platform", "", "filter by integration platform from the entity registry (exact, e.g. hue, mqtt, template)")
+	entLsCmd.Flags().StringVar(&flagEntDevice, "device", "", "filter by device: its ID exactly, or a substring of its name")
 	entLsCmd.Flags().BoolVar(&flagEntRestored, "restored", false, "show only restored 'ghost' entities (state resurrected from the registry with no live entity — deleted or re-authored)")
 	entHistCmd.Flags().StringVar(&flagEntResample, "resample", "", "resample bucket duration (e.g. 5m, 1h)")
 	entHistCmd.Flags().StringVar(&flagEntAttr, "attr", "", "track a specific attribute instead of state (e.g. brightness)")
@@ -234,25 +238,26 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		states = filterEntitiesByPattern(states, flagEntPattern)
 	}
 
-	// Fetch registry context for area/label enrichment
-	var rc *registryContext
-	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
-	if wsErr := ws.Connect(ctx); wsErr == nil {
-		rc, _ = fetchRegistryContext(ctx, ws)
-		_ = ws.Close()
-	} else {
-		slog.Warn("could not connect to WS for registry data", "error", wsErr)
+	// Fetch registry context for area/label/ownership enrichment.
+	rc, rcErr := entLsRegistry(ctx, cfg)
+	if err := registryFiltersAnswerable(rc, rcErr); err != nil {
+		return err
 	}
 
-	// Apply area/label filters
-	if rc != nil && flagEntArea != "" {
+	if flagEntArea != "" {
 		states = filterEntitiesByArea(states, rc, flagEntArea)
 	}
-	if rc != nil && flagEntLabel != "" {
+	if flagEntLabel != "" {
 		if !labelExistsInRegistry(rc, flagEntLabel) {
 			return emitEmptyList(w, labelNotFoundHint(flagEntLabel))
 		}
 		states = filterEntitiesByLabel(states, rc, flagEntLabel)
+	}
+	if flagEntPlatform != "" {
+		states = filterEntitiesByPlatform(states, rc, flagEntPlatform)
+	}
+	if flagEntDevice != "" {
+		states = filterEntitiesByDevice(states, rc, flagEntDevice)
 	}
 
 	if flagEntRestored {
@@ -276,7 +281,7 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		}
 	}
 
-	headers := []string{"entity_id", "state", "area", "labels", "last_changed"}
+	headers := []string{"entity_id", "state", "area", "labels", "platform", "device", "last_changed"}
 	if anyRestored {
 		headers = append(headers, restoredColumn)
 	}
@@ -295,17 +300,25 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 	tbl.SetWidth("state", entStateWidth)
 	for i, s := range states {
 		var areaName, lblNames string
+		var own entOwnership
 		if rc != nil {
 			areaName = rc.areaName(s.EntityID)
 			lblNames = rc.labelNames(s.EntityID)
+			own = rc.ownership(s.EntityID)
 		}
 		row := []string{
 			s.EntityID,
 			s.State,
 			areaName,
 			lblNames,
+			own.platform,
+			own.device,
 			s.LastChanged,
 		}
+		// The two ids are JSON keys only (D-236): a caller joining on them
+		// is a program, and the text table keeps the readable pair.
+		tbl.SetMachine(i, "device_id", own.deviceID)
+		tbl.SetMachine(i, "config_entry_id", own.configEntryID)
 		if anyRestored {
 			row = append(row, boolCell(isRestoredAttr(s.Attributes)))
 			// boolCell is a rendering for a person — see its doc comment. The
@@ -323,7 +336,7 @@ func runEntLs(cmd *cobra.Command, w io.Writer) error {
 		Full:     flagFull,
 		JSON:     flagJSON,
 		Compact:  true,
-		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, --restored, or --top N",
+		MoreHint: "try --pattern '<glob>', --domain <d>, --area <a>, --label <l>, --platform <p>, --device <d>, --restored, or --top N",
 	})
 }
 
@@ -1378,6 +1391,89 @@ const entStateWidth = 20
 // registry `ls`" — which handed them the id that returned zero rows, exit 0,
 // while `device ls --area <same id>` returned the row. H-17: an identifier
 // hactl prints is an identifier hactl accepts.
+// entLsRegistry reads the registries `ent ls` enriches and filters with.
+// A failure is returned, not swallowed: the listing still renders without
+// the registry, but a filter that needs it must not (D-236).
+func entLsRegistry(ctx context.Context, cfg *config.Config) (*registryContext, error) {
+	ws := haapi.NewWSClient(cfg.URL, cfg.Token)
+	if err := ws.Connect(ctx); err != nil {
+		slog.Warn("could not connect to WS for registry data", "error", err)
+		return nil, err
+	}
+	defer func() { _ = ws.Close() }()
+	return fetchRegistryContext(ctx, ws)
+}
+
+// registryFiltersAnswerable refuses a registry-bound filter the registries
+// cannot answer. `--area` and `--label` used to be skipped when the WS
+// session failed, so a narrowed question came back as the whole instance
+// (H-7: no answer is not an answer).
+func registryFiltersAnswerable(rc *registryContext, rcErr error) error {
+	needs := []struct{ flag, value string }{
+		{"--area", flagEntArea}, {"--label", flagEntLabel},
+		{"--platform", flagEntPlatform}, {"--device", flagEntDevice},
+	}
+	for _, n := range needs {
+		if n.value == "" {
+			continue
+		}
+		if rc == nil {
+			return fmt.Errorf("%s needs the entity registry, which could not be read: %w", n.flag, rcErr)
+		}
+		if n.flag == "--device" && rc.devicesErr != nil {
+			return fmt.Errorf("--device needs the device registry, which could not be read: %w", rc.devicesErr)
+		}
+	}
+	return nil
+}
+
+// entOwnership is who owns an entity, as `ent ls` prints it (D-236).
+type entOwnership struct {
+	platform, device, deviceID, configEntryID string
+}
+
+// ownership reads an entity's owner from the registries already fetched.
+// device and deviceID come only from a readable device row, so a device the
+// policy profile hides leaves both empty.
+func (rc *registryContext) ownership(entityID string) entOwnership {
+	ent, ok := rc.entityByID[entityID]
+	if !ok {
+		return entOwnership{}
+	}
+	own := entOwnership{platform: ent.Platform, configEntryID: ent.ConfigEntryID}
+	if d, ok := rc.deviceOf(entityID); ok {
+		own.device = deviceUserFacingName(d)
+		own.deviceID = d.ID
+	}
+	return own
+}
+
+// filterEntitiesByPlatform keeps the entities whose registry platform is
+// platform, ignoring case (D-2, D-236). A state-only entity has no registry
+// row and so no platform.
+func filterEntitiesByPlatform(states []entityState, rc *registryContext, platform string) []entityState {
+	out := make([]entityState, 0, len(states))
+	for _, s := range states {
+		if strings.EqualFold(rc.ownership(s.EntityID).platform, platform) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// filterEntitiesByDevice keeps the entities on a device whose id is device
+// (ignoring case) or whose name contains it (D-236).
+func filterEntitiesByDevice(states []entityState, rc *registryContext, device string) []entityState {
+	out := make([]entityState, 0, len(states))
+	for _, s := range states {
+		d, ok := rc.deviceOf(s.EntityID)
+		if ok && (strings.EqualFold(d.ID, device) || deviceMatchesName(d, device)) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func filterEntitiesByArea(states []entityState, rc *registryContext, area string) []entityState {
 	result := make([]entityState, 0, len(states))
 	for _, s := range states {

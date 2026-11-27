@@ -315,6 +315,8 @@ hactl ent ls --domain sensor              # filter by domain
 hactl ent ls --area living                # filter by area name (substring)
 hactl ent ls --label energy               # filter by label name (substring)
 hactl ent ls --restored                   # only "ghost" entities (restored from registry, no live entity)
+hactl ent ls --platform hue               # filter by integration (registry platform, exact)
+hactl ent ls --device "Wozi TV"           # filter by device (id, or name substring)
 hactl ent show sensor.wp_vl               # state + key attributes + area + labels + ownership (platform, unique_id, config_entry_id) + attribute count
 hactl ent show sensor.wp_vl --full        # + all attributes
 hactl ent hist sensor.wp_vl --since 7d    # ~50 resampled datapoints (time/value)
@@ -329,6 +331,19 @@ hactl ent who light.kitchen --since 7d    # who/what changed it: per-event + cou
 hactl ent rename sensor.old sensor.new            # dry-run: registry rename + reference count
 hactl ent rename sensor.old sensor.new --confirm  # rename + rewrite every reference (needs companion)
 ```
+
+`ent ls` also names who owns each entity, from the registries it already
+reads (no extra request): `platform` (the integration, e.g. `hue`, `mqtt`,
+`template`) and `device` (the device's user-facing name: the name you gave it,
+else its own). `--json` adds `device_id` and `config_entry_id`; the text table
+keeps the two readable columns. An entity with no registry entry (state only)
+has no platform and no device, so `--platform` and `--device` never match it;
+a device the active policy profile may not read leaves `device` and
+`device_id` empty. `--platform` matches the platform exactly, ignoring case;
+`--device` matches the device id exactly, or a substring of either device
+name. `--area`, `--label`, `--platform` and `--device` need the entity
+registry: when it cannot be read, `ent ls` fails rather than answer as if
+the filter were not there.
 
 `ent rename` is the one-command form of "rename the entity, then `ref replace`
 its references": the registry entry is renamed first (the authoritative
@@ -704,7 +719,7 @@ write half and no raw WS passthrough (D-12).
 ### Config entries & flows
 
 ```bash
-hactl config entries                              # list config entries (entry_id, domain, title, state, source, options, disabled_by)
+hactl config entries                              # list config entries (entry_id, domain, title, state, source, options, disabled_by, entities, devices)
 hactl config entries --domain zha                 # filter by integration domain
 hactl config show <entry_id>                      # what an integration is set up as AND how it's configured (read-only)
 hactl config show <entry_id> --probe-options-flow # when no diagnostics platform: read current values via a transient options flow
@@ -716,6 +731,17 @@ hactl config flow-step <flow_id> --data '{...}' --options  # same, but for an op
 hactl config flow-inspect <flow_id>               # inspect current flow state (step, schema, errors)
 hactl config flow-inspect <flow_id> --options     # same, but for an options flow
 
+```
+
+`entities` and `devices` count the registry rows that name the entry: an
+entity's `config_entry_id`, a device's `config_entries` (a device can belong to
+more than one entry, so it counts under each). `0/0` on a `loaded` entry is a
+candidate for cleanup; a `setup_error` or `not_loaded` entry still owns its
+rows. The counts cost two registry reads, not one per entry. If those reads
+fail, the cells say `-` (JSON `null`), never `0`. Under a policy profile they
+count what the profile may read.
+
+```bash
 hactl config files                                # list configuration.yaml and every !include'd file
 hactl config file automations.yaml                # print a config file as YAML, !include's resolved
 hactl config file configuration.yaml --raw        # leave !include directives unresolved

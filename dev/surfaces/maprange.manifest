@@ -32,6 +32,7 @@ internal/haapi/servicedata.go:(*ServiceDescriptor).UnknownFields = proven: TestU
 internal/cmd/wireguard_cmd.go:writeWireguardMonitor = proven: TestWriteWireguardStatus_ResolvedRenderIsDeterministic
 
 # --- walks whose order is destroyed before anything reads it ------------------
+internal/cmd/flow.go:fetchEntryOwnership = exempt: sums device counts per entry into a map; addition commutes, and the render loop walks the sorted-by-HA entries slice, never this map
 internal/cmd/ent.go:runEntShow = exempt: collects the unshown attribute keys into a slice that is sort.Strings-ed before the render loop reads it
 internal/cmd/ent_who.go:runEntWho = exempt: tallies trigger counts into summary rows sorted by a total order (count desc, then trigger asc) before rendering
 internal/cmd/rtfm.go:runRTFMFamilies = exempt: groups aliases per family and sort.Strings-es each family's slice before rendering; family order comes from the fixed Families() slice
