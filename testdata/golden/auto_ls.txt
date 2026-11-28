@@ -1,4 +1,4 @@
-id                state area labels runs_24h errors last_err
-climate_schedule  on                0        0     
-morning_alarm     on                0        0     
-ventilation_boost on                0        0     
+id                state area labels runs_24h errors last_err last_triggered name
+climate_schedule  on                0        0                              Climate Schedule
+morning_alarm     on                0        0                              Morning Alarm
+ventilation_boost on                0        0                              Ventilation Boost

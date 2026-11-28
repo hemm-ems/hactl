@@ -181,7 +181,7 @@ finishes the work even when hactl has stopped waiting (#195).
 ### Automations
 
 ```bash
-hactl auto ls                             # table: id, state, area, labels, runs_24h, errors, last_err
+hactl auto ls                             # table: id, state, area, labels, runs_24h, errors, last_err, last_triggered, name
 hactl auto ls --failing                   # only automations with recent errors
 hactl auto ls --pattern 'ess_*'           # glob/substring on object id, entity_id, config id or alias
 hactl auto ls --label victron             # filter by label name (substring)
@@ -203,6 +203,18 @@ traces per automation; `runs_24h` comes from the uncapped logbook). `script ls`'
 `runs_24h` is a plain invocation count: script conditions are steps inside an
 already-running sequence, so nothing gates a start from being counted.
 
+`last_triggered` is when the automation last entered its actions (for a script: last
+started), as Home Assistant's own attribute says. It is part of the state, so it costs no
+extra request and does not depend on `--since`. It is empty (`null` in `--json`) for an
+automation that never ran. Home Assistant restores the value after a restart, and after an
+unclean shutdown it can be up to 15 minutes behind.
+
+`name` is the name Home Assistant shows (`friendly_name`). That is the name set in the UI
+(entity registry) if there is one, and otherwise the config `alias:`. Observed on HA 2026.11:
+after a rename in the UI, `friendly_name` is the new name, for automations and scripts alike.
+The `alias:` is then no longer a name hactl resolves: `auto show "<old alias>"` fails, while
+the new name, the config `id:` and the entity id still work.
+
 **The run count costs Home Assistant work, so it is bounded.** HA runs a logbook query to
 completion even after hactl gives up on it. One unbounded `--since 30d` read once used up
 the memory of a 4 GB instance and restarted it (#195). The read is therefore bounded in
@@ -223,7 +235,8 @@ what the recorder still holds.
 
 **Automation identifiers:** every command that takes an automation — `auto
 show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its
-interchangeable names: the config `id:`, the alias, the entity_id, or the
+interchangeable names: the config `id:`, the alias (the `name` column; after a rename
+in the UI that is the new name, not the `alias:` in the config), the entity_id, or the
 entity_id's object id (the `id` column of `auto ls`). Copy an identifier out of
 any listing and it works in the next command. The config `id:` is the canonical
 one hactl prints (`auto ls --json`'s and `auto show --json`'s `config_id`, `auto create`'s result);
@@ -262,7 +275,7 @@ A confirmed create prints the automation's live `entity_id`. Home Assistant deri
 ### Scripts
 
 ```bash
-hactl script ls                    # table: id, state, area, labels, runs_24h, errors, last_err
+hactl script ls                    # table: id, state, area, labels, runs_24h, errors, last_err, last_triggered, name
 hactl script ls --pattern kino     # glob/substring filter
 hactl script ls --label energy     # filter by label name (substring)
 hactl script ls --failing          # only scripts with recent errors

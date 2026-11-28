@@ -189,9 +189,11 @@ type automationAttributes struct {
 // id is the entity object id (the `id` column). configID is the automation's
 // config `id:` — not displayed here, but displayed by `auto show`/`auto create`
 // and required by `auto cat`/`diff`/`apply`, which is why `--pattern` has to
-// match it (invariant H-17). alias is HA's friendly_name — the `alias:` field
-// verbatim — which every `auto` target command resolves (D-1), so `--pattern`
-// has to match it too.
+// match it (invariant H-17). alias is HA's friendly_name, which every `auto`
+// target command resolves (D-1), so `--pattern` has to match it too. It is the
+// config `alias:` only while the entity registry has no name of its own: after
+// a rename in the UI it is that name (observed, D-235), and the listing prints
+// it as `name`.
 type autoRow struct {
 	id       string
 	configID string
@@ -323,7 +325,7 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		}
 	}
 
-	headers := []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err"}
+	headers := []string{"id", "state", "area", "labels", runsColumn(sinceWindow()), "errors", "last_err", lastTriggeredColumn, "name"}
 	if anyRestored {
 		headers = append(headers, restoredColumn)
 	}
@@ -331,6 +333,7 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 		Headers: headers,
 		Rows:    make([][]string, len(rows)),
 	}
+	tbl.SetTimeColumn(lastTriggeredColumn)
 	for i, r := range rows {
 		row := []string{
 			r.id,
@@ -340,7 +343,10 @@ func runAutoLs(cmd *cobra.Command, w io.Writer) error {
 			strconv.Itoa(r.runs),
 			strconv.Itoa(r.errors),
 			r.lastErr,
+			r.lastTriggered,
+			r.alias,
 		}
+		tbl.SetMachine(i, lastTriggeredColumn, machineLastTriggered(r.lastTriggered))
 		if anyRestored {
 			row = append(row, boolCell(r.restored))
 			// boolCell is a rendering for a person — see its doc comment. The
@@ -885,6 +891,19 @@ func formatShortTime(isoTime string) string {
 //
 // The empty placeholder is "" rather than formatShortTime's "-": a machine
 // consumer reads "-" as a value, and "no timestamp" is an absence.
+// lastTriggeredColumn is HA's attribute, under HA's name (D-235).
+const lastTriggeredColumn = "last_triggered"
+
+// machineLastTriggered is the JSON value of a last_triggered cell: the
+// instant, or null for an item that never ran (HA's own null), so "never" is
+// not an empty string a caller has to know about.
+func machineLastTriggered(raw string) any {
+	if raw == "" {
+		return nil
+	}
+	return formatMachineTime(raw)
+}
+
 func formatMachineTime(isoTime string) string {
 	if isoTime == "" {
 		return ""
