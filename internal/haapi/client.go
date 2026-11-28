@@ -256,10 +256,23 @@ func (c *Client) GetLogbook(ctx context.Context, startTime, endTime string) ([]b
 
 // GetLogbookFiltered calls GET /api/logbook/<startTime>?end_time=...&entity=<id>
 // and returns the raw JSON body. An empty entityID disables entity filtering
-// (equivalent to GetLogbook). Pass a single entity ID; HA also supports a
-// comma-separated list — entity is mutually exclusive with context_id per
+// (equivalent to GetLogbook). Pass a single entity ID or a comma-separated
+// list — entity is mutually exclusive with context_id per
 // homeassistant/components/logbook/rest_api.py.
+//
+// It is GetLogbookOnce: no logbook read is retried (D-232).
 func (c *Client) GetLogbookFiltered(ctx context.Context, startTime, endTime, entityID string) ([]byte, error) {
+	return c.GetLogbookOnce(ctx, startTime, endTime, entityID)
+}
+
+// GetLogbookOnce is the logbook read, sent exactly once, even on a 5xx.
+//
+// HA builds a logbook answer inside a recorder executor job that a client
+// leaving does not cancel (D-232, #195). A 502 or 504 from a proxy in front
+// of HA therefore says nothing about whether HA is still working on the
+// query, and a retry would start a second copy of the same job next to the
+// first.
+func (c *Client) GetLogbookOnce(ctx context.Context, startTime, endTime, entityID string) ([]byte, error) {
 	path := "/api/logbook/" + url.PathEscape(startTime)
 	params := url.Values{}
 	if endTime != "" {
@@ -271,7 +284,7 @@ func (c *Client) GetLogbookFiltered(ctx context.Context, startTime, endTime, ent
 	if q := params.Encode(); q != "" {
 		path += "?" + q
 	}
-	return c.doGet(ctx, path)
+	return c.doGetOnce(ctx, path)
 }
 
 // HTTPStatusError is returned for a non-2xx HA response. It carries the parsed
@@ -333,6 +346,16 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	return c.doWithRetry(ctx, req)
+}
+
+// doGetOnce is doGet without the 5xx retry, for a read whose server-side
+// work a retry would duplicate rather than repeat (the logbook, D-232).
+func (c *Client) doGetOnce(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	return c.doOnce(req)
 }
 
 func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {

@@ -173,6 +173,11 @@ hactl issues --all            # also include ignored (dismissed) issues
 hactl changes --since 24h     # logbook: what changed recently (state changes, auto triggers)
 ```
 
+`changes` reads the logbook of every entity. It asks for at most 24 hours per request,
+one request after another, and it refuses a `--since` above `7d` unless `--allow-heavy`
+is passed. A long window on a busy instance is a lot of work for Home Assistant, and HA
+finishes the work even when hactl has stopped waiting (#195).
+
 ### Automations
 
 ```bash
@@ -197,6 +202,24 @@ entered the actions and does not count — it appears in `auto show`'s trace tab
 traces per automation; `runs_24h` comes from the uncapped logbook). `script ls`'s
 `runs_24h` is a plain invocation count: script conditions are steps inside an
 already-running sequence, so nothing gates a start from being counted.
+
+**The run count costs Home Assistant work, so it is bounded.** HA runs a logbook query to
+completion even after hactl gives up on it. One unbounded `--since 30d` read once used up
+the memory of a 4 GB instance and restarted it (#195). The read is therefore bounded in
+four ways:
+
+- **Only the rows you list.** `auto ls` and `script ls` ask the logbook only about the rows
+  they print, after `--pattern`, `--label`, `--failing` and `--restored` have been applied.
+  A narrow filter is a small query.
+- **In small pieces.** Each request asks about at most 24 hours. The ids are sent in
+  chunks, and the requests run one after another.
+- **Never sent twice.** A logbook request is not retried. If a piece fails, nothing more is
+  sent, `runs_*` falls back to the trace count, and stderr says so.
+- **At most 7 days.** A `--since` above `7d` is refused before anything is sent. Pass
+  `--allow-heavy` to read further anyway. The same cap applies to `changes`.
+
+A window longer than the recorder keeps (`purge_keep_days`, 10 days by default) counts only
+what the recorder still holds.
 
 **Automation identifiers:** every command that takes an automation — `auto
 show|cat|diff|apply|delete|rollback`, `trace show` — accepts any of its

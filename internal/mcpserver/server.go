@@ -122,7 +122,8 @@ func toolDescription(opts Options) string {
 		"Pass the command line without the binary name, e.g. 'ent ls --domain light' or " +
 		"'auto show <id>'. Useful global flags: --json (structured output), --tokens " +
 		"(compact token estimate), --tokensmax N " +
-		"(raise/remove the output cap, 0 = uncapped), --since 7d, --top N, --full.\n\n")
+		"(raise/remove the output cap, 0 = uncapped), --top N, --full, and --since 7d on the commands that read a time window " +
+		"(windows above 7d need --allow-heavy on changes, auto ls and script ls).\n\n")
 	if opts.NoManualInject {
 		b.WriteString("Start by running 'rtfm' once: it prints the full manual of all commands and is also " +
 			"available as the MCP resource hactl://manual.\n\n")

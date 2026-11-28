@@ -494,8 +494,10 @@ func oracleTracesFor(t *testing.T, inst *hatest.Instance, domain, itemID string)
 // This is the independent half of the H-18 reconciliation: HA writes exactly
 // one automation-domain logbook entry per run, and it writes that entry after
 // the conditions are evaluated — so a trigger the conditions blocked is traced
-// but never logged. Reading it through /api/logbook/<period>?entity= (the
-// filtered endpoint hactl never calls) keeps the oracle off hactl's own path.
+// but never logged. It asks about one entity over the whole window in one
+// request, through the retrying GetLogbookFiltered; hactl asks about chunks of
+// entities in 24 h pieces (D-232). So the oracle does not share the splitting
+// it checks.
 func oracleLogbookRunCount(t *testing.T, inst *hatest.Instance, entityID string, since time.Duration) int {
 	t.Helper()
 	client := haapi.New(inst.URL(), inst.Token())

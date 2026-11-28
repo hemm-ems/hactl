@@ -37,6 +37,7 @@
 # would be a breaking CLI change to separate.
 #ceiling 8
 
+--allow-heavy   = proven: TestAllowHeavyIsDeclaredOnlyOnTheLogbookListings
 --allow-partial = proven: TestPartialScopeSurfaceIsClosed
 --area          = proven: TestFilterFlagsAgreeOnCase
 --as            = proven: TestPolicyAsIsTheSameWhatIfOnShowAndCheck

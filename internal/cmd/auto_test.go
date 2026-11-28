@@ -340,7 +340,10 @@ func TestFetchAutomationFireCounts_ClassifiesTheLogbooksAnswer(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := fetchAutomationFireCounts(context.Background(), haapi.New(srv.URL, "tok"), 24*time.Hour)
+			// ranInWindow=true: a listed row ran by its last_triggered, so the
+			// logbook's silence about the domain is the not-recording case (D-234).
+			got, err := fetchAutomationFireCounts(context.Background(), haapi.New(srv.URL, "tok"), 24*time.Hour,
+				[]string{"automation.a", "automation.b"}, true)
 			if err != nil {
 				t.Fatalf("fetchAutomationFireCounts: %v", err)
 			}

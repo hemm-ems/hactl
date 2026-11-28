@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hemm-ems/hactl/internal/config"
-	"github.com/hemm-ems/hactl/internal/degeneracy"
 	"github.com/hemm-ems/hactl/internal/format"
 	"github.com/hemm-ems/hactl/internal/haapi"
 )
@@ -62,22 +60,19 @@ func runChanges(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	now := time.Now()
-	startTime := now.Add(-sinceDur)
+	if err := checkLogbookWindow(sinceDur, sinceWindow()); err != nil {
+		return err
+	}
 
+	// Every entity, by nature — so the bound is the window: at most 24 h per
+	// request, one request at a time, never retried (D-232). A failed window
+	// fails the command: a feed with a hole in it would read as "nothing
+	// happened then".
 	client := haapi.New(cfg.URL, cfg.Token)
-	data, err := client.GetLogbook(ctx,
-		startTime.Format(time.RFC3339),
-		now.Format(time.RFC3339))
-	if err != nil {
-		return fmt.Errorf("fetching logbook: %w", err)
-	}
-
-	var entries []logbookEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return fmt.Errorf("parsing logbook: %w", err)
-	}
-	if err := degeneracy.Check("/api/logbook", &entries); err != nil {
+	entries := []logbookEntry{}
+	if err := readLogbook(ctx, client, sinceDur, nil, func(chunk []logbookEntry) {
+		entries = append(entries, chunk...)
+	}); err != nil {
 		return err
 	}
 
